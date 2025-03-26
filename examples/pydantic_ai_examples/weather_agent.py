@@ -150,7 +150,7 @@ async def main():
             'What is the weather like in London and in Wiltshire?', deps=deps
         )
         debug(result)
-        print('Response:', result.data)
+        print('Response:', result.output)
 
 
 if __name__ == '__main__':

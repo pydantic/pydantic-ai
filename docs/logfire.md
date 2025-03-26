@@ -115,7 +115,7 @@ logfire.instrument_httpx(capture_all=True)  # (1)!
 
 agent = Agent('openai:gpt-4o', instrument=True)
 result = agent.run_sync('What is the capital of France?')
-print(result.data)
+print(result.output)
 # > The capital of France is Paris.
 ```
 

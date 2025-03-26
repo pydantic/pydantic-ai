@@ -228,7 +228,7 @@ class ModelRequestParameters:
 
     function_tools: list[ToolDefinition]
     allow_text_result: bool
-    result_tools: list[ToolDefinition]
+    output_tools: list[ToolDefinition]
 
 
 class Model(ABC):

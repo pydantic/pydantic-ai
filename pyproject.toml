@@ -175,6 +175,7 @@ exclude_lines = [
     'if TYPE_CHECKING:',
     'if typing.TYPE_CHECKING:',
     '@overload',
+    '@deprecated',
     '@typing.overload',
     '@abstractmethod',
     '\(Protocol\):$',

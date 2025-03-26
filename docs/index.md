@@ -26,14 +26,14 @@ Designed to make [type checking](agents.md#static-type-checking) as powerful and
 Leverages Python's familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project.
 
 * __Structured Responses__:
-Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](results.md#structured-result-validation) model outputs, ensuring responses are consistent across runs.
+Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](output.md#structured-output) model outputs, ensuring responses are consistent across runs.
 
 * __Dependency Injection System__:
-Offers an optional [dependency injection](dependencies.md) system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [result validators](results.md#result-validators-functions).
+Offers an optional [dependency injection](dependencies.md) system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [result validators](output.md#output-validator-functions).
 This is useful for testing and eval-driven iterative development.
 
 * __Streamed Responses__:
-Provides the ability to [stream](results.md#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate results.
+Provides the ability to [stream](output.md#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate results.
 
 * __Graph Support__:
 [Pydantic Graph](graph.md) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.
@@ -51,7 +51,7 @@ agent = Agent(  # (1)!
 )
 
 result = agent.run_sync('Where does "hello world" come from?')  # (3)!
-print(result.data)
+print(result.output)
 """
 The first known use of "hello, world" was in a 1974 textbook about the C programming language.
 """
@@ -95,7 +95,7 @@ class SupportResult(BaseModel):  # (13)!
 support_agent = Agent(  # (1)!
     'openai:gpt-4o',  # (2)!
     deps_type=SupportDependencies,
-    result_type=SupportResult,  # (9)!
+    output_type=SupportResult,  # (9)!
     system_prompt=(  # (4)!
         'You are a support agent in our bank, give the '
         'customer support and judge the risk level of their query.'
@@ -126,13 +126,13 @@ async def customer_balance(
 async def main():
     deps = SupportDependencies(customer_id=123, db=DatabaseConn())
     result = await support_agent.run('What is my balance?', deps=deps)  # (8)!
-    print(result.data)  # (10)!
+    print(result.output)  # (10)!
     """
     support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
     """
 
     result = await support_agent.run('I just lost my card!', deps=deps)
-    print(result.data)
+    print(result.output)
     """
     support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
     """
@@ -177,7 +177,7 @@ logfire.instrument_asyncpg()  # (2)!
 support_agent = Agent(
     'openai:gpt-4o',
     deps_type=SupportDependencies,
-    result_type=SupportResult,
+    output_type=SupportResult,
     system_prompt=(
         'You are a support agent in our bank, give the '
         'customer support and judge the risk level of their query.'

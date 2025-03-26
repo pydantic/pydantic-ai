@@ -825,10 +825,10 @@ class CityLocation(BaseModel):
 ollama_model = OpenAIModel(
     model_name='llama3.2', provider=OpenAIProvider(base_url='http://localhost:11434/v1')
 )
-agent = Agent(ollama_model, result_type=CityLocation)
+agent = Agent(ollama_model, output_type=CityLocation)
 
 result = agent.run_sync('Where were the olympics held in 2012?')
-print(result.data)
+print(result.output)
 #> city='London' country='United Kingdom'
 print(result.usage())
 """
@@ -856,10 +856,10 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent(model=ollama_model, result_type=CityLocation)
+agent = Agent(model=ollama_model, output_type=CityLocation)
 
 result = agent.run_sync('Where were the olympics held in 2012?')
-print(result.data)
+print(result.output)
 #> city='London' country='United Kingdom'
 print(result.usage())
 """
@@ -1028,7 +1028,7 @@ fallback_model = FallbackModel(openai_model, anthropic_model)
 
 agent = Agent(fallback_model)
 response = agent.run_sync('What is the capital of France?')
-print(response.data)
+print(response.output)
 #> Paris
 
 print(response.all_messages())

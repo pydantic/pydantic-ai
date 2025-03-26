@@ -47,7 +47,7 @@ class SupportResult(BaseModel):
 support_agent = Agent(
     'openai:gpt-4o',
     deps_type=SupportDependencies,
-    result_type=SupportResult,
+    output_type=SupportResult,
     system_prompt=(
         'You are a support agent in our bank, give the '
         'customer support and judge the risk level of their query. '
@@ -77,13 +77,13 @@ async def customer_balance(
 if __name__ == '__main__':
     deps = SupportDependencies(customer_id=123, db=DatabaseConn())
     result = support_agent.run_sync('What is my balance?', deps=deps)
-    print(result.data)
+    print(result.output)
     """
     support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
     """
 
     result = support_agent.run_sync('I just lost my card!', deps=deps)
-    print(result.data)
+    print(result.output)
     """
     support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
     """

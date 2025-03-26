@@ -21,7 +21,7 @@ and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`A
     * [`StreamedRunResult.stream()`][pydantic_ai.result.StreamedRunResult.stream]
     * [`StreamedRunResult.stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text]
     * [`StreamedRunResult.stream_structured()`][pydantic_ai.result.StreamedRunResult.stream_structured]
-    * [`StreamedRunResult.get_data()`][pydantic_ai.result.StreamedRunResult.get_data]
+    * [`StreamedRunResult.get_output()`][pydantic_ai.result.StreamedRunResult.get_output]
 
     **Note:** The final result message will NOT be added to result messages if you use [`.stream_text(delta=True)`][pydantic_ai.result.StreamedRunResult.stream_text] since in this case the result content is never built as one string.
 
@@ -33,7 +33,7 @@ from pydantic_ai import Agent
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
 
 result = agent.run_sync('Tell me a joke.')
-print(result.data)
+print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 
 # all messages from the run
@@ -164,11 +164,11 @@ from pydantic_ai import Agent
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
-print(result1.data)
+print(result1.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 
 result2 = agent.run_sync('Explain?', message_history=result1.new_messages())
-print(result2.data)
+print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 
 print(result2.all_messages())
@@ -286,7 +286,7 @@ from pydantic_ai import Agent
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
-print(result1.data)
+print(result1.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 
 result2 = agent.run_sync(
@@ -294,7 +294,7 @@ result2 = agent.run_sync(
     model='google-gla:gemini-1.5-pro',
     message_history=result1.new_messages(),
 )
-print(result2.data)
+print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 
 print(result2.all_messages())

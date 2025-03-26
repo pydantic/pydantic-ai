@@ -138,14 +138,14 @@ async def test_request_simple_success(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('hello')
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(Usage(requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(Usage(requests=1))
     assert result.all_messages() == snapshot(
         [
@@ -187,7 +187,7 @@ async def test_request_simple_usage(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('Hello')
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3))
 
 
@@ -199,7 +199,7 @@ async def test_request_structured_response(allow_model_requests: None):
             tool_calls=[
                 chat.ChatCompletionMessageToolCall(
                     id='123',
-                    function=Function(arguments='{"response": [1, 2, 123]}', name='final_result'),
+                    function=Function(arguments='{"response": [1, 2, 123]}', name='final_output'),
                     type='function',
                 )
             ],
@@ -207,17 +207,17 @@ async def test_request_structured_response(allow_model_requests: None):
     )
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, result_type=list[int])
+    agent = Agent(m, output_type=list[int])
 
     result = await agent.run('Hello')
-    assert result.data == [1, 2, 123]
+    assert result.output == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result',
+                        tool_name='final_output',
                         args='{"response": [1, 2, 123]}',
                         tool_call_id='123',
                     )
@@ -228,7 +228,7 @@ async def test_request_structured_response(allow_model_requests: None):
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result',
+                        tool_name='final_output',
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
@@ -293,7 +293,7 @@ async def test_request_tool_call(allow_model_requests: None):
             raise ModelRetry('Wrong location, please try again')
 
     result = await agent.run('Hello')
-    assert result.data == 'final response'
+    assert result.output == 'final response'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -441,7 +441,7 @@ async def test_stream_structured(allow_model_requests: None):
         chunk([ChoiceDelta(tool_calls=[])]),
         chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
         chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
-        struc_chunk('final_result', None),
+        struc_chunk('final_output', None),
         chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
         struc_chunk(None, '{"first": "One'),
         struc_chunk(None, '", "second": "Two"'),
@@ -450,7 +450,7 @@ async def test_stream_structured(allow_model_requests: None):
     ]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, result_type=MyTypedDict)
+    agent = Agent(m, output_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
@@ -470,7 +470,7 @@ async def test_stream_structured(allow_model_requests: None):
 
 async def test_stream_structured_finish_reason(allow_model_requests: None):
     stream = [
-        struc_chunk('final_result', None),
+        struc_chunk('final_output', None),
         struc_chunk(None, '{"first": "One'),
         struc_chunk(None, '", "second": "Two"'),
         struc_chunk(None, '}'),
@@ -478,7 +478,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
     ]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, result_type=MyTypedDict)
+    agent = Agent(m, output_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
@@ -498,7 +498,7 @@ async def test_no_content(allow_model_requests: None):
     stream = [chunk([ChoiceDelta()]), chunk([ChoiceDelta()])]
     mock_client = MockOpenAI.create_mock_stream(stream)
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, result_type=MyTypedDict)
+    agent = Agent(m, output_type=MyTypedDict)
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream(''):
@@ -535,7 +535,7 @@ async def test_system_prompt_role(
 
     agent = Agent(m, system_prompt='some instructions')
     result = await agent.run('hello')
-    assert result.data == 'world'
+    assert result.output == 'world'
 
     assert get_mock_chat_completion_kwargs(mock_client) == [
         {
@@ -574,7 +574,7 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
             tool_calls=[
                 chat.ChatCompletionMessageToolCall(
                     id='123',
-                    function=Function(arguments='{"response": [1, 2, 3]}', name='final_result'),
+                    function=Function(arguments='{"response": [1, 2, 3]}', name='final_output'),
                     type='function',
                 )
             ],
@@ -582,7 +582,7 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     )
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, result_type=list[int], model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
+    agent = Agent(m, output_type=list[int], model_settings=ModelSettings(parallel_tool_calls=parallel_tool_calls))
 
     await agent.run('Hello')
     assert get_mock_chat_completion_kwargs(mock_client)[0]['parallel_tool_calls'] == parallel_tool_calls
@@ -600,7 +600,7 @@ async def test_image_url_input(allow_model_requests: None):
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert get_mock_chat_completion_kwargs(mock_client) == snapshot(
         [
             {
@@ -633,7 +633,7 @@ async def test_image_as_binary_content_input(
     agent = Agent(m)
 
     result = await agent.run(['What fruit is in the image?', image_content])
-    assert result.data == snapshot('The fruit in the image is a kiwi.')
+    assert result.output == snapshot('The fruit in the image is a kiwi.')
 
 
 @pytest.mark.vcr()
@@ -644,7 +644,7 @@ async def test_audio_as_binary_content_input(
     agent = Agent(m)
 
     result = await agent.run(['Whose name is mentioned in the audio?', audio_content])
-    assert result.data == snapshot('The name mentioned in the audio is Marcelo.')
+    assert result.output == snapshot('The name mentioned in the audio is Marcelo.')
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
@@ -669,7 +669,7 @@ async def test_max_completion_tokens(allow_model_requests: None, model_name: str
     agent = Agent(m, model_settings=ModelSettings(max_tokens=100))
 
     result = await agent.run('hello')
-    assert result.data == IsStr()
+    assert result.output == IsStr()
 
 
 @pytest.mark.vcr()
@@ -694,12 +694,12 @@ async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_
             raise ValueError(f'Country {country} not supported.')  # pragma: no cover
 
     result = await agent.run('What is the capital of France?')
-    assert result.data == snapshot('The capital of France is Paris.\n')
+    assert result.output == snapshot('The capital of France is Paris.\n')
 
     result = await agent.run(
         'What is the capital of England?', model=openai_model, message_history=result.all_messages()
     )
-    assert result.data == snapshot('The capital of England is London.')
+    assert result.output == snapshot('The capital of England is London.')
 
 
 @pytest.mark.vcr()

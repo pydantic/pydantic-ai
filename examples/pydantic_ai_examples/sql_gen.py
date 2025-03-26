@@ -95,7 +95,7 @@ Response: TypeAlias = Union[Success, InvalidRequest]
 agent: Agent[Deps, Response] = Agent(
     'google-gla:gemini-1.5-flash',
     # Type ignore while we wait for PEP-0747, nonetheless unions will work fine everywhere else
-    result_type=Response,  # type: ignore
+    output_type=Response,  # type: ignore
     deps_type=Deps,
     instrument=True,
 )
@@ -117,7 +117,7 @@ today's date = {date.today()}
 """
 
 
-@agent.result_validator
+@agent.output_validator
 async def validate_result(ctx: RunContext[Deps], result: Response) -> Response:
     if isinstance(result, InvalidRequest):
         return result
@@ -146,7 +146,7 @@ async def main():
     ) as conn:
         deps = Deps(conn)
         result = await agent.run(prompt, deps=deps)
-    debug(result.data)
+    debug(result.output)
 
 
 # pyright: reportUnknownMemberType=false

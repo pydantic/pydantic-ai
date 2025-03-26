@@ -164,7 +164,7 @@ class MistralModel(Model):
             messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
-            yield await self._process_streamed_response(model_request_parameters.result_tools, response)
+            yield await self._process_streamed_response(model_request_parameters.output_tools, response)
 
     @property
     def model_name(self) -> MistralModelName:
@@ -216,7 +216,7 @@ class MistralModel(Model):
         mistral_messages = list(chain(*(self._map_message(m) for m in messages)))
 
         if (
-            model_request_parameters.result_tools
+            model_request_parameters.output_tools
             and model_request_parameters.function_tools
             or model_request_parameters.function_tools
         ):
@@ -235,9 +235,9 @@ class MistralModel(Model):
                 frequency_penalty=model_settings.get('frequency_penalty'),
             )
 
-        elif model_request_parameters.result_tools:
+        elif model_request_parameters.output_tools:
             # Json Mode
-            parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_parameters.result_tools]
+            parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_parameters.output_tools]
             user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
             mistral_messages.append(user_output_format_message)
 
@@ -266,7 +266,7 @@ class MistralModel(Model):
         - "none": Prevents tool use.
         - "required": Forces tool use.
         """
-        if not model_request_parameters.function_tools and not model_request_parameters.result_tools:
+        if not model_request_parameters.function_tools and not model_request_parameters.output_tools:
             return None
         elif not model_request_parameters.allow_text_result:
             return 'required'
@@ -281,7 +281,7 @@ class MistralModel(Model):
         Returns None if both function_tools and result_tools are empty.
         """
         all_tools: list[ToolDefinition] = (
-            model_request_parameters.function_tools + model_request_parameters.result_tools
+            model_request_parameters.function_tools + model_request_parameters.output_tools
         )
         tools = [
             MistralTool(

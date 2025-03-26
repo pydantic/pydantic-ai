@@ -159,8 +159,8 @@ class GeminiModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> _GeminiTools | None:
         tools = [_function_from_abstract_tool(t) for t in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [_function_from_abstract_tool(t) for t in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [_function_from_abstract_tool(t) for t in model_request_parameters.output_tools]
         return _GeminiTools(function_declarations=tools) if tools else None
 
     def _get_tool_config(

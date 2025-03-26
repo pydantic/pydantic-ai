@@ -4,21 +4,24 @@ from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Generic, Union, cast
+from typing import TYPE_CHECKING, Generic, Union, cast
 
-from typing_extensions import TypeVar, assert_type
+from typing_extensions import TypeVar, assert_type, deprecated, overload
 
-from . import _result, _utils, exceptions, messages as _messages, models
+from . import _utils, exceptions, messages as _messages, models
 from .messages import AgentStreamEvent, FinalResultEvent
 from .tools import AgentDepsT, RunContext
 from .usage import Usage, UsageLimits
 
-__all__ = 'ResultDataT', 'ResultDataT_inv', 'ResultValidatorFunc'
+if TYPE_CHECKING:
+    from . import _output
+
+__all__ = 'OutputDataT', 'OutputDataT_inv', 'ToolStructuredOutput', 'OutputValidatorFunc'
 
 
 T = TypeVar('T')
 """An invariant TypeVar."""
-ResultDataT_inv = TypeVar('ResultDataT_inv', default=str)
+OutputDataT_inv = TypeVar('OutputDataT_inv', default=str)
 """
 An invariant type variable for the result data of a model.
 
@@ -30,14 +33,14 @@ changing it would have negative consequences for the ergonomics of the library.
 At some point, it may make sense to change the input to ResultValidatorFunc to be `Any` or `object` as doing that would
 resolve these potential variance issues.
 """
-ResultDataT = TypeVar('ResultDataT', default=str, covariant=True)
+OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
 """Covariant type variable for the result data type of a run."""
 
-ResultValidatorFunc = Union[
-    Callable[[RunContext[AgentDepsT], ResultDataT_inv], ResultDataT_inv],
-    Callable[[RunContext[AgentDepsT], ResultDataT_inv], Awaitable[ResultDataT_inv]],
-    Callable[[ResultDataT_inv], ResultDataT_inv],
-    Callable[[ResultDataT_inv], Awaitable[ResultDataT_inv]],
+OutputValidatorFunc = Union[
+    Callable[[RunContext[AgentDepsT], OutputDataT_inv], OutputDataT_inv],
+    Callable[[RunContext[AgentDepsT], OutputDataT_inv], Awaitable[OutputDataT_inv]],
+    Callable[[OutputDataT_inv], OutputDataT_inv],
+    Callable[[OutputDataT_inv], Awaitable[OutputDataT_inv]],
 ]
 """
 A function that always takes and returns the same type of data (which is the result type of an agent run), and:
@@ -48,30 +51,49 @@ A function that always takes and returns the same type of data (which is the res
 Usage `ResultValidatorFunc[AgentDepsT, T]`.
 """
 
+DEFAULT_OUTPUT_TOOL_NAME = 'final_output'
+
 
 @dataclass
-class AgentStream(Generic[AgentDepsT, ResultDataT]):
+class ToolStructuredOutput(Generic[OutputDataT]):
+    """Marker class to use tools for structured outputs, and customize the tool."""
+
+    output_type: type[OutputDataT]
+    name: str = 'final_output'
+    description: str | None = None
+    max_retries: int | None = None
+
+    @staticmethod
+    def unwrap_type(output_type: type[T] | ToolStructuredOutput[T]) -> type[T]:
+        if isinstance(output_type, ToolStructuredOutput):
+            return output_type.output_type
+        else:
+            return output_type
+
+
+@dataclass
+class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _raw_stream_response: models.StreamedResponse
-    _result_schema: _result.ResultSchema[ResultDataT] | None
-    _result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]]
+    _output_schema: _output.OutputSchema[OutputDataT] | None
+    _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]
     _usage_limits: UsageLimits | None
 
     _agent_stream_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
-    _final_result_event: FinalResultEvent | None = field(default=None, init=False)
+    _final_output_event: FinalResultEvent | None = field(default=None, init=False)
     _initial_run_ctx_usage: Usage = field(init=False)
 
     def __post_init__(self):
         self._initial_run_ctx_usage = copy(self._run_ctx.usage)
 
-    async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[ResultDataT]:
+    async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
         async for response in self.stream_responses(debounce_by=debounce_by):
-            if self._final_result_event is not None:
-                yield await self._validate_response(response, self._final_result_event.tool_name, allow_partial=True)
-        if self._final_result_event is not None:
+            if self._final_output_event is not None:
+                yield await self._validate_response(response, self._final_output_event.tool_name, allow_partial=True)
+        if self._final_output_event is not None:
             yield await self._validate_response(
-                self._raw_stream_response.get(), self._final_result_event.tool_name, allow_partial=False
+                self._raw_stream_response.get(), self._final_output_event.tool_name, allow_partial=False
             )
 
     async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
@@ -97,31 +119,31 @@ class AgentStream(Generic[AgentDepsT, ResultDataT]):
 
     async def _validate_response(
         self, message: _messages.ModelResponse, result_tool_name: str | None, *, allow_partial: bool = False
-    ) -> ResultDataT:
+    ) -> OutputDataT:
         """Validate a structured result message."""
-        if self._result_schema is not None and result_tool_name is not None:
-            match = self._result_schema.find_named_tool(message.parts, result_tool_name)
+        if self._output_schema is not None and result_tool_name is not None:
+            match = self._output_schema.find_named_tool(message.parts, result_tool_name)
             if match is None:
                 raise exceptions.UnexpectedModelBehavior(
-                    f'Invalid response, unable to find tool: {self._result_schema.tool_names()}'
+                    f'Invalid response, unable to find tool: {self._output_schema.tool_names()}'
                 )
 
             call, result_tool = match
             result_data = result_tool.validate(call, allow_partial=allow_partial, wrap_validation_errors=False)
 
-            for validator in self._result_validators:
+            for validator in self._output_validators:
                 result_data = await validator.validate(result_data, call, self._run_ctx)
             return result_data
         else:
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
-            for validator in self._result_validators:
+            for validator in self._output_validators:
                 text = await validator.validate(
                     text,
                     None,
                     self._run_ctx,
                 )
-            # Since there is no result tool, we can assume that str is compatible with ResultDataT
-            return cast(ResultDataT, text)
+            # Since there is no result tool, we can assume that str is compatible with OutputDataT
+            return cast(OutputDataT, text)
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
@@ -134,10 +156,10 @@ class AgentStream(Generic[AgentDepsT, ResultDataT]):
             return self._agent_stream_iterator
 
         async def aiter():
-            result_schema = self._result_schema
-            allow_text_result = result_schema is None or result_schema.allow_text_result
+            result_schema = self._output_schema
+            allow_text_output = result_schema is None or result_schema.allow_text_output
 
-            def _get_final_result_event(e: _messages.ModelResponseStreamEvent) -> _messages.FinalResultEvent | None:
+            def _get_final_output_event(e: _messages.ModelResponseStreamEvent) -> _messages.FinalResultEvent | None:
                 """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
                 if isinstance(e, _messages.PartStartEvent):
                     new_part = e.part
@@ -147,7 +169,7 @@ class AgentStream(Generic[AgentDepsT, ResultDataT]):
                                 return _messages.FinalResultEvent(
                                     tool_name=call.tool_name, tool_call_id=call.tool_call_id
                                 )
-                    elif allow_text_result:
+                    elif allow_text_output:
                         assert_type(e, _messages.PartStartEvent)
                         return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
 
@@ -156,9 +178,9 @@ class AgentStream(Generic[AgentDepsT, ResultDataT]):
             )
             async for event in usage_checking_stream:
                 yield event
-                if (final_result_event := _get_final_result_event(event)) is not None:
-                    self._final_result_event = final_result_event
-                    yield final_result_event
+                if (final_output_event := _get_final_output_event(event)) is not None:
+                    self._final_output_event = final_output_event
+                    yield final_output_event
                     break
 
             # If we broke out of the above loop, we need to yield the rest of the events
@@ -171,7 +193,7 @@ class AgentStream(Generic[AgentDepsT, ResultDataT]):
 
 
 @dataclass
-class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
+class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     """Result of a streamed run that returns structured data via a tool call."""
 
     _all_messages: list[_messages.ModelMessage]
@@ -179,9 +201,9 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
 
     _usage_limits: UsageLimits | None
     _stream_response: models.StreamedResponse
-    _result_schema: _result.ResultSchema[ResultDataT] | None
+    _output_schema: _output.OutputSchema[OutputDataT] | None
     _run_ctx: RunContext[AgentDepsT]
-    _result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]]
+    _result_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]]
     _result_tool_name: str | None
     _on_complete: Callable[[], Awaitable[None]]
 
@@ -193,17 +215,17 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
     [`stream`][pydantic_ai.result.StreamedRunResult.stream],
     [`stream_text`][pydantic_ai.result.StreamedRunResult.stream_text],
     [`stream_structured`][pydantic_ai.result.StreamedRunResult.stream_structured] or
-    [`get_data`][pydantic_ai.result.StreamedRunResult.get_data] completes.
+    [`get_output`][pydantic_ai.result.StreamedRunResult.get_output] completes.
     """
 
     def __post_init__(self):
         self._initial_run_ctx_usage = copy(self._run_ctx.usage)
 
-    def all_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
+    def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of _messages.
 
         Args:
-            result_tool_return_content: The return content of the tool call to set in the last message.
+            output_tool_return_content: The return content of the tool call to set in the last message.
                 This provides a convenient way to modify the content of the result tool call if you want to continue
                 the conversation and want to set the response to the result tool call. If `None`, the last message will
                 not be modified.
@@ -212,59 +234,91 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
             List of messages.
         """
         # this is a method to be consistent with the other methods
-        if result_tool_return_content is not None:
-            raise NotImplementedError('Setting result tool return content is not supported for this result type.')
+        if output_tool_return_content is not None:
+            raise NotImplementedError('Setting output tool return content is not supported for this result type.')
         return self._all_messages
 
-    def all_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes:
+    @overload
+    def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes: ...
+
+    @overload
+    @deprecated('`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.')
+    def all_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes: ...
+
+    def all_messages_json(
+        self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
+    ) -> bytes:
         """Return all messages from [`all_messages`][pydantic_ai.result.StreamedRunResult.all_messages] as JSON bytes.
 
         Args:
-            result_tool_return_content: The return content of the tool call to set in the last message.
+            output_tool_return_content: The return content of the tool call to set in the last message.
                 This provides a convenient way to modify the content of the result tool call if you want to continue
                 the conversation and want to set the response to the result tool call. If `None`, the last message will
                 not be modified.
+            result_tool_return_content: deprecated, use `output_tool_return_content` instead.
 
         Returns:
             JSON bytes representing the messages.
         """
         return _messages.ModelMessagesTypeAdapter.dump_json(
-            self.all_messages(result_tool_return_content=result_tool_return_content)
+            self.all_messages(output_tool_return_content=output_tool_return_content or result_tool_return_content)
         )
 
-    def new_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
+    @overload
+    def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]: ...
+
+    @overload
+    @deprecated('`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.')
+    def new_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]: ...
+
+    def new_messages(
+        self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
+    ) -> list[_messages.ModelMessage]:
         """Return new messages associated with this run.
 
         Messages from older runs are excluded.
 
         Args:
-            result_tool_return_content: The return content of the tool call to set in the last message.
+            output_tool_return_content: The return content of the tool call to set in the last message.
                 This provides a convenient way to modify the content of the result tool call if you want to continue
                 the conversation and want to set the response to the result tool call. If `None`, the last message will
                 not be modified.
+            result_tool_return_content: deprecated, use `output_tool_return_content` instead.
 
         Returns:
             List of new messages.
         """
-        return self.all_messages(result_tool_return_content=result_tool_return_content)[self._new_message_index :]
+        return self.all_messages(output_tool_return_content=output_tool_return_content or result_tool_return_content)[
+            self._new_message_index :
+        ]
 
-    def new_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes:
+    @overload
+    def new_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes: ...
+
+    @overload
+    @deprecated('`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.')
+    def new_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes: ...
+
+    def new_messages_json(
+        self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
+    ) -> bytes:
         """Return new messages from [`new_messages`][pydantic_ai.result.StreamedRunResult.new_messages] as JSON bytes.
 
         Args:
-            result_tool_return_content: The return content of the tool call to set in the last message.
+            output_tool_return_content: The return content of the tool call to set in the last message.
                 This provides a convenient way to modify the content of the result tool call if you want to continue
                 the conversation and want to set the response to the result tool call. If `None`, the last message will
                 not be modified.
+            result_tool_return_content: deprecated, use `output_tool_return_content` instead.
 
         Returns:
             JSON bytes representing the new messages.
         """
         return _messages.ModelMessagesTypeAdapter.dump_json(
-            self.new_messages(result_tool_return_content=result_tool_return_content)
+            self.new_messages(output_tool_return_content=output_tool_return_content or result_tool_return_content)
         )
 
-    async def stream(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[ResultDataT]:
+    async def stream(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Stream the response as an async iterable.
 
         The pydantic validator for structured data will be called in
@@ -280,8 +334,7 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
             An async iterable of the response data.
         """
         async for structured_message, is_last in self.stream_structured(debounce_by=debounce_by):
-            result = await self.validate_structured_result(structured_message, allow_partial=not is_last)
-            yield result
+            yield await self.validate_structured_output(structured_message, allow_partial=not is_last)
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
@@ -296,7 +349,7 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
-        if self._result_schema and not self._result_schema.allow_text_result:
+        if self._output_schema and not self._output_schema.allow_text_output:
             raise exceptions.UserError('stream_text() can only be used with text responses')
 
         if delta:
@@ -304,7 +357,7 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
                 yield text
         else:
             async for text in self._stream_response_text(delta=delta, debounce_by=debounce_by):
-                combined_validated_text = await self._validate_text_result(text)
+                combined_validated_text = await self._validate_text_output(text)
                 yield combined_validated_text
         await self._marked_completed(self._stream_response.get())
 
@@ -336,7 +389,7 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
 
         await self._marked_completed(msg)
 
-    async def get_data(self) -> ResultDataT:
+    async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
         usage_checking_stream = _get_usage_checking_stream_response(
             self._stream_response, self._usage_limits, self.usage
@@ -346,7 +399,11 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
             pass
         message = self._stream_response.get()
         await self._marked_completed(message)
-        return await self.validate_structured_result(message)
+        return await self.validate_structured_output(message)
+
+    @deprecated('`get_data` is deprecated, use `get_output` instead.')
+    async def get_data(self) -> OutputDataT:
+        return await self.get_output()
 
     def usage(self) -> Usage:
         """Return the usage of the whole run.
@@ -360,15 +417,21 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
         """Get the timestamp of the response."""
         return self._stream_response.timestamp
 
+    @deprecated('`validate_structured_result` is deprecated, use `validate_structured_output` instead.')
     async def validate_structured_result(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
-    ) -> ResultDataT:
+    ) -> OutputDataT:
+        return await self.validate_structured_output(message, allow_partial=allow_partial)
+
+    async def validate_structured_output(
+        self, message: _messages.ModelResponse, *, allow_partial: bool = False
+    ) -> OutputDataT:
         """Validate a structured result message."""
-        if self._result_schema is not None and self._result_tool_name is not None:
-            match = self._result_schema.find_named_tool(message.parts, self._result_tool_name)
+        if self._output_schema is not None and self._result_tool_name is not None:
+            match = self._output_schema.find_named_tool(message.parts, self._result_tool_name)
             if match is None:
                 raise exceptions.UnexpectedModelBehavior(
-                    f'Invalid response, unable to find tool: {self._result_schema.tool_names()}'
+                    f'Invalid response, unable to find tool: {self._output_schema.tool_names()}'
                 )
 
             call, result_tool = match
@@ -385,10 +448,10 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
                     None,
                     self._run_ctx,
                 )
-            # Since there is no result tool, we can assume that str is compatible with ResultDataT
-            return cast(ResultDataT, text)
+            # Since there is no result tool, we can assume that str is compatible with OutputDataT
+            return cast(OutputDataT, text)
 
-    async def _validate_text_result(self, text: str) -> str:
+    async def _validate_text_output(self, text: str) -> str:
         for validator in self._result_validators:
             text = await validator.validate(
                 text,
@@ -459,15 +522,20 @@ class StreamedRunResult(Generic[AgentDepsT, ResultDataT]):
 
 
 @dataclass
-class FinalResult(Generic[ResultDataT]):
-    """Marker class storing the final result of an agent run and associated metadata."""
+class FinalResult(Generic[OutputDataT]):
+    """Marker class storing the final output of an agent run and associated metadata."""
 
-    data: ResultDataT
+    output: OutputDataT
     """The final result data."""
     tool_name: str | None
     """Name of the final result tool; `None` if the result came from unstructured text content."""
     tool_call_id: str | None
     """ID of the tool call that produced the final result; `None` if the result came from unstructured text content."""
+
+    @property
+    @deprecated('`data` is deprecated, use `output` instead.')
+    def data(self) -> OutputDataT:
+        return self.output
 
 
 def _get_usage_checking_stream_response(

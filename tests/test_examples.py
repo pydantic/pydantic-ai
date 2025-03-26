@@ -239,7 +239,7 @@ text_responses: dict[str, str | ToolCallPart] = {
     ),
     'What is my balance?': ToolCallPart(tool_name='customer_balance', args={'include_pending': True}),
     'I just lost my card!': ToolCallPart(
-        tool_name='final_result',
+        tool_name='final_output',
         args={
             'support_advice': (
                 "I'm sorry to hear that, John. "
@@ -250,28 +250,28 @@ text_responses: dict[str, str | ToolCallPart] = {
         },
     ),
     'Where were the olympics held in 2012?': ToolCallPart(
-        tool_name='final_result',
+        tool_name='final_output',
         args={'city': 'London', 'country': 'United Kingdom'},
     ),
     'The box is 10x20x30': 'Please provide the units for the dimensions (e.g., cm, in, m).',
     'The box is 10x20x30 cm': ToolCallPart(
-        tool_name='final_result',
+        tool_name='final_output',
         args={'width': 10, 'height': 20, 'depth': 30, 'units': 'cm'},
     ),
     'red square, blue circle, green triangle': ToolCallPart(
-        tool_name='final_result_list',
+        tool_name='final_output_list',
         args={'response': ['red', 'blue', 'green']},
     ),
     'square size 10, circle size 20, triangle size 30': ToolCallPart(
-        tool_name='final_result_list_2',
+        tool_name='final_output_list_2',
         args={'response': [10, 20, 30]},
     ),
     'get me users who were last active yesterday.': ToolCallPart(
-        tool_name='final_result_Success',
+        tool_name='final_output_Success',
         args={'sql_query': 'SELECT * FROM users WHERE last_active::date = today() - interval 1 day'},
     ),
     'My name is Ben, I was born on January 28th 1990, I like the chain the dog and the pyramid.': ToolCallPart(
-        tool_name='final_result',
+        tool_name='final_output',
         args={
             'name': 'Ben',
             'dob': '1990-01-28',
@@ -288,7 +288,7 @@ text_responses: dict[str, str | ToolCallPart] = {
         tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id'
     ),
     'Please generate 5 jokes.': ToolCallPart(
-        tool_name='final_result',
+        tool_name='final_output',
         args={'response': []},
         tool_call_id='pyd_ai_tool_call_id',
     ),
@@ -298,18 +298,18 @@ text_responses: dict[str, str | ToolCallPart] = {
         tool_call_id='pyd_ai_tool_call_id',
     ),
     'window seat with leg room': ToolCallPart(
-        tool_name='final_result_SeatPreference',
+        tool_name='final_output_SeatPreference',
         args={'row': 1, 'seat': 'A'},
         tool_call_id='pyd_ai_tool_call_id',
     ),
     'Ask a simple question with a single correct answer.': 'What is the capital of France?',
     '<examples>\n  <question>What is the capital of France?</question>\n  <answer>Vichy</answer>\n</examples>': ToolCallPart(
-        tool_name='final_result',
+        tool_name='final_output',
         args={'correct': False, 'comment': 'Vichy is no longer the capital of France.'},
         tool_call_id='pyd_ai_tool_call_id',
     ),
     '<examples>\n  <question>what is 1 + 1?</question>\n  <answer>2</answer>\n</examples>': ToolCallPart(
-        tool_name='final_result',
+        tool_name='final_output',
         args={'correct': True, 'comment': 'Well done, 1 + 1 = 2'},
         tool_call_id='pyd_ai_tool_call_id',
     ),
@@ -341,7 +341,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result',
+                        tool_name='final_output',
                         args={
                             'subject': 'Welcome to our tech blog!',
                             'body': 'Hello John, Welcome to our tech blog! ...',
@@ -354,7 +354,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             raise UnexpectedModelBehavior('Safety settings triggered', body='<safety settings details>')
         elif m.content.startswith('<examples>\n  <user>'):
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result_EmailOk', args={}, tool_call_id='pyd_ai_tool_call_id')]
+                parts=[ToolCallPart(tool_name='final_output_EmailOk', args={}, tool_call_id='pyd_ai_tool_call_id')]
             )
         elif m.content == 'Ask a simple question with a single correct answer.' and len(messages) > 2:
             return ModelResponse(parts=[TextPart('what is 1 + 1?')])
@@ -367,7 +367,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='final_result', args={'response': win}, tool_call_id='pyd_ai_tool_call_id')]
+            parts=[ToolCallPart(tool_name='final_output', args={'response': win}, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roll_die':
         return ModelResponse(
@@ -397,7 +397,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             'user_id': 123,
         }
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
+            parts=[ToolCallPart(tool_name='final_output', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':
         return ModelResponse(
@@ -410,19 +410,19 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             'risk': 1,
         }
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
+            parts=[ToolCallPart(tool_name='final_output', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'joke_factory':
         return ModelResponse(parts=[TextPart('Did you hear about the toothpaste scandal? They called it Colgate.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_jokes':
         args = {'response': []}
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
+            parts=[ToolCallPart(tool_name='final_output', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'flight_search':
         args = {'flight_number': m.content.flight_number}  # type: ignore
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='final_result_FlightDetails', args=args, tool_call_id='pyd_ai_tool_call_id')]
+            parts=[ToolCallPart(tool_name='final_output_FlightDetails', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
     else:
         sys.stdout.write(str(debug.format(messages, info)))

@@ -199,7 +199,7 @@ async def ask_agent(
 
         assert agent_run.result
         if not stream:
-            content = agent_run.result.data
+            content = agent_run.result.output
             console.print(Markdown(content))
         return agent_run.result.all_messages()
 
