@@ -77,7 +77,7 @@ evals_pp_text = evals_pp.read_text()
 evals_pp_text, count_evals = replace_deps_version(evals_pp_text)
 
 EXPECTED_COUNT_ROOT = 2
-EXPECTED_COUNT_EX = 2
+EXPECTED_COUNT_EX = 3
 EXPECTED_COUNT_SLIM = 2
 EXPECTED_COUNT_GRAPH = 1
 EXPECTED_COUNT_EVALS = 1

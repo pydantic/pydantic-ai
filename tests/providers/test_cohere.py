@@ -1,12 +1,11 @@
 from __future__ import annotations as _annotations
 
-import os
-from unittest.mock import patch
-
 import httpx
 import pytest
 
-from ..conftest import try_import
+from pydantic_ai.exceptions import UserError
+
+from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from cohere import AsyncClientV2
@@ -26,10 +25,10 @@ def test_cohere_provider() -> None:
     assert provider.client._client_wrapper._token == 'api-key'  # type: ignore[reportPrivateUsage]
 
 
-def test_cohere_provider_need_api_key() -> None:
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError, match='CO_API_KEY'):
-            CohereProvider()
+def test_cohere_provider_need_api_key(env: TestEnv) -> None:
+    env.remove('CO_API_KEY')
+    with pytest.raises(UserError, match='CO_API_KEY'):
+        CohereProvider()
 
 
 def test_cohere_provider_pass_http_client() -> None:

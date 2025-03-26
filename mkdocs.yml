@@ -20,7 +20,7 @@ nav:
       - models.md
       - dependencies.md
       - tools.md
-      - common_tools.md
+      - common-tools.md
       - results.md
       - message-history.md
       - testing-evals.md
@@ -64,7 +64,6 @@ nav:
       - api/models/bedrock.md
       - api/models/cohere.md
       - api/models/gemini.md
-      - api/models/vertexai.md
       - api/models/groq.md
       - api/models/instrumented.md
       - api/models/mistral.md

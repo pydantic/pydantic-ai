@@ -2,8 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
-import sys
-from collections.abc import Awaitable, Coroutine, Sequence
+from collections.abc import Awaitable, Sequence
 from functools import partial
 from typing import Any, Callable, TypeVar
 
@@ -73,27 +72,13 @@ _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
 
-def run_until_complete(coro: Coroutine[None, None, _R]) -> _R:  # pragma: no cover
-    """Run a coroutine to completion in a new event loop.
-
-    This is a utility function to run async code from synchronous contexts.
-    It creates a new event loop, runs the coroutine, and then closes the loop.
-
-    Args:
-        coro: The coroutine to run.
-
-    Returns:
-        The result of the coroutine.
-    """
-    if sys.version_info < (3, 11):
-        try:
-            loop = asyncio.new_event_loop()
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
-    else:
-        with asyncio.runners.Runner(loop_factory=asyncio.new_event_loop) as runner:
-            return runner.run(coro)
+def get_event_loop():
+    try:
+        event_loop = asyncio.get_event_loop()
+    except RuntimeError:
+        event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(event_loop)
+    return event_loop
 
 
 async def task_group_gather(tasks: Sequence[Callable[[], Awaitable[T]]]) -> list[T]:

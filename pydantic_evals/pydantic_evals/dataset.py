@@ -30,7 +30,7 @@ from pydantic_core import to_json, to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import NotRequired, Self, TypedDict, TypeVar
 
-from pydantic_graph._utils import run_until_complete
+from pydantic_evals._utils import get_event_loop
 
 from ._utils import get_unwrapped_function_name, task_group_gather
 from .evaluators import EvaluationResult, Evaluator, run_evaluator
@@ -276,7 +276,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Returns:
             A report containing the results of the evaluation.
         """
-        return run_until_complete(self.evaluate(task, name=name, max_concurrency=max_concurrency))
+        return get_event_loop().run_until_complete(self.evaluate(task, name=name, max_concurrency=max_concurrency))
 
     def add_case(
         self,

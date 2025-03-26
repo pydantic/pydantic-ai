@@ -16,7 +16,7 @@ from pydantic_core import to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo
 from typing_extensions import TypeVar
 
-from .._utils import run_until_complete
+from .._utils import get_event_loop
 from ._spec import EvaluatorSpec
 from .context import EvaluatorContext
 
@@ -180,7 +180,7 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
         """
         output = self.evaluate(ctx)
         if inspect.iscoroutine(output):  # pragma: no cover
-            return run_until_complete(output)
+            return get_event_loop().run_until_complete(output)
         else:
             return cast(EvaluatorOutput, output)
 

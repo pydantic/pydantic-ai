@@ -52,10 +52,7 @@ with try_import() as imports_successful:
     )
     from mistralai.types.basemodel import Unset as MistralUnset
 
-    from pydantic_ai.models.mistral import (
-        MistralModel,
-        MistralStreamedResponse,
-    )
+    from pydantic_ai.models.mistral import MistralModel, MistralStreamedResponse
     from pydantic_ai.providers.mistral import MistralProvider
 
     # note: we use Union here so that casting works with Python 3.9
@@ -172,12 +169,6 @@ def func_chunk(
 #####################
 ## Init
 #####################
-
-
-def test_init_deprecated():
-    m = MistralModel('mistral-large-latest', api_key='foobar')  # pyright: ignore[reportDeprecated]
-    assert m.model_name == 'mistral-large-latest'
-    assert m.base_url == 'https://api.mistral.ai'
 
 
 def test_init():
@@ -1610,7 +1601,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
 #####################
 
 
-def test_generate_user_output_format_complex():
+def test_generate_user_output_format_complex(mistral_api_key: str):
     """
     Single test that includes properties exercising every branch
     in _get_python_type (anyOf, arrays, objects with additionalProperties, etc.).
@@ -1633,7 +1624,7 @@ def test_generate_user_output_format_complex():
             'prop_unrecognized_type': {'type': 'customSomething'},
         }
     }
-    m = MistralModel('', json_mode_schema_prompt='{schema}')
+    m = MistralModel('', json_mode_schema_prompt='{schema}', provider=MistralProvider(api_key=mistral_api_key))
     result = m._generate_user_output_format([schema])  # pyright: ignore[reportPrivateUsage]
     assert result.content == (
         "{'prop_anyOf': 'Optional[str]', "
@@ -1648,9 +1639,9 @@ def test_generate_user_output_format_complex():
     )
 
 
-def test_generate_user_output_format_multiple():
+def test_generate_user_output_format_multiple(mistral_api_key: str):
     schema = {'properties': {'prop_anyOf': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]}}}
-    m = MistralModel('', json_mode_schema_prompt='{schema}')
+    m = MistralModel('', json_mode_schema_prompt='{schema}', provider=MistralProvider(api_key=mistral_api_key))
     result = m._generate_user_output_format([schema, schema])  # pyright: ignore[reportPrivateUsage]
     assert result.content == "[{'prop_anyOf': 'Optional[str]'}, {'prop_anyOf': 'Optional[str]'}]"
 
