@@ -38,6 +38,28 @@ async def test_stdio_server():
         assert result.content == snapshot([TextContent(type='text', text='32.0')])
 
 
+async def test_stdio_server_tool_filtering():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], allowed_tools=['celsius_to_fahrenheit'])
+    async with server:
+        tools = await server.list_tools()
+        assert len(tools) == 1
+        assert tools[0].name == 'celsius_to_fahrenheit'
+        assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
+
+        # Test calling the temperature conversion tool
+        result = await server.call_tool('celsius_to_fahrenheit', {'celsius': 0})
+        assert result.content == snapshot([TextContent(type='text', text='32.0')])
+
+        # Test setting allowed tools to empty list
+        server.allowed_tools = []
+        tools = await server.list_tools()
+        assert len(tools) == 0
+
+        # Test calling the temperature conversion tool when its not allowed
+        with pytest.raises(ValueError):
+            result = await server.call_tool('celsius_to_fahrenheit', {'celsius': 0})
+
+
 def test_sse_server():
     sse_server = MCPServerHTTP(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
