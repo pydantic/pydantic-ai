@@ -799,7 +799,7 @@ async def test_iter_stream_output():
     agent = Agent(m)
 
     @agent.output_validator
-    def result_validator_simple(data: str) -> str:
+    def output_validator_simple(data: str) -> str:
         # Make a substitution in the validated results
         return re.sub('cat sat', 'bat sat', data)
 
@@ -840,7 +840,7 @@ async def test_iter_stream_responses():
     agent = Agent(m)
 
     @agent.output_validator
-    def result_validator_simple(data: str) -> str:
+    def output_validator_simple(data: str) -> str:
         # Make a substitution in the validated results
         return re.sub('cat sat', 'bat sat', data)
 
@@ -885,7 +885,7 @@ async def test_stream_iter_structured_validator() -> None:
     agent = Agent[None, Union[ResultType, NotResultType]]('test', output_type=Union[ResultType, NotResultType])  # pyright: ignore[reportArgumentType]
 
     @agent.output_validator
-    def result_validator(data: ResultType | NotResultType) -> ResultType | NotResultType:
+    def output_validator(data: ResultType | NotResultType) -> ResultType | NotResultType:
         assert isinstance(data, ResultType)
         return ResultType(value=data.value + ' (validated)')
 

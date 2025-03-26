@@ -285,7 +285,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning)
             output_retries = result_retries
 
-        self._output_schema: _output.OutputSchema[OutputDataT] | None = _output.OutputSchema[output_type].build(
+        self._output_schema = _output.OutputSchema[OutputDataT].build(
             output_type, self._deprecated_result_tool_name, self._deprecated_result_tool_description
         )
         self._output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = []
@@ -555,7 +555,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
-        output_schema: _output.OutputSchema[RunOutputDataT] | None = self._prepare_output_schema(output_type)
+        output_schema = self._prepare_output_schema(output_type)
 
         output_type_ = ToolStructuredOutput.unwrap_type(output_type or self.output_type)
 
@@ -1693,6 +1693,7 @@ class AgentRunResult(Generic[OutputDataT]):
     """The final result of an agent run."""
 
     output: OutputDataT
+    """The output data from the agent run."""
 
     _result_tool_name: str | None = dataclasses.field(repr=False)
     _state: _agent_graph.GraphAgentState = dataclasses.field(repr=False)

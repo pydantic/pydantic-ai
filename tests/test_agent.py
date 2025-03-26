@@ -181,7 +181,7 @@ def test_result_pydantic_model_validation_error():
 Fix the errors and try again.""")
 
 
-def test_result_validator():
+def test_output_validator():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         if len(messages) == 1:

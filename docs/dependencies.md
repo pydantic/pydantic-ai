@@ -219,7 +219,7 @@ async def main():
 ```
 
 1. To pass `RunContext` to a tool, use the [`tool`][pydantic_ai.Agent.tool] decorator.
-2. `RunContext` may optionally be passed to a [`result_validator`][pydantic_ai.Agent.result_validator] function as the first argument.
+2. `RunContext` may optionally be passed to a [`output_validator`][pydantic_ai.Agent.output_validator] function as the first argument.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 

@@ -127,13 +127,13 @@ async def ok_validator_ctx(ctx: RunContext[MyDeps], data: str) -> str:
     return data
 
 
-# we have overloads for every possible signature of result_validator, so the type of decorated functions is correct
+# we have overloads for every possible signature of output_validator, so the type of decorated functions is correct
 assert_type(ok_validator_simple, Callable[[str], str])
 assert_type(ok_validator_ctx, Callable[[RunContext[MyDeps], str], Awaitable[str]])
 
 
 @typed_agent.output_validator  # type: ignore[arg-type]
-async def result_validator_wrong(ctx: RunContext[int], result: str) -> str:
+async def output_validator_wrong(ctx: RunContext[int], result: str) -> str:
     return result
 
 
@@ -168,9 +168,7 @@ class Bar:
     b: str
 
 
-union_agent: Agent[None, Union[Foo, Bar]] = Agent(
-    output_type=Union[Foo, Bar],  # type: ignore[arg-type]
-)
+union_agent: Agent[None, Union[Foo, Bar]] = Agent(output_type=Union[Foo, Bar])  # type: ignore[arg-type]
 assert_type(union_agent, Agent[None, Union[Foo, Bar]])
 
 
@@ -181,9 +179,7 @@ def run_sync3() -> None:
 
 
 MyUnion: TypeAlias = 'Foo | Bar'
-union_agent2: Agent[None, MyUnion] = Agent(
-    output_type=MyUnion,  # type: ignore[arg-type]
-)
+union_agent2: Agent[None, MyUnion] = Agent(output_type=MyUnion)  # type: ignore[arg-type]
 assert_type(union_agent2, Agent[None, MyUnion])
 
 
