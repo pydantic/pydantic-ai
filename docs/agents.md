@@ -26,7 +26,7 @@ from pydantic_ai import Agent, RunContext
 roulette_agent = Agent(  # (1)!
     'openai:gpt-4o',
     deps_type=int,
-    result_type=bool,
+    output_type=bool,
     system_prompt=(
         'Use the `roulette_wheel` function to see if the '
         'customer has won based on the number they provide.'
@@ -43,11 +43,11 @@ async def roulette_wheel(ctx: RunContext[int], square: int) -> str:  # (2)!
 # Run the agent
 success_number = 18  # (3)!
 result = roulette_agent.run_sync('Put my money on square eighteen', deps=success_number)
-print(result.data)  # (4)!
+print(result.output)  # (4)!
 #> True
 
 result = roulette_agent.run_sync('I bet five is the winner', deps=success_number)
-print(result.data)
+print(result.output)
 #> False
 ```
 
@@ -77,13 +77,16 @@ from pydantic_ai import Agent
 agent = Agent('openai:gpt-4o')
 
 result_sync = agent.run_sync('What is the capital of Italy?')
-print(result_sync.data)
+print(result_sync.output)
+#> Rome
+
+
 #> Rome
 
 
 async def main():
     result = await agent.run('What is the capital of France?')
-    print(result.data)
+    print(result.output)
     #> Paris
 
     async with agent.run_stream('What is the capital of the UK?') as response:
@@ -141,10 +144,10 @@ async def main():
                 kind='response',
             )
         ),
-        End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
+        End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
     ]
     """
-    print(agent_run.result.data)
+    print(agent_run.result.output)
     #> Paris
 ```
 
@@ -202,7 +205,7 @@ async def main():
                     kind='response',
                 )
             ),
-            End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
+            End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
         ]
         """
 ```
@@ -216,7 +219,7 @@ async def main():
 
 You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`Usage`][pydantic_ai.usage.Usage] object containing the usage data.
 
-Once the run finishes, `agent_run.final_result` becomes a [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
+Once the run finishes, `agent_run.final_output` becomes a [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
 ---
 
@@ -258,7 +261,7 @@ class WeatherService:
 weather_agent = Agent[WeatherService, str](
     'openai:gpt-4o',
     deps_type=WeatherService,
-    result_type=str,  # We'll produce a final answer as plain text
+    output_type=str,  # We'll produce a final answer as plain text
     system_prompt='Providing a weather forecast at the locations the user provides.',
 )
 
@@ -327,9 +330,11 @@ async def main():
                                 f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}'
                             )
             elif Agent.is_end_node(node):
-                assert run.result.data == node.data.data
+                assert run.result.output == node.data.output
                 # Once an End node is reached, the agent run is complete
-                output_messages.append(f'=== Final Agent Output: {run.result.data} ===')
+                output_messages.append(
+                    f'=== Final Agent Output: {run.result.output} ==='
+                )
 
 
 if __name__ == '__main__':
@@ -382,7 +387,7 @@ result_sync = agent.run_sync(
     'What is the capital of Italy? Answer with just the city.',
     usage_limits=UsageLimits(response_tokens_limit=10),
 )
-print(result_sync.data)
+print(result_sync.output)
 #> Rome
 print(result_sync.usage())
 """
@@ -420,7 +425,7 @@ class NeverResultType(TypedDict):
 agent = Agent(
     'anthropic:claude-3-5-sonnet-latest',
     retries=3,
-    result_type=NeverResultType,
+    output_type=NeverResultType,
     system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
 )
 
@@ -466,7 +471,7 @@ agent = Agent('openai:gpt-4o')
 result_sync = agent.run_sync(
     'What is the capital of Italy?', model_settings={'temperature': 0.0}
 )
-print(result_sync.data)
+print(result_sync.output)
 #> Rome
 ```
 
@@ -523,7 +528,7 @@ agent = Agent('openai:gpt-4o')
 
 # First run
 result1 = agent.run_sync('Who was Albert Einstein?')
-print(result1.data)
+print(result1.output)
 #> Albert Einstein was a German-born theoretical physicist.
 
 # Second run, passing previous messages
@@ -531,7 +536,7 @@ result2 = agent.run_sync(
     'What was his most famous equation?',
     message_history=result1.new_messages(),  # (1)!
 )
-print(result2.data)
+print(result2.output)
 #> Albert Einstein's most famous equation is (E = mc^2).
 ```
 
@@ -568,7 +573,7 @@ class User:
 agent = Agent(
     'test',
     deps_type=User,  # (1)!
-    result_type=bool,
+    output_type=bool,
 )
 
 
@@ -582,7 +587,7 @@ def foobar(x: bytes) -> None:
 
 
 result = agent.run_sync('Does their name start with "A"?', deps=User('Anne'))
-foobar(result.data)  # (3)!
+foobar(result.output)  # (3)!
 ```
 
 1. The agent is defined as expecting an instance of `User` as `deps`.
@@ -636,7 +641,7 @@ def add_the_date() -> str:  # (4)!
 
 
 result = agent.run_sync('What is the date?', deps='Frank')
-print(result.data)
+print(result.output)
 #> Hello Frank, the date today is 2032-01-02.
 ```
 
@@ -674,7 +679,7 @@ class ChatResult(BaseModel):
 agent = Agent(
     'openai:gpt-4o',
     deps_type=DatabaseConn,
-    result_type=ChatResult,
+    output_type=ChatResult,
 )
 
 
@@ -695,7 +700,7 @@ def get_user_by_name(ctx: RunContext[DatabaseConn], name: str) -> int:
 result = agent.run_sync(
     'Send a message to John Doe asking for coffee next week', deps=DatabaseConn()
 )
-print(result.data)
+print(result.output)
 """
 user_id=123 message='Hello John, would you be free for coffee sometime next week? Let me know what works for you!'
 """
@@ -784,7 +789,7 @@ with capture_run_messages() as messages:  # (2)!
         ]
         """
     else:
-        print(result.data)
+        print(result.output)
 ```
 
 1. Define a tool that will raise `ModelRetry` repeatedly in this case.

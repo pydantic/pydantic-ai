@@ -80,7 +80,7 @@ agent = Agent(
 # Here the exchange should be very short: PydanticAI will send the system prompt and the user query to the LLM,
 # the model will return a text response. See below for a more complex run.
 result = agent.run_sync('Where does "hello world" come from?')
-print(result.data)
+print(result.output)
 """
 The first known use of "hello, world" was in a 1974 textbook about the C programming language.
 """
@@ -150,7 +150,7 @@ async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
 # Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
 @support_agent.tool
 async def customer_balance(
-    ctx: RunContext[SupportDependencies], include_pending: bool
+        ctx: RunContext[SupportDependencies], include_pending: bool
 ) -> float:
     """Returns the customer's current account balance."""
     # The docstring of a tool is also passed to the LLM as the description of the tool.
@@ -172,13 +172,13 @@ async def main():
     result = await support_agent.run('What is my balance?', deps=deps)
     # The result will be validated with Pydantic to guarantee it is a `SupportResult`, since the agent is generic,
     # it'll also be typed as a `SupportResult` to aid with static type checking.
-    print(result.data)
+    print(result.output)
     """
     support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
     """
 
     result = await support_agent.run('I just lost my card!', deps=deps)
-    print(result.data)
+    print(result.output)
     """
     support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
     """

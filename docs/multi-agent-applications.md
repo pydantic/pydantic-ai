@@ -32,7 +32,7 @@ joke_selection_agent = Agent(  # (1)!
     ),
 )
 joke_generation_agent = Agent(  # (2)!
-    'google-gla:gemini-1.5-flash', result_type=list[str]
+    'google-gla:gemini-1.5-flash', output_type=list[str]
 )
 
 
@@ -42,14 +42,14 @@ async def joke_factory(ctx: RunContext[None], count: int) -> list[str]:
         f'Please generate {count} jokes.',
         usage=ctx.usage,  # (4)!
     )
-    return r.data  # (5)!
+    return r.output  # (5)!
 
 
 result = joke_selection_agent.run_sync(
     'Tell me a joke.',
     usage_limits=UsageLimits(request_limit=5, total_tokens_limit=300),
 )
-print(result.data)
+print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 print(result.usage())
 """
@@ -111,7 +111,7 @@ joke_selection_agent = Agent(
 joke_generation_agent = Agent(
     'gemini-1.5-flash',
     deps_type=ClientAndKey,  # (4)!
-    result_type=list[str],
+    output_type=list[str],
     system_prompt=(
         'Use the "get_jokes" tool to get some jokes on the given subject, '
         'then extract each joke into a list.'
@@ -126,7 +126,7 @@ async def joke_factory(ctx: RunContext[ClientAndKey], count: int) -> list[str]:
         deps=ctx.deps,  # (3)!
         usage=ctx.usage,
     )
-    return r.data
+    return r.output
 
 
 @joke_generation_agent.tool  # (5)!
@@ -144,7 +144,7 @@ async def main():
     async with httpx.AsyncClient() as client:
         deps = ClientAndKey(client, 'foobar')
         result = await joke_selection_agent.run('Tell me a joke.', deps=deps)
-        print(result.data)
+        print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
         print(result.usage())  # (6)!
         """
@@ -212,7 +212,7 @@ class Failed(BaseModel):
 
 flight_search_agent = Agent[None, Union[FlightDetails, Failed]](  # (1)!
     'openai:gpt-4o',
-    result_type=Union[FlightDetails, Failed],  # type: ignore
+    output_type=Union[FlightDetails, Failed],  # type: ignore
     system_prompt=(
         'Use the "flight_search" tool to find a flight '
         'from the given origin to the given destination.'
@@ -244,8 +244,8 @@ async def find_flight(usage: Usage) -> Union[FlightDetails, None]:  # (4)!
             usage=usage,
             usage_limits=usage_limits,
         )
-        if isinstance(result.data, FlightDetails):
-            return result.data
+        if isinstance(result.output, FlightDetails):
+            return result.output
         else:
             message_history = result.all_messages(
                 result_tool_return_content='Please try again.'
@@ -260,7 +260,7 @@ class SeatPreference(BaseModel):
 # This agent is responsible for extracting the user's seat selection
 seat_preference_agent = Agent[None, Union[SeatPreference, Failed]](  # (5)!
     'openai:gpt-4o',
-    result_type=Union[SeatPreference, Failed],  # type: ignore
+    output_type=Union[SeatPreference, Failed],  # type: ignore
     system_prompt=(
         "Extract the user's seat preference. "
         'Seats A and F are window seats. '
@@ -281,8 +281,8 @@ async def find_seat(usage: Usage) -> SeatPreference:  # (6)!
             usage=usage,
             usage_limits=usage_limits,
         )
-        if isinstance(result.data, SeatPreference):
-            return result.data
+        if isinstance(result.output, SeatPreference):
+            return result.output
         else:
             print('Could not understand seat preference. Please try again.')
             message_history = result.all_messages()

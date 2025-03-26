@@ -352,7 +352,6 @@ stateDiagram-v2
   Feedback --> [*]
 ```
 
-
 ```python {title="genai_email_feedback.py" py="3.10"}
 from __future__ import annotations as _annotations
 
@@ -387,7 +386,7 @@ class State:
 
 email_writer_agent = Agent(
     'google-vertex:gemini-1.5-pro',
-    result_type=Email,
+    output_type=Email,
     system_prompt='Write a welcome email to our tech blog.',
 )
 
@@ -414,7 +413,7 @@ class WriteEmail(BaseNode[State]):
             message_history=ctx.state.write_agent_messages,
         )
         ctx.state.write_agent_messages += result.all_messages()
-        return Feedback(result.data)
+        return Feedback(result.output)
 
 
 class EmailRequiresWrite(BaseModel):
@@ -427,7 +426,7 @@ class EmailOk(BaseModel):
 
 feedback_agent = Agent[None, EmailRequiresWrite | EmailOk](
     'openai:gpt-4o',
-    result_type=EmailRequiresWrite | EmailOk,  # type: ignore
+    output_type=EmailRequiresWrite | EmailOk,  # type: ignore
     system_prompt=(
         'Review the email and provide feedback, email must reference the users specific interests.'
     ),
@@ -444,8 +443,8 @@ class Feedback(BaseNode[State, None, Email]):
     ) -> WriteEmail | End[Email]:
         prompt = format_as_xml({'user': ctx.state.user, 'email': self.email})
         result = await feedback_agent.run(prompt)
-        if isinstance(result.data, EmailRequiresWrite):
-            return WriteEmail(email_feedback=result.data.feedback)
+        if isinstance(result.output, EmailRequiresWrite):
+            return WriteEmail(email_feedback=result.output.feedback)
         else:
             return End(self.email)
 
@@ -517,7 +516,7 @@ async def main():
 
 1. `Graph.iter(...)` returns a [`GraphRun`][pydantic_graph.graph.GraphRun].
 2. Here, we step through each node as it is executed.
-3. Once the graph returns an [`End`][pydantic_graph.nodes.End], the loop ends, and `run.final_result` becomes a [`GraphRunResult`][pydantic_graph.graph.GraphRunResult] containing the final outcome (`0` here).
+3. Once the graph returns an [`End`][pydantic_graph.nodes.End], the loop ends, and `run.final_output` becomes a [`GraphRunResult`][pydantic_graph.graph.GraphRunResult] containing the final outcome (`0` here).
 
 ### Using `GraphRun.next(node)` manually
 
@@ -560,7 +559,7 @@ async def main():
 
 1. We start by grabbing the first node that will be run in the agent's graph.
 2. The agent run is finished once an `End` node has been produced; instances of `End` cannot be passed to `next`.
-3. If the user decides to stop early, we break out of the loop. The graph run won't have a real final result in that case (`run.final_result` remains `None`).
+3. If the user decides to stop early, we break out of the loop. The graph run won't have a real final result in that case (`run.final_output` remains `None`).
 4. At each step, we call `await run.next(node)` to run it and get the next node (or an `End`).
 5. Because we did not continue the run until it finished, the `result` is not set.
 6. The run's history is still populated with the steps we executed so far.
@@ -666,7 +665,7 @@ Instead of running the entire graph in a single process invocation, we run the g
     from pydantic_ai.format_as_xml import format_as_xml
     from pydantic_ai.messages import ModelMessage
 
-    ask_agent = Agent('openai:gpt-4o', result_type=str, instrument=True)
+    ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
 
 
     @dataclass
@@ -684,8 +683,8 @@ Instead of running the entire graph in a single process invocation, we run the g
                 message_history=ctx.state.ask_agent_messages,
             )
             ctx.state.ask_agent_messages += result.all_messages()
-            ctx.state.question = result.data
-            return Answer(result.data)
+            ctx.state.question = result.output
+            return Answer(result.output)
 
 
     @dataclass
@@ -706,7 +705,7 @@ Instead of running the entire graph in a single process invocation, we run the g
 
     evaluate_agent = Agent(
         'openai:gpt-4o',
-        result_type=EvaluationResult,
+        output_type=EvaluationResult,
         system_prompt='Given a question and answer, evaluate if the answer is correct.',
     )
 

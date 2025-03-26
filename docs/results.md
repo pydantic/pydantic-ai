@@ -14,9 +14,9 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google-gla:gemini-1.5-flash', result_type=CityLocation)
+agent = Agent('google-gla:gemini-1.5-flash', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
-print(result.data)
+print(result.output)
 #> city='London' country='United Kingdom'
 print(result.usage())
 """
@@ -62,7 +62,7 @@ class Box(BaseModel):
 
 agent: Agent[None, Union[Box, str]] = Agent(
     'openai:gpt-4o-mini',
-    result_type=Union[Box, str],  # type: ignore
+    output_type=Union[Box, str],  # type: ignore
     system_prompt=(
         "Extract me the dimensions of a box, "
         "if you can't extract all data, ask the user to try again."
@@ -70,11 +70,11 @@ agent: Agent[None, Union[Box, str]] = Agent(
 )
 
 result = agent.run_sync('The box is 10x20x30')
-print(result.data)
+print(result.output)
 #> Please provide the units for the dimensions (e.g., cm, in, m).
 
 result = agent.run_sync('The box is 10x20x30 cm')
-print(result.data)
+print(result.output)
 #> width=10 height=20 depth=30 units='cm'
 ```
 
@@ -89,16 +89,16 @@ from pydantic_ai import Agent
 
 agent: Agent[None, Union[list[str], list[int]]] = Agent(
     'openai:gpt-4o-mini',
-    result_type=Union[list[str], list[int]],  # type: ignore
+    output_type=Union[list[str], list[int]],  # type: ignore
     system_prompt='Extract either colors or sizes from the shapes provided.',
 )
 
 result = agent.run_sync('red square, blue circle, green triangle')
-print(result.data)
+print(result.output)
 #> ['red', 'blue', 'green']
 
 result = agent.run_sync('square size 10, circle size 20, triangle size 30')
-print(result.data)
+print(result.output)
 #> [10, 20, 30]
 ```
 
@@ -130,13 +130,13 @@ class InvalidRequest(BaseModel):
 Response = Union[Success, InvalidRequest]
 agent: Agent[DatabaseConn, Response] = Agent(
     'google-gla:gemini-1.5-flash',
-    result_type=Response,  # type: ignore
+    output_type=Response,  # type: ignore
     deps_type=DatabaseConn,
     system_prompt='Generate PostgreSQL flavored SQL queries based on user input.',
 )
 
 
-@agent.result_validator
+@agent.output_validator
 async def validate_result(ctx: RunContext[DatabaseConn], result: Response) -> Response:
     if isinstance(result, InvalidRequest):
         return result
@@ -151,7 +151,7 @@ async def validate_result(ctx: RunContext[DatabaseConn], result: Response) -> Re
 result = agent.run_sync(
     'get me users who were last active yesterday.', deps=DatabaseConn()
 )
-print(result.data)
+print(result.output)
 #> sql_query='SELECT * FROM users WHERE last_active::date = today() - interval 1 day'
 ```
 
@@ -242,7 +242,7 @@ class UserProfile(TypedDict, total=False):
 
 agent = Agent(
     'openai:gpt-4o',
-    result_type=UserProfile,
+    output_type=UserProfile,
     system_prompt='Extract a user profile from the input',
 )
 
@@ -280,7 +280,7 @@ class UserProfile(TypedDict, total=False):
     bio: str
 
 
-agent = Agent('openai:gpt-4o', result_type=UserProfile)
+agent = Agent('openai:gpt-4o', output_type=UserProfile)
 
 
 async def main():

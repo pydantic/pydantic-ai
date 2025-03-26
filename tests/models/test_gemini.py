@@ -60,7 +60,7 @@ async def test_model_simple(allow_model_requests: None):
     assert m.model_name == 'gemini-1.5-flash'
     assert 'x-goog-api-key' in m.client.headers
 
-    arc = ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[])
+    arc = ModelRequestParameters(function_tools=[], allow_text_result=True, output_tools=[])
     tools = m._get_tools(arc)
     tool_config = m._get_tool_config(arc, tools)
     assert tools is None
@@ -92,7 +92,7 @@ async def test_model_tools(allow_model_requests: None):
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}, 'required': ['spam']},
     )
 
-    arc = ModelRequestParameters(function_tools=tools, allow_text_result=True, result_tools=[result_tool])
+    arc = ModelRequestParameters(function_tools=tools, allow_text_result=True, output_tools=[result_tool])
     tools = m._get_tools(arc)
     tool_config = m._get_tool_config(arc, tools)
     assert tools == snapshot(
@@ -133,7 +133,7 @@ async def test_require_response_tool(allow_model_requests: None):
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
     )
-    arc = ModelRequestParameters(function_tools=[], allow_text_result=False, result_tools=[result_tool])
+    arc = ModelRequestParameters(function_tools=[], allow_text_result=False, output_tools=[result_tool])
     tools = m._get_tools(arc)
     tool_config = m._get_tool_config(arc, tools)
     assert tools == snapshot(
@@ -193,7 +193,7 @@ async def test_json_def_replaced(allow_model_requests: None):
         json_schema,
     )
     assert m._get_tools(
-        ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool])
+        ModelRequestParameters(function_tools=[], allow_text_result=True, output_tools=[result_tool])
     ) == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -240,7 +240,7 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
         json_schema,
     )
     assert m._get_tools(
-        ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool])
+        ModelRequestParameters(function_tools=[], allow_text_result=True, output_tools=[result_tool])
     ) == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -303,7 +303,7 @@ async def test_json_def_recursive(allow_model_requests: None):
         json_schema,
     )
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
-        m._get_tools(ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool]))
+        m._get_tools(ModelRequestParameters(function_tools=[], allow_text_result=True, output_tools=[result_tool]))
 
 
 async def test_json_def_date(allow_model_requests: None):
@@ -335,7 +335,7 @@ async def test_json_def_date(allow_model_requests: None):
         json_schema,
     )
     assert m._get_tools(
-        ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool])
+        ModelRequestParameters(function_tools=[], allow_text_result=True, output_tools=[result_tool])
     ) == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -429,7 +429,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     agent = Agent(m)
 
     result = await agent.run('Hello')
-    assert result.data == 'Hello world'
+    assert result.output == 'Hello world'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -443,7 +443,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
 
     result = await agent.run('Hello', message_history=result.new_messages())
-    assert result.data == 'Hello world'
+    assert result.output == 'Hello world'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -464,26 +464,26 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
 
 async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     response = gemini_response(
-        _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]})]))
+        _content_model_response(ModelResponse(parts=[ToolCallPart('final_output', {'response': [1, 2, 123]})]))
     )
     gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
-    agent = Agent(m, result_type=list[int])
+    agent = Agent(m, output_type=list[int])
 
     result = await agent.run('Hello')
-    assert result.data == [1, 2, 123]
+    assert result.output == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2, 123]}, tool_call_id=IsStr())],
+                parts=[ToolCallPart(tool_name='final_output', args={'response': [1, 2, 123]}, tool_call_id=IsStr())],
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result',
+                        tool_name='final_output',
                         content='Final result processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
@@ -525,7 +525,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             raise ModelRetry('Wrong location, please try again')
 
     result = await agent.run('Hello')
-    assert result.data == 'final response'
+    assert result.output == 'final response'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -678,14 +678,14 @@ async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
 async def test_stream_structured(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(
-            _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2]})])),
+            _content_model_response(ModelResponse(parts=[ToolCallPart('final_output', {'response': [1, 2]})])),
         ),
     ]
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
     model = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
-    agent = Agent(model, result_type=tuple[int, int])
+    agent = Agent(model, output_type=tuple[int, int])
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
@@ -707,7 +707,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
 
     second_responses = [
         gemini_response(
-            _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2]})])),
+            _content_model_response(ModelResponse(parts=[ToolCallPart('final_output', {'response': [1, 2]})])),
         ),
     ]
     d2 = _gemini_streamed_response_ta.dump_json(second_responses, by_alias=True)
@@ -715,7 +715,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
 
     gemini_client = get_gemini_client([first_stream, second_stream])
     model = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
-    agent = Agent(model, result_type=tuple[int, int])
+    agent = Agent(model, output_type=tuple[int, int])
     tool_calls: list[str] = []
 
     @agent.tool_plain
@@ -754,14 +754,14 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2]}, tool_call_id=IsStr())],
+                parts=[ToolCallPart(tool_name='final_output', args={'response': [1, 2]}, tool_call_id=IsStr())],
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result',
+                        tool_name='final_output',
                         content='Final result processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
@@ -804,27 +804,27 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
 
 async def test_empty_text_ignored():
     content = _content_model_response(
-        ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]}), TextPart(content='xxx')])
+        ModelResponse(parts=[ToolCallPart('final_output', {'response': [1, 2, 123]}), TextPart(content='xxx')])
     )
     # text included
     assert content == snapshot(
         {
             'role': 'model',
             'parts': [
-                {'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}},
+                {'function_call': {'name': 'final_output', 'args': {'response': [1, 2, 123]}}},
                 {'text': 'xxx'},
             ],
         }
     )
 
     content = _content_model_response(
-        ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]}), TextPart(content='')])
+        ModelResponse(parts=[ToolCallPart('final_output', {'response': [1, 2, 123]}), TextPart(content='')])
     )
     # text skipped
     assert content == snapshot(
         {
             'role': 'model',
-            'parts': [{'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}}],
+            'parts': [{'function_call': {'name': 'final_output', 'args': {'response': [1, 2, 123]}}}],
         }
     )
 
@@ -862,7 +862,7 @@ async def test_model_settings(client_with_handler: ClientWithHandler, env: TestE
             'frequency_penalty': 0.4,
         },
     )
-    assert result.data == 'world'
+    assert result.output == 'world'
 
 
 def gemini_no_content_response(
@@ -950,7 +950,7 @@ async def test_safety_settings_safe(
             ]
         ),
     )
-    assert result.data == 'world'
+    assert result.output == 'world'
 
 
 @pytest.mark.vcr()
@@ -961,7 +961,7 @@ async def test_image_as_binary_content_input(
     agent = Agent(m)
 
     result = await agent.run(['What is the name of this fruit?', image_content])
-    assert result.data == snapshot('The fruit in the image is a kiwi.')
+    assert result.output == snapshot('The fruit in the image is a kiwi.')
 
 
 @pytest.mark.vcr()
@@ -972,7 +972,7 @@ async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) 
     image_url = ImageUrl(url='https://goo.gle/instrument-img')
 
     result = await agent.run(['What is the name of this fruit?', image_url])
-    assert result.data == snapshot("This is not a fruit; it's a pipe organ console.")
+    assert result.output == snapshot("This is not a fruit; it's a pipe organ console.")
 
 
 @pytest.mark.vcr()
@@ -983,4 +983,4 @@ async def test_document_url_input(allow_model_requests: None, gemini_api_key: st
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.data == snapshot('The main content of this document is that it is a **dummy PDF file**.')
+    assert result.output == snapshot('The main content of this document is that it is a **dummy PDF file**.')

@@ -39,7 +39,7 @@ async def main():
             'Tell me a joke.',
             deps=deps,  # (3)!
         )
-        print(result.data)
+        print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
@@ -52,7 +52,6 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 ## Accessing Dependencies
 
 Dependencies are accessed through the [`RunContext`][pydantic_ai.tools.RunContext] type, this should be the first parameter of system prompt functions etc.
-
 
 ```python {title="system_prompt_dependencies.py" hl_lines="20-27"}
 from dataclasses import dataclass
@@ -88,7 +87,7 @@ async def main():
     async with httpx.AsyncClient() as client:
         deps = MyDeps('foobar', client)
         result = await agent.run('Tell me a joke.', deps=deps)
-        print(result.data)
+        print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
@@ -147,7 +146,7 @@ async def main():
         'Tell me a joke.',
         deps=deps,
     )
-    print(result.data)
+    print(result.output)
     #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
@@ -198,7 +197,7 @@ async def get_joke_material(ctx: RunContext[MyDeps], subject: str) -> str:
     return response.text
 
 
-@agent.result_validator  # (2)!
+@agent.output_validator  # (2)!
 async def validate_result(ctx: RunContext[MyDeps], final_response: str) -> str:
     response = await ctx.deps.http_client.post(
         'https://example.com#validate',
@@ -215,7 +214,7 @@ async def main():
     async with httpx.AsyncClient() as client:
         deps = MyDeps('foobar', client)
         result = await agent.run('Tell me a joke.', deps=deps)
-        print(result.data)
+        print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
@@ -267,7 +266,7 @@ async def application_code(prompt: str) -> str:  # (3)!
     async with httpx.AsyncClient() as client:
         app_deps = MyDeps('foobar', client)
         result = await joke_agent.run(prompt, deps=app_deps)  # (4)!
-    return result.data
+    return result.output
 ```
 
 1. Define a method on the dependency to make the system prompt easier to customise.

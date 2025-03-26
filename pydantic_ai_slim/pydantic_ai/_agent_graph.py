@@ -16,7 +16,7 @@ from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
 from . import (
-    _result,
+    _output,
     _system_prompt,
     exceptions,
     messages as _messages,
@@ -25,7 +25,7 @@ from . import (
     usage as _usage,
 )
 from .models.instrumented import InstrumentedModel
-from .result import ResultDataT
+from .result import OutputDataT
 from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, Tool, ToolDefinition
 
@@ -74,7 +74,7 @@ class GraphAgentState:
 
 
 @dataclasses.dataclass
-class GraphAgentDeps(Generic[DepsT, ResultDataT]):
+class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     """Dependencies/config passed to the agent graph."""
 
     user_deps: DepsT
@@ -88,9 +88,8 @@ class GraphAgentDeps(Generic[DepsT, ResultDataT]):
     max_result_retries: int
     end_strategy: EndStrategy
 
-    result_schema: _result.ResultSchema[ResultDataT] | None
-    result_tools: list[ToolDefinition]
-    result_validators: list[_result.ResultValidator[DepsT, ResultDataT]]
+    output_schema: _output.OutputSchema[OutputDataT] | None
+    output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
 
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
     mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
@@ -231,11 +230,11 @@ async def _prepare_request_parameters(
         *map(add_mcp_server_tools, ctx.deps.mcp_servers),
     )
 
-    result_schema = ctx.deps.result_schema
+    output_schema = ctx.deps.output_schema
     return models.ModelRequestParameters(
         function_tools=function_tool_defs,
-        allow_text_result=allow_text_result(result_schema),
-        result_tools=result_schema.tool_defs() if result_schema is not None else [],
+        allow_text_result=allow_text_result(output_schema),
+        output_tools=output_schema.tool_defs() if output_schema is not None else [],
     )
 
 
@@ -269,8 +268,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         async with self._stream(ctx) as streamed_response:
             agent_stream = result.AgentStream[DepsT, T](
                 streamed_response,
-                ctx.deps.result_schema,
-                ctx.deps.result_validators,
+                ctx.deps.output_schema,
+                ctx.deps.output_validators,
                 build_run_context(ctx),
                 ctx.deps.usage_limits,
             )
@@ -432,47 +431,47 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         tool_calls: list[_messages.ToolCallPart],
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
-        result_schema = ctx.deps.result_schema
+        result_schema = ctx.deps.output_schema
 
         # first look for the result tool call
-        final_result: result.FinalResult[NodeRunEndT] | None = None
+        final_output: result.FinalResult[NodeRunEndT] | None = None
         parts: list[_messages.ModelRequestPart] = []
         if result_schema is not None:
             for call, result_tool in result_schema.find_tool(tool_calls):
                 try:
                     result_data = result_tool.validate(call)
                     result_data = await _validate_result(result_data, ctx, call)
-                except _result.ToolRetryError as e:
+                except _output.ToolRetryError as e:
                     # TODO: Should only increment retry stuff once per node execution, not for each tool call
                     #   Also, should increment the tool-specific retry count rather than the run retry count
                     ctx.state.increment_retries(ctx.deps.max_result_retries)
                     parts.append(e.tool_retry)
                 else:
-                    final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
+                    final_output = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
                     break
 
         # Then build the other request parts based on end strategy
         tool_responses: list[_messages.ModelRequestPart] = self._tool_responses
         async for event in process_function_tools(
             tool_calls,
-            final_result and final_result.tool_name,
-            final_result and final_result.tool_call_id,
+            final_output and final_output.tool_name,
+            final_output and final_output.tool_call_id,
             ctx,
             tool_responses,
         ):
             yield event
 
-        if final_result:
-            self._next_node = self._handle_final_result(ctx, final_result, tool_responses)
+        if final_output:
+            self._next_node = self._handle_final_output(ctx, final_output, tool_responses)
         else:
             if tool_responses:
                 parts.extend(tool_responses)
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=parts))
 
-    def _handle_final_result(
+    def _handle_final_output(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        final_result: result.FinalResult[NodeRunEndT],
+        final_output: result.FinalResult[NodeRunEndT],
         tool_responses: list[_messages.ModelRequestPart],
     ) -> End[result.FinalResult[NodeRunEndT]]:
         run_span = ctx.deps.run_span
@@ -489,9 +488,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 'all_messages_events': json.dumps(
                     [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)]
                 ),
-                'final_result': final_result.data
-                if isinstance(final_result.data, str)
-                else json.dumps(InstrumentedModel.serialize_any(final_result.data)),
+                'final_output': final_output.output
+                if isinstance(final_output.output, str)
+                else json.dumps(InstrumentedModel.serialize_any(final_output.output)),
             }
         )
         run_span.set_attributes(
@@ -501,7 +500,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         'type': 'object',
                         'properties': {
                             'all_messages_events': {'type': 'array'},
-                            'final_result': {'type': 'object'},
+                            'final_output': {'type': 'object'},
                         },
                     }
                 ),
@@ -509,26 +508,26 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         )
 
         # End the run with self.data
-        return End(final_result)
+        return End(final_output)
 
     async def _handle_text_response(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         texts: list[str],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
-        result_schema = ctx.deps.result_schema
+        result_schema = ctx.deps.output_schema
 
         text = '\n\n'.join(texts)
         if allow_text_result(result_schema):
             result_data_input = cast(NodeRunEndT, text)
             try:
                 result_data = await _validate_result(result_data_input, ctx, None)
-            except _result.ToolRetryError as e:
+            except _output.ToolRetryError as e:
                 ctx.state.increment_retries(ctx.deps.max_result_retries)
                 return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
             else:
                 # The following cast is safe because we know `str` is an allowed result type
-                return self._handle_final_result(ctx, result.FinalResult(result_data, None, None), [])
+                return self._handle_final_output(ctx, result.FinalResult(result_data, None, None), [])
         else:
             ctx.state.increment_retries(ctx.deps.max_result_retries)
             return ModelRequestNode[DepsT, NodeRunEndT](
@@ -568,7 +567,7 @@ async def process_function_tools(
     Because async iterators can't have return values, we use `output_parts` as an output argument.
     """
     stub_function_tools = bool(result_tool_name) and ctx.deps.end_strategy == 'early'
-    result_schema = ctx.deps.result_schema
+    result_schema = ctx.deps.output_schema
 
     # we rely on the fact that if we found a result, it's the first result tool in the last
     found_used_result_tool = False
@@ -701,7 +700,7 @@ def _unknown_tool(
 ) -> _messages.RetryPromptPart:
     ctx.state.increment_retries(ctx.deps.max_result_retries)
     tool_names = list(ctx.deps.function_tools.keys())
-    if result_schema := ctx.deps.result_schema:
+    if result_schema := ctx.deps.output_schema:
         tool_names.extend(result_schema.tool_names())
 
     if tool_names:
@@ -717,15 +716,15 @@ async def _validate_result(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     tool_call: _messages.ToolCallPart | None,
 ) -> T:
-    for validator in ctx.deps.result_validators:
+    for validator in ctx.deps.output_validators:
         run_context = build_run_context(ctx)
         result_data = await validator.validate(result_data, tool_call, run_context)
     return result_data
 
 
-def allow_text_result(result_schema: _result.ResultSchema[Any] | None) -> bool:
+def allow_text_result(result_schema: _output.OutputSchema[Any] | None) -> bool:
     """Check if the result schema allows text results."""
-    return result_schema is None or result_schema.allow_text_result
+    return result_schema is None or result_schema.allow_text_output
 
 
 @dataclasses.dataclass
@@ -777,7 +776,7 @@ def get_captured_run_messages() -> _RunMessages:
 
 
 def build_agent_graph(
-    name: str | None, deps_type: type[DepsT], result_type: type[ResultT]
+    name: str | None, deps_type: type[DepsT], output_type: type[ResultT]
 ) -> Graph[GraphAgentState, GraphAgentDeps[DepsT, result.FinalResult[ResultT]], result.FinalResult[ResultT]]:
     """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
     nodes = (
@@ -789,7 +788,7 @@ def build_agent_graph(
         nodes=nodes,
         name=name or 'Agent',
         state_type=GraphAgentState,
-        run_end_type=result.FinalResult[result_type],
+        run_end_type=result.FinalResult[output_type],
         auto_instrument=False,
     )
     return graph

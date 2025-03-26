@@ -50,7 +50,7 @@ agent = Agent('openai:gpt-4o', mcp_servers=[server])  # (2)!
 async def main():
     async with agent.run_mcp_servers():  # (3)!
         result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
-    print(result.data)
+    print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
 
@@ -89,7 +89,6 @@ The other transport offered by MCP is the [stdio transport](https://spec.modelco
 !!! note
     When using [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] servers, the [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers] context manager is responsible for starting and stopping the server.
 
-
 ```python {title="mcp_stdio_client.py" py="3.10"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
@@ -101,6 +100,6 @@ agent = Agent('openai:gpt-4o', mcp_servers=[server])
 async def main():
     async with agent.run_mcp_servers():
         result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
-    print(result.data)
+    print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```

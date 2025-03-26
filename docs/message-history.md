@@ -33,7 +33,7 @@ from pydantic_ai import Agent
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
 
 result = agent.run_sync('Tell me a joke.')
-print(result.data)
+print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 
 # all messages from the run
@@ -164,11 +164,11 @@ from pydantic_ai import Agent
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
-print(result1.data)
+print(result1.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 
 result2 = agent.run_sync('Explain?', message_history=result1.new_messages())
-print(result2.data)
+print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 
 print(result2.all_messages())
@@ -286,7 +286,7 @@ from pydantic_ai import Agent
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
-print(result1.data)
+print(result1.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 
 result2 = agent.run_sync(
@@ -294,7 +294,7 @@ result2 = agent.run_sync(
     model='google-gla:gemini-1.5-pro',
     message_history=result1.new_messages(),
 )
-print(result2.data)
+print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 
 print(result2.all_messages())

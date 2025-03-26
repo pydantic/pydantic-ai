@@ -697,7 +697,7 @@ class FinalResultEvent:
     """The name of the result tool that was called. `None` if the result is from text content and not from a tool."""
     tool_call_id: str | None
     """The tool call ID, if any, that this result is associated with."""
-    event_kind: Literal['final_result'] = 'final_result'
+    event_kind: Literal['final_output'] = 'final_output'
     """Event type identifier, used as a discriminator."""
 
 

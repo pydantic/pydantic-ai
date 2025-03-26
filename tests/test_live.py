@@ -109,8 +109,8 @@ async def http_client(allow_model_requests: None) -> AsyncIterator[httpx.AsyncCl
 async def test_text(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
     agent = Agent(get_model(http_client, tmp_path), model_settings={'temperature': 0.0}, retries=2)
     result = await agent.run('What is the capital of France?')
-    print('Text response:', result.data)
-    assert 'paris' in result.data.lower()
+    print('Text response:', result.output)
+    assert 'paris' in result.output.lower()
     print('Text usage:', result.usage())
     usage = result.usage()
     assert usage.total_tokens is not None and usage.total_tokens > 0
@@ -141,10 +141,10 @@ structured_params = [p for p in params if p.id != 'ollama']
 
 @pytest.mark.parametrize('get_model', structured_params)
 async def test_structured(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
-    agent = Agent(get_model(http_client, tmp_path), result_type=MyModel, model_settings={'temperature': 0.0}, retries=2)
+    agent = Agent(get_model(http_client, tmp_path), output_type=MyModel, model_settings={'temperature': 0.0}, retries=2)
     result = await agent.run('What is the capital of the UK?')
-    print('Structured response:', result.data)
-    assert result.data.city.lower() == 'london'
+    print('Structured response:', result.output)
+    assert result.output.city.lower() == 'london'
     print('Structured usage:', result.usage())
     usage = result.usage()
     assert usage.total_tokens is not None and usage.total_tokens > 0

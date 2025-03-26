@@ -88,6 +88,9 @@ class TestModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, Usage]:
         self.last_model_request_parameters = model_request_parameters
+        from devtools import debug
+
+        debug(messages, model_settings, model_request_parameters)
 
         model_response = self._request(messages, model_settings, model_request_parameters)
         usage = _estimate_usage([*messages, model_response])
@@ -136,10 +139,10 @@ class TestModel(Model):
             assert self.custom_result_args is None, 'Cannot set both `custom_result_text` and `custom_result_args`.'
             return _TextResult(self.custom_result_text)
         elif self.custom_result_args is not None:
-            assert model_request_parameters.result_tools is not None, (
+            assert model_request_parameters.output_tools is not None, (
                 'No result tools provided, but `custom_result_args` is set.'
             )
-            result_tool = model_request_parameters.result_tools[0]
+            result_tool = model_request_parameters.output_tools[0]
 
             if k := result_tool.outer_typed_dict_key:
                 return _FunctionToolResult({k: self.custom_result_args})
@@ -147,7 +150,7 @@ class TestModel(Model):
                 return _FunctionToolResult(self.custom_result_args)
         elif model_request_parameters.allow_text_result:
             return _TextResult(None)
-        elif model_request_parameters.result_tools:
+        elif model_request_parameters.output_tools:
             return _FunctionToolResult(None)
         else:
             return _TextResult(None)
@@ -160,7 +163,7 @@ class TestModel(Model):
     ) -> ModelResponse:
         tool_calls = self._get_tool_calls(model_request_parameters)
         result = self._get_result(model_request_parameters)
-        result_tools = model_request_parameters.result_tools
+        result_tools = model_request_parameters.output_tools
 
         # if there are tools, the first thing we want to do is call all of them
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):

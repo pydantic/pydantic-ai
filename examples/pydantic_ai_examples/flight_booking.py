@@ -56,7 +56,7 @@ search_agent = Agent[Deps, FlightDetails | NoFlightFound](
 # This agent is responsible for extracting flight details from web page text.
 extraction_agent = Agent(
     'openai:gpt-4o',
-    result_type=list[FlightDetails],
+    output_type=list[FlightDetails],
     system_prompt='Extract all the flight details from the given text.',
 )
 
@@ -66,11 +66,11 @@ async def extract_flights(ctx: RunContext[Deps]) -> list[FlightDetails]:
     """Get details of all flights."""
     # we pass the usage to the search agent so requests within this agent are counted
     result = await extraction_agent.run(ctx.deps.web_page_text, usage=ctx.usage)
-    logfire.info('found {flight_count} flights', flight_count=len(result.data))
-    return result.data
+    logfire.info('found {flight_count} flights', flight_count=len(result.output))
+    return result.output
 
 
-@search_agent.result_validator
+@search_agent.output_validator
 async def validate_result(
     ctx: RunContext[Deps], result: FlightDetails | NoFlightFound
 ) -> FlightDetails | NoFlightFound:
@@ -192,11 +192,11 @@ async def main():
             message_history=message_history,
             usage_limits=usage_limits,
         )
-        if isinstance(result.data, NoFlightFound):
+        if isinstance(result.output, NoFlightFound):
             print('No flight found')
             break
         else:
-            flight = result.data
+            flight = result.output
             print(f'Flight found: {flight}')
             answer = Prompt.ask(
                 'Do you want to buy this flight, or keep searching? (buy/*search)',
@@ -224,8 +224,8 @@ async def find_seat(usage: Usage) -> SeatPreference:
             usage=usage,
             usage_limits=usage_limits,
         )
-        if isinstance(result.data, SeatPreference):
-            return result.data
+        if isinstance(result.output, SeatPreference):
+            return result.output
         else:
             print('Could not understand seat preference. Please try again.')
             message_history = result.all_messages()

@@ -45,23 +45,23 @@ def test_call_one():
         return f'{x}-b'
 
     result = agent.run_sync('x', model=TestModel(call_tools=['ret_a']))
-    assert result.data == snapshot('{"ret_a":"a-a"}')
+    assert result.output == snapshot('{"ret_a":"a-a"}')
     assert calls == ['a']
 
 
 def test_custom_result_text():
     agent = Agent()
     result = agent.run_sync('x', model=TestModel(custom_result_text='custom'))
-    assert result.data == snapshot('custom')
-    agent = Agent(result_type=tuple[str, str])
+    assert result.output == snapshot('custom')
+    agent = Agent(output_type=tuple[str, str])
     with pytest.raises(AssertionError, match='Plain response not allowed, but `custom_result_text` is set.'):
         agent.run_sync('x', model=TestModel(custom_result_text='custom'))
 
 
 def test_custom_result_args():
-    agent = Agent(result_type=tuple[str, str])
+    agent = Agent(output_type=tuple[str, str])
     result = agent.run_sync('x', model=TestModel(custom_result_args=['a', 'b']))
-    assert result.data == ('a', 'b')
+    assert result.output == ('a', 'b')
 
 
 def test_custom_result_args_model():
@@ -69,15 +69,15 @@ def test_custom_result_args_model():
         foo: str
         bar: int
 
-    agent = Agent(result_type=Foo)
+    agent = Agent(output_type=Foo)
     result = agent.run_sync('x', model=TestModel(custom_result_args={'foo': 'a', 'bar': 1}))
-    assert result.data == Foo(foo='a', bar=1)
+    assert result.output == Foo(foo='a', bar=1)
 
 
 def test_result_type():
-    agent = Agent(result_type=tuple[str, str])
+    agent = Agent(output_type=tuple[str, str])
     result = agent.run_sync('x', model=TestModel())
-    assert result.data == ('a', 'a')
+    assert result.output == ('a', 'a')
 
 
 def test_tool_retry():
@@ -95,7 +95,7 @@ def test_tool_retry():
 
     result = agent.run_sync('Hello', model=TestModel())
     assert call_count == 2
-    assert result.data == snapshot('{"my_ret":"1"}')
+    assert result.output == snapshot('{"my_ret":"1"}')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -140,11 +140,11 @@ def test_result_tool_retry_error_handled():
         x: int
         y: str
 
-    agent = Agent('test', result_type=ResultModel, retries=2)
+    agent = Agent('test', output_type=ResultModel, retries=2)
 
     call_count = 0
 
-    @agent.result_validator
+    @agent.output_validator
     def validate_result(ctx: RunContext[None], result: ResultModel) -> ResultModel:
         nonlocal call_count
         call_count += 1
@@ -161,7 +161,7 @@ def test_result_tool_retry_error_handled_with_custom_args(set_event_loop: None):
         x: int
         y: str
 
-    agent = Agent('test', result_type=ResultModel, retries=2)
+    agent = Agent('test', output_type=ResultModel, retries=2)
 
     with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
         agent.run_sync('Hello', model=TestModel(custom_result_args={'foo': 'a', 'bar': 1}))
@@ -299,5 +299,5 @@ def test_max_items():
 def test_different_content_input(content: AudioUrl | ImageUrl | BinaryContent):
     agent = Agent()
     result = agent.run_sync('x', model=TestModel(custom_result_text='custom'))
-    assert result.data == snapshot('custom')
+    assert result.output == snapshot('custom')
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=51, response_tokens=1, total_tokens=52))

@@ -78,7 +78,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
         return str(x + 1)
 
     result = my_agent.run_sync('Hello')
-    assert result.data == snapshot('{"my_ret":"1"}')
+    assert result.output == snapshot('{"my_ret":"1"}')
 
     summary = get_logfire_summary()
     if instrument is False:
@@ -149,12 +149,12 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                     ]
                 )
             ),
-            'final_result': '{"my_ret":"1"}',
+            'final_output': '{"my_ret":"1"}',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
                         'type': 'object',
-                        'properties': {'all_messages_events': {'type': 'array'}, 'final_result': {'type': 'object'}},
+                        'properties': {'all_messages_events': {'type': 'array'}, 'final_output': {'type': 'object'}},
                     }
                 )
             ),
@@ -225,7 +225,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                             }
                         ],
                         'allow_text_result': True,
-                        'result_tools': [],
+                        'output_tools': [],
                     }
                 )
             ),

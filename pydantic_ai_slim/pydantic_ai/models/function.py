@@ -92,7 +92,7 @@ class FunctionModel(Model):
         agent_info = AgentInfo(
             model_request_parameters.function_tools,
             model_request_parameters.allow_text_result,
-            model_request_parameters.result_tools,
+            model_request_parameters.output_tools,
             model_settings,
         )
 
@@ -118,7 +118,7 @@ class FunctionModel(Model):
         agent_info = AgentInfo(
             model_request_parameters.function_tools,
             model_request_parameters.allow_text_result,
-            model_request_parameters.result_tools,
+            model_request_parameters.output_tools,
             model_settings,
         )
 

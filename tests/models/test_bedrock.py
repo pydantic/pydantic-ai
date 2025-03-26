@@ -65,7 +65,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     agent = Agent(model=model, system_prompt='You are a chatbot.')
 
     result = await agent.run('Hello!')
-    assert result.data == snapshot(
+    assert result.output == snapshot(
         "Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
     )
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=7, response_tokens=30, total_tokens=37))
@@ -118,8 +118,8 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
         """
         return '30°C'
 
-    result = await agent.run('What was the temperature in London 1st January 2022?', result_type=Response)
-    assert result.data == snapshot({'temperature': '30°C', 'date': datetime.date(2022, 1, 1), 'city': 'London'})
+    result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
+    assert result.output == snapshot({'temperature': '30°C', 'date': datetime.date(2022, 1, 1), 'city': 'London'})
     assert result.usage() == snapshot(Usage(requests=2, request_tokens=1236, response_tokens=298, total_tokens=1534))
     assert result.all_messages() == snapshot(
         [
@@ -162,10 +162,10 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='<thinking> I have received the result from the "temperature" tool. The temperature in London on 1st January 2022 was 30°C. Now, I will use the "final_result" tool to provide this information to the user.</thinking> '
+                        content='<thinking> I have received the result from the "temperature" tool. The temperature in London on 1st January 2022 was 30°C. Now, I will use the "final_output" tool to provide this information to the user.</thinking> '
                     ),
                     ToolCallPart(
-                        tool_name='final_result',
+                        tool_name='final_output',
                         args={'date': '2022-01-01', 'city': 'London', 'temperature': '30°C'},
                         tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                     ),
@@ -176,7 +176,7 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result',
+                        tool_name='final_output',
                         content='Final result processed.',
                         tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                         timestamp=IsDatetime(),
@@ -225,7 +225,7 @@ async def test_bedrock_model_anthropic_model_without_tools(
     model = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     result = await agent.run('What is the capital of France?')
-    assert result.data == snapshot('Paris is the capital of France.')
+    assert result.output == snapshot('Paris is the capital of France.')
 
 
 async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -303,14 +303,14 @@ async def test_bedrock_model_max_tokens(allow_model_requests: None, bedrock_prov
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'max_tokens': 5})
     result = await agent.run('What is the capital of France?')
-    assert result.data == snapshot('The capital of France is')
+    assert result.output == snapshot('The capital of France is')
 
 
 async def test_bedrock_model_top_p(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'top_p': 0.5})
     result = await agent.run('What is the capital of France?')
-    assert result.data == snapshot(
+    assert result.output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
     )
 
@@ -401,7 +401,7 @@ async def test_image_as_binary_content_input(
     agent = Agent(m, system_prompt='You are a helpful chatbot.')
 
     result = await agent.run(['What fruit is in the image?', image_content])
-    assert result.data == snapshot(
+    assert result.output == snapshot(
         'The image features a fruit that is round and has a green skin with brown dots. The fruit is cut in half, revealing its interior, which is also green. Based on the appearance and characteristics, the fruit in the image is a kiwi.'
     )
 
@@ -417,7 +417,7 @@ async def test_image_url_input(allow_model_requests: None, bedrock_provider: Bed
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.data == snapshot(
+    assert result.output == snapshot(
         'The image shows a potato. It is oval in shape and has a yellow skin with numerous dark brown patches. These patches are known as lenticels, which are pores that allow the potato to breathe. The potato is a root vegetable that is widely cultivated and consumed around the world. It is a versatile ingredient that can be used in a variety of dishes, including mashed potatoes, fries, and potato salad.'
     )
 
@@ -430,7 +430,7 @@ async def test_document_url_input(allow_model_requests: None, bedrock_provider: 
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.data == snapshot(
+    assert result.output == snapshot(
         'Based on the provided XML data, the main content of the document is "Dummy PDF file". This is contained in the <document_content> tag for the document with index="1".'
     )
 
@@ -443,7 +443,7 @@ async def test_text_document_url_input(allow_model_requests: None, bedrock_provi
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
-    assert result.data == snapshot("""\
+    assert result.output == snapshot("""\
 Based on the text in the <document_content> tag, the main content of this document appears to be:
 
 An example text describing the use of "John Doe" as a placeholder name in legal cases, hospitals, and other contexts where a party's real identity is unknown or needs to be withheld. It provides background on how "John Doe" and "Jane Doe" are commonly used in the United States and Canada for this purpose, in contrast to other English speaking countries that use names like "Joe Bloggs". The text gives examples of using John/Jane Doe for legal cases, unidentified corpses, and as generic names on forms. It also mentions how "Baby Doe" and "Precious Doe" are used for unidentified children.\
@@ -458,7 +458,7 @@ async def test_text_as_binary_content_input(allow_model_requests: None, bedrock_
     text_content = BinaryContent(data=b'This is a test document.', media_type='text/plain')
 
     result = await agent.run(['What is the main content on this document?', text_content])
-    assert result.data == snapshot("""\
+    assert result.output == snapshot("""\
 The document you're referring to appears to be a test document, which means its primary purpose is likely to serve as an example or a placeholder rather than containing substantive content. Test documents are commonly used for various purposes such as:
 
 1. **Software Testing**: To verify that a system can correctly handle, display, or process documents.

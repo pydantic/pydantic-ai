@@ -60,7 +60,7 @@ async def return_last(messages: list[ModelMessage], _: AgentInfo) -> ModelRespon
 def test_simple():
     agent = Agent(FunctionModel(return_last))
     result = agent.run_sync('Hello')
-    assert result.data == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
+    assert result.output == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -73,7 +73,7 @@ def test_simple():
     )
 
     result2 = agent.run_sync('World', message_history=result.all_messages())
-    assert result2.data == snapshot("content='World' part_kind='user-prompt' message_count=3")
+    assert result2.output == snapshot("content='World' part_kind='user-prompt' message_count=3")
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -144,7 +144,7 @@ async def get_weather(_: RunContext[None], lat: int, lng: int):
 
 def test_weather():
     result = weather_agent.run_sync('London')
-    assert result.data == 'Raining in London'
+    assert result.output == 'Raining in London'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))]),
@@ -191,7 +191,7 @@ def test_weather():
     )
 
     result = weather_agent.run_sync('Ipswich')
-    assert result.data == 'Sunny in Ipswich'
+    assert result.output == 'Sunny in Ipswich'
 
 
 async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: no cover
@@ -217,7 +217,7 @@ def get_var_args(ctx: RunContext[int], *args: int):
 
 def test_var_args():
     result = var_args_agent.run_sync('{"function": "get_var_args", "arguments": {"args": [1, 2, 3]}}', deps=123)
-    response_data = json.loads(result.data)
+    response_data = json.loads(result.output)
     # Can't parse ISO timestamps with trailing 'Z' in older versions of python:
     response_data['timestamp'] = re.sub('Z$', '+00:00', response_data['timestamp'])
     assert response_data == snapshot(
@@ -278,7 +278,7 @@ def test_deps_init():
 def test_model_arg():
     agent = Agent()
     result = agent.run_sync('Hello', model=FunctionModel(return_last))
-    assert result.data == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
+    assert result.output == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
 
     with pytest.raises(RuntimeError, match='`model` must be set either when creating the agent or when calling it.'):
         agent.run_sync('Hello')
@@ -328,12 +328,12 @@ def test_register_all():
         )
 
     result = agent_all.run_sync('Hello', model=FunctionModel(f))
-    assert result.data == snapshot('messages=1 allow_text_result=True tools=5')
+    assert result.output == snapshot('messages=1 allow_text_result=True tools=5')
 
 
 def test_call_all():
     result = agent_all.run_sync('Hello', model=TestModel())
-    assert result.data == snapshot('{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')
+    assert result.output == snapshot('{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -392,7 +392,7 @@ def test_retry_str():
 
     agent = Agent(FunctionModel(try_again))
 
-    @agent.result_validator
+    @agent.output_validator
     async def validate_result(r: str) -> str:
         if r == '1':
             raise ModelRetry('Try again')
@@ -400,7 +400,7 @@ def test_retry_str():
             return r
 
     result = agent.run_sync('')
-    assert result.data == snapshot('2')
+    assert result.output == snapshot('2')
 
 
 def test_retry_result_type():
@@ -410,14 +410,14 @@ def test_retry_result_type():
         nonlocal call_count
         call_count += 1
 
-        return ModelResponse(parts=[ToolCallPart('final_result', {'x': call_count})])
+        return ModelResponse(parts=[ToolCallPart('final_output', {'x': call_count})])
 
     class Foo(BaseModel):
         x: int
 
-    agent = Agent(FunctionModel(try_again), result_type=Foo)
+    agent = Agent(FunctionModel(try_again), output_type=Foo)
 
-    @agent.result_validator
+    @agent.output_validator
     async def validate_result(r: Foo) -> Foo:
         if r.x == 1:
             raise ModelRetry('Try again')
@@ -425,7 +425,7 @@ def test_retry_result_type():
             return r
 
     result = agent.run_sync('')
-    assert result.data == snapshot(Foo(x=2))
+    assert result.output == snapshot(Foo(x=2))
 
 
 async def stream_text_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
@@ -465,7 +465,7 @@ async def test_stream_structure():
         yield {0: DeltaToolCall(json_args='{"x": ')}
         yield {0: DeltaToolCall(json_args='1}')}
 
-    agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=Foo)
+    agent = Agent(FunctionModel(stream_function=stream_structured_function), output_type=Foo)
     async with agent.run_stream('') as result:
         assert await result.get_data() == snapshot(Foo(x=1))
         assert result.usage() == snapshot(

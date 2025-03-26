@@ -48,7 +48,7 @@ def get_player_name(ctx: RunContext[str]) -> str:
 
 
 dice_result = agent.run_sync('My guess is 4', deps='Anne')  # (5)!
-print(dice_result.data)
+print(dice_result.output)
 #> Congratulations Anne, you guessed correctly! You're a winner!
 ```
 
@@ -219,7 +219,7 @@ agent_b = Agent(
     ],
 )
 dice_result = agent_b.run_sync('My guess is 4', deps='Anne')
-print(dice_result.data)
+print(dice_result.output)
 #> Congratulations Anne, you guessed correctly! You're a winner!
 ```
 
@@ -321,7 +321,7 @@ def foobar(f: Foobar) -> str:
 
 test_model = TestModel()
 result = agent.run_sync('hello', model=test_model)
-print(result.data)
+print(result.output)
 #> {"foobar":"x=0 y='a' z=3.14"}
 print(test_model.last_model_request_parameters.function_tools)
 """
@@ -386,10 +386,10 @@ def hitchhiker(ctx: RunContext[int], answer: str) -> str:
 
 
 result = agent.run_sync('testing...', deps=41)
-print(result.data)
+print(result.output)
 #> success (no tool calls)
 result = agent.run_sync('testing...', deps=42)
-print(result.data)
+print(result.output)
 #> {"hitchhiker":"42 a"}
 ```
 
@@ -426,7 +426,7 @@ test_model = TestModel()
 agent = Agent(test_model, tools=[greet_tool], deps_type=Literal['human', 'machine'])
 
 result = agent.run_sync('testing...', deps='human')
-print(result.data)
+print(result.output)
 #> {"greet":"hello a"}
 print(test_model.last_model_request_parameters.function_tools)
 """
