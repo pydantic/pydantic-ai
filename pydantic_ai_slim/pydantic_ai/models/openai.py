@@ -74,7 +74,10 @@ OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
 class OpenAIModelSettings(ModelSettings, total=False):
-    """Settings used for an OpenAI model request."""
+    """Settings used for an OpenAI model request.
+
+    ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
 
     openai_reasoning_effort: chat.ChatCompletionReasoningEffort
     """
@@ -83,7 +86,7 @@ class OpenAIModelSettings(ModelSettings, total=False):
     result in faster responses and fewer tokens used on reasoning in a response.
     """
 
-    user: str
+    openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
 
     See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
