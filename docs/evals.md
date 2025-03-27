@@ -41,9 +41,9 @@ Evaluators are the components that analyze and score the results of your task wh
 Pydantic Evals includes several built-in evaluators and allows you to create custom evaluators:
 
 ```python {title="simple_eval_evaluator.py"}
-from simple_eval_dataset import dataset
-
 from dataclasses import dataclass
+
+from simple_eval_dataset import dataset
 
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 from pydantic_evals.evaluators.common import IsInstance
