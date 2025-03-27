@@ -8,8 +8,7 @@ from datetime import datetime, timezone
 from itertools import chain
 from typing import Literal, Union, cast, overload
 
-from httpx import AsyncClient as AsyncHTTPClient
-from typing_extensions import assert_never, deprecated
+from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -32,7 +31,7 @@ from ..messages import (
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client, check_allow_model_requests
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests
 
 try:
     from groq import NOT_GIVEN, APIStatusError, AsyncGroq, AsyncStream
@@ -71,7 +70,10 @@ See [the Groq docs](https://console.groq.com/docs/models) for a full list.
 
 
 class GroqModelSettings(ModelSettings):
-    """Settings used for a Groq model request."""
+    """Settings used for a Groq model request.
+
+    ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
 
     # This class is a placeholder for any future groq-specific settings
 
@@ -90,35 +92,7 @@ class GroqModel(Model):
     _model_name: GroqModelName = field(repr=False)
     _system: str = field(default='groq', repr=False)
 
-    @overload
-    def __init__(
-        self,
-        model_name: GroqModelName,
-        *,
-        provider: Literal['groq'] | Provider[AsyncGroq] = 'groq',
-    ) -> None: ...
-
-    @deprecated('Use the `provider` parameter instead of `api_key`, `groq_client`, and `http_client`.')
-    @overload
-    def __init__(
-        self,
-        model_name: GroqModelName,
-        *,
-        provider: None = None,
-        api_key: str | None = None,
-        groq_client: AsyncGroq | None = None,
-        http_client: AsyncHTTPClient | None = None,
-    ) -> None: ...
-
-    def __init__(
-        self,
-        model_name: GroqModelName,
-        *,
-        provider: Literal['groq'] | Provider[AsyncGroq] | None = None,
-        api_key: str | None = None,
-        groq_client: AsyncGroq | None = None,
-        http_client: AsyncHTTPClient | None = None,
-    ):
+    def __init__(self, model_name: GroqModelName, *, provider: Literal['groq'] | Provider[AsyncGroq] = 'groq'):
         """Initialize a Groq model.
 
         Args:
@@ -127,27 +101,12 @@ class GroqModel(Model):
             provider: The provider to use for authentication and API access. Can be either the string
                 'groq' or an instance of `Provider[AsyncGroq]`. If not provided, a new provider will be
                 created using the other parameters.
-            api_key: The API key to use for authentication, if not provided, the `GROQ_API_KEY` environment variable
-                will be used if available.
-            groq_client: An existing
-                [`AsyncGroq`](https://github.com/groq/groq-python?tab=readme-ov-file#async-usage)
-                client to use, if provided, `api_key` and `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         self._model_name = model_name
 
-        if provider is not None:
-            if isinstance(provider, str):
-                provider = infer_provider(provider)
-            self.client = provider.client
-        elif groq_client is not None:
-            assert http_client is None, 'Cannot provide both `groq_client` and `http_client`'
-            assert api_key is None, 'Cannot provide both `groq_client` and `api_key`'
-            self.client = groq_client
-        elif http_client is not None:
-            self.client = AsyncGroq(api_key=api_key, http_client=http_client)
-        else:
-            self.client = AsyncGroq(api_key=api_key, http_client=cached_async_http_client())
+        if isinstance(provider, str):
+            provider = infer_provider(provider)
+        self.client = provider.client
 
     @property
     def base_url(self) -> str:
@@ -309,7 +268,7 @@ class GroqModel(Model):
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
         return chat.ChatCompletionMessageToolCallParam(
-            id=_guard_tool_call_id(t=t, model_source='Groq'),
+            id=_guard_tool_call_id(t=t),
             type='function',
             function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
         )
@@ -335,7 +294,7 @@ class GroqModel(Model):
             elif isinstance(part, ToolReturnPart):
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
-                    tool_call_id=_guard_tool_call_id(t=part, model_source='Groq'),
+                    tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
             elif isinstance(part, RetryPromptPart):
@@ -344,7 +303,7 @@ class GroqModel(Model):
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part, model_source='Groq'),
+                        tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
 

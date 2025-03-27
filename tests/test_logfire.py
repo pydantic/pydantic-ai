@@ -12,6 +12,8 @@ from pydantic_ai import Agent
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 
+from .conftest import IsStr
+
 try:
     from logfire.testing import CaptureLogfire
 except ImportError:
@@ -119,7 +121,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                             'role': 'assistant',
                             'tool_calls': [
                                 {
-                                    'id': None,
+                                    'id': IsStr(),
                                     'type': 'function',
                                     'function': {
                                         'name': 'my_ret',
@@ -133,7 +135,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                         {
                             'content': '1',
                             'role': 'tool',
-                            'id': None,
+                            'id': IsStr(),
                             'name': 'my_ret',
                             'gen_ai.message.index': 2,
                             'event.name': 'gen_ai.tool.message',
@@ -167,7 +169,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
     )
     chat_span_attributes = summary.attributes[2]
     if instrument is True or instrument.event_mode == 'attributes':
-        attribute_mode_attributes = {k: chat_span_attributes.pop(k) for k in ['events', 'logfire.json_schema']}
+        attribute_mode_attributes = {k: chat_span_attributes.pop(k) for k in ['events']}
         assert attribute_mode_attributes == snapshot(
             {
                 'events': IsJson(
@@ -187,7 +189,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                                     'role': 'assistant',
                                     'tool_calls': [
                                         {
-                                            'id': None,
+                                            'id': IsStr(),
                                             'type': 'function',
                                             'function': {'name': 'my_ret', 'arguments': {'x': 0}},
                                         }
@@ -198,7 +200,6 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                         ]
                     )
                 ),
-                'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}}}',
             }
         )
 
@@ -207,6 +208,28 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
             'gen_ai.operation.name': 'chat',
             'gen_ai.system': 'test',
             'gen_ai.request.model': 'test',
+            'model_request_parameters': IsJson(
+                snapshot(
+                    {
+                        'function_tools': [
+                            {
+                                'name': 'my_ret',
+                                'description': '',
+                                'parameters_json_schema': {
+                                    'additionalProperties': False,
+                                    'properties': {'x': {'type': 'integer'}},
+                                    'required': ['x'],
+                                    'type': 'object',
+                                },
+                                'outer_typed_dict_key': None,
+                            }
+                        ],
+                        'allow_text_result': True,
+                        'result_tools': [],
+                    }
+                )
+            ),
+            'logfire.json_schema': IsJson(),
             'logfire.span_type': 'span',
             'logfire.msg': 'chat test',
             'gen_ai.response.model': 'test',

@@ -6,11 +6,10 @@ from itertools import chain
 from typing import Literal, Union, cast
 
 from cohere import TextAssistantMessageContentItem
-from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, result
-from .._utils import guard_tool_call_id as _guard_tool_call_id
+from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -23,6 +22,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -80,7 +80,10 @@ See [Cohere's docs](https://docs.cohere.com/v2/docs/models) for a list of all av
 
 
 class CohereModelSettings(ModelSettings):
-    """Settings used for a Cohere model request."""
+    """Settings used for a Cohere model request.
+
+    ALL FIELDS MUST BE `cohere_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
 
     # This class is a placeholder for any future cohere-specific settings
 
@@ -104,28 +107,22 @@ class CohereModel(Model):
         self,
         model_name: CohereModelName,
         *,
-        api_key: str | None = None,
-        cohere_client: AsyncClientV2 | None = None,
-        http_client: AsyncHTTPClient | None = None,
+        provider: Literal['cohere'] | Provider[AsyncClientV2] = 'cohere',
     ):
         """Initialize an Cohere model.
 
         Args:
             model_name: The name of the Cohere model to use. List of model names
                 available [here](https://docs.cohere.com/docs/models#command).
-            api_key: The API key to use for authentication, if not provided, the
-                `CO_API_KEY` environment variable will be used if available.
-            cohere_client: An existing Cohere async client to use. If provided,
-                `api_key` and `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            provider: The provider to use for authentication and API access. Can be either the string
+                'cohere' or an instance of `Provider[AsyncClientV2]`. If not provided, a new provider will be
+                created using the other parameters.
         """
         self._model_name: CohereModelName = model_name
-        if cohere_client is not None:
-            assert http_client is None, 'Cannot provide both `cohere_client` and `http_client`'
-            assert api_key is None, 'Cannot provide both `cohere_client` and `api_key`'
-            self.client = cohere_client
-        else:
-            self.client = AsyncClientV2(api_key=api_key, httpx_client=http_client)
+
+        if isinstance(provider, str):
+            provider = infer_provider(provider)
+        self.client = provider.client
 
     @property
     def base_url(self) -> str:
@@ -191,7 +188,7 @@ class CohereModel(Model):
                     ToolCallPart(
                         tool_name=c.function.name,
                         args=c.function.arguments,
-                        tool_call_id=c.id,
+                        tool_call_id=c.id or _generate_tool_call_id(),
                     )
                 )
         return ModelResponse(parts=parts, model_name=self._model_name)
@@ -228,7 +225,7 @@ class CohereModel(Model):
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ToolCallV2:
         return ToolCallV2(
-            id=_guard_tool_call_id(t=t, model_source='Cohere'),
+            id=_guard_tool_call_id(t=t),
             type='function',
             function=ToolCallV2Function(
                 name=t.tool_name,
@@ -260,7 +257,7 @@ class CohereModel(Model):
             elif isinstance(part, ToolReturnPart):
                 yield ToolChatMessageV2(
                     role='tool',
-                    tool_call_id=_guard_tool_call_id(t=part, model_source='Cohere'),
+                    tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
             elif isinstance(part, RetryPromptPart):
@@ -269,7 +266,7 @@ class CohereModel(Model):
                 else:
                     yield ToolChatMessageV2(
                         role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part, model_source='Cohere'),
+                        tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
             else:

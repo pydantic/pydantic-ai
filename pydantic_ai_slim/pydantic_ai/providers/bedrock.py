@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 from typing import overload
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers import Provider
 
 try:
@@ -73,4 +74,4 @@ class BedrockProvider(Provider[BaseClient]):
                     region_name=region_name,
                 )
             except NoRegionError as exc:  # pragma: no cover
-                raise ValueError('You must provide a `region_name` or a boto3 client for Bedrock Runtime.') from exc
+                raise UserError('You must provide a `region_name` or a boto3 client for Bedrock Runtime.') from exc

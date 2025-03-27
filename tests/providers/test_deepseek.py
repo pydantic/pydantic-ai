@@ -1,11 +1,11 @@
-import os
 import re
-from unittest.mock import patch
 
 import httpx
 import pytest
 
-from ..conftest import try_import
+from pydantic_ai.exceptions import UserError
+
+from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     import openai
@@ -24,16 +24,16 @@ def test_deep_seek_provider():
     assert provider.client.api_key == 'api-key'
 
 
-def test_deep_seek_provider_need_api_key() -> None:
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(
-            ValueError,
-            match=re.escape(
-                'Set the `DEEPSEEK_API_KEY` environment variable or pass it via `DeepSeekProvider(api_key=...)`'
-                'to use the DeepSeek provider.'
-            ),
-        ):
-            DeepSeekProvider()
+def test_deep_seek_provider_need_api_key(env: TestEnv) -> None:
+    env.remove('DEEPSEEK_API_KEY')
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Set the `DEEPSEEK_API_KEY` environment variable or pass it via `DeepSeekProvider(api_key=...)`'
+            'to use the DeepSeek provider.'
+        ),
+    ):
+        DeepSeekProvider()
 
 
 def test_deep_seek_provider_pass_http_client() -> None:
