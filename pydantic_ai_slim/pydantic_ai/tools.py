@@ -147,8 +147,8 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
     def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
         s = super().typed_dict_schema(schema)
         total = schema.get('total')
-        if total is not None:
-            s['additionalProperties'] = not total
+        if 'additionalProperties' not in s and (total is True or total is None):
+            s['additionalProperties'] = False
         return s
 
     def _named_required_fields_schema(self, named_required_fields: Sequence[tuple[str, bool, Any]]) -> JsonSchemaValue:

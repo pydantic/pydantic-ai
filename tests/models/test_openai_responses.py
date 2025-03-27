@@ -59,7 +59,6 @@ async def test_openai_responses_model_simple_response_with_tool_call(allow_model
     assert result.data == snapshot('The capital of PotatoLand is Potato City.')
 
 
-@pytest.mark.xfail(reason='Need to add `additionalProperties=False` to the schema.')
 async def test_openai_responses_result_type(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -69,7 +68,7 @@ async def test_openai_responses_result_type(allow_model_requests: None, openai_a
 
     agent = Agent(model=model, result_type=MyResult)
     result = await agent.run('Give me the name and age of Brazil, Argentina, and Chile.')
-    assert result.data == snapshot()  # pragma: no cover
+    assert result.data == snapshot({'name': 'Brazil', 'age': 2023})  # pragma: no cover
 
 
 async def test_openai_responses_reasoning_effort(allow_model_requests: None, openai_api_key: str):
