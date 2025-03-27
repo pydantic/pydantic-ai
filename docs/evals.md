@@ -153,6 +153,8 @@ _(This example is complete, it can be run "as is")_
 In this example we evaluate a method for generating recipes based on customer orders.
 
 ```python {title="judge_recipes.py"}
+from __future__ import annotations
+
 from typing import Any
 
 from pydantic import BaseModel
@@ -165,7 +167,7 @@ from pydantic_evals.evaluators import IsInstance, LlmJudge
 
 class CustomerOrder(BaseModel):  # (1)!
     dish_name: str
-    dietary_restriction: 'str | None' = None
+    dietary_restriction: str | None = None
 
 
 class Recipe(BaseModel):
@@ -520,6 +522,8 @@ Pydantic Evals allows you to generate test datasets using LLMs with [`generate_d
 Datasets can be generated in either JSON or YAML format, in both cases a JSON schema file is generated alongside the dataset and referenced in the dataset, so you should get type checking and auto-completion in your editor.
 
 ```python {title="generate_dataset_example.py"}
+from __future__ import annotations
+
 from pathlib import Path
 
 from pydantic import BaseModel, Field

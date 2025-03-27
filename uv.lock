@@ -3109,46 +3109,20 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-anthropic = [
-    { name = "anthropic" },
-]
-cohere = [
-    { name = "cohere" },
-]
-groq = [
-    { name = "groq" },
-]
 logfire = [
     { name = "logfire" },
-]
-mistral = [
-    { name = "mistralai" },
-]
-openai = [
-    { name = "openai" },
-]
-vertexai = [
-    { name = "google-auth" },
-    { name = "requests" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.40.0" },
     { name = "anyio", specifier = ">=0" },
-    { name = "cohere", marker = "extra == 'cohere'", specifier = ">=5.13.11" },
     { name = "eval-type-backport", marker = "python_full_version < '3.11'", specifier = ">=0" },
-    { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
-    { name = "groq", marker = "extra == 'groq'", specifier = ">=0.12.0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
     { name = "logfire-api", specifier = ">=1.2.0" },
-    { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.61.0" },
     { name = "pydantic", specifier = ">=2.10" },
-    { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
     { name = "rich", specifier = ">=13.9.4" },
 ]
-provides-extras = ["logfire", "openai", "cohere", "vertexai", "anthropic", "groq", "mistral"]
+provides-extras = ["logfire"]
 
 [[package]]
 name = "pydantic-graph"
