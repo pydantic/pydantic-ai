@@ -47,7 +47,7 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.optional-dependencies]
 examples = ["pydantic-ai-examples==0.0.46"]
-logfire = ["logfire>=2.3"]
+logfire = ["logfire>=3.11.0"]
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }
