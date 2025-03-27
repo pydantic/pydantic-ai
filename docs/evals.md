@@ -5,13 +5,19 @@ Pydantic Evals is a powerful evaluation framework designed to help you systemati
 !!! note "In Beta"
     Pydantic Evals support was [introduced](https://github.com/pydantic/pydantic-ai/pull/935) in v0.0.47 and is currently in beta. The API is subject to change. The documentation is incomplete.
 
-
 ## Installation
 
-To install the Pydantic Evals package, you can use:
+To install the Pydantic Evals package, run:
 
 ```bash
 pip/uv-add pydantic-evals
+```
+
+`pydantic-evals` does not depend on `pydantic-ai`, but has an optional dependency on `logfire` if you'd like to
+use OpenTelemetry traces in your evals, or send evaluation results to [logfire](https://pydantic.dev/logfire).
+
+```bash
+pip/uv-add 'pydantic-evals[logfire]'
 ```
 
 ## Datasets and Cases
@@ -33,6 +39,8 @@ case1 = Case(
 
 dataset = Dataset(cases=[case1])
 ```
+
+_(This example is complete, it can be run "as is")_
 
 ## Evaluators
 
@@ -69,6 +77,8 @@ dataset.add_evaluator(MyEvaluator())
 ```
 1. You can add built-in evaluators to a dataset using the [`add_evaluator`][pydantic_evals.Dataset.add_evaluator] method.
 2. This custom evaluator returns a simple score based on whether the output matches the expected output.
+
+_(This example is complete, it can be run "as is")_
 
 ## Evaluation Process
 
@@ -135,6 +145,8 @@ report.print(include_input=True, include_output=True)  # (6)!
 4. Our function to evaluate.
 5. Run the evaluation with [`evaluate_sync`][pydantic_evals.Dataset.evaluate_sync], which runs the function against all test cases in the dataset, and returns an [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] object.
 6. Print the report with [`print`][pydantic_evals.reporting.EvaluationReport.print], which shows the results of the evaluation, including input and output.
+
+_(This example is complete, it can be run "as is")_
 
 ## Evaluation with `LlmJudge`
 
@@ -240,6 +252,8 @@ print(report)
 6. Dataset-level evaluators that apply to all cases, including a general quality rubric for all recipes
 7. By default `LlmJudge` uses `openai:gpt-4o`, here we use a specific Anthropic model.
 
+_(This example is complete, it can be run "as is")_
+
 ## Saving and Loading Datasets
 
 Datasets can be saved to and loaded from YAML or JSON files.
@@ -289,6 +303,8 @@ loaded_dataset = Dataset[CustomerOrder, Recipe, dict].from_file(recipe_transform
 print(f'Loaded dataset with {len(loaded_dataset.cases)} cases')
 #> Loaded dataset with 2 cases
 ```
+
+_(This example is complete, it can be run "as is")_
 
 ## Parallel Evaluation
 
@@ -372,6 +388,8 @@ report_limited.print()
 └──────────┴──────────┘
 """
 ```
+
+_(This example is complete, it can be run "as is")_
 
 ## OpenTelemetry Integration
 
@@ -493,6 +511,8 @@ report.print(include_input=True, include_output=True)
 """
 ```
 
+_(This example is complete, it can be run "as is")_
+
 ## Generating Test Datasets
 
 Pydantic Evals allows you to generate test datasets using LLMs with [`generate_dataset`][pydantic_evals.generation.generate_dataset].
@@ -500,8 +520,6 @@ Pydantic Evals allows you to generate test datasets using LLMs with [`generate_d
 Datasets can be generated in either JSON or YAML format, in both cases a JSON schema file is generated alongside the dataset and referenced in the dataset, so you should get type checking and auto-completion in your editor.
 
 ```python {title="generate_dataset_example.py"}
-from __future__ import annotations
-
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -509,29 +527,35 @@ from pydantic import BaseModel, Field
 from pydantic_evals.generation import generate_dataset
 
 
-class QuestionInputs(BaseModel):
+class QuestionInputs(BaseModel, use_attribute_docstrings=True):  # (1)!
     """Model for question inputs."""
 
-    question: str = Field(description='A question to answer')
-    context: str | None = Field(None, description='Optional context for the question')
+    question: str
+    """A question to answer"""
+    context: str | None = None
+    """Optional context for the question"""
 
 
-class AnswerOutput(BaseModel):
+class AnswerOutput(BaseModel, use_attribute_docstrings=True):  # (2)!
     """Model for expected answer outputs."""
 
-    answer: str = Field(description='The answer to the question')
-    confidence: float = Field(description='Confidence level (0-1)', ge=0, le=1)
+    answer: str
+    """The answer to the question"""
+    confidence: float = Field(ge=0, le=1)
+    """Confidence level (0-1)"""
 
 
-class MetadataType(BaseModel):
+class MetadataType(BaseModel, use_attribute_docstrings=True):  # (3)!
     """Metadata model for test cases."""
 
-    difficulty: str = Field(description='Difficulty level (easy, medium, hard)')
-    category: str = Field(description='Question category')
+    difficulty: str
+    """Difficulty level (easy, medium, hard)"""
+    category: str
+    """Question category"""
 
 
 async def main():
-    dataset = await generate_dataset(
+    dataset = await generate_dataset(  # (4)!
         inputs_type=QuestionInputs,
         output_type=AnswerOutput,
         metadata_type=MetadataType,
@@ -542,7 +566,7 @@ async def main():
         """,
     )
     output_file = Path('questions_cases.yaml')
-    dataset.to_file(output_file)
+    dataset.to_file(output_file)  # (5)!
     print(output_file.read_text())
     """
     # yaml-language-server: $schema=questions_cases_schema.json
@@ -571,3 +595,83 @@ async def main():
       - EqualsExpected
     """
 ```
+
+1. Define the schema for the inputs to the task.
+2. Define the schema for the expected outputs of the task.
+3. Define the schema for the metadata of the test cases.
+4. Call [`generate_dataset`][pydantic_evals.generation.generate_dataset] to create a [`Dataset`][pydantic_evals.Dataset] with 2 cases confirming to the schema.
+5. Save the dataset to a YAML file, this will also write `questions_cases_schema.json` with the schema JSON schema for `questions_cases.yaml` to make editing easier. The magic `yaml-language-server` comment is supported by at least vscode, jetbrains/pycharm (more details [here](https://github.com/redhat-developer/yaml-language-server#using-inlined-schema)).
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_
+
+You can also write datasets as JSON files:
+
+```python {title="generate_dataset_example_json.py"}
+from pathlib import Path
+
+from generate_dataset_example import AnswerOutput, MetadataType, QuestionInputs
+
+from pydantic_evals.generation import generate_dataset
+
+
+async def main():
+    dataset = await generate_dataset(  # (1)!
+        inputs_type=QuestionInputs,
+        output_type=AnswerOutput,
+        metadata_type=MetadataType,
+        n_examples=2,
+        extra_instructions="""
+        Generate question-answer pairs about world capitals and landmarks.
+        Make sure to include both easy and challenging questions.
+        """,
+    )
+    output_file = Path('questions_cases.json')
+    dataset.to_file(output_file)  # (2)!
+    print(output_file.read_text())
+    """
+    {
+      "$schema": "questions_cases_schema.json",
+      "cases": [
+        {
+          "name": "Easy Capital Question",
+          "inputs": {
+            "question": "What is the capital of France?"
+          },
+          "metadata": {
+            "difficulty": "easy",
+            "category": "Geography"
+          },
+          "expected_output": {
+            "answer": "Paris",
+            "confidence": 0.95
+          },
+          "evaluators": [
+            "EqualsExpected"
+          ]
+        },
+        {
+          "name": "Challenging Landmark Question",
+          "inputs": {
+            "question": "Which world-famous landmark is located on the banks of the Seine River?"
+          },
+          "metadata": {
+            "difficulty": "hard",
+            "category": "Landmarks"
+          },
+          "expected_output": {
+            "answer": "Eiffel Tower",
+            "confidence": 0.9
+          },
+          "evaluators": [
+            "EqualsExpected"
+          ]
+        }
+      ]
+    }
+    """
+```
+
+1. Generate the [`Dataset`][pydantic_evals.Dataset] exactly as above.
+2. Save the dataset to a JSON file, this will also write `questions_cases_schema.json` with th JSON schema for `questions_cases.json`. This time the `$schema` key is included in the JSON file to define the schema for IDEs to use while you edit the file, there's no formal spec for this, but it works in vscode and pycharm and is discussed at length in [json-schema-org/json-schema-spec#828](https://github.com/json-schema-org/json-schema-spec/issues/828).
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_
