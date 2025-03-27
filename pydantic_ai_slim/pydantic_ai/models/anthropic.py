@@ -276,10 +276,7 @@ class AnthropicModel(Model):
             logger = logging.getLogger(__name__)
             logger.info('Anthropic response:')
             logger.info(f'type: {type(tmp)}')
-            if isinstance(tmp, AnthropicMessage):
-                logger.info(f'content: {tmp.content[0]}')
-            else:
-                logger.info(f'content: {tmp}')
+            logger.info(f'content: {tmp}')
             return tmp
 
         except APIStatusError as e:
