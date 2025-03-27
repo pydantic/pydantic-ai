@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -750,10 +751,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
 
-            if isinstance(chunk, responses.ResponseTextDeltaEvent):
-                yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=chunk.delta)
+            elif isinstance(chunk, responses.ResponseContentPartDoneEvent):
+                pass  # there's nothing we need to do here
 
-            if isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
+            elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=chunk.item_id,
                     tool_name=None,
@@ -763,7 +764,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 if maybe_event is not None:
                     yield maybe_event
 
-            if isinstance(chunk, responses.ResponseOutputItemAddedEvent):
+            elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
                 if isinstance(chunk.item, responses.ResponseFunctionToolCall):
                     yield self._parts_manager.handle_tool_call_part(
                         vendor_part_id=chunk.item.id,
@@ -771,24 +772,32 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         args=chunk.item.arguments,
                         tool_call_id=chunk.item.id,
                     )
-            if isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
-                maybe_event = self._parts_manager.handle_tool_call_delta(
-                    vendor_part_id=chunk.output_index,
-                    tool_name=None,
-                    args=chunk.delta,
-                    tool_call_id=chunk.item_id,
-                )
-                if maybe_event is not None:
-                    yield maybe_event
 
-            if isinstance(chunk, responses.ResponseOutputItemDoneEvent):
-                if isinstance(chunk.item, responses.ResponseFunctionToolCall):
-                    yield self._parts_manager.handle_tool_call_part(
-                        vendor_part_id=chunk.item.id,
-                        tool_name=chunk.item.name,
-                        args=chunk.item.arguments,
-                        tool_call_id=chunk.item.id,
-                    )
+            elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
+                # Note: We only need this if the tool call deltas don't include the final info:
+                # if isinstance(chunk.item, responses.ResponseFunctionToolCall):
+                #     yield self._parts_manager.handle_tool_call_part(
+                #         vendor_part_id=chunk.item.id,
+                #         tool_name=chunk.item.name,
+                #         args=chunk.item.arguments,
+                #         tool_call_id=chunk.item.id,
+                #     )
+                pass
+
+            elif isinstance(chunk, responses.ResponseTextDeltaEvent):
+                yield self._parts_manager.handle_text_delta(vendor_part_id=chunk.content_index, content=chunk.delta)
+
+            elif isinstance(chunk, responses.ResponseTextDoneEvent):
+                pass  # there's nothing we need to do here
+
+            else:
+                # TODO: Before merging, we should add a handler above for all event types we know how to handle,
+                #   even if nothing needs to be done. That serves as documentation for what has been considered and
+                #   what hasn't.
+                warnings.warn(
+                    f'Handling of this event type is not yet implemented. Please report on our GitHub: {chunk}',
+                    UserWarning,
+                )
 
     @property
     def model_name(self) -> OpenAIModelName:
