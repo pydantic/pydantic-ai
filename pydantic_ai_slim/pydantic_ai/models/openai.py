@@ -92,7 +92,7 @@ class OpenAIModelSettings(ModelSettings, total=False):
     result in faster responses and fewer tokens used on reasoning in a response.
     """
 
-    user: str
+    openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
 
     See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
@@ -236,7 +236,7 @@ class OpenAIModel(Model):
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
-                user=model_settings.get('user', NOT_GIVEN),
+                user=model_settings.get('openai_user', NOT_GIVEN),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
