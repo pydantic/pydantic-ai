@@ -3,6 +3,7 @@ from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
+from pydantic_ai.messages import BinaryContent, DocumentUrl, ImageUrl
 
 from ..conftest import TestEnv, try_import
 
@@ -13,6 +14,7 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
+    pytest.mark.vcr,
 ]
 
 
@@ -23,7 +25,6 @@ def test_openai_responses_model(env: TestEnv):
     assert model.system == 'openai'
 
 
-@pytest.mark.vcr()
 async def test_openai_responses_model_simple_response(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
@@ -31,7 +32,6 @@ async def test_openai_responses_model_simple_response(allow_model_requests: None
     assert result.data == snapshot('The capital of France is Paris.')
 
 
-@pytest.mark.vcr()
 async def test_openai_responses_model_simple_response_with_tool_call(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -46,7 +46,6 @@ async def test_openai_responses_model_simple_response_with_tool_call(allow_model
 
 
 @pytest.mark.xfail(reason='Need to add `additionalProperties=False` to the schema.')
-@pytest.mark.vcr()
 async def test_openai_responses_result_type(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -59,7 +58,6 @@ async def test_openai_responses_result_type(allow_model_requests: None, openai_a
     assert result.data == snapshot()
 
 
-@pytest.mark.vcr()
 async def test_openai_responses_reasoning_effort(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, model_settings=OpenAIModelSettings(openai_reasoning_effort='low'))
@@ -107,9 +105,73 @@ async def test_openai_responses_reasoning_effort(allow_model_requests: None, ope
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_responses_system_prompt(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
     result = await agent.run('What is the capital of France?')
     assert result.data == snapshot('The capital of France is Paris.')
+
+
+async def test_image_as_binary_content_input(
+    allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What fruit is in the image?', image_content])
+    assert result.data == snapshot('The fruit in the image is a kiwi.')
+
+
+async def test_openai_responses_audio_as_binary_content_input(
+    allow_model_requests: None, audio_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    with pytest.raises(NotImplementedError):
+        await agent.run(['Whose name is mentioned in the audio?', audio_content])
+
+
+async def test_openai_responses_document_as_binary_content_input(
+    allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What is in the document?', document_content])
+    assert result.data == snapshot('The document contains the text "Dummy PDF file."')
+
+
+async def test_openai_responses_document_url_input(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert result.data == snapshot('The main content of this document is a simple text placeholder: "Dummy PDF file."')
+
+
+async def test_openai_responses_text_document_url_input(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
+
+    result = await agent.run(['What is the main content on this document?', text_document_url])
+    assert result.data == snapshot(
+        'The main content of this document is an example of a TXT file type, with an explanation of the use of placeholder names like "John Doe" and "Jane Doe" in legal, medical, and other contexts. It discusses the practice in the U.S. and Canada, mentions equivalent practices in other English-speaking countries, and touches on cultural references. The document also notes that it\'s an example file created by an online conversion tool, with content sourced from Wikipedia under a Creative Commons license.'
+    )
+
+
+async def test_openai_responses_image_url_input(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'hello',
+            ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
+        ]
+    )
+    assert result.data == snapshot("Hello! I see you've shared an image of a potato. How can I assist you today?")

@@ -587,12 +587,6 @@ class OpenAIResponsesModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append(responses.ResponseInputTextParam(text=item, type='input_text'))
-                elif isinstance(item, ImageUrl):
-                    content.append(
-                        responses.ResponseInputImageParam(
-                            image_url=item.url, type='input_image', detail='auto', file_id=item.url
-                        )
-                    )
                 elif isinstance(item, BinaryContent):
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     if item.is_image:
@@ -603,16 +597,25 @@ class OpenAIResponsesModel(Model):
                                 detail='auto',
                             )
                         )
-                    elif item.is_audio:
-                        assert item.format in ('wav', 'mp3')
+                    elif item.is_document:
                         content.append(
                             responses.ResponseInputFileParam(
                                 type='input_file',
                                 file_data=f'data:{item.media_type};base64,{base64_encoded}',
+                                # NOTE: Type wise it's not necessary to include the filename, but it's required by the
+                                # API itself. If we add empty string, the server sends a 500 error - which OpenAI needs
+                                # to fix. In any case, we add a placeholder name.
+                                filename=f'filename.{item.format}',
                             )
                         )
+                    elif item.is_audio:
+                        raise NotImplementedError('Audio as binary content is not supported for OpenAI Responses API.')
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
+                elif isinstance(item, ImageUrl):
+                    content.append(
+                        responses.ResponseInputImageParam(image_url=item.url, type='input_image', detail='auto')
+                    )
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     client = cached_async_http_client()
                     response = await client.get(item.url)
@@ -629,7 +632,13 @@ class OpenAIResponsesModel(Model):
                     response = await client.get(item.url)
                     response.raise_for_status()
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    content.append(responses.ResponseInputFileParam(type='input_file', file_data=base64_encoded))
+                    content.append(
+                        responses.ResponseInputFileParam(
+                            type='input_file',
+                            file_data=f'data:{item.media_type};base64,{base64_encoded}',
+                            filename=f'filename.{item.format}',
+                        )
+                    )
                 else:
                     assert_never(item)
         return responses.EasyInputMessageParam(role='user', content=content)
