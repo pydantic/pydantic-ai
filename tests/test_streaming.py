@@ -578,6 +578,7 @@ async def test_exhaustive_strategy_executes_all_tools():
                         tool_call_id=IsStr(),
                     ),
                     RetryPromptPart(
+                        tool_name='unknown_tool',
                         content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
