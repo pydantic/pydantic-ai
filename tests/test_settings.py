@@ -1,35 +1,24 @@
+import importlib
+
 import pytest
 
-from .conftest import try_import
-
-with try_import() as imports_successful:
-    from pydantic_ai.models.anthropic import AnthropicModelSettings
-    from pydantic_ai.models.bedrock import BedrockModelSettings
-    from pydantic_ai.models.cohere import CohereModelSettings
-    from pydantic_ai.models.gemini import GeminiModelSettings
-    from pydantic_ai.models.groq import GroqModelSettings
-    from pydantic_ai.models.mistral import MistralModelSettings
-    from pydantic_ai.models.openai import OpenAIModelSettings
-    from pydantic_ai.settings import ModelSettings
-
-pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='dependencies not installed'),
-]
+from pydantic_ai.settings import ModelSettings
 
 
-@pytest.mark.parametrize(
-    'settings_cls, prefix',
-    [
-        (OpenAIModelSettings, 'openai_'),
-        (AnthropicModelSettings, 'anthropic_'),
-        (BedrockModelSettings, 'bedrock_'),
-        (GroqModelSettings, 'groq_'),
-        (GeminiModelSettings, 'gemini_'),
-        (MistralModelSettings, 'mistral_'),
-        (CohereModelSettings, 'cohere_'),
-    ],
-)
-def test_specific_prefix_settings(settings_cls: type[ModelSettings], prefix: str):
+@pytest.fixture(params=['openai_', 'anthropic_', 'bedrock_', 'groq_', 'gemini_', 'mistral_', 'cohere_'])
+def settings(request: pytest.FixtureRequest) -> tuple[type[ModelSettings], str]:
+    prefix_cls_name = request.param.replace('_', '')
+    try:
+        module = importlib.import_module(f'pydantic_ai.models.{prefix_cls_name}')
+    except ImportError:
+        pytest.skip(f'{prefix_cls_name} is not installed')
+    capitalized_prefix = prefix_cls_name.capitalize().replace('Openai', 'OpenAI')
+    cls = getattr(module, capitalized_prefix + 'ModelSettings')
+    return cls, request.param
+
+
+def test_specific_prefix_settings(settings: tuple[type[ModelSettings], str]):
+    settings_cls, prefix = settings
     global_settings = set(ModelSettings.__annotations__.keys())
     specific_settings = set(settings_cls.__annotations__.keys()) - global_settings
     assert all(setting.startswith(prefix) for setting in specific_settings), (
