@@ -29,7 +29,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import Usage
 
-from ..conftest import IsNow, raise_if_exception, try_import
+from ..conftest import IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -435,6 +435,7 @@ async def test_stream_structured(allow_model_requests: None):
                     ToolCallPart(
                         tool_name='final_result',
                         args='{"first": "One", "second": "Two"}',
+                        tool_call_id=IsStr(),
                     )
                 ],
                 model_name='llama-3.3-70b-versatile',
@@ -445,6 +446,7 @@ async def test_stream_structured(allow_model_requests: None):
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
+                        tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ]

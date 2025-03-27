@@ -39,14 +39,9 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '15'
+      - '157'
       openai-version:
       - '2020-10-01'
-      set-cookie:
-      - __cf_bm=k1xoKY2.Jtgshh4aAfJbgzfCta3eg2_pKpOubx52AqY-1740396355-1.0.1.1-piAnJhOpL2bGY4paQ8VURT3k0nvStOyXvtsja2kOYPgRmSNpE1vUf87UU.AnB_di_8lc63rtIkZjSJSSZPPgDQ;
-        path=/; expires=Mon, 24-Feb-25 11:55:55 GMT; domain=.api.openai.com; HttpOnly; Secure; SameSite=None
-      - _cfuvid=9Q7wbAVWuVxqmo8CZYy4FZvphfjrBGzqwRIt0TKETsE-1740396355005-0.0.1.1-604800000; path=/; domain=.api.openai.com;
-        HttpOnly; Secure; SameSite=None
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
     parsed_body:

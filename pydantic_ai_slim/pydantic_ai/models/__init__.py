@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import httpx
 from typing_extensions import Literal
@@ -133,8 +133,6 @@ KnownModelName = Literal[
     'gpt-4-turbo-2024-04-09',
     'gpt-4-turbo-preview',
     'gpt-4-vision-preview',
-    'gpt-4.5-preview',
-    'gpt-4.5-preview-2025-02-27',
     'gpt-4o',
     'gpt-4o-2024-05-13',
     'gpt-4o-2024-08-06',
@@ -146,6 +144,10 @@ KnownModelName = Literal[
     'gpt-4o-mini-2024-07-18',
     'gpt-4o-mini-audio-preview',
     'gpt-4o-mini-audio-preview-2024-12-17',
+    'gpt-4o-mini-search-preview',
+    'gpt-4o-mini-search-preview-2025-03-11',
+    'gpt-4o-search-preview',
+    'gpt-4o-search-preview-2025-03-11',
     'groq:gemma2-9b-it',
     'groq:llama-3.1-8b-instant',
     'groq:llama-3.2-11b-vision-preview',
@@ -189,8 +191,6 @@ KnownModelName = Literal[
     'openai:gpt-4-turbo-2024-04-09',
     'openai:gpt-4-turbo-preview',
     'openai:gpt-4-vision-preview',
-    'openai:gpt-4.5-preview',
-    'openai:gpt-4.5-preview-2025-02-27',
     'openai:gpt-4o',
     'openai:gpt-4o-2024-05-13',
     'openai:gpt-4o-2024-08-06',
@@ -202,6 +202,10 @@ KnownModelName = Literal[
     'openai:gpt-4o-mini-2024-07-18',
     'openai:gpt-4o-mini-audio-preview',
     'openai:gpt-4o-mini-audio-preview-2024-12-17',
+    'openai:gpt-4o-mini-search-preview',
+    'openai:gpt-4o-mini-search-preview-2025-03-11',
+    'openai:gpt-4o-search-preview',
+    'openai:gpt-4o-search-preview-2025-03-11',
     'openai:o1',
     'openai:o1-2024-12-17',
     'openai:o1-mini',
@@ -379,6 +383,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
 
     try:
         provider, model_name = model.split(':', maxsplit=1)
+        provider = cast(str, provider)
     except ValueError:
         model_name = model
         # TODO(Marcelo): We should deprecate this way.
@@ -397,8 +402,7 @@ def infer_model(model: Model | KnownModelName) -> Model:
     if provider == 'cohere':
         from .cohere import CohereModel
 
-        # TODO(Marcelo): Missing provider API.
-        return CohereModel(model_name)
+        return CohereModel(model_name, provider=provider)
     elif provider in ('deepseek', 'openai'):
         from .openai import OpenAIModel
 
@@ -410,50 +414,56 @@ def infer_model(model: Model | KnownModelName) -> Model:
     elif provider == 'groq':
         from .groq import GroqModel
 
-        # TODO(Marcelo): Missing provider API.
-        return GroqModel(model_name)
+        return GroqModel(model_name, provider=provider)
     elif provider == 'mistral':
         from .mistral import MistralModel
 
-        # TODO(Marcelo): Missing provider API.
-        return MistralModel(model_name)
+        return MistralModel(model_name, provider=provider)
     elif provider == 'anthropic':
         from .anthropic import AnthropicModel
 
-        # TODO(Marcelo): Missing provider API.
-        return AnthropicModel(model_name)
+        return AnthropicModel(model_name, provider=provider)
     elif provider == 'bedrock':
         from .bedrock import BedrockConverseModel
 
-        return BedrockConverseModel(model_name)
+        return BedrockConverseModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')
 
 
-def cached_async_http_client(timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
-    """Cached HTTPX async client so multiple agents and calls can share the same client.
+def cached_async_http_client(*, provider: str | None = None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
+    """Cached HTTPX async client that creates a separate client for each provider.
+
+    The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
+    requests (like downloading images). Multiple agents and calls can share the same client when they use the same provider.
 
     There are good reasons why in production you should use a `httpx.AsyncClient` as an async context manager as
     described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
-    examples, it's very useful not to, this allows multiple Agents to use a single client.
+    examples, it's very useful not to.
 
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
-    client = _cached_async_http_client(timeout=timeout, connect=connect)
+    client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
     if client.is_closed:
         # This happens if the context manager is used, so we need to create a new client.
         _cached_async_http_client.cache_clear()
-        client = _cached_async_http_client(timeout=timeout, connect=connect)
+        client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
     return client
 
 
 @cache
-def _cached_async_http_client(timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
+def _cached_async_http_client(provider: str | None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
     return httpx.AsyncClient(
+        transport=_cached_async_http_transport(),
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
     )
+
+
+@cache
+def _cached_async_http_transport() -> httpx.AsyncHTTPTransport:
+    return httpx.AsyncHTTPTransport()
 
 
 @cache

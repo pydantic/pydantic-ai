@@ -87,7 +87,10 @@ print(dice_result.all_messages())
     ModelResponse(
         parts=[
             ToolCallPart(
-                tool_name='roll_die', args={}, tool_call_id=None, part_kind='tool-call'
+                tool_name='roll_die',
+                args={},
+                tool_call_id='pyd_ai_tool_call_id',
+                part_kind='tool-call',
             )
         ],
         model_name='gemini-1.5-flash',
@@ -99,7 +102,7 @@ print(dice_result.all_messages())
             ToolReturnPart(
                 tool_name='roll_die',
                 content='4',
-                tool_call_id=None,
+                tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
                 part_kind='tool-return',
             )
@@ -111,7 +114,7 @@ print(dice_result.all_messages())
             ToolCallPart(
                 tool_name='get_player_name',
                 args={},
-                tool_call_id=None,
+                tool_call_id='pyd_ai_tool_call_id',
                 part_kind='tool-call',
             )
         ],
@@ -124,7 +127,7 @@ print(dice_result.all_messages())
             ToolReturnPart(
                 tool_name='get_player_name',
                 content='Anne',
-                tool_call_id=None,
+                tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
                 part_kind='tool-return',
             )

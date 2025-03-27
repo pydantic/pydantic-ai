@@ -37,7 +37,7 @@ except ImportError as _import_error:
 from pydantic_ai.agent import Agent
 from pydantic_ai.messages import ModelMessage, PartDeltaEvent, TextPartDelta
 
-__version__ = version('pydantic-ai')
+__version__ = version('pydantic-ai-slim')
 
 
 class SimpleCodeBlock(CodeBlock):

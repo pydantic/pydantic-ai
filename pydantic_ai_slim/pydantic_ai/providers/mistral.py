@@ -5,7 +5,9 @@ from typing import overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.providers import Provider
 
 try:
     from mistralai import Mistral
@@ -14,9 +16,6 @@ except ImportError as e:  # pragma: no cover
         'Please install the `mistral` package to use the Mistral provider, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
     ) from e
-
-
-from . import Provider
 
 
 class MistralProvider(Provider[Mistral]):
@@ -62,12 +61,13 @@ class MistralProvider(Provider[Mistral]):
         else:
             api_key = api_key or os.environ.get('MISTRAL_API_KEY')
 
-            if api_key is None:
-                raise ValueError(
+            if not api_key:
+                raise UserError(
                     'Set the `MISTRAL_API_KEY` environment variable or pass it via `MistralProvider(api_key=...)`'
                     'to use the Mistral provider.'
                 )
             elif http_client is not None:
                 self._client = Mistral(api_key=api_key, async_client=http_client)
             else:
-                self._client = Mistral(api_key=api_key, async_client=cached_async_http_client())
+                http_client = cached_async_http_client(provider='mistral')
+                self._client = Mistral(api_key=api_key, async_client=http_client)
