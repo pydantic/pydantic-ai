@@ -1233,6 +1233,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
+                            tool_name='unknown_tool',
                             content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),

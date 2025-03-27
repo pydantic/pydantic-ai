@@ -699,7 +699,7 @@ async def test_early_strategy_with_final_result_in_middle():
                         "'unknown_tool'. Available tools: "
                         'regular_tool, another_tool, '
                         'final_result',
-                        tool_name=None,
+                        tool_name='unknown_tool',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='retry-prompt',
