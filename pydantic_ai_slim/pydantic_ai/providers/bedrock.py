@@ -82,7 +82,7 @@ class BedrockProvider(Provider[BaseClient]):
                     region_name=region_name,
                     config=Config(
                         read_timeout=aws_read_timeout
-                        or float(os.getenv('AWS_READ_TIMEOUT', 300)),  # Need more time for big tool call
+                        or float(os.getenv('AWS_READ_TIMEOUT', 300)),  # Need more time for long tool call
                         connect_timeout=aws_connect_timeout
                         or float(os.getenv('AWS_CONNECT_TIMEOUT', 60)),  # Boto3 use 60 as default
                     ),
