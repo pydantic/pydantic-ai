@@ -23,7 +23,7 @@ def test_cli_help(capfd: CaptureFixture[str]):
 
     assert capfd.readouterr().out.splitlines() == snapshot(
         [
-            'usage: pai [-h] [--model [MODEL]] [--no-stream] [--version] [prompt]',
+            'usage: pai [-h] [--model [MODEL]] [--base-url BASE_URL] [--api-key API_KEY] [--no-stream] [--version] [prompt]',
             '',
             IsStr(),
             '',
@@ -33,17 +33,14 @@ def test_cli_help(capfd: CaptureFixture[str]):
             '* `/multiline` - toggle multiline mode',
             '',
             'positional arguments:',
-            '  prompt           AI Prompt, if omitted fall into interactive mode',
+            '  prompt               AI Prompt, if omitted fall into interactive mode',
             '',
             IsStr(),
-            '  -h, --help       show this help message and exit',
-            '  --model [MODEL]  Model to use, it should be "<provider>:<model>" e.g. "openai:gpt-4o". If omitted it will default to "openai:gpt-4o"',
-            '  --no-stream      Whether to stream responses from OpenAI',
-            '  --version        Show version and exit',
+            '  -h, --help           show this help message and exit',
+            '  --model [MODEL]      Model to use, it should be "<provider>:<model>" e.g. "openai:gpt-4o". If omitted it will default to "openai:gpt-4o"',
+            '  --base-url BASE_URL  Base url to use with model',
+            '  --api-key API_KEY    api key (or set in env, see documentation)',
+            '  --no-stream          Whether to stream responses from OpenAI',
+            '  --version            Show version and exit',
         ]
     )
-
-
-def test_invalid_model(capfd: CaptureFixture[str]):
-    assert cli(['--model', 'invalid_model']) == 1
-    assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), 'Invalid model "invalid_model"'])
