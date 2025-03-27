@@ -261,3 +261,19 @@ async def test_openai_responses_image_url_input(allow_model_requests: None, open
         ]
     )
     assert result.data == snapshot("Hello! I see you've shared an image of a potato. How can I assist you today?")
+
+
+async def test_openai_responses_stream(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    @agent.tool_plain
+    async def get_capital(country: str) -> str:
+        return 'Paris'
+
+    output_text: list[str] = []
+    async with agent.run_stream('What is the capital of France?') as result:
+        async for output in result.stream_text():
+            output_text.append(output)
+
+    assert output_text == snapshot(['The capital of France is Paris.'])

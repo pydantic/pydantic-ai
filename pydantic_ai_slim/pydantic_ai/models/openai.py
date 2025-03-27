@@ -252,7 +252,7 @@ class OpenAIModel(Model):
             items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
-                items.append(ToolCallPart(c.function.name, c.function.arguments, c.id))
+                items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
         return ModelResponse(items, model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
@@ -448,9 +448,23 @@ class OpenAIResponsesModel(Model):
     ) -> tuple[ModelResponse, usage.Usage]:
         check_allow_model_requests()
         response = await self._responses_create(
-            messages, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+            messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
         )
         return self._process_response(response), _map_usage(response)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncIterator[StreamedResponse]:
+        check_allow_model_requests()
+        response = await self._responses_create(
+            messages, True, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+        )
+        async with response:
+            yield await self._process_streamed_response(response)
 
     def _process_response(self, response: responses.Response) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -462,12 +476,47 @@ class OpenAIResponsesModel(Model):
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
         return ModelResponse(items, model_name=response.model, timestamp=timestamp)
 
+    async def _process_streamed_response(
+        self, response: AsyncStream[responses.ResponseStreamEvent]
+    ) -> OpenAIResponsesStreamedResponse:
+        """Process a streamed response, and prepare a streaming response to return."""
+        peekable_response = _utils.PeekableAsyncStream(response)
+        first_chunk = await peekable_response.peek()
+        if isinstance(first_chunk, _utils.Unset):
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+
+        assert isinstance(first_chunk, responses.ResponseCreatedEvent)
+        return OpenAIResponsesStreamedResponse(
+            _model_name=self._model_name,
+            _response=peekable_response,
+            _timestamp=datetime.fromtimestamp(first_chunk.response.created_at, tz=timezone.utc),
+        )
+
+    @overload
     async def _responses_create(
         self,
         messages: list[ModelRequest | ModelResponse],
+        stream: Literal[False],
         model_settings: OpenAIModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response:
+    ) -> responses.Response: ...
+
+    @overload
+    async def _responses_create(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        stream: Literal[True],
+        model_settings: OpenAIModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncStream[responses.ResponseStreamEvent]: ...
+
+    async def _responses_create(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        stream: bool,
+        model_settings: OpenAIModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
         tools = self._get_tools(model_request_parameters)
 
         # standalone function to make it easier to override
@@ -495,6 +544,7 @@ class OpenAIResponsesModel(Model):
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
                 max_output_tokens=model_settings.get('max_tokens', NOT_GIVEN),
+                stream=stream,
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
@@ -675,6 +725,70 @@ class OpenAIStreamedResponse(StreamedResponse):
                 )
                 if maybe_event is not None:
                     yield maybe_event
+
+    @property
+    def model_name(self) -> OpenAIModelName:
+        """Get the model name of the response."""
+        return self._model_name
+
+    @property
+    def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
+        return self._timestamp
+
+
+@dataclass
+class OpenAIResponsesStreamedResponse(StreamedResponse):
+    """Implementation of `StreamedResponse` for OpenAI Responses API."""
+
+    _model_name: OpenAIModelName
+    _response: AsyncIterable[responses.ResponseStreamEvent]
+    _timestamp: datetime
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        async for chunk in self._response:
+            if isinstance(chunk, responses.ResponseCompletedEvent):
+                self._usage += _map_usage(chunk.response)
+
+            if isinstance(chunk, responses.ResponseTextDeltaEvent):
+                yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=chunk.delta)
+
+            if isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
+                maybe_event = self._parts_manager.handle_tool_call_delta(
+                    vendor_part_id=chunk.item_id,
+                    tool_name=None,
+                    args=chunk.delta,
+                    tool_call_id=chunk.item_id,
+                )
+                if maybe_event is not None:
+                    yield maybe_event
+
+            if isinstance(chunk, responses.ResponseOutputItemAddedEvent):
+                if isinstance(chunk.item, responses.ResponseFunctionToolCall):
+                    yield self._parts_manager.handle_tool_call_part(
+                        vendor_part_id=chunk.item.id,
+                        tool_name=chunk.item.name,
+                        args=chunk.item.arguments,
+                        tool_call_id=chunk.item.id,
+                    )
+            if isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
+                maybe_event = self._parts_manager.handle_tool_call_delta(
+                    vendor_part_id=chunk.output_index,
+                    tool_name=None,
+                    args=chunk.delta,
+                    tool_call_id=chunk.item_id,
+                )
+                if maybe_event is not None:
+                    yield maybe_event
+
+            if isinstance(chunk, responses.ResponseOutputItemDoneEvent):
+                if isinstance(chunk.item, responses.ResponseFunctionToolCall):
+                    yield self._parts_manager.handle_tool_call_part(
+                        vendor_part_id=chunk.item.id,
+                        tool_name=chunk.item.name,
+                        args=chunk.item.arguments,
+                        tool_call_id=chunk.item.id,
+                    )
 
     @property
     def model_name(self) -> OpenAIModelName:
