@@ -64,6 +64,7 @@ def test_docs_examples(  # noqa: C901
     eval_example: EvalExample,
     mocker: MockerFixture,
     client_with_handler: ClientWithHandler,
+    allow_model_requests: None,
     env: TestEnv,
     tmp_path: Path,
 ):
@@ -227,6 +228,7 @@ text_responses: dict[str, str | ToolCallPart] = {
     'I bet five is the winner': ToolCallPart(
         tool_name='roulette_wheel', args={'square': 5}, tool_call_id='pyd_ai_tool_call_id'
     ),
+    'My guess is 6': ToolCallPart(tool_name='roll_die', args={}, tool_call_id='pyd_ai_tool_call_id'),
     'My guess is 4': ToolCallPart(tool_name='roll_die', args={}, tool_call_id='pyd_ai_tool_call_id'),
     'Send a message to John Doe asking for coffee next week': ToolCallPart(
         tool_name='get_user_by_name', args={'name': 'John'}
@@ -374,7 +376,10 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             parts=[ToolCallPart(tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
-        return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
+        if 'Anne' in m.content:
+            return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
+        elif 'Yashar' in m.content:
+            return ModelResponse(parts=[TextPart('Tough luck, Yashar, you rolled a 4. Better luck next time.')])
     if (
         isinstance(m, RetryPromptPart)
         and isinstance(m.content, str)
