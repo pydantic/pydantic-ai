@@ -1,11 +1,25 @@
+import json
+
 import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.messages import BinaryContent, DocumentUrl, ImageUrl
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import (
+    BinaryContent,
+    DocumentUrl,
+    ImageUrl,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
-from ..conftest import TestEnv, try_import
+from ..conftest import IsDatetime, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIModelSettings, OpenAIResponsesModel
@@ -55,7 +69,7 @@ async def test_openai_responses_result_type(allow_model_requests: None, openai_a
 
     agent = Agent(model=model, result_type=MyResult)
     result = await agent.run('Give me the name and age of Brazil, Argentina, and Chile.')
-    assert result.data == snapshot()
+    assert result.data == snapshot()  # pragma: no cover
 
 
 async def test_openai_responses_reasoning_effort(allow_model_requests: None, openai_api_key: str):
@@ -110,6 +124,78 @@ async def test_openai_responses_system_prompt(allow_model_requests: None, openai
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
     result = await agent.run('What is the capital of France?')
     assert result.data == snapshot('The capital of France is Paris.')
+
+
+async def test_openai_responses_model_retry(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    @agent.tool_plain
+    async def get_location(loc_name: str) -> str:
+        if loc_name == 'London':
+            return json.dumps({'lat': 51, 'lng': 0})
+        else:
+            raise ModelRetry('Wrong location, I only know about "London".')
+
+    result = await agent.run('What is the location of Londos and London?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the location of Londos and London?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content=''),
+                    ToolCallPart(
+                        tool_name='get_location',
+                        args='{"loc_name":"Londos"}',
+                        tool_call_id=IsStr(),
+                    ),
+                    ToolCallPart(
+                        tool_name='get_location',
+                        args='{"loc_name":"London"}',
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Wrong location, I only know about "London".',
+                        tool_name='get_location',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_location',
+                        content='{"lat": 51, "lng": 0}',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+It seems "Londos" might be incorrect or unknown. If you meant something else, please clarify.
+
+For **London**, it's located at approximately latitude 51° N and longitude 0° W.\
+"""
+                    )
+                ],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
 
 
 async def test_image_as_binary_content_input(
