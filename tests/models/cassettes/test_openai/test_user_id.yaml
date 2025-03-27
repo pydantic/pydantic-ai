@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '86'
+      - '103'
       content-type:
       - application/json
       host:
@@ -21,6 +21,7 @@ interactions:
       model: gpt-4o
       n: 1
       stream: false
+      user: user_id
     uri: https://api.openai.com/v1/chat/completions
   response:
     headers:
@@ -37,7 +38,7 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '321'
+      - '584'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -54,8 +55,8 @@ interactions:
           content: Hello! How can I assist you today?
           refusal: null
           role: assistant
-      created: 1743073372
-      id: chatcmpl-BFfIa2qMUvkkRazpNrkViWm6PlQK5
+      created: 1743073438
+      id: chatcmpl-BFfJeRdAVFPUVWxV3OYH1tSR5KvrI
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
