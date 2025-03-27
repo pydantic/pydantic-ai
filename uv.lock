@@ -1453,7 +1453,7 @@ wheels = [
 
 [[package]]
 name = "logfire"
-version = "3.6.1"
+version = "3.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "executing" },
@@ -1465,9 +1465,9 @@ dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/30/68/50cecae912663b3ff606f24ee4090794bc5a9bb55fc68f25c1a3df8e3b77/logfire-3.6.1.tar.gz", hash = "sha256:93b11d94ad1a19a8bfc1fd97b40ecc3c919a3edc6a5e51cb2a153e64cd04aa9e", size = 268682 }
+sdist = { url = "https://files.pythonhosted.org/packages/38/06/fcde41240092e5b28f4a213da653f773441fe9ac1cbbc59d45b16e691a15/logfire-3.11.0.tar.gz", hash = "sha256:2ce9e58d6a7eb6fb9888fe12464d2284d16479e49ade766846fcb84e1c4a1abe", size = 464360 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/76/48/58089aba35ececf61a0dd78fd527d6c80af281c80df56ceb60c29afbc04b/logfire-3.6.1-py3-none-any.whl", hash = "sha256:de8d7d9e21b292b0fb5cc653a2d6b93be33828ba9e5b2645d09135a7ffbdbf1e", size = 180970 },
+    { url = "https://files.pythonhosted.org/packages/66/64/8bfc71ef2fa44190e7a8b10c3aabddf72df2944a0bce04bbe27a500566ac/logfire-3.11.0-py3-none-any.whl", hash = "sha256:bd20e697030510cfc834b1805945b1ad62ac057679d01d13579ed2f454f0e979", size = 190143 },
 ]
 
 [package.optional-dependencies]
@@ -2820,7 +2820,7 @@ lint = [
 
 [package.metadata]
 requires-dist = [
-    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
+    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.11.0" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
     { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral", "cohere", "bedrock", "cli", "mcp", "evals"], editable = "pydantic_ai_slim" },
 ]
@@ -2968,7 +2968,7 @@ requires-dist = [
     { name = "griffe", specifier = ">=1.3.2" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.15.0" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
+    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.11.0" },
     { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.4.1" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.67.0" },

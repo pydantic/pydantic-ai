@@ -91,7 +91,10 @@ Since [the Mistral docs](https://docs.mistral.ai/getting-started/models/models_o
 
 
 class MistralModelSettings(ModelSettings):
-    """Settings used for a Mistral model request."""
+    """Settings used for a Mistral model request.
+
+    ALL FIELDS MUST BE `mistral_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
 
     # This class is a placeholder for any future mistral-specific settings
 
