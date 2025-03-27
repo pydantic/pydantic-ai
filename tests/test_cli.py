@@ -23,7 +23,7 @@ def test_cli_help(capfd: CaptureFixture[str]):
 
     assert capfd.readouterr().out.splitlines() == snapshot(
         [
-            'usage: pai [-h] [--model [MODEL]] [--no-stream] [--version] [prompt]',
+            'usage: pai [-h] [--model [MODEL]] [--list-models] [--no-stream] [--version] [prompt]',
             '',
             IsStr(),
             '',
@@ -38,6 +38,7 @@ def test_cli_help(capfd: CaptureFixture[str]):
             IsStr(),
             '  -h, --help       show this help message and exit',
             '  --model [MODEL]  Model to use, it should be "<provider>:<model>" e.g. "openai:gpt-4o". If omitted it will default to "openai:gpt-4o"',
+            '  --list-models    List all available models and exit',
             '  --no-stream      Whether to stream responses from OpenAI',
             '  --version        Show version and exit',
         ]
