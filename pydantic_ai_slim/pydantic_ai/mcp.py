@@ -188,11 +188,35 @@ class MCPServerHTTP(MCPServer):
     For example for a server running locally, this might be `http://localhost:3001/sse`.
     """
 
+    headers: dict[str, Any] | None = None
+    """Optional HTTP headers to be sent with each request to the SSE endpoint.
+
+    These headers will be passed directly to the underlying `httpx.AsyncClient`.
+    Useful for authentication, custom headers, or other HTTP-specific configurations.
+    """
+
+    timeout: float = 5
+    """Initial connection timeout in seconds for establishing the SSE connection.
+
+    This timeout applies to the initial connection setup and handshake.
+    If the connection cannot be established within this time, the operation will fail.
+    """
+
+    sse_read_timeout: float = 60 * 5
+    """Maximum time in seconds to wait for new SSE messages before timing out.
+
+    This timeout applies to the long-lived SSE connection after it's established.
+    If no new messages are received within this time, the connection will be considered stale
+    and may be closed. Defaults to 5 minutes (300 seconds).
+    """
+
     @asynccontextmanager
     async def client_streams(
         self,
     ) -> AsyncIterator[
         tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
     ]:  # pragma: no cover
-        async with sse_client(url=self.url) as (read_stream, write_stream):
+        async with sse_client(
+            url=self.url, headers=self.headers, timeout=self.timeout, sse_read_timeout=self.sse_read_timeout
+        ) as (read_stream, write_stream):
             yield read_stream, write_stream

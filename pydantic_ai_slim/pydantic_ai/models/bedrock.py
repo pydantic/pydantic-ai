@@ -143,14 +143,15 @@ class BedrockConverseModel(Model):
             model_name: The name of the model to use.
             model_name: The name of the Bedrock model to use. List of model names available
                 [here](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html).
-            provider: The provider to use. Defaults to `'bedrock'`.
+            provider: The provider to use for authentication and API access. Can be either the string
+                'bedrock' or an instance of `Provider[BaseClient]`. If not provided, a new provider will be
+                created using the other parameters.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
-            self.client = infer_provider(provider).client
-        else:
-            self.client = cast('BedrockRuntimeClient', provider.client)
+            provider = infer_provider(provider)
+        self.client = cast('BedrockRuntimeClient', provider.client)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
@@ -345,7 +346,7 @@ class BedrockConverseModel(Model):
                         content.append({'text': item.content})
                     else:
                         assert isinstance(item, ToolCallPart)
-                        content.append(self._map_tool_call(item))  # FIXME: MISSING key
+                        content.append(self._map_tool_call(item))
                 bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
                 assert_never(m)
@@ -395,11 +396,7 @@ class BedrockConverseModel(Model):
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
         return {
-            'toolUse': {
-                'toolUseId': _utils.guard_tool_call_id(t=t),
-                'name': t.tool_name,
-                'input': t.args_as_dict(),
-            }
+            'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
         }
 
 
