@@ -707,5 +707,5 @@ async def test_user_id(allow_model_requests: None, openai_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `user` don't cause errors, including type.
     # Since we use VCR, creating tests with an `httpx.Transport` is not possible.
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(m, model_settings=OpenAIModelSettings(user='user_id'))
+    agent = Agent(m, model_settings=OpenAIModelSettings(openai_user='user_id'))
     await agent.run('hello')
