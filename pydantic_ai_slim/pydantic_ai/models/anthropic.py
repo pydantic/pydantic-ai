@@ -256,7 +256,7 @@ class AnthropicModel(Model):
             system_prompt = [TextBlockParam(**s) for s in system_prompt]
 
         try:
-            return await self.client.messages.create(
+            tmp = await self.client.messages.create(
                 max_tokens=model_settings.get('max_tokens', 1024),
                 system=system_prompt or NOT_GIVEN,
                 messages=anthropic_messages,
@@ -269,6 +269,19 @@ class AnthropicModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
             )
+            import logging
+
+            # save logs to a file
+            logging.basicConfig(filename='/efs/pydantic_ai_anthropic.log', level=logging.DEBUG)
+            logger = logging.getLogger(__name__)
+            logger.info('Anthropic response:')
+            logger.info(f'type: {type(tmp)}')
+            if isinstance(tmp, AnthropicMessage):
+                logger.info(f'content: {tmp.content[0]}')
+            else:
+                logger.info(f'content: {tmp}')
+            return tmp
+
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
