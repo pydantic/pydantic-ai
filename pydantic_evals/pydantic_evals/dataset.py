@@ -24,7 +24,7 @@ from typing import Any, Callable, Generic, Literal, Union, cast
 import anyio
 import logfire_api
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_serializer, with_config
 from pydantic._internal import _typing_extra
 from pydantic_core import to_json, to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
@@ -575,9 +575,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
             def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
                 td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
-                config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
-                # TODO: Replace with pydantic.with_config after pydantic 2.11 is released
-                td.__pydantic_config__ = config  # pyright: ignore[reportAttributeAccessIssue]
+                td = with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(td)
                 return td
 
             # Shortest form: just the call name

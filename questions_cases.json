@@ -1,0 +1,39 @@
+{
+  "$schema": "questions_cases_schema.json",
+  "cases": [
+    {
+      "name": "Easy Capital Question",
+      "inputs": {
+        "question": "What is the capital of France?"
+      },
+      "metadata": {
+        "difficulty": "easy",
+        "category": "Geography"
+      },
+      "expected_output": {
+        "answer": "Paris",
+        "confidence": 0.95
+      },
+      "evaluators": [
+        "EqualsExpected"
+      ]
+    },
+    {
+      "name": "Challenging Landmark Question",
+      "inputs": {
+        "question": "Which world-famous landmark is located on the banks of the Seine River?"
+      },
+      "metadata": {
+        "difficulty": "hard",
+        "category": "Landmarks"
+      },
+      "expected_output": {
+        "answer": "Eiffel Tower",
+        "confidence": 0.9
+      },
+      "evaluators": [
+        "EqualsExpected"
+      ]
+    }
+  ]
+}

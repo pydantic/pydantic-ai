@@ -36,7 +36,7 @@ requires-python = ">=3.9"
 dependencies = [
     "rich>=13.9.4",
     "logfire-api>=1.2.0",
-    "pydantic>=2.10",
+    "pydantic>=2.11",
     "anyio>=0",
     "eval-type-backport>=0; python_version < '3.11'",
 ]

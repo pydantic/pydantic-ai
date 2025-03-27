@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Union, cast
+from typing import Any, Union, cast
 
 from pydantic import (
     BaseModel,
+    ModelWrapValidatorHandler,
     RootModel,
     ValidationError,
     field_validator,
@@ -13,11 +14,6 @@ from pydantic import (
     model_validator,
 )
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
-
-if TYPE_CHECKING:
-    # This import seems to fail on Pydantic 2.10.1 in CI
-    from pydantic import ModelWrapValidatorHandler
-    # TODO: Try removing this when we update to pydantic 2.11
 
 
 class EvaluatorSpec(BaseModel):
