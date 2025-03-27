@@ -1,0 +1,71 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '457'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: Give me the name and age of Brazil, Argentina, and Chile.
+        role: user
+      instructions: ''
+      model: gpt-4o
+      tool_choice: required
+      tools:
+      - description: The final response which ends this conversation
+        name: final_result
+        parameters:
+          properties:
+            age:
+              title: Age
+              type: integer
+            name:
+              title: Name
+              type: string
+          required:
+          - name
+          - age
+          title: MyResult
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '279'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '22'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      error:
+        code: invalid_function_parameters
+        message: 'Invalid schema for function ''final_result'': In context=(), ''additionalProperties'' is required to be
+          supplied and to be false.'
+        param: tools[0].parameters
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+version: 1

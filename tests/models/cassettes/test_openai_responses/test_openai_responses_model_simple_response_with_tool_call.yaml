@@ -48,7 +48,7 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '586'
+      - '666'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -56,9 +56,9 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1743072656
+      created_at: 1743075630
       error: null
-      id: resp_67e52d90176c819180bd8b6823aff4c7093f95c20016a37e
+      id: resp_67e5392eae34819184408ee7e23f50160aa13be256b050b4
       incomplete_details: null
       instructions: ''
       max_output_tokens: null
@@ -67,8 +67,8 @@ interactions:
       object: response
       output:
       - arguments: '{"country":"PotatoLand"}'
-        call_id: call_61cRAI5gleGxCN89umufHn2a
-        id: fc_67e52d9092bc81919a2b08c7d037eb68093f95c20016a37e
+        call_id: call_Zmx4ZiPQOvoNEhLgG16TO3nx
+        id: fc_67e5392f33ac8191b215eeff4f9931f80aa13be256b050b4
         name: get_capital
         status: completed
         type: function_call
@@ -124,8 +124,8 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=HbecOMmJdsx9yO1OorgiMttSFJv6ddiAhN.pWVqLt8Q-1743072656-1.0.1.1-HNU3kmBPG5EoiWy1v37kW8puX3fllYr9BD.3oJgaIMxWOyW2YLHjZ_udNRud3w09lgLTdnyjDKmywzmqNw.3Qza0bbzBJUYvlCkohIVuy_Y;
-        _cfuvid=ZD_Nns._QCgWHACI8ap9Os8nhlJdmt2oLKJOfkSAZgc-1743072656703-0.0.1.1-604800000
+      - __cf_bm=vVsJhB9A9X9_43ZZ4_DPKFw_dO0SSxBWEhx4UiGncwQ-1743075631-1.0.1.1-N3mdrI4LFgBBnd_XI5x81Q5KKuykqiNo8wFt1XpgnPkVX0ISneJo_Yh1B3ZyfLeI5LaMdhMxhGB6wOfgrg4pP9f33KlF4C8grewNF05MpKw;
+        _cfuvid=vB6MpPuauumuSrL6beYNRLXeNQt2_XZpKzom2c97AFI-1743075631374-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -136,10 +136,10 @@ interactions:
       - content: ''
         role: assistant
       - arguments: '{"country":"PotatoLand"}'
-        call_id: call_61cRAI5gleGxCN89umufHn2a
+        call_id: call_Zmx4ZiPQOvoNEhLgG16TO3nx
         name: get_capital
         type: function_call
-      - call_id: call_61cRAI5gleGxCN89umufHn2a
+      - call_id: call_Zmx4ZiPQOvoNEhLgG16TO3nx
         output: Potato City
         type: function_call_output
       instructions: ''
@@ -172,7 +172,7 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '477'
+      - '470'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -180,9 +180,9 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1743072656
+      created_at: 1743075631
       error: null
-      id: resp_67e52d90d50c81918b6b4f637e7869fe0239062169b1b126
+      id: resp_67e5392f80808191affe6ff7af237dba0b8eafaa14d24d42
       incomplete_details: null
       instructions: ''
       max_output_tokens: null
@@ -194,7 +194,7 @@ interactions:
         - annotations: []
           text: The capital of PotatoLand is Potato City.
           type: output_text
-        id: msg_67e52d9130c081918ed389a3b5a2862b0239062169b1b126
+        id: msg_67e5392fd7b4819190bec4e770968a9d0b8eafaa14d24d42
         role: assistant
         status: completed
         type: message

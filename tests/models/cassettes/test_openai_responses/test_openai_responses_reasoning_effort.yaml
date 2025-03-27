@@ -1,0 +1,110 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '195'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: Explain me how to cook uruguayan alfajor. Do not send whitespaces at the end of the lines.
+        role: user
+      instructions: ''
+      model: o3-mini
+      reasoning:
+        effort: low
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3127'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '6575'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1743075632
+      error: null
+      id: resp_67e5393080ec81918116f16210e1395c0e395386ebcf3a62
+      incomplete_details: null
+      instructions: ''
+      max_output_tokens: null
+      metadata: {}
+      model: o3-mini-2025-01-31
+      object: response
+      output:
+      - id: rs_67e539329f808191ae793066c0ee20800e395386ebcf3a62
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          text: "Ingredients for the dough:\n• 300 g cornstarch  \n• 200 g flour  \n• 150 g powdered sugar  \n• 200 g unsalted
+            butter  \n• 3 egg yolks  \n• Zest of 1 lemon  \n• 1 teaspoon vanilla extract  \n• A pinch of salt  \n\nIngredients
+            for the filling (dulce de leche):\n• 400 g dulce de leche  \n\nOptional coating:\n• Powdered sugar for dusting
+            \ \n• Grated coconut  \n• Crushed peanuts or walnuts  \n• Melted chocolate\n\nSteps:\n1. In a bowl, mix together
+            the cornstarch, flour, powdered sugar, and salt.\n2. Add the unsalted butter cut into small pieces. Work it into
+            the dry ingredients until the mixture resembles coarse breadcrumbs.\n3. Incorporate the egg yolks, lemon zest,
+            and vanilla extract. Mix until you obtain a smooth and homogeneous dough.\n4. Wrap the dough in plastic wrap and
+            let it rest in the refrigerator for at least one hour.\n5. Meanwhile, prepare a clean workspace by lightly dusting
+            it with flour.\n6. Roll out the dough on the working surface until it is about 0.5 cm thick.\n7. Use a round cutter
+            (approximately 3-4 cm in diameter) to cut out circles. Re-roll any scraps to maximize the number of cookies.\n8.
+            Arrange the circles on a baking sheet lined with parchment paper.\n9. Preheat the oven to 180°C (350°F) and bake
+            the cookies for about 10-12 minutes until they are lightly golden at the edges. They should remain soft.\n10.
+            Remove the cookies from the oven and allow them to cool completely on a rack.\n11. Once the cookies are cool,
+            spread dulce de leche on the flat side of one cookie and sandwich it with another.\n12. If desired, roll the edges
+            of the alfajores in powdered sugar, grated coconut, crushed nuts, or dip them in melted chocolate.\n13. Allow
+            any coatings to set before serving.\n\nEnjoy your homemade Uruguayan alfajores!"
+          type: output_text
+        id: msg_67e539331e4c8191b4786c0660adb4ec0e395386ebcf3a62
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: low
+        generate_summary: null
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools: []
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 88
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 547
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 635
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
