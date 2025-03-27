@@ -1,6 +1,6 @@
 # Pydantic Evals
 
-Pydantic Evals is a powerful evaluation framework designed to help you systematically test and evaluate the quality of your code, especially when working with LLM-powered applications.
+Pydantic Evals is a powerful evaluation framework designed to help you systematically test and evaluate the performance and accuracy of the systems you build, especially when working with LLMs.
 
 !!! note "In Beta"
     Pydantic Evals support was [introduced](https://github.com/pydantic/pydantic-ai/pull/935) in v0.0.47 and is currently in beta. The API is subject to change. The documentation is incomplete.
@@ -18,24 +18,21 @@ pip/uv-add pydantic-evals
 
 The foundation of Pydantic Evals is the concept of datasets and test cases:
 
-- [`Case`][pydantic_evals.Case]: A single test scenario consisting of inputs, expected outputs, metadata, and optional evaluators.
-- [`Dataset`][pydantic_evals.Dataset]: A collection of test cases designed to evaluate a specific task or function.
+- [`Case`][pydantic_evals.Case]: A single test scenario corresponding to task inputs. Can also optionally have a name, expected outputs, metadata, and evaluators.
+- [`Dataset`][pydantic_evals.Dataset]: A collection of test cases designed for the evaluation of a specific task or function.
 
 ```python {title="simple_eval_dataset.py"}
 from pydantic_evals import Case, Dataset
 
-case1 = Case(  # (1)!
+case1 = Case(
     name='simple_case',
     inputs='What is the capital of France?',
     expected_output='Paris',
     metadata={'difficulty': 'easy'},
 )
 
-dataset = Dataset(cases=[case1])  # (2)!
+dataset = Dataset(cases=[case1])
 ```
-
-1. Create a test case
-2. Create a dataset from cases, in most real world cases you would have multiple cases `#!python Dataset(cases=[case1, case2, case3])`
 
 ## Evaluators
 
@@ -46,29 +43,32 @@ Pydantic Evals includes several built-in evaluators and allows you to create cus
 ```python {title="simple_eval_evaluator.py"}
 from simple_eval_dataset import dataset
 
-from pydantic_evals.evaluators.common import IsInstance  # (1)!
-from pydantic_evals.evaluators.context import EvaluatorContext
+from dataclasses import dataclass
 
-dataset.add_evaluator(IsInstance(type_name='str'))  # (2)!
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.evaluators.common import IsInstance
 
-
-async def my_evaluator(ctx: EvaluatorContext[str, str]) -> float:  # (3)!
-    if ctx.output == ctx.expected_output:
-        return 1.0
-    elif (
-        isinstance(ctx.output, str)
-        and ctx.expected_output.lower() in ctx.output.lower()
-    ):
-        return 0.8
-    else:
-        return 0.0
+dataset.add_evaluator(IsInstance(type_name='str'))  # (1)!
 
 
-dataset.add_evaluator(my_evaluator)
+@dataclass
+class MyEvaluator(Evaluator):
+    async def evaluate(self, ctx: EvaluatorContext[str, str]) -> float:  # (2)!
+        if ctx.output == ctx.expected_output:
+            return 1.0
+        elif (
+            isinstance(ctx.output, str)
+            and ctx.expected_output.lower() in ctx.output.lower()
+        ):
+            return 0.8
+        else:
+            return 0.0
+
+
+dataset.add_evaluator(MyEvaluator())
 ```
-1. Import built-in evaluators, here we import [`IsInstance`][pydantic_evals.evaluators.IsInstance].
-2. Add built-in evaluators [`IsInstance`][pydantic_evals.evaluators.IsInstance] to the dataset.
-3. Create a custom evaluator function that takes an [`EvaluatorContext`][pydantic_evals.evaluators.context.EvaluatorContext] and returns a simple score.
+1. You can add built-in evaluators to a dataset using the [`add_evaluator`][pydantic_evals.Dataset.add_evaluator] method.
+2. This custom evaluator returns a simple score based on whether the output matches the expected output.
 
 ## Evaluation Process
 

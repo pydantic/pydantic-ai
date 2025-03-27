@@ -69,6 +69,7 @@ DEFAULT_DATASET_PATH = './test_cases.yaml'
 """Default path for saving/loading datasets."""
 DEFAULT_SCHEMA_PATH_TEMPLATE = './{stem}_schema.json'
 """Default template for schema file paths, where {stem} is replaced with the dataset filename stem."""
+_YAML_SCHEMA_LINE_PREFIX = '# yaml-language-server: $schema='
 
 
 class _CaseModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid'):
@@ -533,7 +534,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             dumped_data = self.model_dump(mode='json', by_alias=True, exclude_defaults=True, context=context)
             content = yaml.dump(dumped_data, sort_keys=False)
             if schema_ref:
-                yaml_language_server_line = f'# yaml-language-server: $schema={schema_ref}'
+                yaml_language_server_line = f'{_YAML_SCHEMA_LINE_PREFIX}{schema_ref}'
                 content = f'{yaml_language_server_line}\n{content}'
             path.write_text(content)
         else:
@@ -572,33 +573,29 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 else:
                     required_type_hints[p.name] = type_hints[p.name]
 
-            config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
+            def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
+                td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
+                config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
+                # TODO: Replace with pydantic.with_config after pydantic 2.11 is released
+                td.__pydantic_config__ = config  # pyright: ignore[reportAttributeAccessIssue]
+                return td
 
+            # Shortest form: just the call name
             if len(type_hints) == 0 or not required_type_hints:
-                # Shortest option: just the call name
                 evaluator_schema_types.append(Literal[name])
-            if len(type_hints) == 1:
-                # Short option: only have one parameter, so we can drop the nesting
-                [type_hint_type] = type_hints.values()  # pyright: ignore
-                td = TypedDict(f'short_evaluator_{name}', {name: type_hint_type})  # pyright: ignore
-                td.__pydantic_config__ = config  # pyright: ignore
-                evaluator_schema_types.append(td)
-            if len(type_hints) > 1:
-                if len(required_type_hints) == 1:
-                    # Short option: only have one required parameter, so we can drop the nesting
-                    type_hint_type = next(iter(required_type_hints.values()))  # pyright: ignore
-                    td = TypedDict(f'short_evaluator_{name}', {name: type_hint_type})  # pyright: ignore
-                    td.__pydantic_config__ = config  # pyright: ignore
-                    evaluator_schema_types.append(td)
 
-                # Long form: multiple parameters, or multiple required parameters
-                params_td = TypedDict(f'evaluator_params_{name}', type_hints)  # pyright: ignore
-                params_td.__pydantic_config__ = config  # pyright: ignore
-                td = TypedDict(f'evaluator_{name}', {name: params_td})  # pyright: ignore
-                td.__pydantic_config__ = config  # pyright: ignore
-                evaluator_schema_types.append(td)
-            # Note: We might want to also generate the JSON schema for the format `call: '...', args: [...], kwargs: {...}`.
-            #   It would be a bit complex to implement but not impossible.
+            # Short form: can be called with only one parameter
+            if len(type_hints) == 1:
+                [type_hint_type] = type_hints.values()
+                evaluator_schema_types.append(_make_typed_dict('short_evaluator', {name: type_hint_type}))
+            elif len(required_type_hints) == 1:
+                [type_hint_type] = required_type_hints.values()
+                evaluator_schema_types.append(_make_typed_dict('short_evaluator', {name: type_hint_type}))
+
+            # Long form: multiple parameters, possibly required
+            if len(type_hints) > 1:
+                params_td = _make_typed_dict('evaluator_params', type_hints)
+                evaluator_schema_types.append(_make_typed_dict('evaluator', {name: params_td}))
 
         in_type, out_type, meta_type = cls._params()
 
