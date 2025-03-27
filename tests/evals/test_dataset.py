@@ -989,6 +989,6 @@ def test_import_generate_dataset():
     # This function is tough to test in an interesting way outside an example...
     # This at least ensures importing it doesn't fail.
     # TODO: Add an "example" that actually makes use of this functionality
-    from pydantic_evals.examples import generate_dataset
+    from pydantic_evals.generation import generate_dataset
 
     assert generate_dataset

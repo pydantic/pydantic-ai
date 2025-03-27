@@ -495,7 +495,7 @@ report.print(include_input=True, include_output=True)
 
 ## Generating Test Datasets
 
-Pydantic Evals allows you to generate test datasets using LLMs with [`generate_dataset`][pydantic_evals.examples.generate_dataset].
+Pydantic Evals allows you to generate test datasets using LLMs with [`generate_dataset`][pydantic_evals.generation.generate_dataset].
 
 Datasets can be generated in either JSON or YAML format, in both cases a JSON schema file is generated alongside the dataset and referenced in the dataset, so you should get type checking and auto-completion in your editor.
 
@@ -506,7 +506,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from pydantic_evals.examples import generate_dataset
+from pydantic_evals.generation import generate_dataset
 
 
 class QuestionInputs(BaseModel):
