@@ -146,6 +146,7 @@ def test_docs_examples(  # noqa: C901
         'ai_q_and_a_run.py',
         'count_down_from_persistence.py',
         'generate_dataset_example.py',
+        'generate_dataset_example_json.py',
         'save_load_dataset_example.py',
     }:
         os.chdir(tmp_path)
