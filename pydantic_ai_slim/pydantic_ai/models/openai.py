@@ -406,7 +406,20 @@ class OpenAIModel(Model):
 
 @dataclass(init=False)
 class OpenAIResponsesModel(Model):
-    """A model that uses the OpenAI Responses API."""
+    """A model that uses the OpenAI Responses API.
+
+    The [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses) is the
+    new API for OpenAI models.
+
+    The Responses API has built-in tools, that you can use instead of building your own:
+
+    - [Web search](https://platform.openai.com/docs/guides/tools-web-search)
+    - [File search](https://platform.openai.com/docs/guides/tools-file-search)
+    - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use)
+
+    If you are interested in the differences between the Responses API and the Chat Completions API,
+    see the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
+    """
 
     client: AsyncOpenAI = field(repr=False)
     system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
