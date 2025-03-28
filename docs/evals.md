@@ -1,13 +1,13 @@
 # Pydantic Evals
 
-"Evals" refers to evaluating a models performance for a specific application.
+"Evals" refers to evaluating a model's performance for a specific application.
 
 !!! danger "Warning"
     Unlike unit tests, evals are an emerging art/science; anyone who claims to know for sure exactly how your evals should be defined can safely be ignored.
 
 Pydantic Evals is a powerful evaluation framework designed to help you systematically test and evaluate the performance and accuracy of the systems you build, especially when working with LLMs.
 
-We've designed Pydantic Evals to be useful while not being too opinionated since we (along with everyone else) are still figuring out best practices. We'd love you [feedback](help.md) on the package and how we can improve it.
+We've designed Pydantic Evals to be useful while not being too opinionated since we (along with everyone else) are still figuring out best practices. We'd love your [feedback](help.md) on the package and how we can improve it.
 
 !!! note "In Beta"
     Pydantic Evals support was [introduced](https://github.com/pydantic/pydantic-ai/pull/935) in v0.0.47 and is currently in beta. The API is subject to change and the documentation is incomplete.
