@@ -37,8 +37,13 @@ class EvaluatorContext(Generic[InputsT, OutputT, MetadataT]):
 
     Example:
     ```python
+    from dataclasses import dataclass
+
+    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+
+
     @dataclass
-    class ExactMatch(Evaluator[Any, Any, Any]):
+    class ExactMatch(Evaluator):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
             # Use the context to access task inputs, outputs, and expected outputs
             return ctx.output == ctx.expected_output

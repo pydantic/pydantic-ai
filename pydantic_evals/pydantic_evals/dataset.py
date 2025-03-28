@@ -102,11 +102,13 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
 
     Example:
     ```python
+    from pydantic_evals import Case
+
     case = Case(
-        name="Simple addition",
-        inputs={"a": 1, "b": 2},
+        name='Simple addition',
+        inputs={'a': 1, 'b': 2},
         expected_output=3,
-        metadata={"description": "Tests basic addition"}
+        metadata={'description': 'Tests basic addition'},
     )
     ```
     """
@@ -169,19 +171,44 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     Example:
     ```python
     # Create a dataset with two test cases
+    from dataclasses import dataclass
+
+    from pydantic_evals import Case, Dataset
+    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+
+
+    @dataclass
+    class ExactMatch(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            return ctx.output == ctx.expected_output
+
     dataset = Dataset(
         cases=[
-            Case(name="test1", inputs={"text": "Hello"}, expected_output="HELLO"),
-            Case(name="test2", inputs={"text": "World"}, expected_output="WORLD"),
+            Case(name='test1', inputs={'text': 'Hello'}, expected_output='HELLO'),
+            Case(name='test2', inputs={'text': 'World'}, expected_output='WORLD'),
         ],
-        evaluators=[ExactMatch()]
+        evaluators=[ExactMatch()],
     )
 
     # Evaluate the dataset against a task function
     async def uppercase(inputs: dict) -> str:
-        return inputs["text"].upper()
+        return inputs['text'].upper()
 
-    report = await dataset.evaluate(uppercase)
+    async def main():
+        report = await dataset.evaluate(uppercase)
+        report.print()
+    '''
+       Evaluation Summary: uppercase
+    ┏━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+    ┃ Case ID  ┃ Assertions ┃ Duration ┃
+    ┡━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+    │ test1    │ ✔          │     10ms │
+    ├──────────┼────────────┼──────────┤
+    │ test2    │ ✔          │     10ms │
+    ├──────────┼────────────┼──────────┤
+    │ Averages │ 100.0% ✔   │     10ms │
+    └──────────┴────────────┴──────────┘
+    '''
     ```
     """
 
@@ -463,7 +490,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         cases: list[Case[InputsT, OutputT, MetadataT]] = []
         errors: list[ValueError] = []
-        dataset_evaluators: list[Evaluator[Any, Any, Any]] = []
+        dataset_evaluators: list[Evaluator] = []
         for spec in dataset_model.evaluators:
             try:
                 dataset_evaluator = _load_evaluator_from_registry(registry, None, spec)
@@ -473,7 +500,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             dataset_evaluators.append(dataset_evaluator)
 
         for row in dataset_model.cases:
-            evaluators: list[Evaluator[Any, Any, Any]] = []
+            evaluators: list[Evaluator] = []
             for spec in row.evaluators:
                 try:
                     evaluator = _load_evaluator_from_registry(registry, row.name, spec)
