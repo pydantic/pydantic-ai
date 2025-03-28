@@ -340,7 +340,7 @@ class _JsonSchemaTestData:
                 add_prop_key += '_'
             if addition_props is True:
                 data[add_prop_key] = self._char()
-            else:
+            elif addition_props is not False:
                 data[add_prop_key] = self._gen_any(addition_props)
 
         return data
