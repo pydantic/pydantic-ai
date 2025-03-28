@@ -44,7 +44,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # WARNING if you add optional groups, please update docs/install.md
-logfire = ["logfire>=2.3"]
+logfire = ["logfire>=3.11.0"]
 # Models
 openai = ["openai>=1.67.0"]
 cohere = ["cohere>=5.13.11"]
