@@ -612,10 +612,10 @@ async def test_from_text_failure():
                 '2 error(s) loading evaluators from registry',
                 [
                     ValueError(
-                        "Evaluator 'NotAnEvaluator' is not in the provided registry. Registered choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LlmJudge', 'SpanQuery']"
+                        "Evaluator 'NotAnEvaluator' is not in the provided registry. Registered choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LlmJudge', 'HasMatchingSpan']"
                     ),
                     ValueError(
-                        "Evaluator 'NotAnEvaluator' is not in the provided registry. Registered choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LlmJudge', 'SpanQuery']"
+                        "Evaluator 'NotAnEvaluator' is not in the provided registry. Registered choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LlmJudge', 'HasMatchingSpan']"
                     ),
                 ],
             )

@@ -10,6 +10,7 @@ from pytest_mock import MockerFixture
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    import logfire
     from logfire.testing import CaptureLogfire
 
     from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
@@ -18,14 +19,15 @@ with try_import() as imports_successful:
         Contains,
         Equals,
         EqualsExpected,
+        HasMatchingSpan,
         IsInstance,
         LlmJudge,
         MaxDuration,
         Python,
-        SpanQuery,
     )
     from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
     from pydantic_evals.otel._errors import SpanTreeRecordingError
+    from pydantic_evals.otel.span_tree import SpanQuery
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
@@ -305,14 +307,7 @@ def test_default_evaluators():
 
 
 async def test_span_query_evaluator(capfire: CaptureLogfire):
-    """Test SpanQuery evaluator."""
-    import logfire
-
-    from pydantic_evals.otel.span_tree import SpanQuery as SpanNodeQuery
-
-    # Configure logfire
-    logfire.configure()
-
+    """Test HasMatchingSpan evaluator."""
     # Create a span tree with a known structure
     with context_subtree() as tree:
         with logfire.span('root'):
@@ -335,25 +330,25 @@ async def test_span_query_evaluator(capfire: CaptureLogfire):
     )
 
     # Test matching by name
-    evaluator = SpanQuery(query=SpanNodeQuery(name_equals='child1'))
+    evaluator = HasMatchingSpan(query=SpanQuery(name_equals='child1'))
     assert evaluator.evaluate(ctx) is True
 
     # Test matching by name pattern
-    evaluator = SpanQuery(query=SpanNodeQuery(name_matches_regex='child.*'))
+    evaluator = HasMatchingSpan(query=SpanQuery(name_matches_regex='child.*'))
     assert evaluator.evaluate(ctx) is True
 
     # Test matching by attributes
-    evaluator = SpanQuery(query=SpanNodeQuery(has_attributes={'key': 'value'}))
+    evaluator = HasMatchingSpan(query=SpanQuery(has_attributes={'key': 'value'}))
     assert evaluator.evaluate(ctx) is True
 
     # Test matching nested span
-    evaluator = SpanQuery(query=SpanNodeQuery(name_equals='grandchild', has_attributes={'nested': True}))
+    evaluator = HasMatchingSpan(query=SpanQuery(name_equals='grandchild', has_attributes={'nested': True}))
     assert evaluator.evaluate(ctx) is True
 
     # Test non-matching query
-    evaluator = SpanQuery(query=SpanNodeQuery(name_equals='nonexistent'))
+    evaluator = HasMatchingSpan(query=SpanQuery(name_equals='nonexistent'))
     assert evaluator.evaluate(ctx) is False
 
     # Test non-matching attributes
-    evaluator = SpanQuery(query=SpanNodeQuery(name_equals='child1', has_attributes={'wrong': 'value'}))
+    evaluator = HasMatchingSpan(query=SpanQuery(name_equals='child1', has_attributes={'wrong': 'value'}))
     assert evaluator.evaluate(ctx) is False

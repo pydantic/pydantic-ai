@@ -10,6 +10,7 @@ from pydantic import BaseModel, TypeAdapter
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    import logfire
     from logfire.testing import CaptureLogfire
 
     from pydantic_evals.evaluators._spec import EvaluatorSpec
@@ -17,11 +18,11 @@ with try_import() as imports_successful:
         Contains,
         Equals,
         EqualsExpected,
+        HasMatchingSpan,
         IsInstance,
         LlmJudge,
         MaxDuration,
         Python,
-        SpanQuery,
     )
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.evaluators.evaluator import (
@@ -30,7 +31,8 @@ with try_import() as imports_successful:
         EvaluatorOutput,
         run_evaluator,
     )
-    from pydantic_evals.otel.span_tree import SpanTree
+    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
+    from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
@@ -461,10 +463,6 @@ async def test_span_query_evaluator(
     capfire: CaptureLogfire,
 ):
     """Test the span_query evaluator."""
-    import logfire
-
-    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
-    from pydantic_evals.otel.span_tree import SpanQuery as SpanNodeQuery
 
     # Create a span tree with a known structure
     with context_subtree() as tree:
@@ -486,14 +484,14 @@ async def test_span_query_evaluator(
     )
 
     # Test positive case: query that matches
-    query: SpanNodeQuery = {'name_equals': 'child_span', 'has_attributes': {'type': 'important'}}
-    evaluator = SpanQuery(query=query)
+    query: SpanQuery = {'name_equals': 'child_span', 'has_attributes': {'type': 'important'}}
+    evaluator = HasMatchingSpan(query=query)
     result = evaluator.evaluate(context)
     assert result is True
 
     # Test negative case: query that doesn't match
     query = {'name_equals': 'non_existent_span'}
-    evaluator = SpanQuery(query=query)
+    evaluator = HasMatchingSpan(query=query)
     result = evaluator.evaluate(context)
     assert result is False
 
