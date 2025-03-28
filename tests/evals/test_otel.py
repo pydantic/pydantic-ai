@@ -657,7 +657,7 @@ async def test_span_query_descendant_conditions():
     assert matched_node.name == 'parent1'
 
     # Test all_children_have condition
-    all_children_query: SpanQuery = {'all_children_have': {'has_attributes': {'type': 'normal'}}}
+    all_children_query: SpanQuery = {'all_children_have': {'has_attributes': {'type': 'normal'}}, 'min_child_count': 1}
     matched_node = tree.first(all_children_query)
     assert matched_node is not None
     assert matched_node.name == 'parent2'
@@ -666,7 +666,7 @@ async def test_span_query_descendant_conditions():
     assert not matched_node.matches({'no_child_has': {'has_attributes': {'type': 'normal'}}})
 
     # Test no_child_has condition
-    no_child_query: SpanQuery = {'no_child_has': {'has_attributes': {'type': 'important'}}}
+    no_child_query: SpanQuery = {'no_child_has': {'has_attributes': {'type': 'important'}}, 'min_child_count': 1}
     matched_node = tree.first(no_child_query)
     assert matched_node is not None
     assert matched_node.name == 'parent2'
