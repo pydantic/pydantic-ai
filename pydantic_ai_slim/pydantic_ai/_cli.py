@@ -65,12 +65,21 @@ Special prompt:
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument('prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode')
-    parser.add_argument(
+    arg = parser.add_argument(
         '--model',
         nargs='?',
         help='Model to use, it should be "<provider>:<model>" e.g. "openai:gpt-4o". If omitted it will default to "openai:gpt-4o"',
         default='openai:gpt-4o',
-    ).completer = argcomplete.ChoicesCompleter(list(get_literal_values(KnownModelName.__value__)))  # type: ignore[reportPrivateUsage]
+    )
+    # we don't want to autocomplete or list models that don't include the provider,
+    # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
+    qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
+    arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
+    parser.add_argument(
+        '--list-models',
+        action='store_true',
+        help='List all available models and exit',
+    )
     parser.add_argument('--no-stream', action='store_true', help='Whether to stream responses from OpenAI')
     parser.add_argument('--version', action='store_true', help='Show version and exit')
 
@@ -80,6 +89,11 @@ Special prompt:
     console = Console()
     console.print(f'pai - PydanticAI CLI v{__version__}', style='green bold', highlight=False)
     if args.version:
+        return 0
+    if args.list_models:
+        console.print('Available models:', style='green bold')
+        for model in qualified_model_names:
+            console.print(f'  {model}', highlight=False)
         return 0
 
     now_utc = datetime.now(timezone.utc)
@@ -121,37 +135,38 @@ Special prompt:
             continue
 
         ident_prompt = text.lower().strip(' ').replace(' ', '-').lstrip(' ')
-        if ident_prompt == '/markdown':
-            try:
-                parts = messages[-1].parts
-            except IndexError:
-                console.print('[dim]No markdown output available.[/dim]')
-                continue
-            for part in parts:
-                if part.part_kind == 'text':
-                    last_content = part.content
-                    console.print('[dim]Last markdown output of last question:[/dim]\n')
-                    console.print(Syntax(last_content, lexer='markdown', background_color='default'))
+        if ident_prompt.startswith('/'):
+            if ident_prompt == '/markdown':
+                try:
+                    parts = messages[-1].parts
+                except IndexError:
+                    console.print('[dim]No markdown output available.[/dim]')
+                    continue
+                for part in parts:
+                    if part.part_kind == 'text':
+                        last_content = part.content
+                        console.print('[dim]Last markdown output of last question:[/dim]\n')
+                        console.print(Syntax(last_content, lexer='markdown', background_color='default'))
 
-            continue
-        if ident_prompt == '/multiline':
-            multiline = not multiline
-            if multiline:
-                console.print(
-                    'Enabling multiline mode. '
-                    '[dim]Press [Meta+Enter] or [Esc] followed by [Enter] to accept input.[/dim]'
-                )
+            elif ident_prompt == '/multiline':
+                multiline = not multiline
+                if multiline:
+                    console.print(
+                        'Enabling multiline mode. '
+                        '[dim]Press [Meta+Enter] or [Esc] followed by [Enter] to accept input.[/dim]'
+                    )
+                else:
+                    console.print('Disabling multiline mode.')
+            elif ident_prompt == '/exit':
+                console.print('[dim]Exiting…[/dim]')
+                return 0
             else:
-                console.print('Disabling multiline mode.')
-            continue
-        if ident_prompt == '/exit':
-            console.print('[dim]Exiting…[/dim]')
-            return 0
-
-        try:
-            messages = asyncio.run(ask_agent(agent, text, stream, console, messages))
-        except KeyboardInterrupt:
-            return 0
+                console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
+        else:
+            try:
+                messages = asyncio.run(ask_agent(agent, text, stream, console, messages))
+            except KeyboardInterrupt:
+                return 0
 
 
 async def ask_agent(
