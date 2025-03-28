@@ -483,7 +483,7 @@ class OpenAIResponsesModel(Model):
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
-        if isinstance(first_chunk, _utils.Unset):
+        if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         assert isinstance(first_chunk, responses.ResponseCreatedEvent)
