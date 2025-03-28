@@ -1,9 +1,16 @@
 # Pydantic Evals
 
+"Evals" refers to evaluating a models performance for a specific application.
+
+!!! danger "Warning"
+    Unlike unit tests, evals are an emerging art/science; anyone who claims to know for sure exactly how your evals should be defined can safely be ignored.
+
 Pydantic Evals is a powerful evaluation framework designed to help you systematically test and evaluate the performance and accuracy of the systems you build, especially when working with LLMs.
 
+We've designed Pydantic Evals to be useful while not being too opinionated since we (along with everyone else) are still figuring out best practices. We'd love you [feedback](help.md) on the package and how we can improve it.
+
 !!! note "In Beta"
-    Pydantic Evals support was [introduced](https://github.com/pydantic/pydantic-ai/pull/935) in v0.0.47 and is currently in beta. The API is subject to change. The documentation is incomplete.
+    Pydantic Evals support was [introduced](https://github.com/pydantic/pydantic-ai/pull/935) in v0.0.47 and is currently in beta. The API is subject to change and the documentation is incomplete.
 
 ## Installation
 
@@ -22,7 +29,7 @@ pip/uv-add 'pydantic-evals[logfire]'
 
 ## Datasets and Cases
 
-The foundation of Pydantic Evals is the concept of datasets and test cases:
+The foundations of Pydantic Evals are the concepts of datasets and test cases:
 
 - [`Case`][pydantic_evals.Case]: A single test scenario corresponding to task inputs. Can also optionally have a name, expected outputs, metadata, and evaluators.
 - [`Dataset`][pydantic_evals.Dataset]: A collection of test cases designed for the evaluation of a specific task or function.

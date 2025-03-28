@@ -47,7 +47,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 `pydantic-ai-slim` has the following optional groups:
 
 * `logfire` — installs [`logfire`](logfire.md) [PyPI ↗](https://pypi.org/project/logfire){:target="_blank"}
-* `evals` — installs [`pydantic-evals`](testing-evals.md) [PyPI ↗](https://pypi.org/project/pydantic-evals){:target="_blank"}
+* `evals` — installs [`pydantic-evals`](evals.md) [PyPI ↗](https://pypi.org/project/pydantic-evals){:target="_blank"}
 * `openai` — installs `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
 * `vertexai` — installs `google-auth` [PyPI ↗](https://pypi.org/project/google-auth){:target="_blank"} and `requests` [PyPI ↗](https://pypi.org/project/requests){:target="_blank"}
 * `anthropic` — installs `anthropic` [PyPI ↗](https://pypi.org/project/anthropic){:target="_blank"}
