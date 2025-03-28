@@ -36,7 +36,7 @@ export OPENAI_API_KEY='your-api-key-here'
 Then simply run:
 
 ```bash
-$ pai
+pai
 ```
 
 This will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
@@ -51,4 +51,12 @@ You can specify which model to use with the `--model` flag:
 
 ```bash
 $ pai --model=openai:gpt-4 "What's the capital of France?"
+```
+
+### Usage with `uvx`
+
+If you have [uv](https://docs.astral.sh/uv/) installed, the quickest way to run the CLI is with `uvx`:
+
+```bash
+uvx --from pydantic-ai pai
 ```
