@@ -60,11 +60,17 @@ pydantic-ai-examples = { workspace = true }
 mcp-run-python = { workspace = true }
 
 [tool.uv.workspace]
-members = ["pydantic_ai_slim", "pydantic_evals", "pydantic_graph", "mcp-run-python", "examples"]
+members = [
+    "pydantic_ai_slim",
+    "pydantic_evals",
+    "pydantic_graph",
+    "mcp-run-python",
+    "examples",
+]
 
 [dependency-groups]
 # dev dependencies are defined in `pydantic-ai-slim/pyproject.toml` to allow for minimal testing
-lint = ["mypy>=1.11.2", "pyright>=1.1.388,<1.1.390", "ruff>=0.6.9"]
+lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
     "black>=24.10.0",
     "bs4>=0.0.2",
@@ -132,12 +138,24 @@ reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingModuleSource = false
-include = ["pydantic_ai_slim", "pydantic_evals", "pydantic_graph", "mcp-run-python", "examples", "tests"]
+include = [
+    "pydantic_ai_slim",
+    "pydantic_evals",
+    "pydantic_graph",
+    "mcp-run-python",
+    "tests",
+    "examples",
+]
 venvPath = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
-executionEnvironments = [{ root = "tests", reportUnusedFunction = false }]
-exclude = ["examples/pydantic_ai_examples/weather_agent_gradio.py", "mcp-run-python/node_modules"]
+executionEnvironments = [
+    { root = "tests", reportUnusedFunction = false, reportPrivateImportUsage = false },
+]
+exclude = [
+    "examples/pydantic_ai_examples/weather_agent_gradio.py",
+    "mcp-run-python/node_modules",
+]
 extraPaths = ["mcp-run-python/stubs"]
 
 [tool.mypy]
@@ -154,7 +172,7 @@ filterwarnings = [
     "ignore::RuntimeWarning:pydantic_ai.mcp",
     # uvicorn (mcp server)
     "ignore:websockets.legacy is deprecated.*:DeprecationWarning:websockets.legacy",
-    "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning"
+    "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run

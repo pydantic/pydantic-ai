@@ -27,7 +27,7 @@ except ImportError:
 else:
     from pathlib import Path
 
-    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
+    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)  # pyright: ignore[reportPrivateImportUsage]
 
 
 __all__ = 'Graph', 'GraphRun', 'GraphRunResult'
