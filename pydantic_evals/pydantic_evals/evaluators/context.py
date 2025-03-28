@@ -37,6 +37,12 @@ class EvaluatorContext(Generic[InputsT, OutputT, MetadataT]):
 
     Example:
     ```python
+    from dataclasses import dataclass
+    from typing import Any
+
+    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+
+
     @dataclass
     class ExactMatch(Evaluator[Any, Any, Any]):
         def evaluate(self, ctx: EvaluatorContext) -> bool:

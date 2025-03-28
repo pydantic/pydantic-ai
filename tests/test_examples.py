@@ -65,9 +65,7 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     # Ensure this is run from the package root regardless of where/how the tests are run
     os.chdir(Path(__file__).parent.parent)
 
-    # TODO: need to add pydantic_evals to the following list, but some of those examples are broken
-    # for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
-    for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph'):
+    for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if ex.path.name != '_utils.py':
             prefix_settings = ex.prefix_settings()
             test_id = str(ex)
@@ -171,9 +169,9 @@ def test_docs_examples(  # noqa: C901
 
     if not opt_lint.startswith('skip'):
         if eval_example.update_examples:  # pragma: no cover
-            eval_example.format(example)
+            eval_example.format_ruff(example)
         else:
-            eval_example.lint(example)
+            eval_example.lint_ruff(example)
 
     if opt_test.startswith('skip'):
         print(opt_test[4:].lstrip(' -') or 'running code skipped')

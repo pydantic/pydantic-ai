@@ -102,11 +102,13 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
 
     Example:
     ```python
+    from pydantic_evals import Case
+
     case = Case(
-        name="Simple addition",
-        inputs={"a": 1, "b": 2},
+        name='Simple addition',
+        inputs={'a': 1, 'b': 2},
         expected_output=3,
-        metadata={"description": "Tests basic addition"}
+        metadata={'description': 'Tests basic addition'},
     )
     ```
     """
@@ -169,19 +171,110 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     Example:
     ```python
     # Create a dataset with two test cases
+    from dataclasses import dataclass
+    from typing import Any
+
+    from pydantic_evals import Case, Dataset
+    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+
+
+    @dataclass
+    class ExactMatch(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            return ctx.output == ctx.expected_output
+
     dataset = Dataset(
         cases=[
-            Case(name="test1", inputs={"text": "Hello"}, expected_output="HELLO"),
-            Case(name="test2", inputs={"text": "World"}, expected_output="WORLD"),
+            Case(name='test1', inputs={'text': 'Hello'}, expected_output='HELLO'),
+            Case(name='test2', inputs={'text': 'World'}, expected_output='WORLD'),
         ],
-        evaluators=[ExactMatch()]
+        evaluators=[ExactMatch()],
     )
 
     # Evaluate the dataset against a task function
     async def uppercase(inputs: dict) -> str:
-        return inputs["text"].upper()
+        return inputs['text'].upper()
 
-    report = await dataset.evaluate(uppercase)
+    async def main():
+        report = await dataset.evaluate(uppercase)
+        report.print()
+    '''
+       Evaluation Summary: uppercase
+    ┏━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+    ┃ Case ID  ┃ Assertions ┃ Duration ┃
+    ┡━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+    │ test1    │ ✔          │    0.123µs │
+    ├──────────┼────────────┼──────────┤
+    │ test2    │ ✔          │       0s │
+    ├──────────┼────────────┼──────────┤
+    │ Averages │ 100.0% ✔   │    0.123µs │
+    └──────────┴────────────┴──────────┘
+    '''
+
+    '''
+       Evaluation Summary: uppercase
+    ┏━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+    ┃ Case ID  ┃ Assertions ┃ Duration ┃
+    ┡━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+    │ test1    │ ✔          │    1.123µs │
+    ├──────────┼────────────┼──────────┤
+    │ test2    │ ✔          │       0s │
+    ├──────────┼────────────┼──────────┤
+    │ Averages │ 100.0% ✔   │    0.123µs │
+    └──────────┴────────────┴──────────┘
+    '''
+
+    '''
+       Evaluation Summary: uppercase
+    ┏━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+    ┃ Case ID  ┃ Assertions ┃ Duration ┃
+    ┡━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+    │ test1    │ ✔          │      123µs │
+    ├──────────┼────────────┼──────────┤
+    │ test2    │ ✔          │    1.123µs │
+    ├──────────┼────────────┼──────────┤
+    │ Averages │ 100.0% ✔   │      123µs │
+    └──────────┴────────────┴──────────┘
+    '''
+
+    '''
+       Evaluation Summary: uppercase
+    ┏━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+    ┃ Case ID  ┃ Assertions ┃ Duration ┃
+    ┡━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+    │ test1    │ ✔          │    1.123µs │
+    ├──────────┼────────────┼──────────┤
+    │ test2    │ ✔          │    1.123µs │
+    ├──────────┼────────────┼──────────┤
+    │ Averages │ 100.0% ✔   │    1.123µs │
+    └──────────┴────────────┴──────────┘
+    '''
+
+    '''
+       Evaluation Summary: uppercase
+    ┏━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+    ┃ Case ID  ┃ Assertions ┃ Duration ┃
+    ┡━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+    │ test1    │ ✔          │       0s │
+    ├──────────┼────────────┼──────────┤
+    │ test2    │ ✔          │    0.123µs │
+    ├──────────┼────────────┼──────────┤
+    │ Averages │ 100.0% ✔   │    0.123µs │
+    └──────────┴────────────┴──────────┘
+    '''
+
+    '''
+       Evaluation Summary: uppercase
+    ┏━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+    ┃ Case ID  ┃ Assertions ┃ Duration ┃
+    ┡━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+    │ test1    │ ✔          │       0s │
+    ├──────────┼────────────┼──────────┤
+    │ test2    │ ✔          │      123µs │
+    ├──────────┼────────────┼──────────┤
+    │ Averages │ 100.0% ✔   │    0.123µs │
+    └──────────┴────────────┴──────────┘
+    '''
     ```
     """
 
