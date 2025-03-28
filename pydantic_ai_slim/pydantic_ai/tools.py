@@ -301,12 +301,12 @@ class Tool(Generic[AgentDepsT]):
             'gen_ai.tool.call.id': message.tool_call_id,
             'tool_arguments': message.args_as_json_str(),
             'logfire.msg': f'running tool: {self.name}',
-            # add the JSON schema key for logfire so tool_arguments will be formatted nicely in Logfire
+            # add the JSON schema so these attributes are formatted nicely in Logfire
             'logfire.json_schema': (
                 '{"type": "object", "properties": {'
                 '"tool_arguments": {"type": "object"}, '
-                '"gen_ai.tool.name": {"type": "string"}, '
-                '"gen_ai.tool.call.id": {"type": "string"}'
+                '"gen_ai.tool.name": {}, '
+                '"gen_ai.tool.call.id": {}'
                 '}}'
             ),
         }
