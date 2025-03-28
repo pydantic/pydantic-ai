@@ -5,7 +5,7 @@ from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
@@ -276,3 +276,13 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
             output_text.append(output)
 
     assert output_text == snapshot(['The capital of France is Paris.'])
+
+
+async def test_openai_responses_model_http_error(allow_model_requests: None, openai_api_key: str):
+    """Set temperature to -1 to trigger an error, given only values between 0 and 1 are allowed."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=OpenAIModelSettings(temperature=-1))
+
+    with pytest.raises(ModelHTTPError):
+        async with agent.run_stream('What is the capital of France?'):
+            ...

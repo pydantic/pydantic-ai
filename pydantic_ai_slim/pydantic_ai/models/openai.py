@@ -593,7 +593,8 @@ class OpenAIResponsesModel(Model):
                             )
                         )
                     elif isinstance(part, RetryPromptPart):
-                        if part.tool_name is None:
+                        # TODO(Marcelo): How do we test this conditional branch?
+                        if part.tool_name is None:  # pragma: no cover
                             openai_messages.append(
                                 Message(role='user', content=[{'type': 'input_text', 'text': part.model_response()}])
                             )
@@ -802,7 +803,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseTextDoneEvent):
                 pass  # there's nothing we need to do here
 
-            else:
+            else:  # pragma: no cover
                 warnings.warn(
                     f'Handling of this event type is not yet implemented. Please report on our GitHub: {chunk}',
                     UserWarning,
