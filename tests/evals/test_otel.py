@@ -359,6 +359,13 @@ async def test_span_tree_ancestors_methods():
     assert leaf_node.any_ancestor(lambda node: node.name == 'root')
     assert not leaf_node.any_ancestor(lambda node: node.name == 'non_existent')
 
+    assert [node.name for node in leaf_node.ancestors] == ['level3', 'level2', 'level1', 'root']
+    assert leaf_node.matches({'some_ancestor_has': {'name_equals': 'level1'}})
+    assert not leaf_node.matches({'some_ancestor_has': {'name_equals': 'level4'}})
+
+    assert not leaf_node.matches({'all_ancestors_have': {'name_matches_regex': 'level'}})
+    assert leaf_node.matches({'all_ancestors_have': {'name_matches_regex': 'level|root'}})
+
 
 async def test_span_tree_descendants_methods():
     """Test the descendant traversal methods in SpanNode."""
@@ -437,10 +444,6 @@ async def test_span_tree_descendants_methods():
     assert leaf_node is not None
     assert leaf_node.matches(negated_descendant_query)
     assert leaf_node.matches({'no_descendant_has': {'has_attributes': {'depth': 4}}})
-
-    assert [node.name for node in leaf_node.ancestors] == ['level3', 'level2', 'level1', 'root']
-    assert leaf_node.matches({'some_ancestor_has': {'name_equals': 'level1'}})
-    assert leaf_node.matches({'all_ancestors_have': {'name_matches_regex': 'level|root'}})
 
 
 async def test_log_levels_and_exceptions():
