@@ -823,7 +823,7 @@ async def _run_task(
         #   otherwise, we don't have a great way to get usage data from arbitrary frameworks.
         #   Ideally we wouldn't need to hard-code the specific logic here, but I'm not sure a great way to expose it to
         #   users. Maybe via an argument of type Callable[[SpanTree], dict[str, int | float]] or similar?
-        for node in span_tree.flattened():
+        for node in span_tree:
             if node.attributes.get('gen_ai.operation.name') == 'chat':
                 task_run.increment_metric('requests', 1)
             for k, v in node.attributes.items():
@@ -831,9 +831,9 @@ async def _run_task(
                     continue
                 # TODO: Revisit this choice to strip the prefix..
                 if k.startswith('gen_ai.usage.details.'):
-                    task_run.increment_metric(k[21:], v)
+                    task_run.increment_metric(k.removeprefix('gen_ai.usage.details.'), v)
                 elif k.startswith('gen_ai.usage.'):
-                    task_run.increment_metric(k[13:], v)
+                    task_run.increment_metric(k.removeprefix('gen_ai.usage.'), v)
 
     return EvaluatorContext[InputsT, OutputT, MetadataT](
         name=case.name,

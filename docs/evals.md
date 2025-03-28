@@ -426,7 +426,7 @@ import logfire
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator
 from pydantic_evals.evaluators.context import EvaluatorContext
-from pydantic_evals.otel.span_tree import SpanQuery, as_predicate
+from pydantic_evals.otel.span_tree import SpanQuery
 
 logfire.configure(  # ensure that an OpenTelemetry tracer is configured
     send_to_logfire='if-token-present'
@@ -443,7 +443,7 @@ class SpanTracingEvaluator(Evaluator[str, str]):
             return {'has_spans': False, 'performance_score': 0.0}
 
         # Find all spans with "processing" in the name
-        processing_spans = span_tree.find_all(lambda node: 'processing' in node.name)
+        processing_spans = span_tree.find(lambda node: 'processing' in node.name)
 
         # Calculate total processing time
         total_processing_time = sum(
@@ -452,7 +452,7 @@ class SpanTracingEvaluator(Evaluator[str, str]):
 
         # Check for error spans
         error_query: SpanQuery = {'name_contains': 'error'}
-        has_errors = span_tree.any(as_predicate(error_query))
+        has_errors = span_tree.any(error_query)
 
         # Calculate a performance score (lower is better)
         performance_score = 1.0 if total_processing_time < 0.5 else 0.5

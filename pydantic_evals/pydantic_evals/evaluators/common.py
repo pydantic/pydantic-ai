@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from pydantic_ai import models
 
-from ..otel.span_tree import SpanQuery as SpanNodeQuery, as_predicate
+from ..otel.span_tree import SpanQuery as SpanNodeQuery
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, Evaluator, EvaluatorOutput
 
@@ -17,7 +17,7 @@ __all__ = (
     'IsInstance',
     'MaxDuration',
     'LlmJudge',
-    'SpanQuery',
+    'HasMatchingSpan',
     'Python',
 )
 
@@ -177,8 +177,8 @@ class LlmJudge(Evaluator[object, object, object]):
 
 
 @dataclass
-class SpanQuery(Evaluator[object, object, object]):
-    """Check if the span tree contains a span with the specified name."""
+class HasMatchingSpan(Evaluator[object, object, object]):
+    """Check if the span tree contains a span that matches the specified query."""
 
     query: SpanNodeQuery
 
@@ -186,7 +186,7 @@ class SpanQuery(Evaluator[object, object, object]):
         self,
         ctx: EvaluatorContext[object, object, object],
     ) -> bool:
-        return ctx.span_tree.find_first(as_predicate(self.query)) is not None
+        return ctx.span_tree.any(self.query)
 
 
 # TODO: Consider moving this to docs rather than providing it with the library, given the security implications
@@ -211,6 +211,6 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     IsInstance,
     MaxDuration,
     LlmJudge,
-    SpanQuery,
+    HasMatchingSpan,
     # Python,  # not included by default for security reasons
 )

@@ -1,21 +1,63 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from textwrap import indent
 from typing import TYPE_CHECKING, Any, Callable
 
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
-__all__ = 'SpanNode', 'SpanTree', 'SpanQuery', 'as_predicate'
+__all__ = 'SpanNode', 'SpanTree', 'SpanQuery'
 
 if TYPE_CHECKING:  # pragma: no cover
     # Since opentelemetry isn't a required dependency, don't actually import these at runtime
     from opentelemetry.sdk.trace import ReadableSpan
     from opentelemetry.trace import SpanContext
     from opentelemetry.util.types import AttributeValue
+
+
+class SpanQuery(TypedDict, total=False):
+    """A serializable query for filtering SpanNodes based on various conditions.
+
+    All fields are optional and combined with AND logic by default.
+    """
+
+    # Individual span conditions
+    ## Name conditions
+    name_equals: str
+    name_contains: str
+    name_matches_regex: str  # regex pattern
+
+    ## Attribute conditions
+    has_attributes: dict[str, Any]
+    has_attribute_keys: list[str]
+
+    ## Timing conditions
+    min_duration: timedelta | float
+    max_duration: timedelta | float
+
+    # Logical combinations of conditions
+    not_: SpanQuery
+    and_: list[SpanQuery]
+    or_: list[SpanQuery]
+
+    # Descendant conditions
+    some_child_has: SpanQuery
+    all_children_have: SpanQuery
+    no_child_has: SpanQuery
+    min_child_count: int
+    max_child_count: int
+
+    some_descendant_has: SpanQuery
+    all_descendants_have: SpanQuery
+    no_descendant_has: SpanQuery
+
+    # Ancestor conditions
+    some_ancestor_has: SpanQuery
+    all_ancestors_have: SpanQuery
+    no_ancestor_has: SpanQuery
 
 
 class SpanNode:
@@ -36,13 +78,12 @@ class SpanNode:
     @property
     def descendants(self) -> list[SpanNode]:
         """Return all descendants of this node in DFS order."""
-        descendants: list[SpanNode] = []
-        stack = list(self.children)
-        while stack:
-            node = stack.pop()
-            descendants.append(node)
-            stack.extend(node.children)
-        return descendants
+        return self.find_descendants(lambda _: True)
+
+    @property
+    def ancestors(self) -> list[SpanNode]:
+        """Return all ancestors of this node."""
+        return self.find_ancestors(lambda _: True)
 
     @property
     def context(self) -> SpanContext:
@@ -101,92 +142,75 @@ class SpanNode:
     # -------------------------------------------------------------------------
     # Child queries
     # -------------------------------------------------------------------------
-    def find_children(self, predicate: Callable[[SpanNode], bool]) -> list[SpanNode]:
+    def find_children(self, predicate: SpanQuery | SpanPredicate) -> list[SpanNode]:
         """Return all immediate children that satisfy the given predicate."""
-        return [child for child in self.children if predicate(child)]
+        return list(self._filter_children(predicate))
 
-    def first_child(self, predicate: Callable[[SpanNode], bool]) -> SpanNode | None:
+    def first_child(self, predicate: SpanQuery | SpanPredicate) -> SpanNode | None:
         """Return the first immediate child that satisfies the given predicate, or None if none match."""
-        for child in self.children:
-            if predicate(child):
-                return child
-        return None
+        return next(self._filter_children(predicate), None)
 
-    def any_child(self, predicate: Callable[[SpanNode], bool]) -> bool:
+    def any_child(self, predicate: SpanQuery | SpanPredicate) -> bool:
         """Returns True if there is at least one child that satisfies the predicate."""
         return self.first_child(predicate) is not None
+
+    def _filter_children(self, predicate: SpanQuery | SpanPredicate) -> Iterator[SpanNode]:
+        predicate = _as_predicate(predicate)
+        return (child for child in self.children if predicate(child))
 
     # -------------------------------------------------------------------------
     # Descendant queries (DFS)
     # -------------------------------------------------------------------------
-    def find_descendants(self, predicate: Callable[[SpanNode], bool]) -> list[SpanNode]:
+    def find_descendants(self, predicate: SpanQuery | SpanPredicate) -> list[SpanNode]:
         """Return all descendant nodes that satisfy the given predicate in DFS order."""
-        found: list[SpanNode] = []
-        stack = list(self.children)
-        while stack:
-            node = stack.pop()
-            if predicate(node):
-                found.append(node)
-            stack.extend(node.children)
-        return found
+        return list(self._filter_descendants(predicate))
 
-    def first_descendant(self, predicate: Callable[[SpanNode], bool]) -> SpanNode | None:
+    def first_descendant(self, predicate: SpanQuery | SpanPredicate) -> SpanNode | None:
         """DFS: Return the first descendant (in DFS order) that satisfies the given predicate, or `None` if none match."""
-        stack = list(self.children)
-        while stack:
-            node = stack.pop()
-            if predicate(node):
-                return node
-            stack.extend(node.children)
-        return None
+        return next(self._filter_descendants(predicate), None)
 
-    def any_descendant(self, predicate: Callable[[SpanNode], bool]) -> bool:
+    def any_descendant(self, predicate: SpanQuery | SpanPredicate) -> bool:
         """Returns `True` if there is at least one descendant that satisfies the predicate."""
         return self.first_descendant(predicate) is not None
+
+    def _filter_descendants(self, predicate: SpanQuery | SpanPredicate) -> Iterator[SpanNode]:
+        predicate = _as_predicate(predicate)
+        stack = list(self.children)
+        while stack:
+            node = stack.pop()
+            if predicate(node):
+                yield node
+            stack.extend(node.children)
 
     # -------------------------------------------------------------------------
     # Ancestor queries (DFS "up" the chain)
     # -------------------------------------------------------------------------
-    def find_ancestors(self, predicate: Callable[[SpanNode], bool]) -> list[SpanNode]:
+    def find_ancestors(self, predicate: SpanQuery | SpanPredicate) -> list[SpanNode]:
         """Return all ancestors that satisfy the given predicate."""
-        found: list[SpanNode] = []
-        node = self.parent
-        while node:
-            if predicate(node):
-                found.append(node)
-            node = node.parent
-        return found
+        return list(self._filter_ancestors(predicate))
 
-    def first_ancestor(self, predicate: Callable[[SpanNode], bool]) -> SpanNode | None:
+    def first_ancestor(self, predicate: SpanQuery | SpanPredicate) -> SpanNode | None:
         """Return the closest ancestor that satisfies the given predicate, or `None` if none match."""
-        node = self.parent
-        while node:
-            if predicate(node):
-                return node
-            node = node.parent
-        return None
+        return next(self._filter_ancestors(predicate), None)
 
-    def any_ancestor(self, predicate: Callable[[SpanNode], bool]) -> bool:
+    def any_ancestor(self, predicate: SpanQuery | SpanPredicate) -> bool:
         """Returns True if any ancestor satisfies the predicate."""
         return self.first_ancestor(predicate) is not None
 
-    # -------------------------------------------------------------------------
-    # Matching convenience
-    # -------------------------------------------------------------------------
-    def matches(self, name: str | None = None, attributes: dict[str, Any] | None = None) -> bool:
-        """A convenience method to see if this node's span matches certain conditions.
+    def _filter_ancestors(self, predicate: SpanQuery | SpanPredicate) -> Iterator[SpanNode]:
+        predicate = _as_predicate(predicate)
+        node = self.parent
+        while node:
+            if predicate(node):
+                yield node
+            node = node.parent
 
-        - name: exact match for the Span name
-        - attributes: dict of key->value; must match exactly.
-        """
-        if name is not None and self.name != name:
-            return False
-        if attributes:
-            span_attributes = self._span.attributes or {}
-            for attr_key, attr_val in attributes.items():
-                if span_attributes.get(attr_key) != attr_val:
-                    return False
-        return True
+    # -------------------------------------------------------------------------
+    # Query matching
+    # -------------------------------------------------------------------------
+    def matches(self, query: SpanQuery) -> bool:
+        """Check if the span node matches the query conditions."""
+        return _matches(self, query)
 
     # -------------------------------------------------------------------------
     # String representation
@@ -246,6 +270,9 @@ class SpanNode:
         return self.repr_xml()
 
 
+SpanPredicate = Callable[[SpanNode], bool]
+
+
 class SpanTree:
     """A container that builds a hierarchy of SpanNode objects from a list of finished spans.
 
@@ -287,37 +314,27 @@ class SpanTree:
             if parent_ctx is None or parent_ctx.span_id not in self.nodes_by_id:
                 self.roots.append(node)
 
-    def flattened(self) -> list[SpanNode]:
-        """Return a list of all nodes in the tree."""
-        return list(self.nodes_by_id.values())
-
-    def find_all(self, predicate: Callable[[SpanNode], bool]) -> list[SpanNode]:
+    def find(self, predicate: SpanQuery | SpanPredicate) -> list[SpanNode]:
         """Find all nodes in the entire tree that match the predicate, scanning from each root in DFS order."""
-        result: list[SpanNode] = []
-        stack = self.roots[:]
-        while stack:
-            node = stack.pop()
-            if predicate(node):
-                result.append(node)
-            stack.extend(node.children)
-        return result
+        return list(self._filter(predicate))
 
-    def find_first(self, predicate: Callable[[SpanNode], bool]) -> SpanNode | None:
+    def first(self, predicate: SpanQuery | SpanPredicate) -> SpanNode | None:
         """Find the first node that matches a predicate, scanning from each root in DFS order. Returns `None` if not found."""
-        stack = self.roots[:]
-        while stack:
-            node = stack.pop()
-            if predicate(node):
-                return node
-            stack.extend(node.children)
-        return None
+        return next(self._filter(predicate), None)
 
-    def any(self, predicate: Callable[[SpanNode], bool]) -> bool:
+    def any(self, predicate: SpanQuery | SpanPredicate) -> bool:
         """Returns True if any node in the tree matches the predicate."""
-        return self.find_first(predicate) is not None
+        return self.first(predicate) is not None
 
-    def __str__(self):
-        return f'<SpanTree num_roots={len(self.roots)} total_spans={len(self.nodes_by_id)} />'
+    def _filter(self, predicate: SpanQuery | SpanPredicate) -> Iterator[SpanNode]:
+        predicate = _as_predicate(predicate)
+        for node in self:
+            if predicate(node):
+                yield node
+
+    def __iter__(self) -> Iterator[SpanNode]:
+        """Return an iterator over all nodes in the tree."""
+        return iter(self.nodes_by_id.values())
 
     def repr_xml(
         self,
@@ -349,66 +366,33 @@ class SpanTree:
         ]
         return '\n'.join(repr_parts)
 
+    def __str__(self):
+        return f'<SpanTree num_roots={len(self.roots)} total_spans={len(self.nodes_by_id)} />'
+
     def __repr__(self):
         return self.repr_xml()
 
 
-class SpanQuery(TypedDict):
-    """A serializable query for filtering SpanNodes based on various conditions.
-
-    All fields are optional and combined with AND logic by default.
-
-    Due to the presence of `__calL__`, a `SpanQuery` can be used as a predicate in `SpanTree.find_first`, etc.
-    """
-
-    # Individual span conditions
-    ## Name conditions
-    name_equals: NotRequired[str]
-    name_contains: NotRequired[str]
-    name_matches_regex: NotRequired[str]  # regex pattern
-
-    ## Attribute conditions
-    has_attributes: NotRequired[dict[str, Any]]
-    has_attribute_keys: NotRequired[list[str]]
-
-    ## Timing conditions
-    min_duration: NotRequired[timedelta | float]
-    max_duration: NotRequired[timedelta | float]
-
-    # Logical combinations of conditions
-    not_: NotRequired[SpanQuery]
-    and_: NotRequired[list[SpanQuery]]
-    or_: NotRequired[list[SpanQuery]]
-
-    # Descendant conditions
-    some_child_has: NotRequired[SpanQuery]
-    all_children_have: NotRequired[SpanQuery]
-    no_child_has: NotRequired[SpanQuery]
-    min_child_count: NotRequired[int]
-    max_child_count: NotRequired[int]
-
-    some_descendant_has: NotRequired[SpanQuery]
-    all_descendants_have: NotRequired[SpanQuery]
-    no_descendant_has: NotRequired[SpanQuery]
-
-
-def as_predicate(query: SpanQuery) -> Callable[[SpanNode], bool]:
+def _as_predicate(query: SpanQuery | SpanPredicate) -> Callable[[SpanNode], bool]:
     """Convert a SpanQuery into a callable predicate that can be used in SpanTree.find_first, etc."""
-    return partial(matches, query)
+    if callable(query):
+        return query
+
+    return partial(_matches, query=query)
 
 
-def matches(query: SpanQuery, span: SpanNode) -> bool:  # noqa C901
+def _matches(span: SpanNode, query: SpanQuery) -> bool:  # noqa C901
     """Check if the span matches the query conditions."""
     # Logical combinations
     if or_ := query.get('or_'):
         if len(query) > 1:
             raise ValueError("Cannot combine 'or_' conditions with other conditions at the same level")
-        return any(matches(q, span) for q in or_)
+        return any(_matches(span, q) for q in or_)
     if not_ := query.get('not_'):
-        if matches(not_, span):
+        if _matches(span, not_):
             return False
     if and_ := query.get('and_'):
-        results = [matches(q, span) for q in and_]
+        results = [_matches(span, q) for q in and_]
         if not all(results):
             return False
     # At this point, all existing ANDs and no existing ORs have passed, so it comes down to this condition
@@ -449,27 +433,41 @@ def matches(query: SpanQuery, span: SpanNode) -> bool:  # noqa C901
     if (max_child_count := query.get('max_child_count')) and len(span.children) > max_child_count:
         return False
     if (some_child_has := query.get('some_child_has')) and not any(
-        matches(some_child_has, child) for child in span.children
+        _matches(child, some_child_has) for child in span.children
     ):
         return False
     if (all_children_have := query.get('all_children_have')) and not all(
-        matches(all_children_have, child) for child in span.children
+        _matches(child, all_children_have) for child in span.children
     ):
         return False
-    if (no_child_has := query.get('no_child_has')) and any(matches(no_child_has, child) for child in span.children):
+    if (no_child_has := query.get('no_child_has')) and any(_matches(child, no_child_has) for child in span.children):
         return False
 
     # Descendant conditions
     if (some_descendant_has := query.get('some_descendant_has')) and not any(
-        matches(some_descendant_has, child) for child in span.descendants
+        _matches(child, some_descendant_has) for child in span.descendants
     ):
         return False
     if (all_descendants_have := query.get('all_descendants_have')) and not all(
-        matches(all_descendants_have, child) for child in span.descendants
+        _matches(child, all_descendants_have) for child in span.descendants
     ):
         return False
     if (no_descendant_has := query.get('no_descendant_has')) and any(
-        matches(no_descendant_has, child) for child in span.descendants
+        _matches(child, no_descendant_has) for child in span.descendants
+    ):
+        return False
+
+    # Ancestor conditions
+    if (some_ancestor_has := query.get('some_ancestor_has')) and not any(
+        _matches(ancestor, some_ancestor_has) for ancestor in span.ancestors
+    ):
+        return False
+    if (all_ancestors_have := query.get('all_ancestors_have')) and not all(
+        _matches(ancestor, all_ancestors_have) for ancestor in span.ancestors
+    ):
+        return False
+    if (no_ancestor_has := query.get('no_ancestor_has')) and any(
+        _matches(ancestor, no_ancestor_has) for ancestor in span.ancestors
     ):
         return False
 

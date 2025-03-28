@@ -15,7 +15,7 @@ with try_import() as imports_successful:
     from pydantic_evals.otel._context_subtree import (
         context_subtree,
     )
-    from pydantic_evals.otel.span_tree import SpanQuery, SpanTree, as_predicate, matches
+    from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
@@ -107,11 +107,10 @@ async def span_tree() -> SpanTree:
 
 async def test_span_tree_flattened(span_tree: SpanTree):
     """Test the flattened() method of SpanTree."""
-    flattened_nodes = span_tree.flattened()
-    assert len(flattened_nodes) == 6, 'Should have 6 spans in total'
+    assert len(list(span_tree)) == 6, 'Should have 6 spans in total'
 
     # Check that all expected nodes are in the flattened list
-    node_names = {node.name for node in flattened_nodes}
+    node_names = {node.name for node in span_tree}
     expected_names = {'root', 'child1', 'child2', 'grandchild1', 'grandchild2', 'grandchild3'}
     assert node_names == expected_names
 
@@ -119,13 +118,13 @@ async def test_span_tree_flattened(span_tree: SpanTree):
 async def test_span_tree_find_all(span_tree: SpanTree):
     """Test the find_all method of SpanTree."""
     # Find nodes with important type
-    important_nodes = span_tree.find_all(lambda node: node.attributes.get('type') == 'important')
+    important_nodes = list(span_tree.find(lambda node: node.attributes.get('type') == 'important'))
     assert len(important_nodes) == 2
     important_names = {node.name for node in important_nodes}
     assert important_names == {'child1', 'grandchild1'}
 
     # Find nodes with level 2
-    level2_nodes = span_tree.find_all(lambda node: node.attributes.get('level') == '2')
+    level2_nodes = list(span_tree.find(lambda node: node.attributes.get('level') == '2'))
     assert len(level2_nodes) == 3
     level2_names = {node.name for node in level2_nodes}
     assert level2_names == {'grandchild1', 'grandchild2', 'grandchild3'}
@@ -149,7 +148,7 @@ async def test_span_node_find_children(span_tree: SpanTree):
     assert root_node.name == 'root'
 
     # Find all children with a level attribute
-    child_nodes = root_node.find_children(lambda node: 'level' in node.attributes)
+    child_nodes = list(root_node.find_children(lambda node: 'level' in node.attributes))
     assert len(child_nodes) == 2
 
     # Check that the children have the expected names
@@ -187,7 +186,7 @@ async def test_span_node_find_descendants(span_tree: SpanTree):
     root_node = span_tree.roots[0]
 
     # Find all descendants with level 2
-    level2_nodes = root_node.find_descendants(lambda node: node.attributes.get('level') == '2')
+    level2_nodes = list(root_node.find_descendants(lambda node: node.attributes.get('level') == '2'))
     assert len(level2_nodes) == 3
 
     # Check that they have the expected names
@@ -202,16 +201,16 @@ async def test_span_node_matches(span_tree: SpanTree):
     assert child1_node is not None
 
     # Test matches by name
-    assert child1_node.matches(name='child1')
-    assert not child1_node.matches(name='child2')
+    assert child1_node.matches(SpanQuery(name_equals='child1'))
+    assert not child1_node.matches(SpanQuery(name_equals='child2'))
 
     # Test matches by attributes
-    assert child1_node.matches(attributes={'level': '1', 'type': 'important'})
-    assert not child1_node.matches(attributes={'level': '2', 'type': 'important'})
+    assert child1_node.matches(SpanQuery(has_attributes={'level': '1', 'type': 'important'}))
+    assert not child1_node.matches(SpanQuery(has_attributes={'level': '2', 'type': 'important'}))
 
     # Test matches by both name and attributes
-    assert child1_node.matches(name='child1', attributes={'type': 'important'})
-    assert not child1_node.matches(name='child1', attributes={'type': 'normal'})
+    assert child1_node.matches(SpanQuery(name_equals='child1', has_attributes={'type': 'important'}))
+    assert not child1_node.matches(SpanQuery(name_equals='child1', has_attributes={'type': 'normal'}))
 
 
 async def test_span_tree_repr(span_tree: SpanTree):
@@ -290,10 +289,10 @@ async def test_span_tree_repr(span_tree: SpanTree):
 
 
 async def test_span_node_repr(span_tree: SpanTree):
-    node = span_tree.find_first(as_predicate({'name_equals': 'child2'}))
+    node = span_tree.first({'name_equals': 'child2'})
     assert node is not None
 
-    leaf_node = span_tree.find_first(as_predicate({'name_equals': 'grandchild1'}))
+    leaf_node = span_tree.first({'name_equals': 'grandchild1'})
     assert str(leaf_node) == snapshot("<SpanNode name='grandchild1' span_id=0000000000000005 />")
 
     assert str(node) == snapshot("<SpanNode name='child2' span_id=0000000000000009>...</SpanNode>")
@@ -342,11 +341,11 @@ async def test_span_tree_ancestors_methods():
     assert isinstance(tree, SpanTree)
 
     # Get the leaf node
-    leaf_node = tree.find_first(lambda node: node.name == 'leaf')
+    leaf_node = tree.first(lambda node: node.name == 'leaf')
     assert leaf_node is not None
 
     # Test find_ancestors
-    ancestors = leaf_node.find_ancestors(lambda node: True)
+    ancestors = list(leaf_node.find_ancestors(lambda node: True))
     assert len(ancestors) == 4
     ancestor_names = [node.name for node in ancestors]
     assert ancestor_names == ['level3', 'level2', 'level1', 'root']
@@ -380,7 +379,7 @@ async def test_span_tree_descendants_methods():
     assert root_node.name == 'root'
 
     # Test find_descendants
-    descendants = root_node.find_descendants(lambda node: True)
+    descendants = list(root_node.find_descendants(lambda node: True))
     assert len(descendants) == 4
     descendant_names = [node.name for node in descendants]
     assert descendant_names == ['level1', 'level2', 'level3', 'leaf']
@@ -396,48 +395,48 @@ async def test_span_tree_descendants_methods():
 
     # Test descendant-related conditions in matches function
     # Test some_descendant_has
-    assert matches({'some_descendant_has': {'name_equals': 'leaf'}}, root_node)
+    assert root_node.matches({'some_descendant_has': {'name_equals': 'leaf'}})
 
     level2_node = root_node.first_descendant(lambda node: node.name == 'level2')
     assert level2_node is not None
-    assert matches({'some_descendant_has': {'name_equals': 'leaf'}}, level2_node)
-    assert not matches({'some_descendant_has': {'name_equals': 'level1'}}, level2_node)
+    assert level2_node.matches({'some_descendant_has': {'name_equals': 'leaf'}})
+    assert not level2_node.matches({'some_descendant_has': {'name_equals': 'level1'}})
 
     # Test all_descendants_have
-    assert matches({'all_descendants_have': {'has_attribute_keys': ['depth']}}, root_node)
-    assert matches({'some_descendant_has': {'has_attributes': {'depth': 3}}}, root_node)
-    assert not matches({'all_descendants_have': {'has_attributes': {'depth': 3}}}, root_node)
+    assert root_node.matches({'all_descendants_have': {'has_attribute_keys': ['depth']}})
+    assert root_node.matches({'some_descendant_has': {'has_attributes': {'depth': 3}}})
+    assert not root_node.matches({'all_descendants_have': {'has_attributes': {'depth': 3}}})
 
     # Test no_descendant_has
     no_descendant_query: SpanQuery = {'no_descendant_has': {'name_equals': 'non_existent'}}
-    assert matches(no_descendant_query, root_node)
+    assert root_node.matches(no_descendant_query)
 
     level1_node = root_node.first_descendant(lambda node: node.name == 'level1')
     assert level1_node is not None
-    assert matches({'no_descendant_has': {'name_equals': 'level1'}}, level1_node)
-    assert not matches({'no_descendant_has': {'name_equals': 'level2'}}, level1_node)
+    assert level1_node.matches({'no_descendant_has': {'name_equals': 'level1'}})
+    assert not level1_node.matches({'no_descendant_has': {'name_equals': 'level2'}})
 
     # Test complex descendant queries
-    assert matches({'some_descendant_has': {'name_equals': 'leaf', 'has_attributes': {'depth': 4}}}, root_node)
+    assert root_node.matches({'some_descendant_has': {'name_equals': 'leaf', 'has_attributes': {'depth': 4}}})
 
     # Test descendant queries with logical combinations
     logical_descendant_query: SpanQuery = {
         'some_descendant_has': {'and_': [{'name_contains': 'level'}, {'has_attributes': {'depth': 2}}]}
     }
-    assert matches(logical_descendant_query, root_node)
+    assert root_node.matches(logical_descendant_query)
 
     level3_node = root_node.first_descendant(lambda node: node.name == 'level3')
     assert level3_node is not None
-    assert not matches(logical_descendant_query, level3_node)
+    assert not level3_node.matches(logical_descendant_query)
 
     # Test descendant queries with negation
     negated_descendant_query: SpanQuery = {'no_descendant_has': {'not_': {'has_attributes': {'depth': 4}}}}
-    assert not matches(negated_descendant_query, root_node)  # Should fail because level3 has depth=3
+    assert not root_node.matches(negated_descendant_query)  # Should fail because level3 has depth=3
 
     leaf_node = root_node.first_descendant(lambda node: node.name == 'leaf')
     assert leaf_node is not None
-    assert matches(negated_descendant_query, leaf_node)
-    assert matches({'no_descendant_has': {'has_attributes': {'depth': 4}}}, leaf_node)
+    assert leaf_node.matches(negated_descendant_query)
+    assert leaf_node.matches({'no_descendant_has': {'has_attributes': {'depth': 4}}})
 
 
 async def test_log_levels_and_exceptions():
@@ -463,7 +462,7 @@ async def test_log_levels_and_exceptions():
     assert isinstance(tree, SpanTree)
 
     # Verify log levels are preserved
-    parent_span = tree.find_first(lambda node: node.name == 'parent_span')
+    parent_span = tree.first(lambda node: node.name == 'parent_span')
     assert parent_span is not None
 
     # Find the error child span
@@ -471,11 +470,13 @@ async def test_log_levels_and_exceptions():
     assert error_child is not None
 
     # Verify attributes reflect log levels and exceptions
-    log_nodes = parent_span.find_descendants(
-        lambda node: 'Debug message' in str(node.attributes)
-        or 'Info message' in str(node.attributes)
-        or 'Warning message' in str(node.attributes)
-        or 'Error occurred' in str(node.attributes)
+    log_nodes = list(
+        parent_span.find_descendants(
+            lambda node: 'Debug message' in str(node.attributes)
+            or 'Info message' in str(node.attributes)
+            or 'Warning message' in str(node.attributes)
+            or 'Error occurred' in str(node.attributes)
+        )
     )
     assert len(log_nodes) > 0, 'Should have log messages as spans'
 
@@ -484,25 +485,25 @@ async def test_span_query_basics(span_tree: SpanTree):
     """Test basic SpanQuery conditions on a span tree."""
     # Test name equality condition
     name_equals_query: SpanQuery = {'name_equals': 'child1'}
-    matched_node = span_tree.find_first(as_predicate(name_equals_query))
+    matched_node = span_tree.first(name_equals_query)
     assert matched_node is not None
     assert matched_node.name == 'child1'
 
     # Test name contains condition
     name_contains_query: SpanQuery = {'name_contains': 'child'}
-    matched_nodes = span_tree.find_all(as_predicate(name_contains_query))
+    matched_nodes = list(span_tree.find(name_contains_query))
     assert len(matched_nodes) == 5  # All nodes with "child" in name
     assert all('child' in node.name for node in matched_nodes)
 
     # Test name regex match condition
     name_regex_query: SpanQuery = {'name_matches_regex': r'^grand.*\d$'}
-    matched_nodes = span_tree.find_all(as_predicate(name_regex_query))
+    matched_nodes = list(span_tree.find(name_regex_query))
     assert len(matched_nodes) == 3  # All grandchild nodes
     assert all(node.name.startswith('grand') and node.name[-1].isdigit() for node in matched_nodes)
 
     # Test has_attributes condition
     attr_query: SpanQuery = {'has_attributes': {'level': '1', 'type': 'important'}}
-    matched_node = span_tree.find_first(as_predicate(attr_query))
+    matched_node = span_tree.first(attr_query)
     assert matched_node is not None
     assert matched_node.name == 'child1'
     assert matched_node.attributes.get('level') == '1'
@@ -510,7 +511,7 @@ async def test_span_query_basics(span_tree: SpanTree):
 
     # Test has_attribute_keys condition
     attr_keys_query: SpanQuery = {'has_attribute_keys': ['level', 'type']}
-    matched_nodes = span_tree.find_all(as_predicate(attr_keys_query))
+    matched_nodes = list(span_tree.find(attr_keys_query))
     assert len(matched_nodes) == 5  # All nodes except root have both keys
     assert all('level' in node.attributes and 'type' in node.attributes for node in matched_nodes)
 
@@ -529,22 +530,22 @@ async def test_span_query_negation():
 
     # Test negation of name attribute
     not_query: SpanQuery = {'not_': {'name_equals': 'child1'}}
-    matched_nodes = tree.find_all(as_predicate(not_query))
+    matched_nodes = list(tree.find(not_query))
     assert len(matched_nodes) == 2
     assert all(node.name != 'child1' for node in matched_nodes)
 
     # Test negation of attribute condition
     not_attr_query: SpanQuery = {'not_': {'has_attributes': {'category': 'important'}}}
-    matched_nodes = tree.find_all(as_predicate(not_attr_query))
+    matched_nodes = list(tree.find(not_attr_query))
     assert len(matched_nodes) == 2
     assert all(node.attributes.get('category') != 'important' for node in matched_nodes)
 
     # Test direct negation using the matches function
-    parent_node = tree.find_first(lambda node: node.name == 'parent')
+    parent_node = tree.first(lambda node: node.name == 'parent')
     assert parent_node is not None
 
-    assert matches({'name_equals': 'parent'}, parent_node)
-    assert not matches({'not_': {'name_equals': 'parent'}}, parent_node)
+    assert parent_node.matches({'name_equals': 'parent'})
+    assert not parent_node.matches({'not_': {'name_equals': 'parent'}})
 
 
 async def test_span_query_logical_combinations():
@@ -562,13 +563,13 @@ async def test_span_query_logical_combinations():
 
     # Test AND logic
     and_query: SpanQuery = {'and_': [{'name_contains': '1'}, {'has_attributes': {'level': '1'}}]}
-    matched_nodes = tree.find_all(as_predicate(and_query))
+    matched_nodes = list(tree.find(and_query))
     assert len(matched_nodes) == 1, matched_nodes
     assert all(node.name in ['child1'] for node in matched_nodes)
 
     # Test OR logic
     or_query: SpanQuery = {'or_': [{'name_contains': '2'}, {'has_attributes': {'level': '0'}}]}
-    matched_nodes = tree.find_all(as_predicate(or_query))
+    matched_nodes = list(tree.find(or_query))
     assert len(matched_nodes) == 2
     assert any(node.name == 'child2' for node in matched_nodes)
     assert any(node.attributes.get('level') == '0' for node in matched_nodes)
@@ -580,7 +581,7 @@ async def test_span_query_logical_combinations():
             {'or_': [{'has_attributes': {'category': 'important'}}, {'name_equals': 'child2'}]},
         ]
     }
-    matched_nodes = tree.find_all(as_predicate(complex_query))
+    matched_nodes = list(tree.find(complex_query))
     assert len(matched_nodes) == 3  # child1, child2, special
     matched_names = [node.name for node in matched_nodes]
     assert set(matched_names) == {'child1', 'child2', 'special'}
@@ -602,13 +603,13 @@ async def test_span_query_timing_conditions():
             logfire.info('add a wait')
     assert isinstance(tree, SpanTree)
 
-    durations = sorted([node.duration for node in tree.flattened() if node.duration > timedelta(seconds=0)])
+    durations = sorted([node.duration for node in tree if node.duration > timedelta(seconds=0)])
     fast_threshold = (durations[0] + durations[1]) / 2
     medium_threshold = (durations[1] + durations[2]) / 2
 
     # Test min_duration
     min_duration_query: SpanQuery = {'min_duration': fast_threshold}
-    matched_nodes = tree.find_all(as_predicate(min_duration_query))
+    matched_nodes = list(tree.find(min_duration_query))
     assert len(matched_nodes) == 2
     assert 'fast_operation' not in [node.name for node in matched_nodes]
 
@@ -618,7 +619,7 @@ async def test_span_query_timing_conditions():
         {'min_duration': 0.001, 'max_duration': medium_threshold.seconds},
     ]
     for max_duration_query in max_duration_queries:
-        matched_nodes = tree.find_all(as_predicate(max_duration_query))
+        matched_nodes = list(tree.find(max_duration_query))
         assert len(matched_nodes) == 2
         assert 'slow_operation' not in [node.name for node in matched_nodes]
 
@@ -627,7 +628,7 @@ async def test_span_query_timing_conditions():
         'min_duration': fast_threshold,
         'max_duration': medium_threshold,
     }
-    matched_node = tree.find_first(as_predicate(duration_range_query))
+    matched_node = tree.first(duration_range_query)
     assert matched_node is not None
     assert matched_node.name == 'medium_operation'
 
@@ -651,27 +652,22 @@ async def test_span_query_descendant_conditions():
 
     # Test some_child_has condition
     some_child_query: SpanQuery = {'some_child_has': {'has_attributes': {'type': 'important'}}}
-    matched_node = tree.find_first(as_predicate(some_child_query))
+    matched_node = tree.first(some_child_query)
     assert matched_node is not None
     assert matched_node.name == 'parent1'
 
     # Test all_children_have condition
     all_children_query: SpanQuery = {'all_children_have': {'has_attributes': {'type': 'normal'}}}
-    matched_node = tree.find_first(as_predicate(all_children_query))
+    matched_node = tree.first(all_children_query)
     assert matched_node is not None
     assert matched_node.name == 'parent2'
     # A couple more tests for coverage reasons:
-    assert (
-        tree.find_first(
-            as_predicate({'all_children_have': {'has_attributes': {'type': 'unusual'}}, 'min_child_count': 1})
-        )
-        is None
-    )
-    assert as_predicate({'no_child_has': {'has_attributes': {'type': 'normal'}}})(matched_node) is False
+    assert tree.first({'all_children_have': {'has_attributes': {'type': 'unusual'}}, 'min_child_count': 1}) is None
+    assert not matched_node.matches({'no_child_has': {'has_attributes': {'type': 'normal'}}})
 
     # Test no_child_has condition
     no_child_query: SpanQuery = {'no_child_has': {'has_attributes': {'type': 'important'}}}
-    matched_node = tree.find_first(as_predicate(no_child_query))
+    matched_node = tree.first(no_child_query)
     assert matched_node is not None
     assert matched_node.name == 'parent2'
 
@@ -703,7 +699,7 @@ async def test_span_query_complex_hierarchical_conditions():
         },
     }
 
-    matched_node = tree.find_first(as_predicate(complex_query))
+    matched_node = tree.first(complex_query)
     assert matched_node is not None
     assert matched_node.name == 'app'
 
@@ -713,38 +709,8 @@ async def test_span_query_complex_hierarchical_conditions():
         'some_child_has': {'not_': {'name_equals': 'db_query'}},
     }
 
-    matched_nodes = tree.find_all(as_predicate(request_with_db_and_other))
+    matched_nodes = list(tree.find(request_with_db_and_other))
     assert len(matched_nodes) == 2  # Both requests have db_query and another operation
-
-
-async def test_span_query_as_predicate_conversion():
-    """Test that as_predicate correctly converts SpanQuery to a callable predicate."""
-
-    # Create a simple test span
-    with context_subtree() as tree:
-        with logfire.span('test_span', category='test'):
-            pass
-    assert isinstance(tree, SpanTree)
-
-    test_node = tree.roots[0]
-    assert test_node.name == 'test_span'
-
-    # Create a query and convert it to a predicate
-    query: SpanQuery = {'name_equals': 'test_span', 'has_attributes': {'category': 'test'}}
-    predicate = as_predicate(query)
-
-    # Test the predicate directly
-    assert predicate(test_node)
-
-    # Verify it's equivalent to calling matches directly
-    assert matches(query, test_node)
-
-    # Test with a non-matching query
-    non_matching_query: SpanQuery = {'name_equals': 'different_span'}
-    non_matching_predicate = as_predicate(non_matching_query)
-
-    assert not non_matching_predicate(test_node)
-    assert not matches(non_matching_query, test_node)
 
 
 async def test_matches_function_directly():
@@ -764,22 +730,22 @@ async def test_matches_function_directly():
     child2_node = parent_node.children[1]
 
     # Basic matches tests
-    assert matches({'name_equals': 'parent'}, parent_node)
-    assert not matches({'name_equals': 'parent'}, child1_node)
+    assert parent_node.matches({'name_equals': 'parent'})
+    assert not child1_node.matches({'name_equals': 'parent'})
 
     # Test attribute matching
-    assert matches({'has_attributes': {'level': '1'}}, parent_node)
-    assert not matches({'has_attributes': {'level': '1'}}, child1_node)
+    assert parent_node.matches({'has_attributes': {'level': '1'}})
+    assert not child1_node.matches({'has_attributes': {'level': '1'}})
 
     # Test logical combinations
     complex_query: SpanQuery = {'and_': [{'name_equals': 'child1'}, {'has_attributes': {'category': 'important'}}]}
-    assert matches(complex_query, child1_node)
-    assert not matches(complex_query, child2_node)
+    assert child1_node.matches(complex_query)
+    assert not child2_node.matches(complex_query)
 
     # Test with descendants
     descendant_query: SpanQuery = {'some_child_has': {'name_equals': 'child1'}}
-    assert matches(descendant_query, parent_node)
-    assert not matches(descendant_query, child1_node)
+    assert parent_node.matches(descendant_query)
+    assert not child1_node.matches(descendant_query)
 
 
 async def test_span_query_child_count():
@@ -811,45 +777,45 @@ async def test_span_query_child_count():
 
     # Test min_child_count
     min_2_query: SpanQuery = {'min_child_count': 2}
-    matched_nodes = tree.find_all(as_predicate(min_2_query))
+    matched_nodes = list(tree.find(min_2_query))
     assert len(matched_nodes) == 2
     matched_names = {node.name for node in matched_nodes}
     assert matched_names == {'parent_two_children', 'parent_three_children'}
 
     # Test max_child_count
     max_1_query: SpanQuery = {'max_child_count': 1}
-    matched_nodes = tree.find_all(as_predicate(max_1_query))
+    matched_nodes = list(tree.find(max_1_query))
     assert len(matched_nodes) == 8  # parent_no_children, parent_one_child, and all the leaf nodes
     assert 'parent_two_children' not in {node.name for node in matched_nodes}
     assert 'parent_three_children' not in {node.name for node in matched_nodes}
 
     # Test both min and max together (range)
     child_range_query: SpanQuery = {'min_child_count': 1, 'max_child_count': 2}
-    matched_nodes = tree.find_all(as_predicate(child_range_query))
+    matched_nodes = list(tree.find(child_range_query))
     assert len(matched_nodes) == 2
     matched_names = {node.name for node in matched_nodes}
     assert matched_names == {'parent_one_child', 'parent_two_children'}
 
     # Test with other conditions
     complex_query: SpanQuery = {'name_contains': 'parent', 'min_child_count': 2}
-    matched_nodes = tree.find_all(as_predicate(complex_query))
+    matched_nodes = list(tree.find(complex_query))
     assert len(matched_nodes) == 2
     assert all('parent' in node.name and len(node.children) >= 2 for node in matched_nodes)
 
     # Test direct usage of matches function
-    parent_three = tree.find_first(lambda node: node.name == 'parent_three_children')
+    parent_three = tree.first(lambda node: node.name == 'parent_three_children')
     assert parent_three is not None
 
-    assert matches({'min_child_count': 3}, parent_three)
-    assert matches({'min_child_count': 2, 'max_child_count': 3}, parent_three)
-    assert not matches({'max_child_count': 2}, parent_three)
+    assert parent_three.matches({'min_child_count': 3})
+    assert parent_three.matches({'min_child_count': 2, 'max_child_count': 3})
+    assert not parent_three.matches({'max_child_count': 2})
 
     # Test with logical operators
     logical_query: SpanQuery = {
         'and_': [{'name_contains': 'parent'}, {'min_child_count': 1}],
         'not_': {'max_child_count': 1},
     }
-    matched_nodes = tree.find_all(as_predicate(logical_query))
+    matched_nodes = list(tree.find(logical_query))
     assert len(matched_nodes) == 2
     matched_names = {node.name for node in matched_nodes}
     assert matched_names == {'parent_two_children', 'parent_three_children'}
@@ -857,7 +823,7 @@ async def test_span_query_child_count():
 
 async def test_or_cannot_be_mixed(span_tree: SpanTree):
     with pytest.raises(ValueError) as exc_info:
-        span_tree.find_first(as_predicate({'name_equals': 'child1', 'or_': [SpanQuery(name_equals='child2')]}))
+        span_tree.first({'name_equals': 'child1', 'or_': [SpanQuery(name_equals='child2')]})
     assert str(exc_info.value) == snapshot("Cannot combine 'or_' conditions with other conditions at the same level")
 
 
