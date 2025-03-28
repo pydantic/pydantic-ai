@@ -93,9 +93,15 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                 'children': [
                     {'id': 1, 'message': 'preparing model request params'},
                     {'id': 2, 'message': 'chat test'},
-                    {'id': 3, 'message': 'running tools: my_ret'},
-                    {'id': 4, 'message': 'preparing model request params'},
-                    {'id': 5, 'message': 'chat test'},
+                    {
+                        'id': 3,
+                        'message': 'running 1 tool',
+                        'children': [
+                            {'id': 4, 'message': 'running tool: my_ret'},
+                        ],
+                    },
+                    {'id': 5, 'message': 'preparing model request params'},
+                    {'id': 6, 'message': 'chat test'},
                 ],
             }
         ]
