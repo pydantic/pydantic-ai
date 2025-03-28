@@ -48,3 +48,25 @@ def test_cli_help(capfd: CaptureFixture[str]):
 def test_invalid_model(capfd: CaptureFixture[str]):
     assert cli(['--model', 'invalid_model']) == 1
     assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), 'Invalid model "invalid_model"'])
+
+
+def test_list_models(capfd: CaptureFixture[str]):
+    assert cli(['--list-models']) == 0
+    output = capfd.readouterr().out.splitlines()
+    assert output[:2] == snapshot(['pai - PydanticAI CLI v0.0.46', 'Available models:'])
+
+    providers = (
+        'openai',
+        'anthropic',
+        'bedrock',
+        'google-vertex',
+        'google-gla',
+        'groq',
+        'mistral',
+        'cohere',
+        'deepseek',
+    )
+    models = {line.strip().split(' ')[0] for line in output[2:]}
+    for provider in providers:
+        models = models - {model for model in models if model.startswith(provider)}
+    assert models == set(), models
