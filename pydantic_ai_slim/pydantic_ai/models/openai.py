@@ -760,7 +760,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _timestamp: datetime
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
@@ -773,6 +773,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseCreatedEvent):
                 pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseFailedEvent):
+                self._usage += _map_usage(chunk.response)
 
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -787,8 +790,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
                 pass  # there's nothing we need to do here
 
+            elif isinstance(chunk, responses.ResponseIncompleteEvent):
+                self._usage += _map_usage(chunk.response)
+
             elif isinstance(chunk, responses.ResponseInProgressEvent):
-                pass  # there's nothing we need to do here
+                self._usage += _map_usage(chunk.response)
 
             elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
                 if isinstance(chunk.item, responses.ResponseFunctionToolCall):
