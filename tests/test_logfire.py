@@ -91,17 +91,15 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                 'id': 0,
                 'message': 'my_agent run',
                 'children': [
-                    {'id': 1, 'message': 'preparing model request params'},
-                    {'id': 2, 'message': 'chat test'},
+                    {'id': 1, 'message': 'chat test'},
                     {
-                        'id': 3,
+                        'id': 2,
                         'message': 'running 1 tool',
                         'children': [
-                            {'id': 4, 'message': 'running tool: my_ret'},
+                            {'id': 3, 'message': 'running tool: my_ret'},
                         ],
                     },
-                    {'id': 5, 'message': 'preparing model request params'},
-                    {'id': 6, 'message': 'chat test'},
+                    {'id': 4, 'message': 'chat test'},
                 ],
             }
         ]
@@ -166,14 +164,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
             ),
         }
     )
-    assert summary.attributes[1] == snapshot(
-        {
-            'run_step': 1,
-            'logfire.span_type': 'span',
-            'logfire.msg': 'preparing model request params',
-        }
-    )
-    chat_span_attributes = summary.attributes[2]
+    chat_span_attributes = summary.attributes[1]
     if instrument is True or instrument.event_mode == 'attributes':
         attribute_mode_attributes = {k: chat_span_attributes.pop(k) for k in ['events']}
         assert attribute_mode_attributes == snapshot(
