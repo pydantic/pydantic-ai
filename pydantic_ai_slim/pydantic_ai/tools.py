@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import inspect
+import json
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
@@ -302,12 +303,15 @@ class Tool(Generic[AgentDepsT]):
             'tool_arguments': message.args_as_json_str(),
             'logfire.msg': f'running tool: {self.name}',
             # add the JSON schema so these attributes are formatted nicely in Logfire
-            'logfire.json_schema': (
-                '{"type": "object", "properties": {'
-                '"tool_arguments": {"type": "object"}, '
-                '"gen_ai.tool.name": {}, '
-                '"gen_ai.tool.call.id": {}'
-                '}}'
+            'logfire.json_schema': json.dumps(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'tool_arguments': {'type': 'object'},
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
+                }
             ),
         }
         with tracer.start_as_current_span('running tool', attributes=span_attributes):
