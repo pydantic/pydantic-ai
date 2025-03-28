@@ -6,6 +6,7 @@ we have to update the version number in:
 * examples/pyproject.toml
 * pydantic_ai_slim/pyproject.toml
 * pydantic_graph/pyproject.toml
+* pydantic_evals/pyproject.toml
 
 Usage:
 
@@ -50,7 +51,7 @@ print(f'Updating version from {old_version!r} to {version!r}')
 
 def replace_deps_version(text: str) -> tuple[str, int]:
     ovr = re.escape(old_version)
-    text, c1 = re.subn(f'(pydantic-(?:ai-.+?|graph)==){ovr}', fr'\g<1>{version}', text, count=5)
+    text, c1 = re.subn(f'(pydantic-(?:ai-.+?|graph|evals)==){ovr}', fr'\g<1>{version}', text, count=5)
     text, c2 = re.subn(
         fr'^(version ?= ?)(["\']){ovr}\2$', fr'\g<1>\g<2>{version}\g<2>', text, count=5, flags=re.M
     )
@@ -71,26 +72,33 @@ graph_pp = ROOT_DIR / 'pydantic_graph' / 'pyproject.toml'
 graph_pp_text = graph_pp.read_text()
 graph_pp_text, count_graph = replace_deps_version(graph_pp_text)
 
+evals_pp = ROOT_DIR / 'pydantic_evals' / 'pyproject.toml'
+evals_pp_text = evals_pp.read_text()
+evals_pp_text, count_evals = replace_deps_version(evals_pp_text)
+
 EXPECTED_COUNT_ROOT = 2
-EXPECTED_COUNT_EX = 2
+EXPECTED_COUNT_EX = 3
 EXPECTED_COUNT_SLIM = 2
 EXPECTED_COUNT_GRAPH = 1
+EXPECTED_COUNT_EVALS = 1
 
 if (
     count_root == EXPECTED_COUNT_ROOT
     and count_ex == EXPECTED_COUNT_EX
     and count_slim == EXPECTED_COUNT_SLIM
     and count_graph == EXPECTED_COUNT_GRAPH
+    and count_evals == EXPECTED_COUNT_EVALS
 ):
     root_pp.write_text(root_pp_text)
     examples_pp.write_text(examples_pp_text)
     slim_pp.write_text(slim_pp_text)
     graph_pp.write_text(graph_pp_text)
+    evals_pp.write_text(evals_pp_text)
     print('running `make sync`...')
     subprocess.run(['make', 'sync'], check=True)
     print(f'running `git switch -c uprev-{version}`...')
     subprocess.run(['git', 'switch', '-c', f'uprev-{version}'], check=True)
-    print(f'SUCCESS: replaced version in\n  {root_pp}\n  {examples_pp}\n  {slim_pp}\n  {graph_pp}')
+    print(f'SUCCESS: replaced version in\n  {root_pp}\n  {examples_pp}\n  {slim_pp}\n  {graph_pp}\n  {evals_pp}')
 else:
     print(
         f'ERROR:\n'
@@ -98,6 +106,7 @@ else:
         f'  {count_ex} version references in {examples_pp} (expected {EXPECTED_COUNT_EX})\n'
         f'  {count_slim} version references in {slim_pp} (expected {EXPECTED_COUNT_SLIM})\n'
         f'  {count_graph} version references in {graph_pp} (expected {EXPECTED_COUNT_GRAPH})',
+        f'  {count_evals} version references in {evals_pp} (expected {EXPECTED_COUNT_EVALS})',
         file=sys.stderr,
     )
     sys.exit(1)
