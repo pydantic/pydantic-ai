@@ -490,7 +490,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         cases: list[Case[InputsT, OutputT, MetadataT]] = []
         errors: list[ValueError] = []
-        dataset_evaluators: list[Evaluator[Any, Any, Any]] = []
+        dataset_evaluators: list[Evaluator] = []
         for spec in dataset_model.evaluators:
             try:
                 dataset_evaluator = _load_evaluator_from_registry(registry, None, spec)
@@ -500,7 +500,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             dataset_evaluators.append(dataset_evaluator)
 
         for row in dataset_model.cases:
-            evaluators: list[Evaluator[Any, Any, Any]] = []
+            evaluators: list[Evaluator] = []
             for spec in row.evaluators:
                 try:
                     evaluator = _load_evaluator_from_registry(registry, row.name, spec)
