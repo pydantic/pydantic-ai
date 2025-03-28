@@ -85,7 +85,10 @@ See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models)
 
 
 class AnthropicModelSettings(ModelSettings):
-    """Settings used for an Anthropic model request."""
+    """Settings used for an Anthropic model request.
+
+    ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
 
     anthropic_metadata: MetadataParam
     """An object describing metadata about the request.

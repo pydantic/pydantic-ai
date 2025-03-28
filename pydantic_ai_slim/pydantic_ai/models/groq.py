@@ -70,7 +70,10 @@ See [the Groq docs](https://console.groq.com/docs/models) for a full list.
 
 
 class GroqModelSettings(ModelSettings):
-    """Settings used for a Groq model request."""
+    """Settings used for a Groq model request.
+
+    ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
 
     # This class is a placeholder for any future groq-specific settings
 
