@@ -156,6 +156,7 @@ class EvaluationReport(BaseModel):
         baseline: EvaluationReport | None = None,
         include_input: bool = False,
         include_output: bool = False,
+        include_durations: bool = True,
         include_total_duration: bool = False,
         include_removed_cases: bool = False,
         include_averages: bool = True,
@@ -174,6 +175,7 @@ class EvaluationReport(BaseModel):
             baseline=baseline,
             include_input=include_input,
             include_output=include_output,
+            include_durations=include_durations,
             include_total_duration=include_total_duration,
             include_removed_cases=include_removed_cases,
             include_averages=include_averages,
@@ -191,6 +193,7 @@ class EvaluationReport(BaseModel):
         baseline: EvaluationReport | None = None,
         include_input: bool = False,
         include_output: bool = False,
+        include_durations: bool = True,
         include_total_duration: bool = False,
         include_removed_cases: bool = False,
         include_averages: bool = True,
@@ -208,6 +211,7 @@ class EvaluationReport(BaseModel):
         renderer = EvaluationRenderer(
             include_input=include_input,
             include_output=include_output,
+            include_durations=include_durations,
             include_total_duration=include_total_duration,
             include_removed_cases=include_removed_cases,
             include_averages=include_averages,
@@ -494,6 +498,7 @@ class ReportCaseRenderer:
     include_labels: bool
     include_metrics: bool
     include_assertions: bool
+    include_durations: bool
     include_total_duration: bool
 
     input_renderer: _ValueRenderer
@@ -519,7 +524,8 @@ class ReportCaseRenderer:
             table.add_column('Metrics', overflow='fold')
         if self.include_assertions:
             table.add_column('Assertions', overflow='fold')
-        table.add_column('Durations' if self.include_total_duration else 'Duration', justify='right')
+        if self.include_durations:
+            table.add_column('Durations' if self.include_total_duration else 'Duration', justify='right')
         return table
 
     def build_row(self, case: ReportCase) -> list[str]:
@@ -544,7 +550,9 @@ class ReportCaseRenderer:
         if self.include_assertions:
             row.append(self._render_assertions(list(case.assertions.values())))
 
-        row.append(self._render_durations(case))
+        if self.include_durations:
+            row.append(self._render_durations(case))
+
         return row
 
     def build_aggregate_row(self, aggregate: ReportCaseAggregate) -> list[str]:
@@ -569,7 +577,9 @@ class ReportCaseRenderer:
         if self.include_assertions:
             row.append(self._render_aggregate_assertions(aggregate.assertions))
 
-        row.append(self._render_durations(aggregate))
+        if self.include_durations:
+            row.append(self._render_durations(aggregate))
+
         return row
 
     def build_diff_row(
@@ -611,7 +621,9 @@ class ReportCaseRenderer:
             )
             row.append(assertions_diff)
 
-        row.append(self._render_durations_diff(baseline, new_case))
+        if self.include_durations:
+            durations_diff = self._render_durations_diff(baseline, new_case)
+            row.append(durations_diff)
 
         return row
 
@@ -646,7 +658,9 @@ class ReportCaseRenderer:
             assertions_diff = self._render_aggregate_assertions_diff(baseline.assertions, new.assertions)
             row.append(assertions_diff)
 
-        row.append(self._render_durations_diff(baseline, new))
+        if self.include_durations:
+            durations_diff = self._render_durations_diff(baseline, new)
+            row.append(durations_diff)
 
         return row
 
@@ -761,6 +775,7 @@ class EvaluationRenderer:
     # Columns to include
     include_input: bool
     include_output: bool
+    include_durations: bool
     include_total_duration: bool
 
     # Rows to include
@@ -817,6 +832,7 @@ class EvaluationRenderer:
             include_labels=self.include_labels(report, baseline),
             include_metrics=self.include_metrics(report, baseline),
             include_assertions=self.include_assertions(report, baseline),
+            include_durations=self.include_durations,
             include_total_duration=self.include_total_duration,
             input_renderer=input_renderer,
             output_renderer=output_renderer,

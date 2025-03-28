@@ -1,9 +1,16 @@
-# Pydantic Evals
+# Evals
+
+"Evals" refers to evaluating a model's performance for a specific application.
+
+!!! danger "Warning"
+    Unlike unit tests, evals are an emerging art/science; anyone who claims to know for sure exactly how your evals should be defined can safely be ignored.
 
 Pydantic Evals is a powerful evaluation framework designed to help you systematically test and evaluate the performance and accuracy of the systems you build, especially when working with LLMs.
 
+We've designed Pydantic Evals to be useful while not being too opinionated since we (along with everyone else) are still figuring out best practices. We'd love your [feedback](help.md) on the package and how we can improve it.
+
 !!! note "In Beta"
-    Pydantic Evals support was [introduced](https://github.com/pydantic/pydantic-ai/pull/935) in v0.0.47 and is currently in beta. The API is subject to change. The documentation is incomplete.
+    Pydantic Evals support was [introduced](https://github.com/pydantic/pydantic-ai/pull/935) in v0.0.47 and is currently in beta. The API is subject to change and the documentation is incomplete.
 
 ## Installation
 
@@ -22,9 +29,9 @@ pip/uv-add 'pydantic-evals[logfire]'
 
 ## Datasets and Cases
 
-The foundation of Pydantic Evals is the concept of datasets and test cases:
+In Pydantic Evals, everything begins with `Dataset`s and `Case`s:
 
-- [`Case`][pydantic_evals.Case]: A single test scenario corresponding to task inputs. Can also optionally have a name, expected outputs, metadata, and evaluators.
+- [`Case`][pydantic_evals.Case]: A single test scenario corresponding to "task" inputs. Can also optionally have a name, expected outputs, metadata, and evaluators.
 - [`Dataset`][pydantic_evals.Dataset]: A collection of test cases designed for the evaluation of a specific task or function.
 
 ```python {title="simple_eval_dataset.py"}
@@ -87,12 +94,8 @@ The evaluation process involves running a task against all cases in a dataset:
 Putting the above two examples together and using the more declarative `evaluators` kwarg to [`Dataset`][pydantic_evals.Dataset]:
 
 ```python {title="simple_eval_complete.py"}
-import logfire
-
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext, IsInstance
-
-logfire.configure()
 
 case1 = Case(  # (1)!
     name='simple_case',
@@ -126,16 +129,16 @@ async def guess_city(question: str) -> str:  # (4)!
 
 
 report = dataset.evaluate_sync(guess_city)  # (5)!
-report.print(include_input=True, include_output=True)  # (6)!
+report.print(include_input=True, include_output=True, include_durations=False)  # (6)!
 """
-                                    Evaluation Summary: guess_city
-┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID     ┃ Inputs                         ┃ Outputs ┃ Scores            ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ simple_case │ What is the capital of France? │ Paris   │ MyEvaluator: 1.00 │ ✔          │    123µs │
-├─────────────┼────────────────────────────────┼─────────┼───────────────────┼────────────┼──────────┤
-│ Averages    │                                │         │ MyEvaluator: 1.00 │ 100.0% ✔   │    123µs │
-└─────────────┴────────────────────────────────┴─────────┴───────────────────┴────────────┴──────────┘
+                              Evaluation Summary: guess_city
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┓
+┃ Case ID     ┃ Inputs                         ┃ Outputs ┃ Scores            ┃ Assertions ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━┩
+│ simple_case │ What is the capital of France? │ Paris   │ MyEvaluator: 1.00 │ ✔          │
+├─────────────┼────────────────────────────────┼─────────┼───────────────────┼────────────┤
+│ Averages    │                                │         │ MyEvaluator: 1.00 │ 100.0% ✔   │
+└─────────────┴────────────────────────────────┴─────────┴───────────────────┴────────────┘
 """
 ```
 
@@ -144,7 +147,7 @@ report.print(include_input=True, include_output=True)  # (6)!
 3. Create a [`Dataset`][pydantic_evals.Dataset] with test cases, also set the [`evaluators`][pydantic_evals.Dataset.evaluators] when creating the dataset
 4. Our function to evaluate.
 5. Run the evaluation with [`evaluate_sync`][pydantic_evals.Dataset.evaluate_sync], which runs the function against all test cases in the dataset, and returns an [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] object.
-6. Print the report with [`print`][pydantic_evals.reporting.EvaluationReport.print], which shows the results of the evaluation, including input and output.
+6. Print the report with [`print`][pydantic_evals.reporting.EvaluationReport.print], which shows the results of the evaluation, including input and output. We have omitted duration here just to keep the printed output from changing from run to run.
 
 _(This example is complete, it can be run "as is")_
 
@@ -237,11 +240,11 @@ print(report)
 ┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID            ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ vegetarian_recipe  │ ✔✔✔        │    123µs │
+│ vegetarian_recipe  │ ✔✔✔        │     10ms │
 ├────────────────────┼────────────┼──────────┤
-│ gluten_free_recipe │ ✔✔✔        │    123µs │
+│ gluten_free_recipe │ ✔✔✔        │     10ms │
 ├────────────────────┼────────────┼──────────┤
-│ Averages           │ 100.0% ✔   │    123µs │
+│ Averages           │ 100.0% ✔   │     10ms │
 └────────────────────┴────────────┴──────────┘
 """
 ```
@@ -312,7 +315,7 @@ _(This example is complete, it can be run "as is")_
 
 You can control concurrency during evaluation (this might be useful to prevent exceeding a rate limit):
 
-```python {title="parallel_evaluation_example.py"}
+```python {title="parallel_evaluation_example.py" line_length="100"}
 import asyncio
 import time
 
@@ -342,25 +345,26 @@ t0 = time.time()
 report_default = dataset.evaluate_sync(double_number)
 print(f'Evaluation took less than 0.3s: {time.time() - t0 < 0.3}')
 #> Evaluation took less than 0.3s: True
-report_default.print()
+
+report_default.print(include_input=True, include_output=True, include_durations=False)  # (1)!
 """
-  Evaluation Summary:
-     double_number
-┏━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID  ┃ Duration ┃
-┡━━━━━━━━━━╇━━━━━━━━━━┩
-│ case_0   │  101.0ms │
-├──────────┼──────────┤
-│ case_1   │  101.0ms │
-├──────────┼──────────┤
-│ case_2   │  101.0ms │
-├──────────┼──────────┤
-│ case_3   │  101.0ms │
-├──────────┼──────────┤
-│ case_4   │  101.0ms │
-├──────────┼──────────┤
-│ Averages │  101.0ms │
-└──────────┴──────────┘
+      Evaluation Summary:
+         double_number
+┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
+┃ Case ID  ┃ Inputs ┃ Outputs ┃
+┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━┩
+│ case_0   │ 0      │ 0       │
+├──────────┼────────┼─────────┤
+│ case_1   │ 1      │ 2       │
+├──────────┼────────┼─────────┤
+│ case_2   │ 2      │ 4       │
+├──────────┼────────┼─────────┤
+│ case_3   │ 3      │ 6       │
+├──────────┼────────┼─────────┤
+│ case_4   │ 4      │ 8       │
+├──────────┼────────┼─────────┤
+│ Averages │        │         │
+└──────────┴────────┴─────────┘
 """
 
 # Run evaluation with limited concurrency
@@ -369,27 +373,30 @@ report_limited = dataset.evaluate_sync(double_number, max_concurrency=1)
 print(f'Evaluation took more than 0.5s: {time.time() - t0 > 0.5}')
 #> Evaluation took more than 0.5s: True
 
-report_limited.print()
+report_limited.print(include_input=True, include_output=True, include_durations=False)  # (2)!
 """
-  Evaluation Summary:
-     double_number
-┏━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID  ┃ Duration ┃
-┡━━━━━━━━━━╇━━━━━━━━━━┩
-│ case_0   │  101.0ms │
-├──────────┼──────────┤
-│ case_1   │  101.0ms │
-├──────────┼──────────┤
-│ case_2   │  101.0ms │
-├──────────┼──────────┤
-│ case_3   │  101.0ms │
-├──────────┼──────────┤
-│ case_4   │  101.0ms │
-├──────────┼──────────┤
-│ Averages │  101.0ms │
-└──────────┴──────────┘
+      Evaluation Summary:
+         double_number
+┏━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━┓
+┃ Case ID  ┃ Inputs ┃ Outputs ┃
+┡━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━┩
+│ case_0   │ 0      │ 0       │
+├──────────┼────────┼─────────┤
+│ case_1   │ 1      │ 2       │
+├──────────┼────────┼─────────┤
+│ case_2   │ 2      │ 4       │
+├──────────┼────────┼─────────┤
+│ case_3   │ 3      │ 6       │
+├──────────┼────────┼─────────┤
+│ case_4   │ 4      │ 8       │
+├──────────┼────────┼─────────┤
+│ Averages │        │         │
+└──────────┴────────┴─────────┘
 """
 ```
+
+1. We have omitted duration here just to keep the printed output from changing from run to run.
+2. We have omitted duration here just to keep the printed output from changing from run to run.
 
 _(This example is complete, it can be run "as is")_
 
@@ -408,7 +415,7 @@ evaluation.
 
 There are two main ways this is useful.
 
-TODO: Finish this
+<!-- TODO: Finish this -->
 
 ```python {title="opentelemetry_example.py"}
 import asyncio
@@ -498,20 +505,22 @@ dataset = Dataset(
 report = dataset.evaluate_sync(process_text)
 
 # Print the report
-report.print(include_input=True, include_output=True)
+report.print(include_input=True, include_output=True, include_durations=False)  # (1)!
 """
-                                                    Evaluation Summary: process_text
-┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID         ┃ Inputs                ┃ Outputs                                 ┃ Scores                   ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ normal_text     │ Hello World           │ Processed: hello_world                  │ performance_score: 1.00  │ ✔✗         │  101.0ms │
-├─────────────────┼───────────────────────┼─────────────────────────────────────────┼──────────────────────────┼────────────┼──────────┤
-│ text_with_error │ Contains error marker │ Error processing: Contains error marker │ performance_score: 0     │ ✔✔         │  101.0ms │
-├─────────────────┼───────────────────────┼─────────────────────────────────────────┼──────────────────────────┼────────────┼──────────┤
-│ Averages        │                       │                                         │ performance_score: 0.500 │ 75.0% ✔    │  101.0ms │
-└─────────────────┴───────────────────────┴─────────────────────────────────────────┴──────────────────────────┴────────────┴──────────┘
+                                              Evaluation Summary: process_text
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┓
+┃ Case ID         ┃ Inputs                ┃ Outputs                                 ┃ Scores                   ┃ Assertions ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━┩
+│ normal_text     │ Hello World           │ Processed: hello_world                  │ performance_score: 1.00  │ ✔✗         │
+├─────────────────┼───────────────────────┼─────────────────────────────────────────┼──────────────────────────┼────────────┤
+│ text_with_error │ Contains error marker │ Error processing: Contains error marker │ performance_score: 0     │ ✔✔         │
+├─────────────────┼───────────────────────┼─────────────────────────────────────────┼──────────────────────────┼────────────┤
+│ Averages        │                       │                                         │ performance_score: 0.500 │ 75.0% ✔    │
+└─────────────────┴───────────────────────┴─────────────────────────────────────────┴──────────────────────────┴────────────┘
 """
 ```
+
+1. We have omitted duration here just to keep the printed output from changing from run to run.
 
 _(This example is complete, it can be run "as is")_
 
