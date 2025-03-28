@@ -14,7 +14,7 @@ from opentelemetry.trace import ProxyTracerProvider, get_tracer_provider
 
 try:
     from logfire._internal.tracer import (
-        ProxyTracerProvider as LogfireProxyTracerProvider,  # pyright: ignore[reportAssignmentType]
+        ProxyTracerProvider as LogfireProxyTracerProvider,  # pyright: ignore[reportAssignmentType,reportPrivateImportUsage]
     )
 
     _LOGFIRE_IS_INSTALLED = True

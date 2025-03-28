@@ -432,12 +432,12 @@ def matches(query: SpanQuery, span: SpanNode) -> bool:  # noqa C901
         return False
 
     # Timing conditions
-    if (min_duration := query.get('min_duration')) is not None and span.duration is not None:
+    if (min_duration := query.get('min_duration')) is not None and span.duration is not None:  # pyright: ignore[reportUnnecessaryComparison]
         if not isinstance(min_duration, timedelta):
             min_duration = timedelta(seconds=min_duration)
         if span.duration < min_duration:
             return False
-    if (max_duration := query.get('max_duration')) is not None and span.duration is not None:
+    if (max_duration := query.get('max_duration')) is not None and span.duration is not None:  # pyright: ignore[reportUnnecessaryComparison]
         if not isinstance(max_duration, timedelta):
             max_duration = timedelta(seconds=max_duration)
         if span.duration > max_duration:
