@@ -126,13 +126,12 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
     Example:
     ```python
     from dataclasses import dataclass
-    from typing import Any
 
     from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 
     @dataclass
-    class ExactMatch(Evaluator[Any, Any, Any]):
+    class ExactMatch(Evaluator):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
             return ctx.output == ctx.expected_output
     ```

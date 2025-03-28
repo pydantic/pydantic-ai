@@ -172,14 +172,13 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     ```python
     # Create a dataset with two test cases
     from dataclasses import dataclass
-    from typing import Any
 
     from pydantic_evals import Case, Dataset
     from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 
     @dataclass
-    class ExactMatch(Evaluator[Any, Any, Any]):
+    class ExactMatch(Evaluator):
         def evaluate(self, ctx: EvaluatorContext) -> bool:
             return ctx.output == ctx.expected_output
 
