@@ -331,10 +331,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.run_step += 1
 
         model_settings = merge_model_settings(ctx.deps.model_settings, None)
-        with ctx.deps.tracer.start_as_current_span(
-            'preparing model request params', attributes=dict(run_step=ctx.state.run_step)
-        ):
-            model_request_parameters = await _prepare_request_parameters(ctx)
+        model_request_parameters = await _prepare_request_parameters(ctx)
         return model_settings, model_request_parameters
 
     def _finish_handling(
