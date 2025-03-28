@@ -169,6 +169,7 @@ def test_docs_examples(  # noqa: C901
     call_name = prefix_settings.get('call_name', 'main')
 
     if not opt_lint.startswith('skip'):
+        # ruff and seem to black disagree here, not sure if that's easily fixable
         if eval_example.update_examples:  # pragma: no cover
             eval_example.format_ruff(example)
         else:
