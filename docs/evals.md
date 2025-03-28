@@ -94,12 +94,8 @@ The evaluation process involves running a task against all cases in a dataset:
 Putting the above two examples together and using the more declarative `evaluators` kwarg to [`Dataset`][pydantic_evals.Dataset]:
 
 ```python {title="simple_eval_complete.py"}
-import logfire
-
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext, IsInstance
-
-logfire.configure()
 
 case1 = Case(  # (1)!
     name='simple_case',
@@ -139,9 +135,9 @@ report.print(include_input=True, include_output=True)  # (6)!
 ┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID     ┃ Inputs                         ┃ Outputs ┃ Scores            ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ simple_case │ What is the capital of France? │ Paris   │ MyEvaluator: 1.00 │ ✔          │    123µs │
+│ simple_case │ What is the capital of France? │ Paris   │ MyEvaluator: 1.00 │ ✔          │     10µs │
 ├─────────────┼────────────────────────────────┼─────────┼───────────────────┼────────────┼──────────┤
-│ Averages    │                                │         │ MyEvaluator: 1.00 │ 100.0% ✔   │    123µs │
+│ Averages    │                                │         │ MyEvaluator: 1.00 │ 100.0% ✔   │     10µs │
 └─────────────┴────────────────────────────────┴─────────┴───────────────────┴────────────┴──────────┘
 """
 ```
@@ -244,11 +240,11 @@ print(report)
 ┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID            ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ vegetarian_recipe  │ ✔✔✔        │    123µs │
+│ vegetarian_recipe  │ ✔✔✔        │     10µs │
 ├────────────────────┼────────────┼──────────┤
-│ gluten_free_recipe │ ✔✔✔        │    123µs │
+│ gluten_free_recipe │ ✔✔✔        │     10µs │
 ├────────────────────┼────────────┼──────────┤
-│ Averages           │ 100.0% ✔   │    123µs │
+│ Averages           │ 100.0% ✔   │     10µs │
 └────────────────────┴────────────┴──────────┘
 """
 ```
@@ -356,17 +352,17 @@ report_default.print()
 ┏━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID  ┃ Duration ┃
 ┡━━━━━━━━━━╇━━━━━━━━━━┩
-│ case_0   │  101.0ms │
+│ case_0   │     10ms │
 ├──────────┼──────────┤
-│ case_1   │  101.0ms │
+│ case_1   │     10ms │
 ├──────────┼──────────┤
-│ case_2   │  101.0ms │
+│ case_2   │     10ms │
 ├──────────┼──────────┤
-│ case_3   │  101.0ms │
+│ case_3   │     10ms │
 ├──────────┼──────────┤
-│ case_4   │  101.0ms │
+│ case_4   │     10ms │
 ├──────────┼──────────┤
-│ Averages │  101.0ms │
+│ Averages │     10ms │
 └──────────┴──────────┘
 """
 
@@ -383,17 +379,17 @@ report_limited.print()
 ┏━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID  ┃ Duration ┃
 ┡━━━━━━━━━━╇━━━━━━━━━━┩
-│ case_0   │  101.0ms │
+│ case_0   │     10ms │
 ├──────────┼──────────┤
-│ case_1   │  101.0ms │
+│ case_1   │     10ms │
 ├──────────┼──────────┤
-│ case_2   │  101.0ms │
+│ case_2   │     10ms │
 ├──────────┼──────────┤
-│ case_3   │  101.0ms │
+│ case_3   │     10ms │
 ├──────────┼──────────┤
-│ case_4   │  101.0ms │
+│ case_4   │     10ms │
 ├──────────┼──────────┤
-│ Averages │  101.0ms │
+│ Averages │     10ms │
 └──────────┴──────────┘
 """
 ```
@@ -415,7 +411,7 @@ evaluation.
 
 There are two main ways this is useful.
 
-TODO: Finish this
+<!-- TODO: Finish this -->
 
 ```python {title="opentelemetry_example.py"}
 import asyncio
@@ -511,11 +507,11 @@ report.print(include_input=True, include_output=True)
 ┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID         ┃ Inputs                ┃ Outputs                                 ┃ Scores                   ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ normal_text     │ Hello World           │ Processed: hello_world                  │ performance_score: 1.00  │ ✔✗         │  101.0ms │
+│ normal_text     │ Hello World           │ Processed: hello_world                  │ performance_score: 1.00  │ ✔✗         │     10ms │
 ├─────────────────┼───────────────────────┼─────────────────────────────────────────┼──────────────────────────┼────────────┼──────────┤
-│ text_with_error │ Contains error marker │ Error processing: Contains error marker │ performance_score: 0     │ ✔✔         │  101.0ms │
+│ text_with_error │ Contains error marker │ Error processing: Contains error marker │ performance_score: 0     │ ✔✔         │     10ms │
 ├─────────────────┼───────────────────────┼─────────────────────────────────────────┼──────────────────────────┼────────────┼──────────┤
-│ Averages        │                       │                                         │ performance_score: 0.500 │ 75.0% ✔    │  101.0ms │
+│ Averages        │                       │                                         │ performance_score: 0.500 │ 75.0% ✔    │     10ms │
 └─────────────────┴───────────────────────┴─────────────────────────────────────────┴──────────────────────────┴────────────┴──────────┘
 """
 ```
