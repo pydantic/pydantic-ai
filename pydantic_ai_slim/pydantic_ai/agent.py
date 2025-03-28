@@ -762,7 +762,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         """Context manager to temporarily override agent dependencies and model.
 
         This is particularly useful when testing.
-        You can find an example of this [here](../testing-evals.md#overriding-model-via-pytest-fixtures).
+        You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
 
         Args:
             deps: The dependencies to use instead of the dependencies passed to the agent run.

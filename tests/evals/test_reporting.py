@@ -105,6 +105,7 @@ async def test_evaluation_renderer_basic(sample_report: EvaluationReport):
     renderer = EvaluationRenderer(
         include_input=True,
         include_output=True,
+        include_durations=True,
         include_total_duration=True,
         include_removed_cases=False,
         include_averages=True,
@@ -162,6 +163,7 @@ async def test_evaluation_renderer_with_baseline(sample_report: EvaluationReport
     renderer = EvaluationRenderer(
         include_input=True,
         include_output=True,
+        include_durations=True,
         include_total_duration=True,
         include_removed_cases=False,
         include_averages=True,
@@ -205,6 +207,7 @@ async def test_evaluation_renderer_with_removed_cases(sample_report: EvaluationR
     renderer = EvaluationRenderer(
         include_input=True,
         include_output=True,
+        include_durations=True,
         include_total_duration=True,
         include_removed_cases=True,
         include_averages=True,
@@ -226,6 +229,7 @@ async def test_evaluation_renderer_with_custom_configs(sample_report: Evaluation
     renderer = EvaluationRenderer(
         include_input=True,
         include_output=True,
+        include_durations=True,
         include_total_duration=True,
         include_removed_cases=False,
         include_averages=True,

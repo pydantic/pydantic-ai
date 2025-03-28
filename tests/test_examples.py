@@ -88,6 +88,7 @@ def test_docs_examples(  # noqa: C901
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
+    mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
 
     mocker.patch('httpx.Client.get', side_effect=http_request)
     mocker.patch('httpx.Client.post', side_effect=http_request)
@@ -197,12 +198,11 @@ def test_docs_examples(  # noqa: C901
 def print_callback(s: str) -> str:
     s = re.sub(r'datetime\.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
-
-    # Replace durations below 100ms with 123µs
-    s = re.sub(r'\b(:?\d+µs|\d{1,2}\.\d+ms)', r'123µs', s)
-    # Replace durations above 100ms with 101.0ms
-    s = re.sub(r'\b(:?\d{3,}\.\d+ms)', r'101.0ms', s)
     return re.sub(r'datetime.date\(', 'date(', s)
+
+
+def mock_render_duration(seconds: float, force_signed: bool) -> str:
+    return '10ms'
 
 
 def custom_include_print(path: Path, frame: FrameInfo, args: Sequence[Any]) -> bool:

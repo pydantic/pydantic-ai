@@ -23,7 +23,7 @@ nav:
       - common-tools.md
       - results.md
       - message-history.md
-      - testing-evals.md
+      - testing.md
       - logfire.md
       - multi-agent-applications.md
       - graph.md

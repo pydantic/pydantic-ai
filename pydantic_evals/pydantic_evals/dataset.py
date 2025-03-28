@@ -784,9 +784,9 @@ async def _run_task(
     try:
         with _logfire.span('execute {task}', task=get_unwrapped_function_name(task)) as task_span:
             with context_subtree() as span_tree:
-                t0 = time.time()
+                t0 = time.perf_counter()
                 task_output = await task(case.inputs)
-                fallback_duration = time.time() - t0
+                fallback_duration = time.perf_counter() - t0
     finally:
         _CURRENT_TASK_RUN.reset(token)
 
