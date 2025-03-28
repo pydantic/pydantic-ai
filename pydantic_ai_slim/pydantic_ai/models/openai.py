@@ -751,7 +751,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
 
+            elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
+                pass  # there's nothing we need to do here
+
             elif isinstance(chunk, responses.ResponseContentPartDoneEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseCreatedEvent):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
@@ -763,6 +769,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
                 if maybe_event is not None:
                     yield maybe_event
+
+            elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseInProgressEvent):
+                pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
                 if isinstance(chunk.item, responses.ResponseFunctionToolCall):
@@ -791,9 +803,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             else:
-                # TODO: Before merging, we should add a handler above for all event types we know how to handle,
-                #   even if nothing needs to be done. That serves as documentation for what has been considered and
-                #   what hasn't.
                 warnings.warn(
                     f'Handling of this event type is not yet implemented. Please report on our GitHub: {chunk}',
                     UserWarning,
