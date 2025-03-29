@@ -1,6 +1,6 @@
-"""Tests of pydantic-ai actually connecting to OpenAI and Gemini models.
+"""Tests of pydantic-ai actually making request to live vendor model APIs.
 
-WARNING: running these tests will consume your OpenAI and Gemini credits.
+WARNING: running these tests will make use of the relevant API tokens (and cost money).
 """
 
 import os
@@ -78,11 +78,11 @@ def mistral(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     return MistralModel('mistral-small-latest', provider=MistralProvider(http_client=http_client))
 
 
-# TODO(Marcelo): We've surpassed the limit of our API key on Cohere.
-# def cohere(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-#     from pydantic_ai.models.cohere import CohereModel
+def cohere(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.cohere import CohereModel
+    from pydantic_ai.providers.cohere import CohereProvider
 
-#     return CohereModel('command-r7b-12-2024', http_client=http_client)
+    return CohereModel('command-r7b-12-2024', provider=CohereProvider(http_client=http_client))
 
 
 params = [
@@ -93,8 +93,7 @@ params = [
     pytest.param(anthropic, id='anthropic'),
     pytest.param(ollama, id='ollama'),
     pytest.param(mistral, id='mistral'),
-    # TODO(Marcelo): We've surpassed the limit of our API key on Cohere.
-    # pytest.param(cohere, id='cohere'),
+    pytest.param(cohere, id='cohere'),
 ]
 GetModel = Callable[[httpx.AsyncClient, Path], Model]
 
@@ -106,6 +105,10 @@ async def http_client(allow_model_requests: None) -> AsyncIterator[httpx.AsyncCl
 
 
 @pytest.mark.parametrize('get_model', params)
+@pytest.mark.filterwarnings(  # mistral is using deprecated APIs internally; remove this once that is fixed
+    'ignore:.*Pydantic serializer warnings.*:UserWarning',
+    'ignore:.*Instead, you should access this attribute from the model class.*:pydantic.PydanticDeprecatedSince211',
+)
 async def test_text(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
     agent = Agent(get_model(http_client, tmp_path), model_settings={'temperature': 0.0}, retries=2)
     result = await agent.run('What is the capital of France?')
@@ -120,6 +123,10 @@ stream_params = [p for p in params if p.id != 'cohere']
 
 
 @pytest.mark.parametrize('get_model', stream_params)
+@pytest.mark.filterwarnings(  # mistral is using deprecated APIs internally; remove this once that is fixed
+    'ignore:.*Pydantic serializer warnings.*:UserWarning',
+    'ignore:.*Instead, you should access this attribute from the model class.*:pydantic.PydanticDeprecatedSince211',
+)
 async def test_stream(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
     agent = Agent(get_model(http_client, tmp_path), model_settings={'temperature': 0.0}, retries=2)
     async with agent.run_stream('What is the capital of France?') as result:
@@ -140,6 +147,10 @@ structured_params = [p for p in params if p.id != 'ollama']
 
 
 @pytest.mark.parametrize('get_model', structured_params)
+@pytest.mark.filterwarnings(  # mistral is using deprecated APIs internally; remove this once that is fixed
+    'ignore:.*Pydantic serializer warnings.*:UserWarning',
+    'ignore:.*Instead, you should access this attribute from the model class.*:pydantic.PydanticDeprecatedSince211',
+)
 async def test_structured(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
     agent = Agent(get_model(http_client, tmp_path), result_type=MyModel, model_settings={'temperature': 0.0}, retries=2)
     result = await agent.run('What is the capital of the UK?')

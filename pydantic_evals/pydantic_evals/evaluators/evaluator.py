@@ -7,10 +7,10 @@ from dataclasses import MISSING, dataclass, fields
 from typing import Any, Generic, Union, cast
 
 from pydantic import (
-    ConfigDict,
     TypeAdapter,
     ValidationError,
     model_serializer,
+    with_config,
 )
 from pydantic_core import to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo
@@ -46,11 +46,10 @@ EvaluatorOutput = Union[EvaluationScalar, EvaluationReason, Mapping[str, Union[E
 """Type for the output of an evaluator, which can be a scalar, an EvaluationReason, or a mapping of names to either."""
 
 
-# TODO(DavidM): Add bound=EvaluationScalar to the following typevar after we upgrade to pydantic 2.11
-EvaluationScalarT = TypeVar('EvaluationScalarT', default=EvaluationScalar, covariant=True)
+EvaluationScalarT = TypeVar('EvaluationScalarT', bound=EvaluationScalar, default=EvaluationScalar, covariant=True)
 """Type variable for the scalar result type of an evaluation."""
 
-T = TypeVar('T')
+T = TypeVar('T', bound=EvaluationScalar)
 
 
 @dataclass
@@ -115,6 +114,7 @@ class _StrictABCMeta(ABCMeta):
         return result
 
 
+@with_config(arbitrary_types_allowed=True)
 @dataclass
 class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
     """Base class for all evaluators.
@@ -136,8 +136,6 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
             return ctx.output == ctx.expected_output
     ```
     """
-
-    __pydantic_config__ = ConfigDict(arbitrary_types_allowed=True)
 
     @classmethod
     def name(cls) -> str:

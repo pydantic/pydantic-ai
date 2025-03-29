@@ -109,7 +109,7 @@ class CohereModel(Model):
         *,
         provider: Literal['cohere'] | Provider[AsyncClientV2] = 'cohere',
     ):
-        """Initialize an Cohere model.
+        """Initialize a Cohere model.
 
         Args:
             model_name: The name of the Cohere model to use. List of model names

@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from pydantic_ai import models
 
-from ..otel.span_tree import SpanQuery as SpanNodeQuery
+from ..otel.span_tree import SpanQuery
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, Evaluator, EvaluatorOutput
 
@@ -180,7 +180,7 @@ class LlmJudge(Evaluator[object, object, object]):
 class HasMatchingSpan(Evaluator[object, object, object]):
     """Check if the span tree contains a span that matches the specified query."""
 
-    query: SpanNodeQuery
+    query: SpanQuery
 
     def evaluate(
         self,
