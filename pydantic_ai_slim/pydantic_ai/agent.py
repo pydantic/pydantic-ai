@@ -691,13 +691,10 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                                     new_part = maybe_part_event.part
                                     
                                     if isinstance(new_part, _messages.TextPart):
-                                        # Skip empty text parts to avoid premature ending of the stream
-                                        if not new_part.has_content():
-                                            continue
-                                            
-                                        if _agent_graph.allow_text_result(result_schema):
+                                        # Only consider non-empty text parts as potential final results
+                                        if new_part.has_content() and _agent_graph.allow_text_result(result_schema):
                                             return FinalResult(s, None, None)
-                                            
+                                        # Empty text parts are processed but don't end the stream
                                     elif isinstance(new_part, _messages.ToolCallPart) and result_schema:
                                         for call, _ in result_schema.find_tool([new_part]):
                                             return FinalResult(s, call.tool_name, call.tool_call_id)
