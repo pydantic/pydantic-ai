@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Sequence
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
@@ -13,7 +14,6 @@ from typing_inspection.introspection import get_literal_values
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName
-from pydantic_graph.nodes import End
 
 try:
     import argcomplete
@@ -49,6 +49,10 @@ class SimpleCodeBlock(CodeBlock):
 
 
 Markdown.elements['fence'] = SimpleCodeBlock
+
+
+class MyKeyboardInterrupt(Exception):
+    pass
 
 
 def cli(args_list: Sequence[str] | None = None) -> int:  # noqa: C901  # pragma: no cover
@@ -115,7 +119,7 @@ Special prompt:
     if prompt := cast(str, args.prompt):
         try:
             asyncio.run(ask_agent(agent, prompt, stream, console))
-        except KeyboardInterrupt:
+        except MyKeyboardInterrupt:
             pass
         return 0
 
@@ -166,7 +170,8 @@ Special prompt:
             try:
                 messages = asyncio.run(ask_agent(agent, text, stream, console, messages))
             except KeyboardInterrupt:
-                return 0
+                console.print('[dim]Interrupted[/dim]')
+                messages = []
 
 
 async def ask_agent(
@@ -177,45 +182,42 @@ async def ask_agent(
     messages: list[ModelMessage] | None = None,
 ) -> list[ModelMessage]:  # pragma: no cover
     status: None | Status = Status('[dim]Working on it…[/dim]', console=console)
+
+    if not stream:
+        with status:
+            result = await agent.run(prompt, message_history=messages)
+        content = result.data
+        console.print(Markdown(content))
+        return result.all_messages()
+
     live = Live('', refresh_per_second=15, console=console)
-    status.start()
+    with ExitStack() as stack:
+        stack.enter_context(status)
 
-    async with agent.iter(prompt, message_history=messages) as agent_run:
-        console.print('\nResponse:', style='green')
+        async with agent.iter(prompt, message_history=messages) as agent_run:
+            console.print('\nResponse:', style='green')
 
-        content: str = ''
-        interrupted = False
-        try:
-            node = agent_run.next_node
-            while not isinstance(node, End):
-                node = await agent_run.next(node)
-                if Agent.is_model_request_node(node):
-                    async with node.stream(agent_run.ctx) as handle_stream:
-                        # NOTE(Marcelo): It took me a lot of time to figure out how to stop `status` and start `live`
-                        # in a context manager, so I had to do it manually with `stop` and `start` methods.
-                        # PR welcome to simplify this code.
-                        if status is not None:
-                            status.stop()
-                            status = None
-                        if not live.is_started:
-                            live.start()
-                        async for event in handle_stream:
-                            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-                                if stream:
-                                    content += event.delta.content_delta
-                                    live.update(Markdown(content))
-        except KeyboardInterrupt:
-            interrupted = True
-        finally:
-            live.stop()
+            content: str = ''
+            async for node in agent_run:
+                if not Agent.is_model_request_node(node):
+                    # TODO: Show tool calls etc. here
+                    continue
 
-        if interrupted:
-            console.print('[dim]Interrupted[/dim]')
+                async with node.stream(agent_run.ctx) as handle_stream:
+                    if status is not None:
+                        # We need to exit the status context manager so the live context manager can take over
+                        status.stop()
+                        stack.pop_all()
+                        stack.enter_context(live)
+                        status = None
 
-        assert agent_run.result
-        if not stream:
-            content = agent_run.result.data
-            console.print(Markdown(content))
+                    async for event in handle_stream:
+                        if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                            if stream:
+                                content += event.delta.content_delta
+                                live.update(Markdown(content))
+
+        assert agent_run.result is not None
         return agent_run.result.all_messages()
 
 
