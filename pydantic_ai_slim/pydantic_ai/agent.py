@@ -685,29 +685,19 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                             s: models.StreamedResponse,
                         ) -> FinalResult[models.StreamedResponse] | None:
                             result_schema = graph_ctx.deps.result_schema
-                            has_seen_empty_tool_call = False
                             async for maybe_part_event in streamed_response:
                                 if isinstance(maybe_part_event, _messages.PartStartEvent):
                                     new_part = maybe_part_event.part
                                     if isinstance(new_part, _messages.TextPart):
-                                        if _agent_graph.allow_text_result(result_schema):
-                                            # Return final result for text parts (even empty ones)
+                                        if new_part.has_content() and _agent_graph.allow_text_result(result_schema):
                                             return FinalResult(s, None, None)
                                     elif isinstance(new_part, _messages.ToolCallPart) and result_schema:
-                                        # Skip empty tool calls from Ollama
-                                        if not new_part.has_content():
-                                            has_seen_empty_tool_call = True
-                                            continue
-                                            
-                                        # For non-empty tool calls, find tools that match and return final result
                                         for call, _ in result_schema.find_tool([new_part]):
                                             return FinalResult(s, call.tool_name, call.tool_call_id)
-                            
-                            # If we've seen empty tool calls but no other parts returned a result,
-                            # return None to keep streaming
-                            if has_seen_empty_tool_call:
-                                return None
-                                
+                                elif isinstance(maybe_part_event, _messages.PartDeltaEvent) and isinstance(maybe_part_event.delta, _messages.TextPartDelta):
+                                    # If we're getting deltas, we should also check if the accumulated content is now non-empty
+                                    if maybe_part_event.delta.content_delta and _agent_graph.allow_text_result(result_schema):
+                                        return FinalResult(s, None, None)
                             return None
 
                         final_result_details = await stream_to_final(streamed_response)
@@ -1216,8 +1206,6 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         if some_deps := self._override_deps:
             return some_deps.value
         else:
-            if deps is None and self._deps_type is not NoneType:
-                raise ValueError("deps cannot be None when _override_deps is not set and deps_type is not NoneType")
             return deps  # type: ignore
 
     def _infer_name(self, function_frame: FrameType | None) -> None:

@@ -89,6 +89,15 @@ class ModelResponsePartsManager:
             UnexpectedModelBehavior: If attempting to apply text content to a part that is
                 not a TextPart.
         """
+        # If this is the first part and content is empty, create an empty TextPart
+        if not self._parts and not content:
+            new_part_index = len(self._parts)
+            part = TextPart(content="")
+            if vendor_part_id is not None:
+                self._vendor_id_to_part_index[vendor_part_id] = new_part_index
+            self._parts.append(part)
+            return PartStartEvent(index=new_part_index, part=part)
+
         existing_text_part_and_index: tuple[TextPart, int] | None = None
 
         if vendor_part_id is None:
