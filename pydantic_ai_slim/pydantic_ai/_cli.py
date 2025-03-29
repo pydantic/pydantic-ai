@@ -12,7 +12,9 @@ from typing import cast
 
 from typing_inspection.introspection import get_literal_values
 
+from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, PartDeltaEvent, TextPartDelta
 from pydantic_ai.models import KnownModelName
 
 try:
@@ -34,8 +36,6 @@ except ImportError as _import_error:
         'you can use the `cli` optional group — `pip install "pydantic-ai-slim[cli]"`'
     ) from _import_error
 
-from pydantic_ai.agent import Agent
-from pydantic_ai.messages import ModelMessage, PartDeltaEvent, TextPartDelta
 
 __version__ = version('pydantic-ai-slim')
 
@@ -49,10 +49,6 @@ class SimpleCodeBlock(CodeBlock):
 
 
 Markdown.elements['fence'] = SimpleCodeBlock
-
-
-class MyKeyboardInterrupt(Exception):
-    pass
 
 
 def cli(args_list: Sequence[str] | None = None) -> int:  # noqa: C901  # pragma: no cover
@@ -119,7 +115,7 @@ Special prompt:
     if prompt := cast(str, args.prompt):
         try:
             asyncio.run(ask_agent(agent, prompt, stream, console))
-        except MyKeyboardInterrupt:
+        except KeyboardInterrupt:
             pass
         return 0
 
@@ -190,32 +186,23 @@ async def ask_agent(
         console.print(Markdown(content))
         return result.all_messages()
 
-    live = Live('', refresh_per_second=15, console=console)
-    with ExitStack() as stack:
-        stack.enter_context(status)
-
+    with Status('[dim]Working on it…[/dim]', console=console) as status, ExitStack() as stack:
         async with agent.iter(prompt, message_history=messages) as agent_run:
             console.print('\nResponse:', style='green')
 
+            live = Live('', refresh_per_second=15, console=console, vertical_overflow='visible')
             content: str = ''
             async for node in agent_run:
-                if not Agent.is_model_request_node(node):
-                    # TODO: Show tool calls etc. here
-                    continue
+                if Agent.is_model_request_node(node):
+                    async with node.stream(agent_run.ctx) as handle_stream:
+                        status.stop()  # stopping multiple times is idempotent
+                        stack.enter_context(live)  # entering multiple times is idempotent
 
-                async with node.stream(agent_run.ctx) as handle_stream:
-                    if status is not None:
-                        # We need to exit the status context manager so the live context manager can take over
-                        status.stop()
-                        stack.pop_all()
-                        stack.enter_context(live)
-                        status = None
-
-                    async for event in handle_stream:
-                        if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-                            if stream:
-                                content += event.delta.content_delta
-                                live.update(Markdown(content))
+                        async for event in handle_stream:
+                            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                                if stream:
+                                    content += event.delta.content_delta
+                                    live.update(Markdown(content))
 
         assert agent_run.result is not None
         return agent_run.result.all_messages()
