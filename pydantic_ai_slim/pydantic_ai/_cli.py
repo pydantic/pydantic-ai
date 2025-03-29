@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Sequence
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
@@ -178,45 +179,45 @@ async def ask_agent(
 ) -> list[ModelMessage]:  # pragma: no cover
     status: None | Status = Status('[dim]Working on it…[/dim]', console=console)
     live = Live('', refresh_per_second=15, console=console)
-    status.start()
 
-    async with agent.iter(prompt, message_history=messages) as agent_run:
-        console.print('\nResponse:', style='green')
+    with ExitStack() as stack:
+        stack.enter_context(status)
 
-        content: str = ''
-        interrupted = False
-        try:
-            node = agent_run.next_node
-            while not isinstance(node, End):
-                node = await agent_run.next(node)
-                if Agent.is_model_request_node(node):
-                    async with node.stream(agent_run.ctx) as handle_stream:
-                        # NOTE(Marcelo): It took me a lot of time to figure out how to stop `status` and start `live`
-                        # in a context manager, so I had to do it manually with `stop` and `start` methods.
-                        # PR welcome to simplify this code.
-                        if status is not None:
-                            status.stop()
-                            status = None
-                        if not live.is_started:
-                            live.start()
-                        async for event in handle_stream:
-                            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-                                if stream:
-                                    content += event.delta.content_delta
-                                    live.update(Markdown(content))
-        except KeyboardInterrupt:
-            interrupted = True
-        finally:
-            live.stop()
+        async with agent.iter(prompt, message_history=messages) as agent_run:
+            console.print('\nResponse:', style='green')
 
-        if interrupted:
-            console.print('[dim]Interrupted[/dim]')
+            content: str = ''
+            interrupted = False
+            try:
+                node = agent_run.next_node
+                while not isinstance(node, End):
+                    node = await agent_run.next(node)
+                    if Agent.is_model_request_node(node):
+                        async with node.stream(agent_run.ctx) as handle_stream:
+                            if status is not None:
+                                # We need to exit the status context manager so the live context manager can take over
+                                stack.pop_all()
+                                status.stop()
+                                stack.enter_context(live)
+                                status = None
+                            async for event in handle_stream:
+                                if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                                    if stream:
+                                        content += event.delta.content_delta
+                                        live.update(Markdown(content))
+            except KeyboardInterrupt:
+                interrupted = True
+            finally:
+                live.stop()
 
-        assert agent_run.result
-        if not stream:
-            content = agent_run.result.data
-            console.print(Markdown(content))
-        return agent_run.result.all_messages()
+            if interrupted:
+                console.print('[dim]Interrupted[/dim]')
+
+            assert agent_run.result
+            if not stream:
+                content = agent_run.result.data
+                console.print(Markdown(content))
+            return agent_run.result.all_messages()
 
 
 class CustomAutoSuggest(AutoSuggestFromHistory):
