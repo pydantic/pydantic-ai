@@ -685,11 +685,11 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                             s: models.StreamedResponse,
                         ) -> FinalResult[models.StreamedResponse] | None:
                             result_schema = graph_ctx.deps.result_schema
-                            
+
                             async for maybe_part_event in streamed_response:
                                 if isinstance(maybe_part_event, _messages.PartStartEvent):
                                     new_part = maybe_part_event.part
-                                    
+
                                     if isinstance(new_part, _messages.TextPart):
                                         # Only consider non-empty text parts as potential final results
                                         if new_part.has_content() and _agent_graph.allow_text_result(result_schema):
@@ -698,12 +698,16 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                                     elif isinstance(new_part, _messages.ToolCallPart) and result_schema:
                                         for call, _ in result_schema.find_tool([new_part]):
                                             return FinalResult(s, call.tool_name, call.tool_call_id)
-                                            
-                                elif isinstance(maybe_part_event, _messages.PartDeltaEvent) and isinstance(maybe_part_event.delta, _messages.TextPartDelta):
+
+                                elif isinstance(maybe_part_event, _messages.PartDeltaEvent) and isinstance(
+                                    maybe_part_event.delta, _messages.TextPartDelta
+                                ):
                                     # If we're getting deltas, check if the delta has content
-                                    if maybe_part_event.delta.content_delta and _agent_graph.allow_text_result(result_schema):
+                                    if maybe_part_event.delta.content_delta and _agent_graph.allow_text_result(
+                                        result_schema
+                                    ):
                                         return FinalResult(s, None, None)
-                            
+
                             return None
 
                         final_result_details = await stream_to_final(streamed_response)
@@ -1504,7 +1508,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
         return next_node
 
     def usage(self) -> _usage.Usage:
-        """Get usage statistics for the run so far, including token usage, model requests, and so on."""
+        """Return the usage of the whole run."""
         return self._graph_run.state.usage
 
     def __repr__(self) -> str:
