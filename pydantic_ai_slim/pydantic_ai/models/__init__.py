@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cache
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import httpx
 from typing_extensions import Literal, TypeAliasType
@@ -386,7 +386,6 @@ def infer_model(model: Model | KnownModelName) -> Model:
 
     try:
         provider, model_name = model.split(':', maxsplit=1)
-        provider = cast(str, provider)
     except ValueError:
         model_name = model
         # TODO(Marcelo): We should deprecate this way.

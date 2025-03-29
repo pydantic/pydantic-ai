@@ -27,7 +27,7 @@ except ImportError:
 else:
     from pathlib import Path
 
-    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
+    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)  # pyright: ignore[reportPrivateImportUsage]
 
 
 __all__ = 'Graph', 'GraphRun', 'GraphRunResult'
@@ -111,7 +111,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         self.auto_instrument = auto_instrument
 
         parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
-        self.node_defs: dict[str, NodeDef[StateT, DepsT, RunEndT]] = {}
+        self.node_defs = {}
         for node in nodes:
             self._register_node(node, parent_namespace)
 

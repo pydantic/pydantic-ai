@@ -63,13 +63,13 @@ def serialize(cassette_dict: Any):
             content_type = headers.get('content-type', [])
             if any(isinstance(header, str) and header.startswith('application/json') for header in content_type):
                 # Parse the body as JSON
-                body: Any = data.get('body', None)
+                body = data.get('body', None)
                 assert body is not None, data
                 if isinstance(body, dict):
                     # Responses will have the body under a field called 'string'
                     body = body.get('string')
                 if body is not None:
-                    data['parsed_body'] = json.loads(body)
+                    data['parsed_body'] = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
                     if 'access_token' in data['parsed_body']:
                         data['parsed_body']['access_token'] = 'scrubbed'
                     del data['body']

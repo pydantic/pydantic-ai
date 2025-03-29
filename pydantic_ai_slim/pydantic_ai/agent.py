@@ -212,16 +212,16 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         self._result_tool_name = result_tool_name
         self._result_tool_description = result_tool_description
-        self._result_schema: _result.ResultSchema[ResultDataT] | None = _result.ResultSchema[result_type].build(
+        self._result_schema = _result.ResultSchema[result_type].build(
             result_type, result_tool_name, result_tool_description
         )
-        self._result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]] = []
+        self._result_validators = []
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
-        self._system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
-        self._system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = {}
+        self._system_prompt_functions = []
+        self._system_prompt_dynamic_functions = {}
 
-        self._function_tools: dict[str, Tool[AgentDepsT]] = {}
+        self._function_tools = {}
 
         self._default_retries = retries
         self._max_result_retries = result_retries if result_retries is not None else retries

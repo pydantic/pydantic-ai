@@ -54,7 +54,7 @@ except ImportError:  # pragma: no cover
 else:
     from pathlib import Path
 
-    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)
+    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)  # pyright: ignore[reportPrivateImportUsage]
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-evals')
 
@@ -628,9 +628,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         class ClsDatasetRow(BaseModel, extra='forbid'):
             name: str
-            inputs: in_type
-            metadata: meta_type
-            expected_output: out_type | None = None
+            inputs: in_type  # pyright: ignore[reportInvalidTypeForm]
+            metadata: meta_type  # pyright: ignore[reportInvalidTypeForm]
+            expected_output: out_type | None = None  # pyright: ignore[reportInvalidTypeForm,reportUnknownVariableType]
             if evaluator_schema_types:
                 evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa UP007
 
