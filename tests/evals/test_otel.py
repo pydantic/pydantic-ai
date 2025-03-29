@@ -106,12 +106,12 @@ async def span_tree() -> SpanTree:
 
 
 async def test_span_tree_flattened(span_tree: SpanTree):
-    """Test the flattened() method of SpanTree."""
+    """Test the __iter__ method of SpanTree."""
     assert len(list(span_tree)) == 6, 'Should have 6 spans in total'
 
-    # Check that all expected nodes are in the flattened list
-    node_names = {node.name for node in span_tree}
-    expected_names = {'root', 'child1', 'child2', 'grandchild1', 'grandchild2', 'grandchild3'}
+    # Check that all expected nodes are in the flattened list, ordered by start_timestamp
+    node_names = [node.name for node in span_tree]
+    expected_names = ['root', 'child1', 'grandchild1', 'grandchild2', 'child2', 'grandchild3']
     assert node_names == expected_names
 
 
@@ -192,6 +192,15 @@ async def test_span_node_find_descendants(span_tree: SpanTree):
     # Check that they have the expected names
     level2_names = {node.name for node in level2_nodes}
     assert level2_names == {'grandchild1', 'grandchild2', 'grandchild3'}
+
+    # Test descendant counts
+    assert root_node.matches({'min_descendant_count': 5, 'max_descendant_count': 5})
+    assert not root_node.matches({'min_descendant_count': 4, 'max_descendant_count': 4})
+    assert not root_node.matches({'min_descendant_count': 6, 'max_descendant_count': 6})
+
+    child1_node = root_node.first_child(lambda node: node.name == 'child1')
+    assert child1_node is not None
+    assert child1_node.matches({'min_descendant_count': 2, 'max_descendant_count': 2})
 
 
 async def test_span_node_matches(span_tree: SpanTree):
@@ -359,12 +368,20 @@ async def test_span_tree_ancestors_methods():
     assert leaf_node.any_ancestor(lambda node: node.name == 'root')
     assert not leaf_node.any_ancestor(lambda node: node.name == 'non_existent')
 
+    # Test ancestor query matches
+    assert leaf_node.matches({'min_depth': 4, 'max_depth': 4})
+    assert not leaf_node.matches({'min_depth': 3, 'max_depth': 3})
+    assert not leaf_node.matches({'min_depth': 5, 'max_depth': 5})
+
     assert [node.name for node in leaf_node.ancestors] == ['level3', 'level2', 'level1', 'root']
     assert leaf_node.matches({'some_ancestor_has': {'name_equals': 'level1'}})
     assert not leaf_node.matches({'some_ancestor_has': {'name_equals': 'level4'}})
 
     assert not leaf_node.matches({'all_ancestors_have': {'name_matches_regex': 'level'}})
     assert leaf_node.matches({'all_ancestors_have': {'name_matches_regex': 'level|root'}})
+
+    assert not leaf_node.matches({'no_ancestor_has': {'name_matches_regex': 'root'}})
+    assert leaf_node.matches({'no_ancestor_has': {'name_matches_regex': 'abc'}})
 
 
 async def test_span_tree_descendants_methods():
