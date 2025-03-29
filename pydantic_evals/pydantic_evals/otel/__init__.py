@@ -1,7 +1,7 @@
-from .span_tree import SpanNode, SpanTree
+from .span_tree import SpanNode, SpanQuery, SpanTree
 
 __all__ = (
-    # span_tree
     'SpanTree',
     'SpanNode',
+    'SpanQuery',
 )

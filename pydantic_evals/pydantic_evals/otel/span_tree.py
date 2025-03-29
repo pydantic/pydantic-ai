@@ -8,13 +8,13 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from typing_extensions import TypedDict
 
-__all__ = 'SpanNode', 'SpanTree', 'SpanQuery'
-
 if TYPE_CHECKING:  # pragma: no cover
     # Since opentelemetry isn't a required dependency, don't actually import these at runtime
     from opentelemetry.sdk.trace import ReadableSpan
     from opentelemetry.trace import SpanContext
     from opentelemetry.util.types import AttributeValue
+
+__all__ = 'SpanNode', 'SpanTree', 'SpanQuery'
 
 
 class SpanQuery(TypedDict, total=False):
