@@ -6,7 +6,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 from __future__ import annotations as _annotations
 
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, cast, get_origin
 
 from pydantic import ConfigDict
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
@@ -15,28 +15,15 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import TypedDict, get_origin
 
 from ._griffe import doc_descriptions
 from ._utils import check_object_json_schema, is_model_like
 
 if TYPE_CHECKING:
-    from .tools import DocstringFormat, ObjectJsonSchema
+    from .tools import DocstringFormat, FunctionSchema
 
 
 __all__ = ('function_schema',)
-
-
-class FunctionSchema(TypedDict):
-    """Internal information about a function schema."""
-
-    description: str
-    validator: SchemaValidator
-    json_schema: ObjectJsonSchema
-    # if not None, the function takes a single by that name (besides potentially `info`)
-    single_arg_name: str | None
-    positional_fields: list[str]
-    var_positional_field: str | None
 
 
 def function_schema(  # noqa: C901
@@ -162,14 +149,14 @@ def function_schema(  # noqa: C901
         # and set it on the tool
         description = json_schema.pop('description', None)
 
-    return FunctionSchema(
-        description=description,
-        validator=schema_validator,
-        json_schema=check_object_json_schema(json_schema),
-        single_arg_name=single_arg_name,
-        positional_fields=positional_fields,
-        var_positional_field=var_positional_field,
-    )
+    return {
+        'description': description,
+        'validator': schema_validator,
+        'json_schema': check_object_json_schema(json_schema),
+        'single_arg_name': single_arg_name,
+        'positional_fields': positional_fields,
+        'var_positional_field': var_positional_field,
+    }
 
 
 def takes_ctx(function: Callable[..., Any]) -> bool:
