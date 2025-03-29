@@ -685,19 +685,28 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                             s: models.StreamedResponse,
                         ) -> FinalResult[models.StreamedResponse] | None:
                             result_schema = graph_ctx.deps.result_schema
+                            
                             async for maybe_part_event in streamed_response:
                                 if isinstance(maybe_part_event, _messages.PartStartEvent):
                                     new_part = maybe_part_event.part
+                                    
                                     if isinstance(new_part, _messages.TextPart):
-                                        if new_part.has_content() and _agent_graph.allow_text_result(result_schema):
+                                        # Skip empty text parts to avoid premature ending of the stream
+                                        if not new_part.has_content():
+                                            continue
+                                            
+                                        if _agent_graph.allow_text_result(result_schema):
                                             return FinalResult(s, None, None)
+                                            
                                     elif isinstance(new_part, _messages.ToolCallPart) and result_schema:
                                         for call, _ in result_schema.find_tool([new_part]):
                                             return FinalResult(s, call.tool_name, call.tool_call_id)
+                                            
                                 elif isinstance(maybe_part_event, _messages.PartDeltaEvent) and isinstance(maybe_part_event.delta, _messages.TextPartDelta):
-                                    # If we're getting deltas, we should also check if the accumulated content is now non-empty
+                                    # If we're getting deltas, check if the delta has content
                                     if maybe_part_event.delta.content_delta and _agent_graph.allow_text_result(result_schema):
                                         return FinalResult(s, None, None)
+                            
                             return None
 
                         final_result_details = await stream_to_final(streamed_response)
