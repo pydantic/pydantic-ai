@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import AwareDatetime, BaseModel
 from pydantic_evals.dataset import Dataset
-from pydantic_evals.evaluators.common import IsInstance, LlmJudge
+from pydantic_evals.evaluators.common import IsInstance, LLMJudge
 from typing_extensions import TypedDict
 
 
@@ -76,8 +76,8 @@ if __name__ == '__main__':
 
         path = Path(__file__).parent / 'test_cases.yaml'
         if not path.exists():
-            TimeRangeDataset(cases=[], evaluators=[LlmJudge(rubric='abc')]).to_file(
-                path, custom_evaluator_types=[LlmJudge, IsInstance]
+            TimeRangeDataset(cases=[], evaluators=[LLMJudge(rubric='abc')]).to_file(
+                path, custom_evaluator_types=[LLMJudge, IsInstance]
             )
 
     main()

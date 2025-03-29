@@ -151,7 +151,7 @@ report.print(include_input=True, include_output=True, include_durations=False)  
 
 _(This example is complete, it can be run "as is")_
 
-## Evaluation with `LlmJudge`
+## Evaluation with `LLMJudge`
 
 In this example we evaluate a method for generating recipes based on customer orders.
 
@@ -165,7 +165,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.format_as_xml import format_as_xml
 from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import IsInstance, LlmJudge
+from pydantic_evals.evaluators import IsInstance, LLMJudge
 
 
 class CustomerOrder(BaseModel):  # (1)!
@@ -202,7 +202,7 @@ recipe_dataset = Dataset[CustomerOrder, Recipe, Any](  # (3)!
             expected_output=None,  # (4)
             metadata={'focus': 'vegetarian'},
             evaluators=(
-                LlmJudge(  # (5)!
+                LLMJudge(  # (5)!
                     rubric='Recipe should not contain meat or animal products',
                 ),
             ),
@@ -216,7 +216,7 @@ recipe_dataset = Dataset[CustomerOrder, Recipe, Any](  # (3)!
             metadata={'focus': 'gluten-free'},
             # Case-specific evaluator with a focused rubric
             evaluators=(
-                LlmJudge(
+                LLMJudge(
                     rubric='Recipe should not contain gluten or wheat products',
                 ),
             ),
@@ -224,7 +224,7 @@ recipe_dataset = Dataset[CustomerOrder, Recipe, Any](  # (3)!
     ],
     evaluators=[  # (6)!
         IsInstance(type_name='Recipe'),
-        LlmJudge(
+        LLMJudge(
             rubric='Recipe should have clear steps and relevant ingredients',
             include_input=True,
             model='anthropic:claude-3-7-sonnet-latest',  # (7)!
@@ -253,9 +253,9 @@ print(report)
 2. Define our recipe generation function - this is the task we want to evaluate.
 3. Create a dataset with different test cases and different rubrics.
 4. No expected output, we'll let the LLM judge the quality.
-5. Case-specific evaluator with a focused rubric using [`LlmJudge`][pydantic_evals.evaluators.LlmJudge].
+5. Case-specific evaluator with a focused rubric using [`LLMJudge`][pydantic_evals.evaluators.LLMJudge].
 6. Dataset-level evaluators that apply to all cases, including a general quality rubric for all recipes
-7. By default `LlmJudge` uses `openai:gpt-4o`, here we use a specific Anthropic model.
+7. By default `LLMJudge` uses `openai:gpt-4o`, here we use a specific Anthropic model.
 
 _(This example is complete, it can be run "as is")_
 
@@ -284,7 +284,7 @@ cases:
     focus: vegetarian
   expected_output: null
   evaluators:
-  - LlmJudge: Recipe should not contain meat or animal products
+  - LLMJudge: Recipe should not contain meat or animal products
 - name: gluten_free_recipe
   inputs:
     dish_name: Chocolate Cake
@@ -293,10 +293,10 @@ cases:
     focus: gluten-free
   expected_output: null
   evaluators:
-  - LlmJudge: Recipe should not contain gluten or wheat products
+  - LLMJudge: Recipe should not contain gluten or wheat products
 evaluators:
 - IsInstance: Recipe
-- LlmJudge:
+- LLMJudge:
     rubric: Recipe should have clear steps and relevant ingredients
     model: anthropic:claude-3-7-sonnet-latest
     include_input: true
