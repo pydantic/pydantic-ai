@@ -1170,11 +1170,9 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
     def _register_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Private utility to register a tool instance."""
-        # Fix strict setting if needed
         if tool.strict is None and self.model_settings and 'strict' in self.model_settings:
             tool = dataclasses.replace(tool, strict=self.model_settings['strict'])
 
-        # Fix max_retries if needed
         if tool.max_retries is None:
             # noinspection PyTypeChecker
             tool = dataclasses.replace(tool, max_retries=self._default_retries)
