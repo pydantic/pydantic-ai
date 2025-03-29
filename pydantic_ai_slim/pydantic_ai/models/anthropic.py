@@ -217,9 +217,15 @@ class AnthropicModel(Model):
                 tool_choice['disable_parallel_tool_use'] = not allow_parallel_tool_calls
 
         system_prompt, anthropic_messages = await self._map_message(messages)
+        # HACK pydantic-ai does not currently support system prompts that are JSON arrays
+        # so we need to convert them to a list of TextBlockParam objects so the Anthropic client
+        # can accept the system prompt, potentially with cache controls or other objects.
+        if system_prompt.startswith('[') and system_prompt.endswith(']'):
+            system_prompt = json_loads(system_prompt)
+            system_prompt = [TextBlockParam(**s) for s in system_prompt]
 
         try:
-            return await self.client.messages.create(
+            tmp = await self.client.messages.create(
                 max_tokens=model_settings.get('max_tokens', 1024),
                 system=system_prompt or NOT_GIVEN,
                 messages=anthropic_messages,
@@ -232,6 +238,16 @@ class AnthropicModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
             )
+            import logging
+
+            # save logs to a file
+            logging.basicConfig(filename='/efs/pydantic_ai_anthropic.log', level=logging.DEBUG)
+            logger = logging.getLogger(__name__)
+            logger.info('Anthropic response:')
+            logger.info(f'type: {type(tmp)}')
+            logger.info(f'content: {tmp}')
+            return tmp
+
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
@@ -435,11 +451,17 @@ def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage
 
     request_tokens = getattr(response_usage, 'input_tokens', None)
 
+    anthropic_extra = {
+        'cache_creation_input_tokens': getattr(response_usage, 'cache_creation_input_tokens', None) or 0,
+        'cache_read_input_tokens': getattr(response_usage, 'cache_read_input_tokens', None) or 0,
+    }
+
     return usage.Usage(
         # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence this getattr
         request_tokens=request_tokens,
         response_tokens=response_usage.output_tokens,
         total_tokens=(request_tokens or 0) + response_usage.output_tokens,
+        details=anthropic_extra,
     )
 
 
