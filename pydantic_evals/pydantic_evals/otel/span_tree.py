@@ -23,6 +23,11 @@ class SpanQuery(TypedDict, total=False):
     All fields are optional and combined with AND logic by default.
     """
 
+    # These fields are ordered to match the implementation of SpanNode.matches_query for easy review.
+    # * Individual span conditions come first because these are generally the cheapest to evaluate
+    # * Logical combinations come next because they may just be combinations of individual span conditions
+    # * Related-span conditions come last because they may require the most work to evaluate
+
     # Individual span conditions
     ## Name conditions
     name_equals: str
@@ -42,26 +47,35 @@ class SpanQuery(TypedDict, total=False):
     and_: list[SpanQuery]
     or_: list[SpanQuery]
 
-    # Descendant conditions
-    some_child_has: SpanQuery
-    all_children_have: SpanQuery
-    no_child_has: SpanQuery
-    min_child_count: int
-    max_child_count: int
-
-    some_descendant_has: SpanQuery
-    all_descendants_have: SpanQuery
-    no_descendant_has: SpanQuery
-
-    # Ancestor conditions
+    # Related-span conditions
+    ## Ancestor conditions
+    min_depth: int  # depth is equivalent to ancestor count; roots have depth 0
+    max_depth: int
     some_ancestor_has: SpanQuery
     all_ancestors_have: SpanQuery
     no_ancestor_has: SpanQuery
+
+    ## Child conditions
+    min_child_count: int
+    max_child_count: int
+    some_child_has: SpanQuery
+    all_children_have: SpanQuery
+    no_child_has: SpanQuery
+
+    ## Descendant conditions
+    min_descendant_count: int
+    max_descendant_count: int
+    some_descendant_has: SpanQuery
+    all_descendants_have: SpanQuery
+    no_descendant_has: SpanQuery
 
 
 class SpanNode:
     """A node in the span tree; provides references to parents/children for easy traversal and queries."""
 
+    # -------------------------------------------------------------------------
+    # Construction
+    # -------------------------------------------------------------------------
     def __init__(self, span: ReadableSpan):
         self._span = span
         # If a span has no context, it's going to cause problems. We may need to add improved handling of this scenario.
@@ -70,6 +84,14 @@ class SpanNode:
         self.parent: SpanNode | None = None
         self.children_by_id: dict[int, SpanNode] = {}  # note: we rely on insertion order to determine child order
 
+    def add_child(self, child: SpanNode) -> None:
+        """Attach a child node to this node's list of children."""
+        self.children_by_id[child.span_id] = child
+        child.parent = self
+
+    # -------------------------------------------------------------------------
+    # Utility properties
+    # -------------------------------------------------------------------------
     @property
     def children(self) -> list[SpanNode]:
         return list(self.children_by_id.values())
@@ -132,11 +154,6 @@ class SpanNode:
         # Note: It would be nice to expose the non-JSON-serialized versions of (logfire-recorded) attributes with
         # nesting etc. This just exposes the JSON-serialized version, but doing more would be difficult.
         return self._span.attributes or {}
-
-    def add_child(self, child: SpanNode) -> None:
-        """Attach a child node to this node's list of children."""
-        self.children_by_id[child.span_id] = child
-        child.parent = self
 
     # -------------------------------------------------------------------------
     # Child queries
@@ -257,6 +274,24 @@ class SpanNode:
             if self.duration > max_duration:
                 return False
 
+        # Ancestor conditions
+        if (min_depth := query.get('min_depth')) and len(self.ancestors) < min_depth:
+            return False
+        if (max_depth := query.get('max_depth')) and len(self.ancestors) > max_depth:
+            return False
+        if (some_ancestor_has := query.get('some_ancestor_has')) and not any(
+            ancestor._matches_query(some_ancestor_has) for ancestor in self.ancestors
+        ):
+            return False
+        if (all_ancestors_have := query.get('all_ancestors_have')) and not all(
+            ancestor._matches_query(all_ancestors_have) for ancestor in self.ancestors
+        ):
+            return False
+        if (no_ancestor_has := query.get('no_ancestor_has')) and any(
+            ancestor._matches_query(no_ancestor_has) for ancestor in self.ancestors
+        ):
+            return False
+
         # Children conditions
         if (min_child_count := query.get('min_child_count')) and len(self.children) < min_child_count:
             return False
@@ -276,6 +311,10 @@ class SpanNode:
             return False
 
         # Descendant conditions
+        if (min_descendant_count := query.get('min_descendant_count')) and len(self.descendants) < min_descendant_count:
+            return False
+        if (max_descendant_count := query.get('max_descendant_count')) and len(self.descendants) > max_descendant_count:
+            return False
         if (some_descendant_has := query.get('some_descendant_has')) and not any(
             descendant._matches_query(some_descendant_has) for descendant in self.descendants
         ):
@@ -286,20 +325,6 @@ class SpanNode:
             return False
         if (no_descendant_has := query.get('no_descendant_has')) and any(
             descendant._matches_query(no_descendant_has) for descendant in self.descendants
-        ):
-            return False
-
-        # Ancestor conditions
-        if (some_ancestor_has := query.get('some_ancestor_has')) and not any(
-            ancestor._matches_query(some_ancestor_has) for ancestor in self.ancestors
-        ):
-            return False
-        if (all_ancestors_have := query.get('all_ancestors_have')) and not all(
-            ancestor._matches_query(all_ancestors_have) for ancestor in self.ancestors
-        ):
-            return False
-        if (no_ancestor_has := query.get('no_ancestor_has')) and any(
-            ancestor._matches_query(no_ancestor_has) for ancestor in self.ancestors
         ):
             return False
 
@@ -372,6 +397,9 @@ class SpanTree:
     You can then search or iterate the tree to make your assertions (using DFS for traversal).
     """
 
+    # -------------------------------------------------------------------------
+    # Construction
+    # -------------------------------------------------------------------------
     def __init__(self, spans: list[ReadableSpan] | None = None):
         self.nodes_by_id: dict[int, SpanNode] = {}
         self.roots: list[SpanNode] = []
@@ -407,6 +435,9 @@ class SpanTree:
             if parent_ctx is None or parent_ctx.span_id not in self.nodes_by_id:
                 self.roots.append(node)
 
+    # -------------------------------------------------------------------------
+    # Node filtering and iteration
+    # -------------------------------------------------------------------------
     def find(self, predicate: SpanQuery | SpanPredicate) -> list[SpanNode]:
         """Find all nodes in the entire tree that match the predicate, scanning from each root in DFS order."""
         return list(self._filter(predicate))
@@ -428,6 +459,9 @@ class SpanTree:
         """Return an iterator over all nodes in the tree."""
         return iter(self.nodes_by_id.values())
 
+    # -------------------------------------------------------------------------
+    # String representation
+    # -------------------------------------------------------------------------
     def repr_xml(
         self,
         include_children: bool = True,
