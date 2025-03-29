@@ -306,7 +306,7 @@ class OpenAIModel(Model):
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
-        return {
+        tool_def: chat.ChatCompletionToolParam = {
             'type': 'function',
             'function': {
                 'name': f.name,
@@ -314,6 +314,12 @@ class OpenAIModel(Model):
                 'parameters': f.parameters_json_schema,
             },
         }
+        if not f.strict:
+            return tool_def
+        tool_def['function']['strict'] = True
+        if 'parameters' in tool_def['function']:
+            tool_def['function']['parameters']['additionalProperties'] = False
+        return tool_def
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:

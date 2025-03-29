@@ -173,6 +173,7 @@ class Tool(Generic[AgentDepsT]):
     prepare: ToolPrepareFunc[AgentDepsT] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
+    strict: bool | None
     _is_async: bool = field(init=False)
     _single_arg_name: str | None = field(init=False)
     _positional_fields: list[str] = field(init=False)
@@ -196,6 +197,7 @@ class Tool(Generic[AgentDepsT]):
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
     ):
         """Create a new tool instance.
 
@@ -246,6 +248,8 @@ class Tool(Generic[AgentDepsT]):
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
+            strict: If True, enable OpenAI's strict mode for this tool to enforce JSON schema validation.
+                When None, uses the value from the agent's model settings.
         """
         if takes_ctx is None:
             takes_ctx = _pydantic.takes_ctx(function)
@@ -261,6 +265,7 @@ class Tool(Generic[AgentDepsT]):
         self.prepare = prepare
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
+        self.strict = strict
         self._is_async = inspect.iscoroutinefunction(self.function)
         self._single_arg_name = f['single_arg_name']
         self._positional_fields = f['positional_fields']
@@ -281,6 +286,7 @@ class Tool(Generic[AgentDepsT]):
             name=self.name,
             description=self.description,
             parameters_json_schema=self._parameters_json_schema,
+            strict=self.strict,
         )
         if self.prepare is not None:
             return await self.prepare(ctx, tool_def)
@@ -416,4 +422,11 @@ class ToolDefinition:
     """The key in the outer [TypedDict] that wraps a result tool.
 
     This will only be set for result tools which don't have an `object` JSON schema.
+    """
+
+    strict: bool | None = None
+    """Whether to enable OpenAI's strict mode for this tool.
+
+    When True, the model will be constrained to generate output that exactly matches the JSON schema.
+    When None or False, the JSON schema is used as a guide, but the model is free to generate other properties or types.
     """

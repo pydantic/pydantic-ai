@@ -133,6 +133,17 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     """
 
+    strict: bool
+    """Enforce strict JSON schema validation for tool calls.
+
+    When enabled, the model is constrained to generate output that exactly matches the provided schema.
+    This can improve reliability of responses but may be incompatible with schemas using additionalProperties.
+
+    Supported by:
+
+    * OpenAI
+    """
+
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
     """Merge two sets of model settings, preferring the overrides.
