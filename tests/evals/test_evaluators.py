@@ -21,7 +21,7 @@ with try_import() as imports_successful:
         EqualsExpected,
         HasMatchingSpan,
         IsInstance,
-        LlmJudge,
+        LLMJudge,
         MaxDuration,
         Python,
     )
@@ -176,9 +176,9 @@ async def test_is_instance_evaluator():
 
 
 async def test_llm_judge_evaluator():
-    """Test the LlmJudge evaluator."""
+    """Test the LLMJudge evaluator."""
     # We can't easily test this without mocking the LLM, so we'll just check that it's importable
-    assert LlmJudge
+    assert LLMJudge
 
 
 async def test_custom_evaluator(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):

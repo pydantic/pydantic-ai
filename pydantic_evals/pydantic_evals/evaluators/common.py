@@ -16,7 +16,7 @@ __all__ = (
     'Contains',
     'IsInstance',
     'MaxDuration',
-    'LlmJudge',
+    'LLMJudge',
     'HasMatchingSpan',
     'Python',
 )
@@ -154,7 +154,7 @@ class MaxDuration(Evaluator[object, object, object]):
 
 
 @dataclass
-class LlmJudge(Evaluator[object, object, object]):
+class LLMJudge(Evaluator[object, object, object]):
     """Judge whether the output of a language model meets the criteria of a provided rubric."""
 
     rubric: str
@@ -210,7 +210,7 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     Contains,
     IsInstance,
     MaxDuration,
-    LlmJudge,
+    LLMJudge,
     HasMatchingSpan,
     # Python,  # not included by default for security reasons
 )

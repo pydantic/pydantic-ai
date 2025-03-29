@@ -1,4 +1,4 @@
-from .common import Contains, Equals, EqualsExpected, HasMatchingSpan, IsInstance, LlmJudge, MaxDuration, Python
+from .common import Contains, Equals, EqualsExpected, HasMatchingSpan, IsInstance, LLMJudge, MaxDuration, Python
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationResult, Evaluator, EvaluatorOutput
 
@@ -9,7 +9,7 @@ __all__ = (
     'Contains',
     'IsInstance',
     'MaxDuration',
-    'LlmJudge',
+    'LLMJudge',
     'HasMatchingSpan',
     'Python',
     # context

@@ -34,10 +34,10 @@
           "items": {
             "anyOf": [
               {
-                "$ref": "#/$defs/short_evaluator_LlmJudge"
+                "$ref": "#/$defs/short_evaluator_LLMJudge"
               },
               {
-                "$ref": "#/$defs/evaluator_LlmJudge"
+                "$ref": "#/$defs/evaluator_LLMJudge"
               },
               {
                 "$ref": "#/$defs/short_evaluator_IsInstance"
@@ -447,17 +447,17 @@
       "title": "evaluator_Contains",
       "type": "object"
     },
-    "evaluator_LlmJudge": {
+    "evaluator_LLMJudge": {
       "additionalProperties": false,
       "properties": {
-        "LlmJudge": {
-          "$ref": "#/$defs/evaluator_params_LlmJudge"
+        "LLMJudge": {
+          "$ref": "#/$defs/evaluator_params_LLMJudge"
         }
       },
       "required": [
-        "LlmJudge"
+        "LLMJudge"
       ],
-      "title": "evaluator_LlmJudge",
+      "title": "evaluator_LLMJudge",
       "type": "object"
     },
     "evaluator_params_Contains": {
@@ -481,7 +481,7 @@
       "title": "evaluator_params_Contains",
       "type": "object"
     },
-    "evaluator_params_LlmJudge": {
+    "evaluator_params_LLMJudge": {
       "additionalProperties": false,
       "properties": {
         "rubric": {
@@ -499,7 +499,7 @@
       "required": [
         "rubric"
       ],
-      "title": "evaluator_params_LlmJudge",
+      "title": "evaluator_params_LLMJudge",
       "type": "object"
     },
     "short_evaluator_Contains": {
@@ -542,18 +542,18 @@
       "title": "short_evaluator_IsInstance",
       "type": "object"
     },
-    "short_evaluator_LlmJudge": {
+    "short_evaluator_LLMJudge": {
       "additionalProperties": false,
       "properties": {
-        "LlmJudge": {
+        "LLMJudge": {
           "title": "Llmjudge",
           "type": "string"
         }
       },
       "required": [
-        "LlmJudge"
+        "LLMJudge"
       ],
-      "title": "short_evaluator_LlmJudge",
+      "title": "short_evaluator_LLMJudge",
       "type": "object"
     },
     "short_evaluator_MaxDuration": {
@@ -606,10 +606,10 @@
       "items": {
         "anyOf": [
           {
-            "$ref": "#/$defs/short_evaluator_LlmJudge"
+            "$ref": "#/$defs/short_evaluator_LLMJudge"
           },
           {
-            "$ref": "#/$defs/evaluator_LlmJudge"
+            "$ref": "#/$defs/evaluator_LLMJudge"
           },
           {
             "$ref": "#/$defs/short_evaluator_IsInstance"

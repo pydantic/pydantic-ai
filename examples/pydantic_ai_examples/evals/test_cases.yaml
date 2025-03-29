@@ -31,5 +31,5 @@ cases:
     error_message: The prompt 'next holiday season' is too ambiguous to generate a
       specific time range as holidays vary by region and context.
   evaluators:
-    - LlmJudge: should return an error message
+    - LLMJudge: should return an error message
     - IsInstance: TimeRangeBuilderError
