@@ -170,29 +170,35 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             # Shallow copy messages
             messages.extend(message_history)
             # Reevaluate any dynamic system prompt parts
-            await self._reevaluate_dynamic_prompts(messages, run_context)
+            await self._reevaluate_system_prompts(messages, run_context)
             return messages, _messages.ModelRequest([_messages.UserPromptPart(user_prompt)])
         else:
             parts = await self._sys_parts(run_context)
             parts.append(_messages.UserPromptPart(user_prompt))
             return messages, _messages.ModelRequest(parts)
 
-    async def _reevaluate_dynamic_prompts(
+    async def _reevaluate_system_prompts(
         self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
     ) -> None:
-        """Reevaluate any `SystemPromptPart` with dynamic_ref in the provided messages by running the associated runner function."""
-        # Only proceed if there's at least one dynamic runner.
-        if self.system_prompt_dynamic_functions:
-            for msg in messages:
-                if isinstance(msg, _messages.ModelRequest):
-                    for i, part in enumerate(msg.parts):
-                        if isinstance(part, _messages.SystemPromptPart) and part.dynamic_ref:
+        """Reevaluate the system prompts in the provided messages.
+
+        In case the system prompt is dynamic, we reevaluate it by running the associated runner function.
+        Otherwise, we replace the system prompt with the new one.
+        """
+        for msg in messages:
+            if isinstance(msg, _messages.ModelRequest):
+                for i, part in enumerate(msg.parts):
+                    if isinstance(part, _messages.SystemPromptPart):
+                        if part.dynamic_ref:
                             # Look up the runner by its ref
                             if runner := self.system_prompt_dynamic_functions.get(part.dynamic_ref):
                                 updated_part_content = await runner.run(run_context)
                                 msg.parts[i] = _messages.SystemPromptPart(
                                     updated_part_content, dynamic_ref=part.dynamic_ref
                                 )
+                        else:
+                            # If the part is not dynamic, we replace it with the new system prompt.
+                            msg.parts[i] = _messages.SystemPromptPart(self.system_prompts[0])
 
     async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.ModelRequestPart]:
         """Build the initial messages for the conversation."""
