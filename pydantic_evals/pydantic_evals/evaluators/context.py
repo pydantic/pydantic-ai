@@ -15,13 +15,13 @@ from ..otel._errors import SpanTreeRecordingError
 from ..otel.span_tree import SpanTree
 
 # ScoringContext needs to be covariant
-InputsT = TypeVar('InputsT', default=dict[str, Any], covariant=True)
+InputsT = TypeVar('InputsT', default=Any, covariant=True)
 """Type variable for the inputs to the task being evaluated."""
 
-OutputT = TypeVar('OutputT', default=dict[str, Any], covariant=True)
+OutputT = TypeVar('OutputT', default=Any, covariant=True)
 """Type variable for the output of the task being evaluated."""
 
-MetadataT = TypeVar('MetadataT', default=dict[str, Any], covariant=True)
+MetadataT = TypeVar('MetadataT', default=Any, covariant=True)
 """Type variable for the metadata associated with the task being evaluated."""
 
 
