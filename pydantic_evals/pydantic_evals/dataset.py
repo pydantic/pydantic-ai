@@ -33,7 +33,8 @@ from typing_extensions import NotRequired, Self, TypedDict, TypeVar
 from pydantic_evals._utils import get_event_loop
 
 from ._utils import get_unwrapped_function_name, task_group_gather
-from .evaluators import EvaluationResult, Evaluator, run_evaluator
+from .evaluators import EvaluationResult, Evaluator
+from .evaluators._run_evaluator import run_evaluator
 from .evaluators._spec import EvaluatorSpec
 from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
@@ -55,6 +56,13 @@ else:
     from pathlib import Path
 
     logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)  # pyright: ignore[reportPrivateImportUsage]
+
+__all__ = (
+    'Case',
+    'Dataset',
+    'increment_eval_metric',
+    'set_eval_attribute',
+)
 
 _logfire = logfire_api.Logfire(otel_scope='pydantic-evals')
 

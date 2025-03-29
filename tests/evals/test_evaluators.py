@@ -13,6 +13,7 @@ with try_import() as imports_successful:
     import logfire
     from logfire.testing import CaptureLogfire
 
+    from pydantic_evals.evaluators._run_evaluator import run_evaluator
     from pydantic_evals.evaluators._spec import EvaluatorSpec
     from pydantic_evals.evaluators.common import (
         Contains,
@@ -29,7 +30,6 @@ with try_import() as imports_successful:
         EvaluationReason,
         Evaluator,
         EvaluatorOutput,
-        run_evaluator,
     )
     from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
     from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
