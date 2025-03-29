@@ -685,22 +685,29 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                             s: models.StreamedResponse,
                         ) -> FinalResult[models.StreamedResponse] | None:
                             result_schema = graph_ctx.deps.result_schema
-                            parts_seen: list[_messages.ModelResponsePart] = []
-                            has_tool_call = False
+                            has_seen_empty_tool_call = False
                             async for maybe_part_event in streamed_response:
                                 if isinstance(maybe_part_event, _messages.PartStartEvent):
                                     new_part = maybe_part_event.part
-                                    parts_seen.append(new_part)
-                                    if isinstance(new_part, _messages.ToolCallPart) and result_schema:
-                                        has_tool_call = True
+                                    if isinstance(new_part, _messages.TextPart):
+                                        if _agent_graph.allow_text_result(result_schema):
+                                            # Return final result for text parts (even empty ones)
+                                            return FinalResult(s, None, None)
+                                    elif isinstance(new_part, _messages.ToolCallPart) and result_schema:
+                                        # Skip empty tool calls from Ollama
+                                        if not new_part.has_content():
+                                            has_seen_empty_tool_call = True
+                                            continue
+                                            
+                                        # For non-empty tool calls, find tools that match and return final result
                                         for call, _ in result_schema.find_tool([new_part]):
                                             return FinalResult(s, call.tool_name, call.tool_call_id)
-                            # Only check for final result after seeing all parts and no tool calls
-                            if not has_tool_call and len(parts_seen) > 0:
-                                # For text-only responses, we need all parts to be TextPart
-                                if all(isinstance(p, _messages.TextPart) for p in parts_seen):
-                                    if _agent_graph.allow_text_result(result_schema):
-                                        return FinalResult(s, None, None)
+                            
+                            # If we've seen empty tool calls but no other parts returned a result,
+                            # return None to keep streaming
+                            if has_seen_empty_tool_call:
+                                return None
+                                
                             return None
 
                         final_result_details = await stream_to_final(streamed_response)
