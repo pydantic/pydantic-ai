@@ -57,7 +57,7 @@ class SimpleCodeBlock(CodeBlock):
 class LeftHeading(Heading):
     """Customised headings in markdown to stop centering and prepend markdown style hashes."""
 
-    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:  # pragma: no cover
         # note we use `Style(bold=True)` not `self.style_name` here to disable underlining which is ugly IMHO
         yield Text(f'{"#" * int(self.tag[1:])} {self.text.plain}', style=Style(bold=True))
 
