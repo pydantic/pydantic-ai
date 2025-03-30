@@ -257,7 +257,7 @@ async def test_request_strict_structured_response(allow_model_requests: None):
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m, result_type=list[int])
 
-    result = await agent.run('Hello', model_settings=OpenAIModelSettings(strict=True))
+    result = await agent.run('Hello', model_settings=OpenAIModelSettings(openai_strict=True))
     assert result.data == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [

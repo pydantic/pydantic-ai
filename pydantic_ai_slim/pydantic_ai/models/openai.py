@@ -92,7 +92,7 @@ class OpenAIModelSettings(ModelSettings, total=False):
     See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
     """
 
-    strict: bool
+    openai_strict: bool
     """Whether to enable strict schema adherence when generating the function call.
     If set to true, the model will follow the exact schema defined in the parameters field.
 
