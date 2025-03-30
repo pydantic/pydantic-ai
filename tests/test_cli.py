@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 from dirty_equals import IsStr
 from inline_snapshot import snapshot
@@ -16,6 +18,7 @@ def test_cli_version(capfd: CaptureFixture[str]):
     assert capfd.readouterr().out.startswith('pai - PydanticAI CLI')
 
 
+@pytest.mark.skipif(sys.version_info >= (3, 13), reason='slightly different output with 3.13')
 def test_cli_help(capfd: CaptureFixture[str]):
     with pytest.raises(SystemExit) as exc:
         cli(['--help'])
