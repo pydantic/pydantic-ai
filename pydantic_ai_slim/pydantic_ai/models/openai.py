@@ -198,7 +198,7 @@ class OpenAIModel(Model):
         model_settings: OpenAIModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
-        tools = self._get_tools(model_request_parameters)
+        tools = self._get_tools(model_request_parameters, model_settings.get('strict') if model_settings else None)
 
         # standalone function to make it easier to override
         if not tools:
@@ -264,10 +264,12 @@ class OpenAIModel(Model):
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
+    def _get_tools(
+        self, model_request_parameters: ModelRequestParameters, strict: bool | None
+    ) -> list[chat.ChatCompletionToolParam]:
+        tools = [self._map_tool_definition(r, strict) for r in model_request_parameters.function_tools]
         if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+            tools += [self._map_tool_definition(r, strict) for r in model_request_parameters.result_tools]
         return tools
 
     async def _map_message(self, message: ModelMessage) -> AsyncIterable[chat.ChatCompletionMessageParam]:
@@ -305,7 +307,7 @@ class OpenAIModel(Model):
         )
 
     @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
+    def _map_tool_definition(f: ToolDefinition, strict: bool | None) -> chat.ChatCompletionToolParam:
         tool_def: chat.ChatCompletionToolParam = {
             'type': 'function',
             'function': {
@@ -314,7 +316,7 @@ class OpenAIModel(Model):
                 'parameters': f.parameters_json_schema,
             },
         }
-        if not f.strict:
+        if f.strict is False or (f.strict is None and strict is not True):
             return tool_def
         tool_def['function']['strict'] = True
         if 'parameters' in tool_def['function']:
