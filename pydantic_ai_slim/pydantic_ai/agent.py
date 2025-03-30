@@ -213,9 +213,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self._result_tool_name = result_tool_name
         self._result_tool_description = result_tool_description
         self._result_schema: _result.ResultSchema[ResultDataT] | None = _result.ResultSchema[result_type].build(
-            result_type,
-            result_tool_name,
-            result_tool_description,
+            result_type, result_tool_name, result_tool_description
         )
         self._result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]] = []
 
@@ -1172,9 +1170,6 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
     def _register_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Private utility to register a tool instance."""
-        if tool.strict is None and self.model_settings and 'strict' in self.model_settings:
-            tool = dataclasses.replace(tool, strict=self.model_settings['strict'])
-
         if tool.max_retries is None:
             # noinspection PyTypeChecker
             tool = dataclasses.replace(tool, max_retries=self._default_retries)
