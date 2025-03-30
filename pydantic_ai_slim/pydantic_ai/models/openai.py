@@ -206,7 +206,7 @@ class OpenAIModel(Model):
         model_settings: OpenAIModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
-        tools = self._get_tools(model_request_parameters, strict=model_settings.get('strict', False))
+        tools = self._get_tools(model_request_parameters, strict=model_settings.get('openai_strict', False))
 
         # standalone function to make it easier to override
         if not tools:
