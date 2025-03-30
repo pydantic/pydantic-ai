@@ -88,7 +88,7 @@ class ResultSchema(Generic[ResultDataT]):
 
     @classmethod
     def build(
-        cls: type[ResultSchema[T]], response_type: type[T], name: str, description: str | None
+        cls: type[ResultSchema[T]], response_type: type[T], name: str, description: str | None, strict: bool | None
     ) -> ResultSchema[T] | None:
         """Build a ResultSchema dataclass from a response type."""
         if response_type is str:
@@ -100,8 +100,8 @@ class ResultSchema(Generic[ResultDataT]):
         else:
             allow_text_result = False
 
-        def _build_tool(a: Any, tool_name_: str, multiple: bool) -> ResultTool[T]:
-            return cast(ResultTool[T], ResultTool(a, tool_name_, description, multiple))
+        def _build_tool(a: Any, tool_name_: str, multiple: bool, strict: bool | None) -> ResultTool[T]:
+            return cast(ResultTool[T], ResultTool(a, tool_name_, description, multiple, strict))
 
         tools: dict[str, ResultTool[T]] = {}
         if args := get_union_args(response_type):
@@ -109,9 +109,9 @@ class ResultSchema(Generic[ResultDataT]):
                 tool_name = union_tool_name(name, arg)
                 while tool_name in tools:
                     tool_name = f'{tool_name}_{i}'
-                tools[tool_name] = _build_tool(arg, tool_name, True)
+                tools[tool_name] = _build_tool(arg, tool_name, True, strict)
         else:
-            tools[name] = _build_tool(response_type, name, False)
+            tools[name] = _build_tool(response_type, name, False, strict)
 
         return cls(tools=tools, allow_text_result=allow_text_result)
 
@@ -151,7 +151,9 @@ class ResultTool(Generic[ResultDataT]):
     tool_def: ToolDefinition
     type_adapter: TypeAdapter[Any]
 
-    def __init__(self, response_type: type[ResultDataT], name: str, description: str | None, multiple: bool):
+    def __init__(
+        self, response_type: type[ResultDataT], name: str, description: str | None, multiple: bool, strict: bool | None
+    ):
         """Build a ResultTool dataclass from a response type."""
         assert response_type is not str, 'ResultTool does not support str as a response type'
 
@@ -184,6 +186,7 @@ class ResultTool(Generic[ResultDataT]):
             description=tool_description,
             parameters_json_schema=parameters_json_schema,
             outer_typed_dict_key=outer_typed_dict_key,
+            strict=strict,
         )
 
     def validate(

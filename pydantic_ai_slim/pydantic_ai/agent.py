@@ -213,7 +213,10 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self._result_tool_name = result_tool_name
         self._result_tool_description = result_tool_description
         self._result_schema: _result.ResultSchema[ResultDataT] | None = _result.ResultSchema[result_type].build(
-            result_type, result_tool_name, result_tool_description
+            result_type,
+            result_tool_name,
+            result_tool_description,
+            model_settings.get('strict') if model_settings else None,
         )
         self._result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]] = []
 
@@ -1273,7 +1276,10 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             if self._result_validators:
                 raise exceptions.UserError('Cannot set a custom run `result_type` when the agent has result validators')
             return _result.ResultSchema[result_type].build(
-                result_type, self._result_tool_name, self._result_tool_description
+                result_type,
+                self._result_tool_name,
+                self._result_tool_description,
+                self.model_settings.get('strict') if self.model_settings else None,
             )
         else:
             return self._result_schema  # pyright: ignore[reportReturnType]
