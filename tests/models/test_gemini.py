@@ -30,7 +30,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.gemini import (
-    ApiKeyAuth,
     GeminiModel,
     GeminiModelSettings,
     _content_model_response,
@@ -53,32 +52,6 @@ from pydantic_ai.tools import ToolDefinition
 from ..conftest import ClientWithHandler, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
-
-
-def test_api_key_arg(env: TestEnv):
-    env.set('GEMINI_API_KEY', 'via-env-var')
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
-    assert m.client.headers['x-goog-api-key'] == 'via-arg'
-    assert m.base_url == 'https://generativelanguage.googleapis.com/v1beta/models/'
-
-
-def test_api_key_env_var(env: TestEnv):
-    env.set('GEMINI_API_KEY', 'via-env-var')
-    m = GeminiModel('gemini-1.5-flash')
-    assert isinstance(m.auth, ApiKeyAuth)
-    assert m.auth.api_key == 'via-env-var'
-
-
-def test_api_key_not_set(env: TestEnv):
-    env.remove('GEMINI_API_KEY')
-    with pytest.raises(UserError, match='API key must be provided or set in the GEMINI_API_KEY environment variable'):
-        GeminiModel('gemini-1.5-flash')
-
-
-def test_api_key_empty(env: TestEnv):
-    env.set('GEMINI_API_KEY', '')
-    with pytest.raises(UserError, match='API key must be provided or set in the GEMINI_API_KEY environment variable'):
-        GeminiModel('gemini-1.5-flash')
 
 
 async def test_model_simple(allow_model_requests: None):

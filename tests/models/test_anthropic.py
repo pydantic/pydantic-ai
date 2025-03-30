@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from datetime import timezone
 from functools import cached_property
 from typing import Any, TypeVar, Union, cast
-from unittest.mock import patch
 
 import httpx
 import pytest
@@ -30,7 +29,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -680,8 +679,8 @@ def test_init_with_provider():
     assert model.client == provider.client
 
 
-def test_init_with_provider_string():
-    with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'env-api-key'}, clear=False):
-        model = AnthropicModel('claude-3-opus-latest', provider='anthropic')
-        assert model.model_name == 'claude-3-opus-latest'
-        assert model.client is not None
+def test_init_with_provider_string(env: TestEnv):
+    env.set('ANTHROPIC_API_KEY', 'env-api-key')
+    model = AnthropicModel('claude-3-opus-latest', provider='anthropic')
+    assert model.model_name == 'claude-3-opus-latest'
+    assert model.client is not None

@@ -1,13 +1,13 @@
 from __future__ import annotations as _annotations
 
-import os
 import re
-from unittest.mock import patch
 
 import httpx
 import pytest
 
-from ..conftest import try_import
+from pydantic_ai.exceptions import UserError
+
+from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from mistralai import Mistral
@@ -26,16 +26,16 @@ def test_mistral_provider():
     assert provider.client.sdk_configuration.security.api_key == 'api-key'  # pyright: ignore
 
 
-def test_mistral_provider_need_api_key() -> None:
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(
-            ValueError,
-            match=re.escape(
-                'Set the `MISTRAL_API_KEY` environment variable or pass it via `MistralProvider(api_key=...)`'
-                'to use the Mistral provider.'
-            ),
-        ):
-            MistralProvider()
+def test_mistral_provider_need_api_key(env: TestEnv) -> None:
+    env.remove('MISTRAL_API_KEY')
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Set the `MISTRAL_API_KEY` environment variable or pass it via `MistralProvider(api_key=...)`'
+            'to use the Mistral provider.'
+        ),
+    ):
+        MistralProvider()
 
 
 def test_mistral_provider_pass_http_client() -> None:

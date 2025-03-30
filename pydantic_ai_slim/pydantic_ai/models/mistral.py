@@ -1,17 +1,16 @@
 from __future__ import annotations as _annotations
 
 import base64
-import os
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Callable, Literal, Union, cast, overload
+from typing import Any, Literal, Union, cast
 
 import pydantic_core
-from httpx import AsyncClient as AsyncHTTPClient, Timeout
-from typing_extensions import assert_never, deprecated
+from httpx import Timeout
+from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -39,7 +38,6 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    cached_async_http_client,
     check_allow_model_requests,
 )
 
@@ -93,7 +91,10 @@ Since [the Mistral docs](https://docs.mistral.ai/getting-started/models/models_o
 
 
 class MistralModelSettings(ModelSettings):
-    """Settings used for a Mistral model request."""
+    """Settings used for a Mistral model request.
+
+    ALL FIELDS MUST BE `mistral_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
 
     # This class is a placeholder for any future mistral-specific settings
 
@@ -113,65 +114,28 @@ class MistralModel(Model):
     _model_name: MistralModelName = field(repr=False)
     _system: str = field(default='mistral_ai', repr=False)
 
-    @overload
     def __init__(
         self,
         model_name: MistralModelName,
         *,
         provider: Literal['mistral'] | Provider[Mistral] = 'mistral',
         json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n""",
-    ) -> None: ...
-
-    @overload
-    @deprecated('Use the `provider` parameter instead of `api_key`, `client` and `http_client`.')
-    def __init__(
-        self,
-        model_name: MistralModelName,
-        *,
-        provider: None = None,
-        api_key: str | Callable[[], str | None] | None = None,
-        client: Mistral | None = None,
-        http_client: AsyncHTTPClient | None = None,
-        json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n""",
-    ) -> None: ...
-
-    def __init__(
-        self,
-        model_name: MistralModelName,
-        *,
-        provider: Literal['mistral'] | Provider[Mistral] | None = None,
-        api_key: str | Callable[[], str | None] | None = None,
-        client: Mistral | None = None,
-        http_client: AsyncHTTPClient | None = None,
-        json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n""",
     ):
         """Initialize a Mistral model.
 
         Args:
+            model_name: The name of the model to use.
             provider: The provider to use for authentication and API access. Can be either the string
                 'mistral' or an instance of `Provider[Mistral]`. If not provided, a new provider will be
                 created using the other parameters.
-            model_name: The name of the model to use.
-            api_key: The API key to use for authentication, if unset uses `MISTRAL_API_KEY` environment variable.
-            client: An existing `Mistral` client to use, if provided, `api_key` and `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             json_mode_schema_prompt: The prompt to show when the model expects a JSON object as input.
         """
         self._model_name = model_name
         self.json_mode_schema_prompt = json_mode_schema_prompt
 
-        if provider is not None:
-            if isinstance(provider, str):
-                # TODO(Marcelo): We should add an integration test with VCR when I get the API key.
-                provider = infer_provider(provider)  # pragma: no cover
-            self.client = provider.client
-        elif client is not None:
-            assert http_client is None, 'Cannot provide both `mistral_client` and `http_client`'
-            assert api_key is None, 'Cannot provide both `mistral_client` and `api_key`'
-            self.client = client
-        else:
-            api_key = api_key or os.getenv('MISTRAL_API_KEY')
-            self.client = Mistral(api_key=api_key, async_client=http_client or cached_async_http_client())
+        if isinstance(provider, str):
+            provider = infer_provider(provider)
+        self.client = provider.client
 
     @property
     def base_url(self) -> str:
@@ -436,6 +400,8 @@ class MistralModel(Model):
         # 5) Object: Check for additionalProperties
         if value_type == 'object':
             additional_properties = value.get('additionalProperties', {})
+            if isinstance(additional_properties, bool):
+                return 'bool'  # pragma: no cover
             additional_properties_type = additional_properties.get('type')
             if (
                 additional_properties_type in SIMPLE_JSON_TYPE_MAPPING
