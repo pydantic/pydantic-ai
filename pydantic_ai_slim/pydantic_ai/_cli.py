@@ -26,7 +26,7 @@ try:
     from prompt_toolkit.history import FileHistory
     from rich.console import Console, ConsoleOptions, RenderResult
     from rich.live import Live
-    from rich.markdown import CodeBlock, Markdown
+    from rich.markdown import CodeBlock, Heading, Markdown
     from rich.status import Status
     from rich.syntax import Syntax
     from rich.text import Text
@@ -41,6 +41,11 @@ __version__ = version('pydantic-ai-slim')
 
 
 class SimpleCodeBlock(CodeBlock):
+    """Customised code blocks in markdown.
+
+    This avoids a background color which messes up copy-pasting and sets the language name as dim prefix and suffix.
+    """
+
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:  # pragma: no cover
         code = str(self.text).rstrip()
         yield Text(self.lexer_name, style='dim')
@@ -48,7 +53,17 @@ class SimpleCodeBlock(CodeBlock):
         yield Text(f'/{self.lexer_name}', style='dim')
 
 
-Markdown.elements['fence'] = SimpleCodeBlock
+class LeftHeading(Heading):
+    """Customised headings in markdown to stop centering and prepend markdown style hashes."""
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        yield Text(f'{"#" * int(self.tag[1:])} {self.text.plain}', style=self.style_name)
+
+
+Markdown.elements.update(
+    fence=SimpleCodeBlock,
+    heading_open=LeftHeading,
+)
 
 
 def cli(args_list: Sequence[str] | None = None) -> int:  # noqa: C901  # pragma: no cover
