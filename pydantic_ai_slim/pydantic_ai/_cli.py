@@ -28,6 +28,7 @@ try:
     from rich.live import Live
     from rich.markdown import CodeBlock, Heading, Markdown
     from rich.status import Status
+    from rich.style import Style
     from rich.syntax import Syntax
     from rich.text import Text
 except ImportError as _import_error:
@@ -57,7 +58,8 @@ class LeftHeading(Heading):
     """Customised headings in markdown to stop centering and prepend markdown style hashes."""
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        yield Text(f'{"#" * int(self.tag[1:])} {self.text.plain}', style=self.style_name)
+        # note we use `Style(bold=True)` not `self.style_name` here to disable underlining which is ugly IMHO
+        yield Text(f'{"#" * int(self.tag[1:])} {self.text.plain}', style=Style(bold=True))
 
 
 Markdown.elements.update(
