@@ -67,25 +67,22 @@ class BedrockProvider(Provider[BaseClient]):
             aws_access_key_id: The AWS access key ID.
             aws_secret_access_key: The AWS secret access key.
             aws_session_token: The AWS session token.
-            aws_read_timeout: The read timeout for bedrock client.
-            aws_connect_timeout: The connect timeout for bedrock client.
+            aws_read_timeout: The read timeout for Bedrock client.
+            aws_connect_timeout: The connect timeout for Bedrock client.
         """
         if bedrock_client is not None:
             self._client = bedrock_client
         else:
             try:
+                read_timeout = aws_read_timeout or float(os.getenv('AWS_READ_TIMEOUT', 300))
+                connect_timeout = aws_connect_timeout or float(os.getenv('AWS_CONNECT_TIMEOUT', 60))
                 self._client = boto3.client(  # type: ignore[reportUnknownMemberType]
                     'bedrock-runtime',
                     aws_access_key_id=aws_access_key_id,
                     aws_secret_access_key=aws_secret_access_key,
                     aws_session_token=aws_session_token,
                     region_name=region_name,
-                    config=Config(
-                        read_timeout=aws_read_timeout
-                        or float(os.getenv('AWS_READ_TIMEOUT', 300)),  # Need more time for long tool call
-                        connect_timeout=aws_connect_timeout
-                        or float(os.getenv('AWS_CONNECT_TIMEOUT', 60)),  # Boto3 use 60 as default
-                    ),
+                    config=Config(read_timeout=read_timeout, connect_timeout=connect_timeout),
                 )
             except NoRegionError as exc:  # pragma: no cover
                 raise UserError('You must provide a `region_name` or a boto3 client for Bedrock Runtime.') from exc
