@@ -907,3 +907,52 @@ def test_schema_generator():
             },
         ]
     )
+
+
+def test_tool_with_strict_parameter():
+    agent = Agent(FunctionModel(get_json_schema))
+
+    @agent.tool_plain(strict=True)
+    def strict_tool(x: int) -> str:
+        return str(x)
+
+    @agent.tool_plain(strict=False)
+    def non_strict_tool(x: int) -> str:
+        return str(x)
+
+    @agent.tool_plain()
+    def default_tool(x: int) -> str:
+        return str(x)
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.data)
+
+    strict_schema = next(t for t in json_schema if t['name'] == 'strict_tool')
+    non_strict_schema = next(t for t in json_schema if t['name'] == 'non_strict_tool')
+    default_schema = next(t for t in json_schema if t['name'] == 'default_tool')
+
+    assert strict_schema['strict'] is True
+    assert non_strict_schema['strict'] is False
+    assert default_schema['strict'] is None
+
+
+def test_tool_constructor_with_strict():
+    def my_tool(x: int) -> str:
+        return str(x)
+
+    strict_tool = Tool(my_tool, strict=True)
+    non_strict_tool = Tool(my_tool, name='non_strict_tool', strict=False)
+    default_tool = Tool(my_tool, name='default_tool')
+
+    agent = Agent(FunctionModel(get_json_schema), tools=[strict_tool, non_strict_tool, default_tool])
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.data)
+
+    strict_schema = next(t for t in json_schema if t['name'] == 'my_tool')
+    non_strict_schema = next(t for t in json_schema if t['name'] == 'non_strict_tool')
+    default_schema = next(t for t in json_schema if t['name'] == 'default_tool')
+
+    assert strict_schema['strict'] is True
+    assert non_strict_schema['strict'] is False
+    assert default_schema['strict'] is None
