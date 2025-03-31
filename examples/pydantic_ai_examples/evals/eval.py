@@ -1,6 +1,6 @@
 from pydantic_evals.dataset import EvaluatorContext
 from pydantic_evals.evaluators import Evaluator
-from pydantic_evals.evaluators.common import IsInstance, LlmJudge
+from pydantic_evals.evaluators.common import IsInstance, LLMJudge
 from pydantic_evals.evaluators.llm_as_a_judge import GradingOutput, judge_input_output
 
 from .agent import infer_time_range
@@ -31,7 +31,7 @@ async def main():
     )
     dataset = TimeRangeDataset.from_file(
         Path(__file__).parent / 'test_cases.yaml',
-        custom_evaluator_types=(IsInstance, LlmJudge),
+        custom_evaluator_types=(IsInstance, LLMJudge),
     )
 
     class MyEvaluator(Evaluator[TimeRangeInputs, TimeRangeResponse]):
