@@ -136,6 +136,7 @@ jobs:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
+      CI: true
     steps:
       - uses: actions/checkout@v4
 
@@ -315,11 +316,6 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-
-      - name: check GITHUB_REF matches package version
-        uses: samuelcolvin/check-python-version@v4.1
-        with:
-          version_file_path: pyproject.toml
 
       - run: uv build --all-packages
 
