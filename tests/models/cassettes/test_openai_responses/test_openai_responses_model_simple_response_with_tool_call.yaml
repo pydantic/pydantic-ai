@@ -1,0 +1,240 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '338'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the capital of PotatoLand?
+        role: user
+      instructions: ''
+      model: gpt-4o
+      tool_choice: auto
+      tools:
+      - description: ''
+        name: get_capital
+        parameters:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1497'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '666'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1743075630
+      error: null
+      id: resp_67e5392eae34819184408ee7e23f50160aa13be256b050b4
+      incomplete_details: null
+      instructions: ''
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - arguments: '{"country":"PotatoLand"}'
+        call_id: call_Zmx4ZiPQOvoNEhLgG16TO3nx
+        id: fc_67e5392f33ac8191b215eeff4f9931f80aa13be256b050b4
+        name: get_capital
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        generate_summary: null
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_capital
+        parameters:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        strict: true
+        type: function
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 256
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 18
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 274
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '600'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=vVsJhB9A9X9_43ZZ4_DPKFw_dO0SSxBWEhx4UiGncwQ-1743075631-1.0.1.1-N3mdrI4LFgBBnd_XI5x81Q5KKuykqiNo8wFt1XpgnPkVX0ISneJo_Yh1B3ZyfLeI5LaMdhMxhGB6wOfgrg4pP9f33KlF4C8grewNF05MpKw;
+        _cfuvid=vB6MpPuauumuSrL6beYNRLXeNQt2_XZpKzom2c97AFI-1743075631374-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the capital of PotatoLand?
+        role: user
+      - content: ''
+        role: assistant
+      - arguments: '{"country":"PotatoLand"}'
+        call_id: call_Zmx4ZiPQOvoNEhLgG16TO3nx
+        name: get_capital
+        type: function_call
+      - call_id: call_Zmx4ZiPQOvoNEhLgG16TO3nx
+        output: Potato City
+        type: function_call_output
+      instructions: ''
+      model: gpt-4o
+      tool_choice: auto
+      tools:
+      - description: ''
+        name: get_capital
+        parameters:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1561'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '470'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1743075631
+      error: null
+      id: resp_67e5392f80808191affe6ff7af237dba0b8eafaa14d24d42
+      incomplete_details: null
+      instructions: ''
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          text: The capital of PotatoLand is Potato City.
+          type: output_text
+        id: msg_67e5392fd7b4819190bec4e770968a9d0b8eafaa14d24d42
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        generate_summary: null
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_capital
+        parameters:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        strict: true
+        type: function
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 287
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 11
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 298
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
