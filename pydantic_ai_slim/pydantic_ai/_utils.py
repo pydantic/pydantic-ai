@@ -40,7 +40,7 @@ def is_model_like(type_: Any) -> bool:
     return (
         isinstance(type_, type)
         and not isinstance(type_, GenericAlias)
-        and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))
+        and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))  # pyright: ignore[reportUnknownArgumentType]
     )
 
 

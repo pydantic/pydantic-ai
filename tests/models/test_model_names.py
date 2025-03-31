@@ -58,5 +58,5 @@ def test_known_model_names():
         + extra_names
     )
 
-    known_model_names = sorted(get_args(KnownModelName))
+    known_model_names = sorted(get_args(KnownModelName.__value__))
     assert generated_names == known_model_names

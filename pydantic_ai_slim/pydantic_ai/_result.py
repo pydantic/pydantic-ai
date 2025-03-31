@@ -163,7 +163,10 @@ class ResultTool(Generic[ResultDataT]):
                 self.type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
             )
         else:
-            response_data_typed_dict = TypedDict('response_data_typed_dict', {'response': response_type})  # noqa
+            response_data_typed_dict = TypedDict(  # noqa: UP013
+                'response_data_typed_dict',
+                {'response': response_type},  # pyright: ignore[reportInvalidTypeForm]
+            )
             self.type_adapter = TypeAdapter(response_data_typed_dict)
             outer_typed_dict_key = 'response'
             # noinspection PyArgumentList
