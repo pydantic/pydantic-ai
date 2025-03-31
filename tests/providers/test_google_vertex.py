@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
@@ -8,6 +9,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 from inline_snapshot import snapshot
+from pytest_mock import MockerFixture
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.models.gemini import GeminiModel
@@ -139,6 +141,22 @@ def save_service_account(service_account_path: Path, project_id: str) -> None:
     service_account = prepare_service_account_contents(project_id)
 
     service_account_path.write_text(json.dumps(service_account, indent=2))
+
+
+@pytest.fixture(autouse=True)
+def vertex_provider_auth(mocker: MockerFixture) -> None:
+    # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
+    if not os.getenv('CI'):
+        return
+
+    @dataclass
+    class NoOpCredentials:
+        token = 'my-token'
+
+        def refresh(self, request: Request): ...
+
+    return_value = (NoOpCredentials(), 'pydantic-ai')
+    mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
 
 
 @pytest.mark.vcr()

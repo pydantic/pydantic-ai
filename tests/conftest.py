@@ -269,20 +269,6 @@ def mistral_api_key() -> str:
     return os.getenv('MISTRAL_API_KEY', 'mock-api-key')
 
 
-@pytest.fixture(scope='session', autouse=True)
-def vertex_provider_auth(mocker: MockerFixture) -> None:
-    # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
-    if not os.getenv('CI'):
-        return
-
-    @dataclass
-    class NoOpCredentials:
-        token = 'my-token'
-
-        def refresh(self, request: Request): ...
-
-    return_value = (NoOpCredentials(), 'pydantic-ai')
-    mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
 
 
 @pytest.fixture
