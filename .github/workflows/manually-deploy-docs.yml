@@ -5,6 +5,7 @@ on:
 
 jobs:
   build-docs-manual:
+    # Note: this should match the `docs` job in ci.yml
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +37,7 @@ jobs:
           path: site
 
   deploy-docs-manual:
+    # Note: this should match the `deploy-docs` job in ci.yml
     needs: [build-docs-manual]
     runs-on: ubuntu-latest
     environment:
