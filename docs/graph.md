@@ -760,7 +760,7 @@ from ai_q_and_a_graph import Ask, question_graph, Evaluate, QuestionState, Answe
 
 
 async def main():
-    answer: str | None = sys.argv[2] if len(sys.argv) > 2 else None  # (1)!
+    answer: str | None = sys.argv[1] if len(sys.argv) > 1 else None  # (1)!
     persistence = FileStatePersistence(Path('question_graph.json'))  # (2)!
     persistence.set_graph_types(question_graph)  # (3)!
 
@@ -797,7 +797,7 @@ async def main():
 8. To demonstrate the state persistence, we call [`load_all`][pydantic_graph.persistence.BaseStatePersistence.load_all] to get all the snapshots from the persistence instance. This will return a list of [`Snapshot`][pydantic_graph.persistence.Snapshot] objects.
 9. If the node is an `Answer` object, we print the question and break out of the loop to end the process and wait for user input.
 
-_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main(answer))` to run `main`)_
+_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
 
 For a complete example of this graph, see the [question graph example](examples/question-graph.md).
 

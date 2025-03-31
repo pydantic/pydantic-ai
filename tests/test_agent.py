@@ -818,6 +818,7 @@ def test_unknown_tool():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
+                        tool_name='foobar',
                         content="Unknown tool name: 'foobar'. No tools available.",
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
@@ -855,6 +856,7 @@ def test_unknown_tool_fix():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
+                        tool_name='foobar',
                         content="Unknown tool name: 'foobar'. No tools available.",
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
@@ -1140,6 +1142,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
+                            tool_name='unknown_tool',
                             content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
@@ -1233,6 +1236,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
+                            tool_name='unknown_tool',
                             content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),

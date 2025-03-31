@@ -161,7 +161,10 @@ class ResultTool(Generic[ResultDataT]):
             # noinspection PyArgumentList
             parameters_json_schema = _utils.check_object_json_schema(self.type_adapter.json_schema())
         else:
-            response_data_typed_dict = TypedDict('response_data_typed_dict', {'response': response_type})  # noqa
+            response_data_typed_dict = TypedDict(  # noqa: UP013
+                'response_data_typed_dict',
+                {'response': response_type},  # pyright: ignore[reportInvalidTypeForm]
+            )
             self.type_adapter = TypeAdapter(response_data_typed_dict)
             outer_typed_dict_key = 'response'
             # noinspection PyArgumentList

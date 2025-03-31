@@ -20,6 +20,6 @@ async def test_my_agent():
     assert m.last_model_request_parameters.function_tools == []
 ```
 
-See [Unit testing with `TestModel`](../../testing-evals.md#unit-testing-with-testmodel) for detailed documentation.
+See [Unit testing with `TestModel`](../../testing.md#unit-testing-with-testmodel) for detailed documentation.
 
 ::: pydantic_ai.models.test

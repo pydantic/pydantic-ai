@@ -51,6 +51,6 @@ async def test_my_agent():
         assert result.data == 'hello world'
 ```
 
-See [Unit testing with `FunctionModel`](../../testing-evals.md#unit-testing-with-functionmodel) for detailed documentation.
+See [Unit testing with `FunctionModel`](../../testing.md#unit-testing-with-functionmodel) for detailed documentation.
 
 ::: pydantic_ai.models.function
