@@ -109,6 +109,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
                 'additionalProperties': False,
             },
             'outer_typed_dict_key': None,
+            'strict': None,
         }
     )
     keys = list(json_schema.keys())
@@ -144,6 +145,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
                 'additionalProperties': False,
             },
             'outer_typed_dict_key': None,
+            'strict': None,
         }
     )
 
@@ -182,6 +184,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
                 'additionalProperties': False,
             },
             'outer_typed_dict_key': None,
+            'strict': None,
         }
     )
 
@@ -220,6 +223,7 @@ def test_google_style_with_returns():
                 'type': 'object',
             },
             'outer_typed_dict_key': None,
+            'strict': None,
         }
     )
 
@@ -256,6 +260,7 @@ def test_sphinx_style_with_returns():
                 'type': 'object',
             },
             'outer_typed_dict_key': None,
+            'strict': None,
         }
     )
 
@@ -298,6 +303,7 @@ def test_numpy_style_with_returns():
                 'type': 'object',
             },
             'outer_typed_dict_key': None,
+            'strict': None,
         }
     )
 
@@ -328,6 +334,7 @@ def test_only_returns_type():
 """,
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
+            'strict': None,
         }
     )
 
@@ -349,6 +356,7 @@ def test_docstring_unknown():
             'description': 'Unknown style docstring.',
             'parameters_json_schema': {'properties': {}, 'type': 'object', 'additionalProperties': True},
             'outer_typed_dict_key': None,
+            'strict': None,
         }
     )
 
@@ -388,6 +396,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
                 'additionalProperties': False,
             },
             'outer_typed_dict_key': None,
+            'strict': None,
         }
     )
 
@@ -420,6 +429,7 @@ def test_takes_just_model():
                 'type': 'object',
             },
             'outer_typed_dict_key': None,
+            'strict': None,
         }
     )
 
@@ -461,6 +471,7 @@ def test_takes_model_and_int():
                 'additionalProperties': False,
             },
             'outer_typed_dict_key': None,
+            'strict': None,
         }
     )
 
@@ -736,6 +747,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'name': 'tool_without_return_annotation_in_docstring',
             'outer_typed_dict_key': None,
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+            'strict': None,
         }
     )
 
@@ -790,6 +802,7 @@ def test_json_schema_required_parameters(set_event_loop: None):
                     'required': ['a'],
                     'type': 'object',
                 },
+                'strict': None,
             },
             {
                 'description': '',
@@ -801,6 +814,7 @@ def test_json_schema_required_parameters(set_event_loop: None):
                     'required': ['b'],
                     'type': 'object',
                 },
+                'strict': None,
             },
         ]
     )
@@ -879,6 +893,7 @@ def test_schema_generator():
                     'properties': {'x': {'type': 'string'}},
                     'type': 'object',
                 },
+                'strict': None,
             },
             {
                 'description': '',
@@ -888,6 +903,7 @@ def test_schema_generator():
                     'properties': {'x': {'type': 'string', 'title': 'X title'}},
                     'type': 'object',
                 },
+                'strict': None,
             },
         ]
     )

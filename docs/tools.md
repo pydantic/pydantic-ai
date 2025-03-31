@@ -353,6 +353,7 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         outer_typed_dict_key=None,
+        strict=None,
     )
 ]
 """
@@ -456,6 +457,7 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         outer_typed_dict_key=None,
+        strict=None,
     )
 ]
 """
