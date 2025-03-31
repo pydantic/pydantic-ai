@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import base64
 import io
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
@@ -354,35 +353,13 @@ class AnthropicModel(Model):
                     else:
                         raise RuntimeError('Only images and PDFs are supported for binary content')
                 elif isinstance(item, ImageUrl):
-                    try:
-                        response = await cached_async_http_client().get(item.url)
-                        response.raise_for_status()
-                        yield ImageBlockParam(
-                            source={
-                                'data': io.BytesIO(response.content),
-                                'media_type': item.media_type,
-                                'type': 'base64',
-                            },
-                            type='image',
-                        )
-                    except ValueError:
-                        # Download the file if can't find the mime type.
-                        client = cached_async_http_client()
-                        response = await client.get(item.url, follow_redirects=True)
-                        response.raise_for_status()
-                        base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                        if (mime_type := response.headers['Content-Type']) in (
-                            'image/jpeg',
-                            'image/png',
-                            'image/gif',
-                            'image/webp',
-                        ):
-                            yield ImageBlockParam(
-                                source={'data': base64_encoded, 'media_type': mime_type, 'type': 'base64'},
-                                type='image',
-                            )
-                        else:  # pragma: no cover
-                            raise RuntimeError(f'Unsupported image type: {mime_type}')
+                    yield ImageBlockParam(
+                        source={
+                            'type': 'url',
+                            'url': item.url,
+                        },
+                        type='image',
+                    )
                 elif isinstance(item, DocumentUrl):
                     response = await cached_async_http_client().get(item.url)
                     response.raise_for_status()
