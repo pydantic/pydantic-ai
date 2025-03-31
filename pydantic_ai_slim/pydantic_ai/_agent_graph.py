@@ -331,10 +331,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.run_step += 1
 
         model_settings = merge_model_settings(ctx.deps.model_settings, None)
-        with ctx.deps.tracer.start_as_current_span(
-            'preparing model request params', attributes=dict(run_step=ctx.state.run_step)
-        ):
-            model_request_parameters = await _prepare_request_parameters(ctx)
+        model_request_parameters = await _prepare_request_parameters(ctx)
         return model_settings, model_request_parameters
 
     def _finish_handling(
@@ -642,12 +639,17 @@ async def process_function_tools(
 
     # Run all tool tasks in parallel
     results_by_index: dict[int, _messages.ModelRequestPart] = {}
-    tool_names = [call.tool_name for _, call in calls_to_run]
     with ctx.deps.tracer.start_as_current_span(
-        'running tools', attributes={'tools': tool_names, 'logfire.msg': f'running tools: {", ".join(tool_names)}'}
+        'running tools',
+        attributes={
+            'tools': [call.tool_name for _, call in calls_to_run],
+            'logfire.msg': f'running {len(calls_to_run)} tool{"" if len(calls_to_run) == 1 else "s"}',
+        },
     ):
-        # TODO: Should we wrap each individual tool call in a dedicated span?
-        tasks = [asyncio.create_task(tool.run(call, run_context), name=call.tool_name) for tool, call in calls_to_run]
+        tasks = [
+            asyncio.create_task(tool.run(call, run_context, ctx.deps.tracer), name=call.tool_name)
+            for tool, call in calls_to_run
+        ]
         pending = tasks
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)

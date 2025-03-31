@@ -22,6 +22,7 @@ members = [
     "pydantic-ai",
     "pydantic-ai-examples",
     "pydantic-ai-slim",
+    "pydantic-evals",
     "pydantic-graph",
 ]
 
@@ -2785,7 +2786,7 @@ name = "pydantic-ai"
 version = "0.0.46"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "groq", "mcp", "mistral", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "evals", "groq", "mcp", "mistral", "openai", "vertexai"] },
 ]
 
 [package.optional-dependencies]
@@ -2820,7 +2821,7 @@ lint = [
 requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.11.0" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral", "cohere", "bedrock", "cli", "mcp"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic", "mistral", "cohere", "bedrock", "cli", "mcp", "evals"], editable = "pydantic_ai_slim" },
 ]
 provides-extras = ["examples", "logfire"]
 
@@ -2840,7 +2841,7 @@ docs-upload = [
 ]
 lint = [
     { name = "mypy", specifier = ">=1.11.2" },
-    { name = "pyright", specifier = ">=1.1.388,<1.1.390" },
+    { name = "pyright", specifier = ">=1.1.390" },
     { name = "ruff", specifier = ">=0.6.9" },
 ]
 
@@ -2856,6 +2857,7 @@ dependencies = [
     { name = "logfire", extra = ["asyncpg", "fastapi", "sqlite3"] },
     { name = "mcp", extra = ["cli"], marker = "python_full_version >= '3.10'" },
     { name = "pydantic-ai-slim", extra = ["anthropic", "groq", "openai", "vertexai"] },
+    { name = "pydantic-evals" },
     { name = "python-multipart" },
     { name = "rich" },
     { name = "uvicorn" },
@@ -2870,6 +2872,7 @@ requires-dist = [
     { name = "logfire", extras = ["asyncpg", "fastapi", "sqlite3"], specifier = ">=2.6" },
     { name = "mcp", extras = ["cli"], marker = "python_full_version >= '3.10'", specifier = ">=1.4.1" },
     { name = "pydantic-ai-slim", extras = ["openai", "vertexai", "groq", "anthropic"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-evals", editable = "pydantic_evals" },
     { name = "python-multipart", specifier = ">=0.0.17" },
     { name = "rich", specifier = ">=13.9.2" },
     { name = "uvicorn", specifier = ">=0.32.0" },
@@ -2907,6 +2910,9 @@ cohere = [
 ]
 duckduckgo = [
     { name = "duckduckgo-search" },
+]
+evals = [
+    { name = "pydantic-evals" },
 ]
 groq = [
     { name = "groq" },
@@ -2968,13 +2974,14 @@ requires-dist = [
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
     { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-evals", marker = "extra == 'evals'", editable = "pydantic_evals" },
     { name = "pydantic-graph", editable = "pydantic_graph" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13" },
     { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
-provides-extras = ["logfire", "openai", "cohere", "vertexai", "anthropic", "groq", "mistral", "bedrock", "duckduckgo", "tavily", "cli", "mcp"]
+provides-extras = ["logfire", "openai", "cohere", "vertexai", "anthropic", "groq", "mistral", "bedrock", "duckduckgo", "tavily", "cli", "mcp", "evals"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3090,6 +3097,34 @@ wheels = [
 ]
 
 [[package]]
+name = "pydantic-evals"
+version = "0.0.41"
+source = { editable = "pydantic_evals" }
+dependencies = [
+    { name = "anyio" },
+    { name = "eval-type-backport", marker = "python_full_version < '3.11'" },
+    { name = "logfire-api" },
+    { name = "pydantic" },
+    { name = "rich" },
+]
+
+[package.optional-dependencies]
+logfire = [
+    { name = "logfire" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anyio", specifier = ">=0" },
+    { name = "eval-type-backport", marker = "python_full_version < '3.11'", specifier = ">=0" },
+    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
+    { name = "logfire-api", specifier = ">=1.2.0" },
+    { name = "pydantic", specifier = ">=2.10" },
+    { name = "rich", specifier = ">=13.9.4" },
+]
+provides-extras = ["logfire"]
+
+[[package]]
 name = "pydantic-graph"
 version = "0.0.46"
 source = { editable = "pydantic_graph" }
@@ -3154,15 +3189,15 @@ wheels = [
 
 [[package]]
 name = "pyright"
-version = "1.1.389"
+version = "1.1.398"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "nodeenv" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/72/4e/9a5ab8745e7606b88c2c7ca223449ac9d82a71fd5e31df47b453f2cb39a1/pyright-1.1.389.tar.gz", hash = "sha256:716bf8cc174ab8b4dcf6828c3298cac05c5ed775dda9910106a5dcfe4c7fe220", size = 21940 }
+sdist = { url = "https://files.pythonhosted.org/packages/24/d6/48740f1d029e9fc4194880d1ad03dcf0ba3a8f802e0e166b8f63350b3584/pyright-1.1.398.tar.gz", hash = "sha256:357a13edd9be8082dc73be51190913e475fa41a6efb6ec0d4b7aab3bc11638d8", size = 3892675 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/26/c288cabf8cfc5a27e1aa9e5029b7682c0f920b8074f45d22bf844314d66a/pyright-1.1.389-py3-none-any.whl", hash = "sha256:41e9620bba9254406dc1f621a88ceab5a88af4c826feb4f614d95691ed243a60", size = 18581 },
+    { url = "https://files.pythonhosted.org/packages/58/e0/5283593f61b3c525d6d7e94cfb6b3ded20b3df66e953acaf7bb4f23b3f6e/pyright-1.1.398-py3-none-any.whl", hash = "sha256:0a70bfd007d9ea7de1cf9740e1ad1a40a122592cfe22a3f6791b06162ad08753", size = 5780235 },
 ]
 
 [[package]]
@@ -3184,16 +3219,16 @@ wheels = [
 
 [[package]]
 name = "pytest-examples"
-version = "0.0.15"
+version = "0.0.17"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "black" },
     { name = "pytest" },
     { name = "ruff" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c3/82/fa4fb866d52934de97b90c84c89896faebfb984436804fc3baa55d48d511/pytest_examples-0.0.15.tar.gz", hash = "sha256:2d6ced2d1f0d59863f81a4d2f193737464b8004a7670907c3bedef6306a5d660", size = 20771 }
+sdist = { url = "https://files.pythonhosted.org/packages/05/b2/555d866fc26d3ab7bc49e1be7cc982dd95b62bc33d60256506634d28fc5d/pytest_examples-0.0.17.tar.gz", hash = "sha256:3f02460c10de36646dab45825659fa4735441863af8c86388c22eb6113d038d8", size = 21211 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ba/81/3f727a7d2f9c1ff36f581453949a4af314629108642d5140298476e90902/pytest_examples-0.0.15-py3-none-any.whl", hash = "sha256:6e4adc522bf2e3f93cae3b37a4add76fcc2c1ada29d8988b2ea15b236233ec0f", size = 17922 },
+    { url = "https://files.pythonhosted.org/packages/9d/53/c2fc4d70d1999030b1f7bc6fe1441fa0a37a686a74a9a2109a4aa5e946ce/pytest_examples-0.0.17-py3-none-any.whl", hash = "sha256:3269b8b108e248d81edead269b2abf1cb76636bd49b7d5d3b41b194634cb10e6", size = 18168 },
 ]
 
 [[package]]
