@@ -327,8 +327,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             async for _ in agent_run:
                 pass
 
-        assert (final_result := agent_run.result) is not None, 'The graph run did not finish properly'
-        return final_result
+        assert agent_run.result is not None, 'The graph run did not finish properly'
+        return agent_run.result
 
     @asynccontextmanager
     async def iter(
