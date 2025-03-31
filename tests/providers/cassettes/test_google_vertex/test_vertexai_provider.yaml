@@ -37,8 +37,8 @@ interactions:
     parsed_body:
       access_token: scrubbed
       expires_in: 3599
-      id_token: eyJhbGciOiJSUzI1NiIsImtpZCI6IjgyMWYzYmM2NmYwNzUxZjc4NDA2MDY3OTliMWFkZjllOWZiNjBkZmIiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJhdWQiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJzdWIiOiIxMDY1Njg0NzQzMTU3NzkyMTI1NTkiLCJoZCI6InB5ZGFudGljLmRldiIsImVtYWlsIjoibWFyY2Vsb0BweWRhbnRpYy5kZXYiLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiYXRfaGFzaCI6IllUblZTT05BYk9oM2MzT1BhRjdZc1EiLCJpYXQiOjE3NDM0MTA3ODQsImV4cCI6MTc0MzQxNDM4NH0.FMmWuHh51lrvuJrcCSui_2as8xq21LdaEeNFK3uNS4mSir4K2K5IsAwjLiKIbutfSt_pWU5Mt0eMo2UvKQWqMxTnww_wGANL-mJIMAV5V9nnXceSxwEd6LAcUToXsCaeUAWPT1fT_WPzfU8WQaDast_eV6Ql50ZGQ8_EKCnYCgNHcpPP9YuWyJmu-l1MGDCH5mzhzf3a5n_8ouMKCpPfFkJ2-Xf6pyP8IVU_F86EnrNhu8megfA3NHcnIvgaI8O3xEOjK2JeJXQdnKjX5o3qCB7tucLPChYVUC0R3YU-hMF5IGT-tQuRFkT3430_HaC_n1scSlDOch7WkAnvPy82uw
-      scope: https://www.googleapis.com/auth/sqlservice.login openid https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email
+      id_token: eyJhbGciOiJSUzI1NiIsImtpZCI6IjgyMWYzYmM2NmYwNzUxZjc4NDA2MDY3OTliMWFkZjllOWZiNjBkZmIiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJhdWQiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJzdWIiOiIxMDY1Njg0NzQzMTU3NzkyMTI1NTkiLCJoZCI6InB5ZGFudGljLmRldiIsImVtYWlsIjoibWFyY2Vsb0BweWRhbnRpYy5kZXYiLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiYXRfaGFzaCI6ImlyckNRNE00c0Z0Z2dfS2hRTVNjekEiLCJpYXQiOjE3NDM0MTM3NzcsImV4cCI6MTc0MzQxNzM3N30.BAvb4TlcIoYcQODNLFqwtUQoSNJJbpAR0lk2OyFxXK9rSZ7m1e1_Dp1O4ApxPUS7f_NX34eSCuDJN2IXgh8VBv4k3IhI7CbMydYeqXuwlbgOOp1Z0farGEKneU1M7TvdngigAJ9wT-2LHjKd_GEcGau-CUvzXpcT1IOnNNyXGVqtuGmEfcw5jjPkKJNECUheeNHE3zeImatTstOLuKmI1ZK-etl41l3poSNuQkZkrbQ80Vst8BdT-b1tnJnXP1KGATBIamDy99OOiB9a7a9m_ikXYEyN91yR76DYot3hpDPlOX0H9hF-BOSqoOtlSS2TMBkMvFiiYWjID1e_9VlNUg
+      scope: https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email openid https://www.googleapis.com/auth/sqlservice.login
       token_type: Bearer
     status:
       code: 200
@@ -69,7 +69,7 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '755'
+      - '759'
       content-type:
       - application/json; charset=UTF-8
       transfer-encoding:
@@ -80,26 +80,26 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.02431304194033146
+      - avgLogprobs: -0.02161086102326711
         content:
           parts:
           - text: |
-              The capital of France is Paris.
+              The capital of France is **Paris**.
           role: model
         finishReason: STOP
-      createTime: '2025-03-31T08:46:24.369892Z'
+      createTime: '2025-03-31T09:36:18.248148Z'
       modelVersion: gemini-2.0-flash
-      responseId: YFbqZ-TJFvPB-O4PmemwiAw
+      responseId: EmLqZ9SSD-yOm9IP2bHc6Ag
       usageMetadata:
-        candidatesTokenCount: 8
+        candidatesTokenCount: 9
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 8
+          tokenCount: 9
         promptTokenCount: 7
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 7
-        totalTokenCount: 15
+        totalTokenCount: 16
         trafficType: ON_DEMAND
     status:
       code: 200

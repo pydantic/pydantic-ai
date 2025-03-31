@@ -8,7 +8,6 @@ import secrets
 import sys
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
@@ -31,7 +30,6 @@ __all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'TestEnv', 'ClientWithHandl
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 if TYPE_CHECKING:
-    from google.auth.transport.requests import Request
 
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
@@ -267,8 +265,6 @@ def co_api_key() -> str:
 @pytest.fixture(scope='session')
 def mistral_api_key() -> str:
     return os.getenv('MISTRAL_API_KEY', 'mock-api-key')
-
-
 
 
 @pytest.fixture
