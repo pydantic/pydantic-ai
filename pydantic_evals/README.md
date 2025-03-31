@@ -27,7 +27,6 @@ quick example that evaluates a simple function against a test case using both cu
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext, IsInstance
 
-
 # Define a test case with inputs and expected output
 case = Case(
     name='capital_question',
@@ -62,9 +61,9 @@ report.print(include_input=True, include_output=True)
 ┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID          ┃ Inputs                         ┃ Outputs ┃ Scores            ┃ Assertions ┃ Duration ┃
 ┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ capital_question │ What is the capital of France? │ Paris   │ MatchAnswer: 1.00 │ ✔          │    0.6µs │
+│ capital_question │ What is the capital of France? │ Paris   │ MatchAnswer: 1.00 │ ✔          │     10ms │
 ├──────────────────┼────────────────────────────────┼─────────┼───────────────────┼────────────┼──────────┤
-│ Averages         │                                │         │ MatchAnswer: 1.00 │ 100.0% ✔   │    0.6µs │
+│ Averages         │                                │         │ MatchAnswer: 1.00 │ 100.0% ✔   │     10ms │
 └──────────────────┴────────────────────────────────┴─────────┴───────────────────┴────────────┴──────────┘
 """
 ```
@@ -88,7 +87,7 @@ You'll see full details about the inputs, outputs, token usage, execution durati
 
 Basic setup:
 
-```python {test="skip"}
+```python {test="skip" lint="skip" format="skip"}
 import logfire
 
 logfire.configure(
