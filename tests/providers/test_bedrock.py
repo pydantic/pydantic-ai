@@ -22,6 +22,7 @@ def test_bedrock_provider(env: TestEnv):
 
 
 def test_bedrock_provider_timeout(env: TestEnv):
+    env.set('AWS_DEFAULT_REGION', 'us-east-1')
     env.set('AWS_READ_TIMEOUT', '1')
     env.set('AWS_CONNECT_TIMEOUT', '1')
     provider = BedrockProvider()
