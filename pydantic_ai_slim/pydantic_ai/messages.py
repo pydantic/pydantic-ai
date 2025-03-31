@@ -447,25 +447,6 @@ ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discrimina
 
 
 @dataclass
-class TopLogprob:
-    """An integer between 0 and 5 specifying the number of most likely tokens to return at each token position, each with an associated log probability."""
-
-    token: str
-    bytes: list[int]
-    logprob: float
-
-
-@dataclass
-class ChatCompletionTokenLogprob:
-    """It is the probability of each output token returned in the content of the message."""
-
-    token: str
-    bytes: list[int]
-    logprob: float
-    top_logprobs: list[TopLogprob]
-
-
-@dataclass
 class ModelResponse:
     """A response from a model, e.g. a message from the model to the PydanticAI app."""
 
@@ -484,11 +465,11 @@ class ModelResponse:
     kind: Literal['response'] = 'response'
     """Message type identifier, this is available on all parts as a discriminator."""
 
-    # TODO: implemented in OpenAI, but not in other models
-    logprobs: list[ChatCompletionTokenLogprob] = field(default_factory=lambda: [])
-    """Logprobs from the model, if any.
+    vendor_metadata: dict[str, Any] | None = field(default_factory=dict, repr=False)
+    """Additional vendor-specific metadata in a serializable format.
 
-    This is used by the models to provide additional information about the response.
+    This allows storing selected vendor-specific data that isn't mapped to standard ModelResponse fields.
+    For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
     """
 
     def otel_events(self) -> list[Event]:

@@ -6,7 +6,7 @@ from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal, Union, cast, overload
+from typing import Any, Literal, Union, cast, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never, deprecated
@@ -18,7 +18,6 @@ from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     AudioUrl,
     BinaryContent,
-    ChatCompletionTokenLogprob,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -308,16 +307,29 @@ class OpenAIModel(Model):
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+        vendor_metadata: dict[str, Any] = {}
 
-        logprobs = choice.logprobs.content if choice.logprobs is not None else []
-        logprobs = [ChatCompletionTokenLogprob(**lp.model_dump()) for lp in logprobs] if logprobs else []
+        # Add logprobs to vendor_metadata if available
+        if choice.logprobs is not None and choice.logprobs.content:
+            # Convert logprobs to a serializable format
+            vendor_metadata['logprobs'] = [
+                {
+                    'token': lp.token,
+                    'bytes': lp.bytes,
+                    'logprob': lp.logprob,
+                    'top_logprobs': [
+                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                    ],
+                }
+                for lp in choice.logprobs.content
+            ]
 
         if choice.message.content is not None:
             items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, c.id))
-        return ModelResponse(items, model_name=response.model, timestamp=timestamp, logprobs=logprobs)
+        return ModelResponse(items, model_name=response.model, timestamp=timestamp, vendor_metadata=vendor_metadata)
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""

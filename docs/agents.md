@@ -139,7 +139,6 @@ async def main():
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
-                logprobs=[],
             )
         ),
         End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
@@ -201,7 +200,6 @@ async def main():
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                     kind='response',
-                    logprobs=[],
                 )
             ),
             End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
@@ -757,7 +755,6 @@ with capture_run_messages() as messages:  # (2)!
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
-                logprobs=[],
             ),
             ModelRequest(
                 parts=[
@@ -783,7 +780,6 @@ with capture_run_messages() as messages:  # (2)!
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
-                logprobs=[],
             ),
         ]
         """

@@ -388,7 +388,6 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
                         kind='response',
-                        logprobs=[],
                     )
                 ),
                 End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
@@ -1346,7 +1345,6 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                     kind='response',
-                    logprobs=[],
                 )
             ),
             End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
@@ -1471,7 +1469,6 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                             model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
                             kind='response',
-                            logprobs=[],
                         )
                     ),
                     End(data=FinalResult(data='Paris', tool_name=None, tool_call_id=None)),
