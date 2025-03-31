@@ -889,10 +889,20 @@ def test_override_model(env: TestEnv):
         assert result.data == snapshot((0, 'a'))
 
 
+def test_set_model(env: TestEnv):
+    env.set('GEMINI_API_KEY', 'foobar')
+    agent = Agent(result_type=tuple[int, str])
+
+    agent.model = 'test'
+
+    result = agent.run_sync('Hello')
+    assert result.data == snapshot((0, 'a'))
+
+
 def test_override_model_no_model():
     agent = Agent()
 
-    with pytest.raises(UserError, match=r'`model` must be set either.+Even when `override\(model=...\)` is customiz'):
+    with pytest.raises(UserError, match=r'`model` must either be set.+Even when `override\(model=...\)` is customiz'):
         with agent.override(model='test'):
             agent.run_sync('Hello')
 

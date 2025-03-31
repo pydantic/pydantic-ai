@@ -371,9 +371,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> Union[ModelRequestNode[DepsT, NodeRunEndT], End[result.FinalResult[NodeRunEndT]]]:  # noqa UP007
         async with self.stream(ctx):
             pass
-
-        assert (next_node := self._next_node) is not None, 'the stream should set `self._next_node` before it ends'
-        return next_node
+        assert self._next_node is not None, 'the stream should set `self._next_node` before it ends'
+        return self._next_node
 
     @asynccontextmanager
     async def stream(

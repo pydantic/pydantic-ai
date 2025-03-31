@@ -1,10 +1,18 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
 
 [project]
 name = "pydantic-evals"
-version = "0.0.41"
+dynamic = ["version"]
 description = "Framework for evaluating stochastic code execution, especially code making use of LLMs"
 authors = [
     { name = "David Montague", email = "david@pydantic.dev" },

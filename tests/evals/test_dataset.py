@@ -17,7 +17,7 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
-    from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, LlmJudge, Python
+    from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, LLMJudge, Python
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.reporting import ReportCase
 
@@ -562,10 +562,10 @@ async def test_from_text():
                 'inputs': {'query': 'What is the capital of Germany?'},
                 'expected_output': {'answer': 'Berlin', 'confidence': 0.9},
                 'metadata': {'difficulty': 'hard', 'category': 'geography'},
-                'evaluators': [{'LlmJudge': 'my rubric'}],
+                'evaluators': [{'LLMJudge': 'my rubric'}],
             },
         ],
-        'evaluators': [{'LlmJudge': 'my rubric'}],
+        'evaluators': [{'LLMJudge': 'my rubric'}],
     }
 
     loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
@@ -583,11 +583,11 @@ async def test_from_text():
                 inputs=TaskInput(query='What is the capital of Germany?'),
                 metadata=TaskMetadata(difficulty='hard', category='geography'),
                 expected_output=TaskOutput(answer='Berlin', confidence=0.9),
-                evaluators=(LlmJudge(rubric='my rubric'),),
+                evaluators=(LLMJudge(rubric='my rubric'),),
             ),
         ]
     )
-    assert loaded_dataset.evaluators == snapshot([LlmJudge(rubric='my rubric')])
+    assert loaded_dataset.evaluators == snapshot([LLMJudge(rubric='my rubric')])
 
 
 async def test_from_text_failure():
@@ -612,10 +612,10 @@ async def test_from_text_failure():
                 '2 error(s) loading evaluators from registry',
                 [
                     ValueError(
-                        "Evaluator 'NotAnEvaluator' is not in the provided registry. Registered choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LlmJudge', 'HasMatchingSpan']"
+                        "Evaluator 'NotAnEvaluator' is not in the provided registry. Registered choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan']"
                     ),
                     ValueError(
-                        "Evaluator 'NotAnEvaluator' is not in the provided registry. Registered choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LlmJudge', 'HasMatchingSpan']"
+                        "Evaluator 'NotAnEvaluator' is not in the provided registry. Registered choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan']"
                     ),
                 ],
             )
@@ -629,10 +629,10 @@ async def test_from_text_failure():
                 'inputs': {'query': 'What is the capital of Germany?'},
                 'expected_output': {'answer': 'Berlin', 'confidence': 0.9},
                 'metadata': {'difficulty': 'hard', 'category': 'geography'},
-                'evaluators': ['LlmJudge'],
+                'evaluators': ['LLMJudge'],
             }
         ],
-        'evaluators': ['LlmJudge'],
+        'evaluators': ['LLMJudge'],
     }
     with pytest.raises(ExceptionGroup) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
@@ -643,10 +643,10 @@ async def test_from_text_failure():
                     '2 error(s) loading evaluators from registry',
                     [
                         ValueError(
-                            "Failed to instantiate evaluator 'LlmJudge' for dataset: LlmJudge.__init__() missing 1 required positional argument: 'rubric'"
+                            "Failed to instantiate evaluator 'LLMJudge' for dataset: LLMJudge.__init__() missing 1 required positional argument: 'rubric'"
                         ),
                         ValueError(
-                            "Failed to instantiate evaluator 'LlmJudge' for case 'text_case': LlmJudge.__init__() missing 1 required positional argument: 'rubric'"
+                            "Failed to instantiate evaluator 'LLMJudge' for case 'text_case': LLMJudge.__init__() missing 1 required positional argument: 'rubric'"
                         ),
                     ],
                 )
@@ -659,10 +659,10 @@ async def test_from_text_failure():
                     '2 error(s) loading evaluators from registry',
                     [
                         ValueError(
-                            "Failed to instantiate evaluator 'LlmJudge' for dataset: __init__() missing 1 required positional argument: 'rubric'"
+                            "Failed to instantiate evaluator 'LLMJudge' for dataset: __init__() missing 1 required positional argument: 'rubric'"
                         ),
                         ValueError(
-                            "Failed to instantiate evaluator 'LlmJudge' for case 'text_case': __init__() missing 1 required positional argument: 'rubric'"
+                            "Failed to instantiate evaluator 'LLMJudge' for case 'text_case': __init__() missing 1 required positional argument: 'rubric'"
                         ),
                     ],
                 )
