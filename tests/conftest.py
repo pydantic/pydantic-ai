@@ -269,7 +269,7 @@ def mistral_api_key() -> str:
     return os.getenv('MISTRAL_API_KEY', 'mock-api-key')
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope='session', autouse=True)
 def vertex_provider_auth(mocker: MockerFixture) -> None:
     # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
     if not os.getenv('CI'):
