@@ -75,9 +75,10 @@ def serialize(cassette_dict: Any):
                     del data['body']
             if content_type == ['application/x-www-form-urlencoded']:
                 query_params = urllib.parse.parse_qs(data['body'])
-                if 'client_secret' in query_params:
-                    query_params['client_secret'] = ['scrubbed']
-                    data['body'] = urllib.parse.urlencode(query_params)
+                for key in ['client_secret', 'refresh_token']:  # pragma: no cover
+                    if key in query_params:
+                        query_params[key] = ['scrubbed']
+                        data['body'] = urllib.parse.urlencode(query_params)
 
     # Use our custom dumper
     return yaml.dump(cassette_dict, Dumper=LiteralDumper, allow_unicode=True, width=120)

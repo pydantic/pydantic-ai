@@ -11,12 +11,12 @@ from pydantic import TypeAdapter
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_evals.evaluators._run_evaluator import run_evaluator
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.evaluators.evaluator import (
         EvaluationReason,
         EvaluationResult,
         Evaluator,
-        run_evaluator,
     )
     from pydantic_evals.otel._errors import SpanTreeRecordingError
 
