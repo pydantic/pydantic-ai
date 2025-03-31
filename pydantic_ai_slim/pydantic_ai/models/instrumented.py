@@ -7,7 +7,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 from urllib.parse import urlparse
 
-from opentelemetry._events import Event, EventLogger, EventLoggerProvider, get_event_logger_provider
+from opentelemetry._events import (
+    Event,  # pyright: ignore[reportPrivateImportUsage]
+    EventLogger,  # pyright: ignore[reportPrivateImportUsage]
+    EventLoggerProvider,  # pyright: ignore[reportPrivateImportUsage]
+    get_event_logger_provider,  # pyright: ignore[reportPrivateImportUsage]
+)
 from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter

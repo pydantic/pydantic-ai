@@ -36,7 +36,7 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere,bedrock,cli,mcp]==0.0.46",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere,bedrock,cli,mcp,evals]==0.0.46",
 ]
 
 [project.urls]
@@ -47,20 +47,30 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.optional-dependencies]
 examples = ["pydantic-ai-examples==0.0.46"]
-logfire = ["logfire>=2.3"]
+logfire = ["logfire>=3.11.0"]
+
+[project.scripts]
+pai = "pydantic_ai._cli:app"
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }
+pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
 mcp-run-python = { workspace = true }
 
 [tool.uv.workspace]
-members = ["pydantic_ai_slim", "pydantic_graph", "examples", "mcp-run-python"]
+members = [
+    "pydantic_ai_slim",
+    "pydantic_evals",
+    "pydantic_graph",
+    "mcp-run-python",
+    "examples",
+]
 
 [dependency-groups]
 # dev dependencies are defined in `pydantic-ai-slim/pyproject.toml` to allow for minimal testing
-lint = ["mypy>=1.11.2", "pyright>=1.1.388,<1.1.390", "ruff>=0.6.9"]
+lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
     "black>=24.10.0",
     "bs4>=0.0.2",
@@ -83,8 +93,9 @@ line-length = 120
 target-version = "py39"
 include = [
     "pydantic_ai_slim/**/*.py",
-    "mcp-run-python/**/*.py",
+    "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
+    "mcp-run-python/**/*.py",
     "examples/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
@@ -115,10 +126,10 @@ docstring-code-format = false
 quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
+"mcp-run-python/**/*.py" = ["D", "TID251"]
+"examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
-"examples/**/*.py" = ["D101", "D103"]
-"mcp-run-python/**/*.py" = ["D", "TID251"]
 
 [tool.pyright]
 pythonVersion = "3.12"
@@ -127,12 +138,24 @@ reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingModuleSource = false
-include = ["pydantic_ai_slim", "mcp-run-python", "pydantic_graph", "tests", "examples"]
+include = [
+    "pydantic_ai_slim",
+    "pydantic_evals",
+    "pydantic_graph",
+    "mcp-run-python",
+    "tests",
+    "examples",
+]
 venvPath = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
-executionEnvironments = [{ root = "tests", reportUnusedFunction = false }]
-exclude = ["examples/pydantic_ai_examples/weather_agent_gradio.py", "mcp-run-python/node_modules"]
+executionEnvironments = [
+    { root = "tests", reportUnusedFunction = false, reportPrivateImportUsage = false },
+]
+exclude = [
+    "examples/pydantic_ai_examples/weather_agent_gradio.py",
+    "mcp-run-python/node_modules",
+]
 extraPaths = ["mcp-run-python/stubs"]
 
 [tool.mypy]
@@ -149,7 +172,7 @@ filterwarnings = [
     "ignore::RuntimeWarning:pydantic_ai.mcp",
     # uvicorn (mcp server)
     "ignore:websockets.legacy is deprecated.*:DeprecationWarning:websockets.legacy",
-    "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning"
+    "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
@@ -157,6 +180,7 @@ filterwarnings = [
 # required to avoid warnings about files created by create_module fixture
 include = [
     "pydantic_ai_slim/**/*.py",
+    "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
     "tests/**/*.py",
 ]
@@ -182,6 +206,7 @@ exclude_lines = [
     '$\s*assert_never\(',
     'if __name__ == .__main__.:',
     'except ImportError as _import_error:',
+    '$\s*pass$',
 ]
 
 [tool.logfire]

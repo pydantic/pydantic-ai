@@ -44,7 +44,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # WARNING if you add optional groups, please update docs/install.md
-logfire = ["logfire>=2.3"]
+logfire = ["logfire>=3.11.0"]
 # Models
 openai = ["openai>=1.67.0"]
 cohere = ["cohere>=5.13.11"]
@@ -60,6 +60,8 @@ tavily = ["tavily-python>=0.5.0"]
 cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0"]
 # MCP
 mcp = ["mcp>=1.4.1; python_version >= '3.10'"]
+# Evals
+evals = ["pydantic-evals==0.0.41"]
 
 [dependency-groups]
 dev = [
