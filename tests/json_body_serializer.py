@@ -75,7 +75,7 @@ def serialize(cassette_dict: Any):
                     del data['body']
             if content_type == ['application/x-www-form-urlencoded']:
                 query_params = urllib.parse.parse_qs(data['body'])
-                for key in ['client_secret', 'refresh_token']:
+                for key in ['client_secret', 'refresh_token']:  # pragma: no cover
                     if key in query_params:
                         query_params[key] = ['scrubbed']
                         data['body'] = urllib.parse.urlencode(query_params)
