@@ -16,6 +16,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, PartDeltaEvent, TextPartDelta
 from pydantic_ai.models import KnownModelName
+from pydantic_graph._utils import get_event_loop
 
 try:
     import argcomplete
@@ -134,8 +135,8 @@ Special prompt:
     The current date and time is {datetime.now()} {tzname}.
     The user is running {sys.platform}.""",
         )
-    except UserError:
-        console.print(f'[red]Invalid model "{args.model}"[/red]')
+    except UserError as e:
+        console.print(f'[red]Invalid model[/red] [magenta]{args.model}[/magenta]:\n{e}')
         return 1
 
     stream = not args.no_stream
@@ -205,7 +206,9 @@ Special prompt:
                 console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
         else:
             try:
-                messages = asyncio.run(ask_agent(agent, text, stream, console, code_theme, messages))
+                messages = get_event_loop().run_until_complete(
+                    ask_agent(agent, text, stream, console, code_theme, messages)
+                )
             except KeyboardInterrupt:
                 console.print('[dim]Interrupted[/dim]')
                 messages = []
