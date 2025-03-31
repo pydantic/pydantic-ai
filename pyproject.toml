@@ -12,7 +12,7 @@ bump = true
 
 [project]
 name = "pydantic-ai"
-dynamic = ["version", "dependencies"]
+dynamic = ["version", "dependencies", "optional-dependencies"]
 description = "Agent Framework / shim to use Pydantic with LLMs"
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
@@ -49,15 +49,15 @@ dependencies = [
     "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere,bedrock,cli,mcp,evals]=={{ version }}",
 ]
 
+[tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
+examples = ["pydantic-ai-examples=={{ version }}"]
+logfire = ["logfire>=3.11.0"]
+
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
 Source = "https://github.com/pydantic/pydantic-ai"
 Documentation = "https://ai.pydantic.dev"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
-
-[project.optional-dependencies]
-examples = ["pydantic-ai-examples==0.0.46"]
-logfire = ["logfire>=3.11.0"]
 
 [project.scripts]
 pai = "pydantic_ai._cli:app"
