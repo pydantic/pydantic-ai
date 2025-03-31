@@ -709,3 +709,116 @@ async def test_user_id(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, model_settings=OpenAIModelSettings(openai_user='user_id'))
     await agent.run('hello')
+
+
+async def test_strict_mode_settings(allow_model_requests: None):
+    """Test that strict mode settings are properly passed to OpenAI and respect precedence rules."""
+    # Create a mock completion for testing
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+
+    # Test 1: Default behavior (no strict setting)
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def default_tool(x: int) -> str:
+        """A tool with default strict setting."""
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello')
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'tools' in kwargs
+    tool_def = kwargs['tools'][0]
+    assert 'strict' not in tool_def['function']
+
+    # Test 2: Agent-level strict setting
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(strict=True))
+
+    @agent.tool_plain
+    def agent_level_tool(x: int) -> str:
+        """A tool that should inherit agent-level strict setting."""
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello')
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'tools' in kwargs
+    tool_def = kwargs['tools'][0]
+    assert tool_def['function']['strict'] is True
+    assert tool_def['function']['parameters']['additionalProperties'] is False
+
+    # Test 3: Run-level strict setting (overrides agent-level)
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(strict=True))
+
+    @agent.tool_plain
+    def run_override_tool(x: int) -> str:
+        """A tool that should be affected by run-level strict setting."""
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings=ModelSettings(strict=False))
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'tools' in kwargs
+    tool_def = kwargs['tools'][0]
+    assert 'strict' not in tool_def['function']
+
+    # Test 4: Tool-level strict setting (highest precedence)
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(strict=False))
+
+    @agent.tool_plain(strict=True)
+    def tool_level_strict(x: int) -> str:
+        """A tool with explicit strict=True that should override other settings."""
+        return str(x)  # pragma: no cover
+
+    @agent.tool_plain(strict=False)
+    def tool_level_not_strict(x: int) -> str:
+        """A tool with explicit strict=False that should override other settings."""
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings=ModelSettings(strict=True))
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+
+    strict_tool = next(t for t in kwargs['tools'] if t['function']['name'] == 'tool_level_strict')
+    not_strict_tool = next(t for t in kwargs['tools'] if t['function']['name'] == 'tool_level_not_strict')
+
+    assert strict_tool['function']['strict'] is True
+    assert strict_tool['function']['parameters']['additionalProperties'] is False
+    assert 'strict' not in not_strict_tool['function']
+
+    # Test 5: Mixed precedence with multiple tools
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain(strict=True)
+    def explicit_strict_tool(x: int) -> str:
+        """A tool with explicit strict=True."""
+        return str(x)  # pragma: no cover
+
+    @agent.tool_plain(strict=False)
+    def explicit_not_strict_tool(x: int) -> str:
+        """A tool with explicit strict=False."""
+        return str(x)  # pragma: no cover
+
+    @agent.tool_plain
+    def inherit_strict_tool(x: int) -> str:
+        """A tool that inherits strict setting from run."""
+        return str(x)  # pragma: no cover
+
+    await agent.run('hello', model_settings=ModelSettings(strict=True))
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+
+    explicit_strict = next(t for t in kwargs['tools'] if t['function']['name'] == 'explicit_strict_tool')
+    explicit_not_strict = next(t for t in kwargs['tools'] if t['function']['name'] == 'explicit_not_strict_tool')
+    inherit_strict = next(t for t in kwargs['tools'] if t['function']['name'] == 'inherit_strict_tool')
+
+    assert explicit_strict['function']['strict'] is True
+    assert explicit_strict['function']['parameters']['additionalProperties'] is False
+    assert 'strict' not in explicit_not_strict['function']
+    assert inherit_strict['function']['strict'] is True
+    assert inherit_strict['function']['parameters']['additionalProperties'] is False
