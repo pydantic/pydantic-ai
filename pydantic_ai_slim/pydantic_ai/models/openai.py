@@ -806,14 +806,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     )
 
             elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
-                # Note: We only need this if the tool call deltas don't include the final info:
-                # if isinstance(chunk.item, responses.ResponseFunctionToolCall):
-                #     yield self._parts_manager.handle_tool_call_part(
-                #         vendor_part_id=chunk.item.id,
-                #         tool_name=chunk.item.name,
-                #         args=chunk.item.arguments,
-                #         tool_call_id=chunk.item.id,
-                #     )
+                # NOTE: We only need this if the tool call deltas don't include the final info.
                 pass
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
