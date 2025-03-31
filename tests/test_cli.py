@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 from dirty_equals import IsStr
 from inline_snapshot import snapshot
@@ -16,6 +18,7 @@ def test_cli_version(capfd: CaptureFixture[str]):
     assert capfd.readouterr().out.startswith('pai - PydanticAI CLI')
 
 
+@pytest.mark.skipif(sys.version_info >= (3, 13), reason='slightly different output with 3.13')
 def test_cli_help(capfd: CaptureFixture[str]):
     with pytest.raises(SystemExit) as exc:
         cli(['--help'])
@@ -23,7 +26,7 @@ def test_cli_help(capfd: CaptureFixture[str]):
 
     assert capfd.readouterr().out.splitlines() == snapshot(
         [
-            'usage: pai [-h] [--model [MODEL]] [--list-models] [--no-stream] [--version] [prompt]',
+            'usage: pai [-h] [-m [MODEL]] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]',
             '',
             IsStr(),
             '',
@@ -33,14 +36,17 @@ def test_cli_help(capfd: CaptureFixture[str]):
             '* `/multiline` - toggle multiline mode',
             '',
             'positional arguments:',
-            '  prompt           AI Prompt, if omitted fall into interactive mode',
+            '  prompt                AI Prompt, if omitted fall into interactive mode',
             '',
             IsStr(),
-            '  -h, --help       show this help message and exit',
-            '  --model [MODEL]  Model to use, it should be "<provider>:<model>" e.g. "openai:gpt-4o". If omitted it will default to "openai:gpt-4o"',
-            '  --list-models    List all available models and exit',
-            '  --no-stream      Whether to stream responses from OpenAI',
-            '  --version        Show version and exit',
+            '  -h, --help            show this help message and exit',
+            '  -m [MODEL], --model [MODEL]',
+            '                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o". Defaults to "openai:gpt-4o".',
+            '  -l, --list-models     List all available models and exit',
+            '  -t [CODE_THEME], --code-theme [CODE_THEME]',
+            '                        Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "monokai".',
+            '  --no-stream           Whether to stream responses from the model',
+            '  --version             Show version and exit',
         ]
     )
 
@@ -53,7 +59,7 @@ def test_invalid_model(capfd: CaptureFixture[str]):
 def test_list_models(capfd: CaptureFixture[str]):
     assert cli(['--list-models']) == 0
     output = capfd.readouterr().out.splitlines()
-    assert output[:2] == snapshot(['pai - PydanticAI CLI v0.0.46', 'Available models:'])
+    assert output[:2] == snapshot(['pai - PydanticAI CLI v0.0.46 using openai:gpt-4o', 'Available models:'])
 
     providers = (
         'openai',
