@@ -73,7 +73,7 @@ Special prompt:
     )
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
-    qualified_model_names = [n for n in get_literal_values(KnownModelName) if ':' in n]
+    qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
     arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
     parser.add_argument(
         '--list-models',
