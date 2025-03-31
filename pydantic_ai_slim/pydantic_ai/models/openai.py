@@ -774,7 +774,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseCreatedEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseFailedEvent):
+            elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
                 self._usage += _map_usage(chunk.response)
 
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
@@ -790,7 +790,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseIncompleteEvent):
+            elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
                 self._usage += _map_usage(chunk.response)
 
             elif isinstance(chunk, responses.ResponseInProgressEvent):
