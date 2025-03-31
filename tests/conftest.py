@@ -8,6 +8,7 @@ import secrets
 import sys
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
@@ -30,6 +31,7 @@ __all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'TestEnv', 'ClientWithHandl
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 if TYPE_CHECKING:
+    from google.auth.transport.requests import Request
 
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
@@ -265,6 +267,22 @@ def co_api_key() -> str:
 @pytest.fixture(scope='session')
 def mistral_api_key() -> str:
     return os.getenv('MISTRAL_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def vertex_provider_auth(mocker: MockerFixture) -> None:
+    # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
+    if not os.getenv('CI'):
+        return
+
+    @dataclass
+    class NoOpCredentials:
+        token = 'my-token'
+
+        def refresh(self, request: Request): ...
+
+    return_value = (NoOpCredentials(), 'pydantic-ai')
+    mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
 
 
 @pytest.fixture

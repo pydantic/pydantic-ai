@@ -984,3 +984,12 @@ async def test_document_url_input(allow_model_requests: None, gemini_api_key: st
 
     result = await agent.run(['What is the main content on this document?', document_url])
     assert result.data == snapshot('The main content of this document is that it is a **dummy PDF file**.')
+
+
+@pytest.mark.vcr()
+async def test_vertexai_provider(allow_model_requests: None):
+    m = GeminiModel('gemini-2.0-flash', provider='google-vertex')
+    agent = Agent(m)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.data == snapshot('The capital of France is Paris.\n')
