@@ -1,11 +1,12 @@
 from typing import cast
 
 import pytest
-from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
+    from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
+
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 
