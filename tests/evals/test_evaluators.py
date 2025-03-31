@@ -13,6 +13,7 @@ with try_import() as imports_successful:
     import logfire
     from logfire.testing import CaptureLogfire
 
+    from pydantic_evals.evaluators._run_evaluator import run_evaluator
     from pydantic_evals.evaluators._spec import EvaluatorSpec
     from pydantic_evals.evaluators.common import (
         Contains,
@@ -20,7 +21,7 @@ with try_import() as imports_successful:
         EqualsExpected,
         HasMatchingSpan,
         IsInstance,
-        LlmJudge,
+        LLMJudge,
         MaxDuration,
         Python,
     )
@@ -29,7 +30,6 @@ with try_import() as imports_successful:
         EvaluationReason,
         Evaluator,
         EvaluatorOutput,
-        run_evaluator,
     )
     from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
     from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
@@ -176,9 +176,9 @@ async def test_is_instance_evaluator():
 
 
 async def test_llm_judge_evaluator():
-    """Test the LlmJudge evaluator."""
+    """Test the LLMJudge evaluator."""
     # We can't easily test this without mocking the LLM, so we'll just check that it's importable
-    assert LlmJudge
+    assert LLMJudge
 
 
 async def test_custom_evaluator(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):

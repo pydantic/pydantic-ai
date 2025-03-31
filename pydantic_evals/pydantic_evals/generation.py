@@ -17,6 +17,8 @@ from pydantic_ai import Agent, models
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators.evaluator import Evaluator
 
+__all__ = ('generate_dataset',)
+
 InputsT = TypeVar('InputsT', default=Any)
 """Generic type for the inputs to the task being evaluated."""
 
@@ -27,7 +29,6 @@ MetadataT = TypeVar('MetadataT', default=Any)
 """Generic type for the metadata associated with the task being evaluated."""
 
 
-# TODO: Add an example that uses this...
 async def generate_dataset(
     *,
     path: Path | str | None = None,
