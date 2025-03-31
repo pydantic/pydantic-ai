@@ -632,7 +632,7 @@ async def process_function_tools(
                 )
                 output_parts.append(part)
         else:
-            output_parts.append(_unknown_tool(call.tool_name, ctx))
+            output_parts.append(_unknown_tool(call.tool_name, call.tool_call_id, ctx))
 
     if not calls_to_run:
         return
@@ -699,6 +699,7 @@ async def _tool_from_mcp_server(
 
 def _unknown_tool(
     tool_name: str,
+    tool_call_id: str,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
 ) -> _messages.RetryPromptPart:
     ctx.state.increment_retries(ctx.deps.max_result_retries)
@@ -711,7 +712,11 @@ def _unknown_tool(
     else:
         msg = 'No tools available.'
 
-    return _messages.RetryPromptPart(content=f'Unknown tool name: {tool_name!r}. {msg}')
+    return _messages.RetryPromptPart(
+        tool_name=tool_name,
+        tool_call_id=tool_call_id,
+        content=f'Unknown tool name: {tool_name!r}. {msg}',
+    )
 
 
 async def _validate_result(
