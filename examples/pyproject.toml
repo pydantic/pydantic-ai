@@ -1,10 +1,18 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
 
 [project]
 name = "pydantic-ai-examples"
-version = "0.0.46"
+dynamic = ["version", "dependencies"]
 description = "Examples of how to use PydanticAI and what it can do."
 authors = [{ name = "Samuel Colvin", email = "samuel@pydantic.dev" }]
 license = "MIT"
@@ -31,9 +39,11 @@ classifiers = [
     "Topic :: Internet",
 ]
 requires-python = ">=3.9"
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic]==0.0.46",
-    "pydantic-evals==0.0.46",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic]=={{ version }}",
+    "pydantic-evals=={{ version }}",
     "asyncpg>=0.30.0",
     "fastapi>=0.115.4",
     "logfire[asyncpg,fastapi,sqlite3]>=2.6",

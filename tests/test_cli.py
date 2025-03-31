@@ -59,7 +59,7 @@ def test_invalid_model(capfd: CaptureFixture[str]):
 def test_list_models(capfd: CaptureFixture[str]):
     assert cli(['--list-models']) == 0
     output = capfd.readouterr().out.splitlines()
-    assert output[:2] == snapshot(['pai - PydanticAI CLI v0.0.46 using openai:gpt-4o', 'Available models:'])
+    assert output[:2] == snapshot([IsStr(regex='pai - PydanticAI CLI .* using openai:gpt-4o'), 'Available models:'])
 
     providers = (
         'openai',
