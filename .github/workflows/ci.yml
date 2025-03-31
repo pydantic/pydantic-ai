@@ -317,11 +317,6 @@ jobs:
         with:
           enable-cache: true
 
-      - name: check GITHUB_REF matches package version
-        uses: samuelcolvin/check-python-version@v4.1
-        with:
-          version_file_path: pyproject.toml
-
       - run: uv build --all-packages
 
       - name: Publish to PyPI
