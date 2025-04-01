@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -55,6 +55,7 @@ try:
     )
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
+    from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
@@ -63,6 +64,14 @@ except ImportError as _import_error:
         'Please install `openai` to use the OpenAI model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+__all__ = (
+    'OpenAIModel',
+    'OpenAIResponsesModel',
+    'OpenAIModelSettings',
+    'OpenAIResponsesModelSettings',
+    'OpenAIModelName',
+)
 
 OpenAIModelName = Union[str, ChatModel]
 """
@@ -97,6 +106,19 @@ class OpenAIModelSettings(ModelSettings, total=False):
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
 
     See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
+    """
+
+
+class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
+    """Settings used for an OpenAI Responses model request.
+
+    ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+    openai_builtin_tools: Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam]
+    """The provided OpenAI built-in tools to use.
+
+    See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
     """
 
 
@@ -417,6 +439,8 @@ class OpenAIResponsesModel(Model):
     - [File search](https://platform.openai.com/docs/guides/tools-file-search)
     - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use)
 
+    Use the `openai_builtin_tools` setting to add these tools to your model.
+
     If you are interested in the differences between the Responses API and the Chat Completions API,
     see the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
     """
@@ -462,7 +486,7 @@ class OpenAIResponsesModel(Model):
     ) -> tuple[ModelResponse, usage.Usage]:
         check_allow_model_requests()
         response = await self._responses_create(
-            messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+            messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
         return self._process_response(response), _map_usage(response)
 
@@ -475,7 +499,7 @@ class OpenAIResponsesModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._responses_create(
-            messages, True, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+            messages, True, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
             yield await self._process_streamed_response(response)
@@ -511,7 +535,7 @@ class OpenAIResponsesModel(Model):
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: Literal[False],
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response: ...
 
@@ -520,7 +544,7 @@ class OpenAIResponsesModel(Model):
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: Literal[True],
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[responses.ResponseStreamEvent]: ...
 
@@ -528,10 +552,11 @@ class OpenAIResponsesModel(Model):
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: bool,
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
         tools = self._get_tools(model_request_parameters)
+        tools = list(model_settings.get('openai_builtin_tools', [])) + tools
 
         # standalone function to make it easier to override
         if not tools:
@@ -848,7 +873,7 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             },
         )
     else:
-        details: dict[str, int] = {}
+        details = {}
         if response_usage.completion_tokens_details is not None:
             details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
         if response_usage.prompt_tokens_details is not None:
