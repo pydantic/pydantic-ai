@@ -138,7 +138,7 @@ The Responses API has built-in tools that you can use instead of building your o
 - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use)
 
 !!! warning "Work in progress"
-    We currently don't support the native OpenAI tools listed above in the `OpenAIResponsesModel` class.
+    Support for native OpenAI tools added in `0.0.49`
 
 You can learn more about the differences between the Responses API and Chat Completions API in the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
 
