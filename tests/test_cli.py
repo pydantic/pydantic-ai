@@ -5,9 +5,6 @@ from typing import Any
 import pytest
 from dirty_equals import IsInstance, IsStr
 from inline_snapshot import snapshot
-from prompt_toolkit.input import create_pipe_input
-from prompt_toolkit.output import DummyOutput
-from prompt_toolkit.shortcuts import PromptSession
 from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
@@ -19,6 +16,10 @@ from pydantic_ai.models.test import TestModel
 from .conftest import try_import
 
 with try_import() as imports_successful:
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+    from prompt_toolkit.shortcuts import PromptSession
+
     from pydantic_ai._cli import cli, cli_agent, handle_slash_command
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
