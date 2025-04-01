@@ -707,6 +707,8 @@ class OpenAIResponsesModel(Model):
                             filename=f'filename.{item.format}',
                         )
                     )
+                elif isinstance(item, FileUrl):
+                    raise RuntimeError('Direct file Url is not supported.')
                 else:
                     assert_never(item)
         return responses.EasyInputMessageParam(role='user', content=content)

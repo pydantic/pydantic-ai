@@ -53,8 +53,11 @@ class FileUrl:
     url: str
     """The URL of the file."""
 
-    media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str
-    """[IANA MIME type](https://www.iana.org/assignments/media-types/media-types.xml) of the data."""
+    media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str | None = None
+    """[IANA MIME type](https://www.iana.org/assignments/media-types/media-types.xml) of the data.
+
+    Required for the VertexAI provider, optional for the GLA provider.
+    """
 
     kind: Literal['file-url'] = 'file-url'
     """Type identifier, this is available on all parts as a discriminator."""

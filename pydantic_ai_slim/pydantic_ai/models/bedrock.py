@@ -397,7 +397,7 @@ class BedrockConverseModel(Model):
                         content.append({'document': {'name': name, 'format': item.format, 'source': {'bytes': data}}})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
-                elif isinstance(item, FileUrl):  # pragma: no cover
+                elif isinstance(item, FileUrl):
                     raise RuntimeError('Direct file Url is not supported.')
                 else:
                     assert_never(item)

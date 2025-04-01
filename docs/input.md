@@ -115,6 +115,8 @@ The following URLs are supported on Vertex AI:
 
 See the [Vertex AI Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata) and the [GLA Gemini API docs](https://ai.google.dev/api/caching#FileData) for use cases and limitations.
 
+Here's an example of using PDF URLs with the VertexAI provider (`media_type` is required):
+
 ```py {title="main.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, FileUrl
 
@@ -130,4 +132,22 @@ result = agent.run_sync(
 )
 print(result.data)
 #> The document is...
+```
+
+And similarly, for Youtube URLs and the GLA provider (`media_type` is optional):
+
+```py {title="main.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, FileUrl
+
+agent = Agent(model='google-gla:gemini-2.0-flash')
+result = agent.run_sync(
+    [
+        'What is the main content of this video?',
+        FileUrl(
+            url='https://www.youtube.com/watch?v=bG2NQIwyEUU'
+        ),
+    ]
+)
+print(result.data)
+#> The video shows a comparison...
 ```

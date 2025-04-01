@@ -1,5 +1,3 @@
-# pyright: reportDeprecated=false
-# pyright: reportPrivateUsage=false
 from __future__ import annotations as _annotations
 
 import json
@@ -7,19 +5,10 @@ from pathlib import Path
 
 import httpx
 import pytest
-from typing_extensions import Literal
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import FileUrl, ModelResponse, TextPart
-from pydantic_ai.models.gemini import (
-    GeminiModel,
-    _content_model_response,
-    _gemini_response_ta,
-    _GeminiCandidates,
-    _GeminiContent,
-    _GeminiResponse,
-    _GeminiUsageMetaData,
-)
+from pydantic_ai.messages import FileUrl
+from pydantic_ai.models.gemini import GeminiModel
 
 from ..conftest import ClientWithHandler, TestEnv, try_import
 
@@ -31,17 +20,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-auth not installed'),
     pytest.mark.anyio,
 ]
-
-
-def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
-    candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
-    if finish_reason:  # pragma: no cover
-        candidate['finish_reason'] = finish_reason
-    return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage(), model_version='gemini-1.5-flash-123')
-
-
-def example_usage() -> _GeminiUsageMetaData:
-    return _GeminiUsageMetaData(prompt_token_count=1, candidates_token_count=2, total_token_count=3)
 
 
 async def mock_refresh_token():
@@ -69,10 +47,7 @@ async def test_file_url_input(
 
         return httpx.Response(
             200,
-            content=_gemini_response_ta.dump_json(
-                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('...')]))),
-                by_alias=True,
-            ),
+            content=json.dumps({'candidates': [{'content': {'role': 'user', 'parts': [{'text': '...'}]}}]}),
             headers={'Content-Type': 'application/json'},
         )
 

@@ -537,7 +537,7 @@ class _GeminiFileData(TypedDict):
     """See <https://ai.google.dev/api/caching#FileData>."""
 
     file_uri: Annotated[str, pydantic.Field(alias='fileUri')]
-    mime_type: Annotated[str, pydantic.Field(alias='mimeType')]
+    mime_type: Annotated[str | None, pydantic.Field(alias='mimeType')]
 
 
 class _GeminiFileDataPart(TypedDict):
