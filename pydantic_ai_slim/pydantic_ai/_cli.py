@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import argparse
 import asyncio
 import sys
+from asyncio import CancelledError
 from collections.abc import Sequence
 from contextlib import ExitStack
 from datetime import datetime, timezone
@@ -15,7 +16,7 @@ from typing_inspection.introspection import get_literal_values
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, PartDeltaEvent, TextPartDelta
-from pydantic_ai.models import KnownModelName
+from pydantic_ai.models import KnownModelName, infer_model
 
 try:
     import argcomplete
@@ -47,7 +48,7 @@ class SimpleCodeBlock(CodeBlock):
     This avoids a background color which messes up copy-pasting and sets the language name as dim prefix and suffix.
     """
 
-    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:  # pragma: no cover
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         code = str(self.text).rstrip()
         yield Text(self.lexer_name, style='dim')
         yield Syntax(code, self.lexer_name, theme=self.theme, background_color='default', word_wrap=True)
@@ -57,7 +58,7 @@ class SimpleCodeBlock(CodeBlock):
 class LeftHeading(Heading):
     """Customised headings in markdown to stop centering and prepend markdown style hashes."""
 
-    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:  # pragma: no cover
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         # note we use `Style(bold=True)` not `self.style_name` here to disable underlining which is ugly IMHO
         yield Text(f'{"#" * int(self.tag[1:])} {self.text.plain}', style=Style(bold=True))
 
@@ -68,7 +69,21 @@ Markdown.elements.update(
 )
 
 
-def cli(args_list: Sequence[str] | None = None) -> int:  # pragma: no cover
+cli_agent = Agent()
+
+
+@cli_agent.system_prompt
+def cli_system_prompt() -> str:
+    now_utc = datetime.now(timezone.utc)
+    tzinfo = now_utc.astimezone().tzinfo
+    tzname = tzinfo.tzname(now_utc) if tzinfo else ''
+    return f"""\
+Help the user by responding to their request, the output should be concise and always written in markdown.
+The current date and time is {datetime.now()} {tzname}.
+The user is running {sys.platform}."""
+
+
+def cli(args_list: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog='pai',
         description=f"""\
@@ -124,18 +139,10 @@ Special prompt:
             console.print(f'  {model}', highlight=False)
         return 0
 
-    now_utc = datetime.now(timezone.utc)
-    tzname = now_utc.astimezone().tzinfo.tzname(now_utc)  # type: ignore
     try:
-        agent = Agent(
-            model=args.model,
-            system_prompt=f"""\
-    Help the user by responding to their request, the output should be concise and always written in markdown.
-    The current date and time is {datetime.now()} {tzname}.
-    The user is running {sys.platform}.""",
-        )
+        cli_agent.model = infer_model(args.model)
     except UserError as e:
-        console.print(f'[red]Invalid model[/red] [magenta]{args.model}[/magenta]:\n{e}')
+        console.print(f'Error initializing [magenta]{args.model}[/magenta]:\n[red]{e}[/red]')
         return 1
 
     stream = not args.no_stream
@@ -148,15 +155,18 @@ Special prompt:
 
     if prompt := cast(str, args.prompt):
         try:
-            asyncio.run(ask_agent(agent, prompt, stream, console, code_theme))
+            asyncio.run(ask_agent(cli_agent, prompt, stream, console, code_theme))
         except KeyboardInterrupt:
             pass
         return 0
 
     history = Path.home() / '.pai-prompt-history.txt'
-    session = PromptSession[Any](history=FileHistory(str(history)))
-
-    return asyncio.run(run_chat(session, stream, agent, console, code_theme))
+    # doing this instead of `PromptSession[Any](history=` allows mocking of PromptSession in tests
+    session: PromptSession[Any] = PromptSession(history=FileHistory(str(history)))
+    try:
+        return asyncio.run(run_chat(session, stream, cli_agent, console, code_theme))
+    except KeyboardInterrupt:  # pragma: no cover
+        return 0
 
 
 async def run_chat(session: PromptSession[Any], stream: bool, agent: Agent, console: Console, code_theme: str) -> int:
@@ -167,23 +177,22 @@ async def run_chat(session: PromptSession[Any], stream: bool, agent: Agent, cons
         try:
             auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit'])
             text = await session.prompt_async('pai ➤ ', auto_suggest=auto_suggest, multiline=multiline)
-        except (KeyboardInterrupt, EOFError):
+        except (KeyboardInterrupt, EOFError):  # pragma: no cover
             return 0
 
         if not text.strip():
             continue
 
-        ident_prompt = text.lower().strip(' ').replace(' ', '-').lstrip(' ')
+        ident_prompt = text.lower().strip().replace(' ', '-')
         if ident_prompt.startswith('/'):
-            result = handle_slash_command(ident_prompt, messages, multiline, console, code_theme)
-            if result is not None:
-                return result
+            exit_value, multiline = handle_slash_command(ident_prompt, messages, multiline, console, code_theme)
+            if exit_value is not None:
+                return exit_value
         else:
             try:
                 messages = await ask_agent(agent, text, stream, console, code_theme, messages)
-            except KeyboardInterrupt:
+            except CancelledError:  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
-                messages = []
 
 
 async def ask_agent(
@@ -193,7 +202,7 @@ async def ask_agent(
     console: Console,
     code_theme: str,
     messages: list[ModelMessage] | None = None,
-) -> list[ModelMessage]:  # pragma: no cover
+) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
     if not stream:
@@ -223,7 +232,7 @@ async def ask_agent(
 
 
 class CustomAutoSuggest(AutoSuggestFromHistory):
-    def __init__(self, special_suggestions: list[str] | None = None):  # pragma: no cover
+    def __init__(self, special_suggestions: list[str] | None = None):
         super().__init__()
         self.special_suggestions = special_suggestions or []
 
@@ -241,25 +250,25 @@ class CustomAutoSuggest(AutoSuggestFromHistory):
 
 def handle_slash_command(
     ident_prompt: str, messages: list[ModelMessage], multiline: bool, console: Console, code_theme: str
-) -> int | None:
+) -> tuple[int | None, bool]:
     if ident_prompt == '/markdown':
         try:
             parts = messages[-1].parts
         except IndexError:
             console.print('[dim]No markdown output available.[/dim]')
-            return 0
-        console.print('[dim]Markdown output of last question:[/dim]\n')
-        for part in parts:
-            if part.part_kind == 'text':
-                console.print(
-                    Syntax(
-                        part.content,
-                        lexer='markdown',
-                        theme=code_theme,
-                        word_wrap=True,
-                        background_color='default',
+        else:
+            console.print('[dim]Markdown output of last question:[/dim]\n')
+            for part in parts:
+                if part.part_kind == 'text':
+                    console.print(
+                        Syntax(
+                            part.content,
+                            lexer='markdown',
+                            theme=code_theme,
+                            word_wrap=True,
+                            background_color='default',
+                        )
                     )
-                )
 
     elif ident_prompt == '/multiline':
         multiline = not multiline
@@ -269,11 +278,13 @@ def handle_slash_command(
             )
         else:
             console.print('Disabling multiline mode.')
+        return None, multiline
     elif ident_prompt == '/exit':
         console.print('[dim]Exiting…[/dim]')
-        return 0
+        return 0, multiline
     else:
         console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
+    return None, multiline
 
 
 def app():  # pragma: no cover
