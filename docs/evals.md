@@ -688,3 +688,57 @@ async def main():
 2. Save the dataset to a JSON file, this will also write `questions_cases_schema.json` with th JSON schema for `questions_cases.json`. This time the `$schema` key is included in the JSON file to define the schema for IDEs to use while you edit the file, there's no formal spec for this, but it works in vscode and pycharm and is discussed at length in [json-schema-org/json-schema-spec#828](https://github.com/json-schema-org/json-schema-spec/issues/828).
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main(answer))` to run `main`)_
+
+## Integration with Logfire
+
+Pydantic Evals is implemented using OpenTelemetry to record traces of the evaluation process. These traces contain all
+the information included in the terminal output as attributes, but also include full tracing from the executions of the
+evaluation task function.
+
+You can send these traces to any OpenTelemetry-compatible backend, including [Pydantic Logfire](https://logfire.pydantic.dev/docs).
+
+All you need to do is configure Logfire via `logfire.configure`:
+
+```python {title="logfire_integration.py"}
+import logfire
+from judge_recipes import recipe_dataset, transform_recipe
+
+logfire.configure(
+    send_to_logfire='if-token-present',  # (1)!
+    environment='development',  # (2)!
+    service_name='evals',  # (3)!
+)
+
+recipe_dataset.evaluate_sync(transform_recipe)
+```
+
+1. The `send_to_logfire` argument controls when traces are sent to Logfire. You can set it to `'if-token-present'` to send data to Logfire only if the `LOGFIRE_TOKEN` environment variable is set. See the [Logfire configuration docs](https://logfire.pydantic.dev/docs/reference/configuration/) for more details.
+2. The `environment` argument sets the environment for the traces. It's a good idea to set this to `'development'` when running tests or evaluations and sending data to a project with production data, to make it easier to filter these traces out while reviewing data from your production environment(s).
+3. The `service_name` argument sets the service name for the traces. This is displayed in the Logfire UI to help you identify the source of the associated spans.
+
+Logfire has some special integration with Pydantic Evals traces, including a table view of the evaluation results
+on the evaluation root span (which is generated in each call to [`Dataset.evaluate`][pydantic_evals.Dataset.evaluate]):
+
+![Logfire Evals Overview](img/logfire-evals-overview.png)
+
+and a detailed view of the inputs and outputs for the execution of each case:
+
+![Logfire Evals Case](img/logfire-evals-case.png)
+
+In addition, any OpenTelemetry spans generated during the evaluation process will be sent to Logfire, allowing you to
+visualize the full execution of the code called during the evaluation process:
+
+![Logfire Evals Case Trace](img/logfire-evals-case-trace.png)
+
+This can be especially helpful when attempting to write evaluators that make use of the `span_tree` property of the
+[`EvaluatorContext`][pydantic_evals.evaluators.context.EvaluatorContext], as described in the
+[OpenTelemetry Integration](#opentelemetry-integration) section above.
+
+This allows you to write evaluations that depend on information about which code paths were executed during the call to
+the task function without needing to manually instrument the code being evaluated, as long as the code being evaluated
+is already adequately instrumented with OpenTelemetry. In the case of PydanticAI agents, for example, this can be used
+to ensure specific tools are (or are not) called during the execution of specific cases.
+
+Using OpenTelemetry in this way also means that all data used to evaluate the task executions will be accessible in
+the traces produced by production runs of the code, making it straightforward to perform the same evaluations on
+production data.
