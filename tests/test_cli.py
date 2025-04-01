@@ -13,7 +13,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.test import TestModel
 
-from .conftest import try_import
+from .conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from prompt_toolkit.input import create_pipe_input
@@ -92,7 +92,8 @@ def test_list_models(capfd: CaptureFixture[str]):
     assert models == set(), models
 
 
-def test_cli_prompt(capfd: CaptureFixture[str]):
+def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
     with cli_agent.override(model=TestModel(custom_result_text='# result\n\n```py\nx = 1\n```')):
         assert cli(['hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
@@ -100,7 +101,8 @@ def test_cli_prompt(capfd: CaptureFixture[str]):
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
 
 
-def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture):
+def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
     with create_pipe_input() as inp:
         inp.send_text('\n')
         inp.send_text('hello\n')
@@ -162,7 +164,8 @@ def test_handle_slash_command_other():
     assert io.getvalue() == snapshot('Unknown command `/foobar`\n')
 
 
-def test_code_theme_unset(mocker: MockerFixture):
+def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli([])
     mock_run_chat.assert_awaited_once_with(
@@ -170,7 +173,8 @@ def test_code_theme_unset(mocker: MockerFixture):
     )
 
 
-def test_code_theme_light(mocker: MockerFixture):
+def test_code_theme_light(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=light'])
     mock_run_chat.assert_awaited_once_with(
@@ -178,7 +182,8 @@ def test_code_theme_light(mocker: MockerFixture):
     )
 
 
-def test_code_theme_dark(mocker: MockerFixture):
+def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=dark'])
     mock_run_chat.assert_awaited_once_with(
