@@ -566,11 +566,9 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.data == snapshot("""\
-This is a potato. It's a yellow-skinned potato with a somewhat oblong or oval shape. The surface is covered in small eyes or dimples, which is typical of potato skin. The color is a golden-yellow, and the potato appears to be clean and fresh, photographed against a white background.
-
-Potatoes are root vegetables that are staple foods in many cuisines around the world. They can be prepared in numerous ways such as boiling, baking, roasting, frying, or mashing. This particular potato looks like it could be a Yukon Gold or a similar yellow-fleshed variety.\
-""")
+    assert result.data == snapshot(
+        "This is a potato. It's a yellow-brown, oblong-shaped potato with a smooth skin and some small eyes or blemishes visible on its surface. Potatoes are starchy root vegetables that are a staple food in many cuisines around the world. They can be prepared in numerous ways, such as boiling, baking, frying, or mashing, and are rich in carbohydrates and nutrients."
+    )
 
 
 @pytest.mark.vcr()
@@ -639,11 +637,11 @@ async def test_document_url_input(allow_model_requests: None, anthropic_api_key:
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
-    document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+    document_url = DocumentUrl(url='https://pdfobject.com/pdf/sample.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
     assert result.data == snapshot(
-        'The document appears to be a simple PDF file with only the text "Dummy PDF file" displayed at the top. It seems to be a blank or template document with minimal content.'
+        'This document appears to be a sample PDF file that primarily contains Lorem ipsum text, which is placeholder text commonly used in design and publishing. The document begins with "Sample PDF" and states "This is a simple PDF file. Fun fun fun." followed by several paragraphs of Lorem ipsum text. The content doesn\'t convey any meaningful information as Lorem ipsum is essentially dummy text used to demonstrate the visual form of a document without the distraction of meaningful content.'
     )
 
 
