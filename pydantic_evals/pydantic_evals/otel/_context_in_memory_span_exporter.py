@@ -49,7 +49,7 @@ def context_subtree() -> typing.Iterator[SpanTree | SpanTreeRecordingError]:
             yield spans
             return
         yield tree
-    tree.add_spans(spans)
+    tree.add_readable_spans(spans)
 
 
 @contextmanager

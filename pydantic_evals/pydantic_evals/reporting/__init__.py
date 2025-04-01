@@ -150,6 +150,9 @@ class EvaluationReport(BaseModel):
     cases: list[ReportCase]
     """The cases in the report."""
 
+    def averages(self) -> ReportCaseAggregate:
+        return ReportCaseAggregate.average(self.cases)
+
     def print(
         self,
         width: int | None = None,
@@ -849,7 +852,7 @@ class EvaluationRenderer:
             table.add_row(*case_renderer.build_row(case))
 
         if self.include_averages:
-            average = ReportCaseAggregate.average(report.cases)
+            average = report.averages()
             table.add_row(*case_renderer.build_aggregate_row(average))
         return table
 
