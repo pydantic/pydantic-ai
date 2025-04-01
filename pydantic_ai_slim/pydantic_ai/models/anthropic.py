@@ -64,6 +64,9 @@ try:
         TextBlock,
         TextBlockParam,
         TextDelta,
+        ThinkingBlock,
+        ThinkingBlockParam,
+        ThinkingConfigParam,
         ToolChoiceParam,
         ToolParam,
         ToolResultBlockParam,
@@ -102,7 +105,14 @@ class AnthropicModelSettings(ModelSettings, total=False):
     anthropic_metadata: MetadataParam
     """An object describing metadata about the request.
 
-    Contains `user_id`, an external identifier for the user who is associated with the request."""
+    Contains `user_id`, an external identifier for the user who is associated with the request.
+    """
+
+    anthropic_thinking: ThinkingConfigParam
+    """Determine whether the model should generate a thinking block.
+
+    See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking) for more information.
+    """
 
 
 @dataclass(init=False)
@@ -235,7 +245,7 @@ class AnthropicModel(Model):
                 tool_choice=tool_choice or NOT_GIVEN,
                 stream=stream,
                 stop_sequences=model_settings.get('stop_sequences', NOT_GIVEN),
-                thinking={'budget_tokens': 1024, 'type': 'enabled'},
+                thinking=model_settings.get('anthropic_thinking', NOT_GIVEN),
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
