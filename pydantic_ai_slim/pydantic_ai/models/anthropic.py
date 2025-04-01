@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from json import JSONDecodeError, loads as json_loads
 from typing import Any, Literal, Union, cast, overload
 
-from anthropic.types import DocumentBlockParam, ThinkingBlock, ThinkingBlockParam
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -41,6 +40,7 @@ try:
     from anthropic.types import (
         Base64PDFSourceParam,
         ContentBlock,
+        DocumentBlockParam,
         ImageBlockParam,
         Message as AnthropicMessage,
         MessageParam,
@@ -56,6 +56,9 @@ try:
         TextBlock,
         TextBlockParam,
         TextDelta,
+        ThinkingBlock,
+        ThinkingBlockParam,
+        ThinkingConfigParam,
         ToolChoiceParam,
         ToolParam,
         ToolResultBlockParam,
@@ -85,7 +88,7 @@ See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models)
 """
 
 
-class AnthropicModelSettings(ModelSettings):
+class AnthropicModelSettings(ModelSettings, total=False):
     """Settings used for an Anthropic model request.
 
     ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -94,7 +97,14 @@ class AnthropicModelSettings(ModelSettings):
     anthropic_metadata: MetadataParam
     """An object describing metadata about the request.
 
-    Contains `user_id`, an external identifier for the user who is associated with the request."""
+    Contains `user_id`, an external identifier for the user who is associated with the request.
+    """
+
+    anthropic_thinking: ThinkingConfigParam
+    """Determine whether the model should generate a thinking block.
+
+    See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking) for more information.
+    """
 
 
 @dataclass(init=False)
@@ -228,7 +238,7 @@ class AnthropicModel(Model):
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
                 stream=stream,
-                thinking={'budget_tokens': 1024, 'type': 'enabled'},
+                thinking=model_settings.get('anthropic_thinking', NOT_GIVEN),
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
