@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from itertools import chain
 from typing import Literal, Union, cast
 
-from cohere import TextAssistantMessageContentItem
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, result
@@ -38,6 +37,7 @@ try:
         ChatMessageV2,
         ChatResponse,
         SystemChatMessageV2,
+        TextAssistantMessageContentItem,
         ToolCallV2,
         ToolCallV2Function,
         ToolChatMessageV2,

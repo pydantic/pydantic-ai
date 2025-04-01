@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from json import JSONDecodeError, loads as json_loads
 from typing import Any, Literal, Union, cast, overload
 
-from anthropic.types import DocumentBlockParam
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -40,6 +39,7 @@ try:
     from anthropic.types import (
         Base64PDFSourceParam,
         ContentBlock,
+        DocumentBlockParam,
         ImageBlockParam,
         Message as AnthropicMessage,
         MessageParam,
