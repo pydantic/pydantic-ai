@@ -122,7 +122,6 @@ def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
     """Sphinx style docstring.
 
     :param foo: The foo thing.
-    :return: The result.
     """
     return str(foo)
 
@@ -187,6 +186,152 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
     )
 
 
+def test_google_style_with_returns():
+    agent = Agent(FunctionModel(get_json_schema))
+
+    def my_tool(x: int) -> str:  # pragma: no cover
+        """A function that does something.
+
+        Args:
+            x: The input value.
+
+        Returns:
+            str: The result as a string.
+        """
+        return str(x)
+
+    agent.tool_plain(my_tool)
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.data)
+    assert json_schema == snapshot(
+        {
+            'name': 'my_tool',
+            'description': """\
+<summary>A function that does something.</summary>
+<returns>
+<type>str</type>
+<description>The result as a string.</description>
+</returns>\
+""",
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {'x': {'description': 'The input value.', 'type': 'integer'}},
+                'required': ['x'],
+                'type': 'object',
+            },
+            'outer_typed_dict_key': None,
+        }
+    )
+
+
+def test_sphinx_style_with_returns():
+    agent = Agent(FunctionModel(get_json_schema))
+
+    def my_tool(x: int) -> str:  # pragma: no cover
+        """A sphinx function with returns.
+
+        :param x: The input value.
+        :rtype: str
+        :return: The result as a string with type.
+        """
+        return str(x)
+
+    agent.tool_plain(docstring_format='sphinx')(my_tool)
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.data)
+    assert json_schema == snapshot(
+        {
+            'name': 'my_tool',
+            'description': """\
+<summary>A sphinx function with returns.</summary>
+<returns>
+<type>str</type>
+<description>The result as a string with type.</description>
+</returns>\
+""",
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {'x': {'description': 'The input value.', 'type': 'integer'}},
+                'required': ['x'],
+                'type': 'object',
+            },
+            'outer_typed_dict_key': None,
+        }
+    )
+
+
+def test_numpy_style_with_returns():
+    agent = Agent(FunctionModel(get_json_schema))
+
+    def my_tool(x: int) -> str:  # pragma: no cover
+        """A numpy function with returns.
+
+        Parameters
+        ----------
+        x : int
+            The input value.
+
+        Returns
+        -------
+        str
+            The result as a string with type.
+        """
+        return str(x)
+
+    agent.tool_plain(docstring_format='numpy')(my_tool)
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.data)
+    assert json_schema == snapshot(
+        {
+            'name': 'my_tool',
+            'description': """\
+<summary>A numpy function with returns.</summary>
+<returns>
+<type>str</type>
+<description>The result as a string with type.</description>
+</returns>\
+""",
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {'x': {'description': 'The input value.', 'type': 'integer'}},
+                'required': ['x'],
+                'type': 'object',
+            },
+            'outer_typed_dict_key': None,
+        }
+    )
+
+
+def only_returns_type() -> str:  # pragma: no cover
+    """
+
+    Returns:
+        str: The result as a string.
+    """
+    return 'foo'
+
+
+def test_only_returns_type():
+    agent = Agent(FunctionModel(get_json_schema))
+    agent.tool_plain(only_returns_type)
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.data)
+    assert json_schema == snapshot(
+        {
+            'name': 'only_returns_type',
+            'description': """\
+<returns>
+<type>str</type>
+<description>The result as a string.</description>
+</returns>\
+""",
+            'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+            'outer_typed_dict_key': None,
+        }
+    )
+
+
 def unknown_docstring(**kwargs: int) -> str:  # pragma: no cover
     """Unknown style docstring."""
     return str(kwargs)
@@ -202,7 +347,7 @@ def test_docstring_unknown():
         {
             'name': 'unknown_docstring',
             'description': 'Unknown style docstring.',
-            'parameters_json_schema': {'properties': {}, 'type': 'object', 'additionalProperties': True},
+            'parameters_json_schema': {'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
         }
     )
@@ -572,11 +717,7 @@ agent = Agent('test', tools=[ctx_tool], deps_type=int)
 
 
 async def tool_without_return_annotation_in_docstring() -> str:  # pragma: no cover
-    """A tool that documents what it returns but doesn't have a return annotation in the docstring.
-
-    Returns:
-        A value.
-    """
+    """A tool that documents what it returns but doesn't have a return annotation in the docstring."""
 
     return ''
 
@@ -591,8 +732,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
     json_schema = json.loads(result.data)
     assert json_schema == snapshot(
         {
-            'description': "A tool that documents what it returns but doesn't have a "
-            'return annotation in the docstring.',
+            'description': "A tool that documents what it returns but doesn't have a return annotation in the docstring.",
             'name': 'tool_without_return_annotation_in_docstring',
             'outer_typed_dict_key': None,
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
@@ -735,7 +875,6 @@ def test_schema_generator():
                 'name': 'my_tool_1',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
-                    'additionalProperties': True,
                     'properties': {'x': {'type': 'string'}},
                     'type': 'object',
                 },

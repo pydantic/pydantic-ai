@@ -5,6 +5,7 @@ import os
 import httpx
 
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.providers import Provider
 
 try:
     from openai import AsyncOpenAI
@@ -13,9 +14,6 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the OpenAI provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
-
-
-from . import Provider
 
 
 class OpenAIProvider(Provider[AsyncOpenAI]):
@@ -27,7 +25,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
 
     @property
     def base_url(self) -> str:
-        return self._base_url
+        return str(self.client.base_url)
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -52,10 +50,9 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        self._base_url = base_url or os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
         # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
         # openai compatible models do not always need an API key, but a placeholder (non-empty) key is required.
-        if api_key is None and 'OPENAI_API_KEY' not in os.environ and openai_client is None:
+        if api_key is None and 'OPENAI_API_KEY' not in os.environ and base_url is not None and openai_client is None:
             api_key = 'api-key-not-set'
 
         if openai_client is not None:
@@ -64,6 +61,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
         else:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=cached_async_http_client())
+            http_client = cached_async_http_client(provider='openai')
+            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)

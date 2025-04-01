@@ -86,7 +86,7 @@ def test_result_pydantic_model_retry():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args='{"a": "wrong", "b": "foo"}')],
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": "wrong", "b": "foo"}', tool_call_id=IsStr())],
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -102,19 +102,23 @@ def test_result_pydantic_model_retry():
                                 'input': 'wrong',
                             }
                         ],
+                        tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}')],
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
             ),
@@ -203,26 +207,32 @@ def test_result_validator():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args='{"a": 41, "b": "foo"}')],
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": 41, "b": "foo"}', tool_call_id=IsStr())],
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='"a" should be 42', tool_name='final_result', timestamp=IsNow(tz=timezone.utc)
+                        content='"a" should be 42',
+                        tool_name='final_result',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}')],
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
             ),
@@ -262,18 +272,24 @@ def test_plain_response_then_tuple():
                     RetryPromptPart(
                         content='Plain text responses are not permitted, please call one of the functions instead.',
                         timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     )
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}')],
+                parts=[
+                    ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
+                ],
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
             ),
@@ -282,14 +298,21 @@ def test_plain_response_then_tuple():
     assert result._result_tool_name == 'final_result'  # pyright: ignore[reportPrivateUsage]
     assert result.all_messages(result_tool_return_content='foobar')[-1] == snapshot(
         ModelRequest(
-            parts=[ToolReturnPart(tool_name='final_result', content='foobar', timestamp=IsNow(tz=timezone.utc))]
+            parts=[
+                ToolReturnPart(
+                    tool_name='final_result', content='foobar', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                )
+            ]
         )
     )
     assert result.all_messages()[-1] == snapshot(
         ModelRequest(
             parts=[
                 ToolReturnPart(
-                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
                 )
             ]
         )
@@ -338,12 +361,12 @@ def test_response_tuple():
                 name='final_result',
                 description='The final response which ends this conversation',
                 parameters_json_schema={
+                    'additionalProperties': False,
                     'properties': {
                         'response': {
                             'maxItems': 2,
                             'minItems': 2,
                             'prefixItems': [{'type': 'string'}, {'type': 'string'}],
-                            'title': 'Response',
                             'type': 'array',
                         }
                     },
@@ -398,8 +421,8 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
                 description='The final response which ends this conversation',
                 parameters_json_schema={
                     'properties': {
-                        'a': {'title': 'A', 'type': 'integer'},
-                        'b': {'title': 'B', 'type': 'string'},
+                        'a': {'type': 'integer'},
+                        'b': {'type': 'string'},
                     },
                     'required': ['a', 'b'],
                     'title': 'Foo',
@@ -474,8 +497,8 @@ class Bar(BaseModel):
                 description='Foo: The final response which ends this conversation',
                 parameters_json_schema={
                     'properties': {
-                        'a': {'title': 'A', 'type': 'integer'},
-                        'b': {'title': 'B', 'type': 'string'},
+                        'a': {'type': 'integer'},
+                        'b': {'type': 'string'},
                     },
                     'required': ['a', 'b'],
                     'title': 'Foo',
@@ -486,7 +509,7 @@ class Bar(BaseModel):
                 name='final_result_Bar',
                 description='This is a bar model.',
                 parameters_json_schema={
-                    'properties': {'b': {'title': 'B', 'type': 'string'}},
+                    'properties': {'b': {'type': 'string'}},
                     'required': ['b'],
                     'title': 'Bar',
                     'type': 'object',
@@ -519,12 +542,16 @@ def test_run_with_history_new():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
+                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
-                parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
+                parts=[
+                    ToolReturnPart(
+                        tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
@@ -543,12 +570,16 @@ def test_run_with_history_new():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
+                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
-                parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
+                parts=[
+                    ToolReturnPart(
+                        tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
@@ -591,12 +622,16 @@ def test_run_with_history_new():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
+                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
-                parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
+                parts=[
+                    ToolReturnPart(
+                        tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
@@ -637,19 +672,23 @@ def test_run_with_history_new_structured():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
+                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
-                parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
+                parts=[
+                    ToolReturnPart(
+                        tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
             ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
                         args={'a': 0},
-                        tool_call_id=None,
+                        tool_call_id=IsStr(),
                     )
                 ],
                 model_name='test',
@@ -658,7 +697,10 @@ def test_run_with_history_new_structured():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
             ),
@@ -675,15 +717,19 @@ def test_run_with_history_new_structured():
                 ],
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
+                parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
-                parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))],
+                parts=[
+                    ToolReturnPart(
+                        tool_name='ret_a', content='a-apple', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                    )
+                ],
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'a': 0})],
+                parts=[ToolCallPart(tool_name='final_result', args={'a': 0}, tool_call_id=IsStr())],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -692,6 +738,7 @@ def test_run_with_history_new_structured():
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
+                        tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ],
@@ -703,7 +750,7 @@ def test_run_with_history_new_structured():
                 ],
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'a': 0})],
+                parts=[ToolCallPart(tool_name='final_result', args={'a': 0}, tool_call_id=IsStr())],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -712,6 +759,7 @@ def test_run_with_history_new_structured():
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
+                        tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                 ]
@@ -763,19 +811,22 @@ def test_unknown_tool():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='foobar', args='{}')],
+                parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content="Unknown tool name: 'foobar'. No tools available.", timestamp=IsNow(tz=timezone.utc)
+                        tool_name='foobar',
+                        content="Unknown tool name: 'foobar'. No tools available.",
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='foobar', args='{}')],
+                parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -798,14 +849,17 @@ def test_unknown_tool_fix():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='foobar', args='{}')],
+                parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content="Unknown tool name: 'foobar'. No tools available.", timestamp=IsNow(tz=timezone.utc)
+                        tool_name='foobar',
+                        content="Unknown tool name: 'foobar'. No tools available.",
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
             ),
@@ -835,10 +889,20 @@ def test_override_model(env: TestEnv):
         assert result.data == snapshot((0, 'a'))
 
 
+def test_set_model(env: TestEnv):
+    env.set('GEMINI_API_KEY', 'foobar')
+    agent = Agent(result_type=tuple[int, str])
+
+    agent.model = 'test'
+
+    result = agent.run_sync('Hello')
+    assert result.data == snapshot((0, 'a'))
+
+
 def test_override_model_no_model():
     agent = Agent()
 
-    with pytest.raises(UserError, match=r'`model` must be set either.+Even when `override\(model=...\)` is customiz'):
+    with pytest.raises(UserError, match=r'`model` must either be set.+Even when `override\(model=...\)` is customiz'):
         with agent.override(model='test'):
             agent.run_sync('Hello')
 
@@ -962,16 +1026,21 @@ class TestMultipleToolCalls:
         assert messages[-1].parts == snapshot(
             [
                 ToolReturnPart(
-                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturnPart(
                     tool_name='regular_tool',
                     content='Tool not executed - a final result was already processed.',
+                    tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturnPart(
                     tool_name='another_tool',
                     content='Tool not executed - a final result was already processed.',
+                    tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ]
@@ -999,11 +1068,15 @@ class TestMultipleToolCalls:
         assert result.new_messages()[-1].parts == snapshot(
             [
                 ToolReturnPart(
-                    tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturnPart(
                     tool_name='final_result',
                     content='Result tool not used - a final result was already processed.',
+                    tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ]
@@ -1055,11 +1128,11 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='regular_tool', args={'x': 42}),
-                        ToolCallPart(tool_name='final_result', args={'value': 'first'}),
-                        ToolCallPart(tool_name='another_tool', args={'y': 2}),
-                        ToolCallPart(tool_name='final_result', args={'value': 'second'}),
-                        ToolCallPart(tool_name='unknown_tool', args={'value': '???'}),
+                        ToolCallPart(tool_name='regular_tool', args={'x': 42}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args={'value': 'first'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args={'value': 'second'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
                     ],
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
@@ -1069,19 +1142,30 @@ class TestMultipleToolCalls:
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
+                            tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Result tool not used - a final result was already processed.',
+                            tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
+                            tool_name='unknown_tool',
                             content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
                             timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
                         ),
-                        ToolReturnPart(tool_name='regular_tool', content=42, timestamp=IsNow(tz=timezone.utc)),
-                        ToolReturnPart(tool_name='another_tool', content=2, timestamp=IsNow(tz=timezone.utc)),
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content=42,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        ),
                     ]
                 ),
             ]
@@ -1133,10 +1217,10 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='regular_tool', args={'x': 1}),
-                        ToolCallPart(tool_name='final_result', args={'value': 'final'}),
-                        ToolCallPart(tool_name='another_tool', args={'y': 2}),
-                        ToolCallPart(tool_name='unknown_tool', args={'value': '???'}),
+                        ToolCallPart(tool_name='regular_tool', args={'x': 1}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args={'value': 'final'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
                     ],
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
@@ -1146,21 +1230,26 @@ class TestMultipleToolCalls:
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
+                            tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
                             tool_name='another_tool',
                             content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
+                            tool_name='unknown_tool',
                             content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
                             timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
                         ),
                     ]
                 ),
@@ -1238,7 +1327,12 @@ async def test_empty_text_part():
     def return_empty_text(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.result_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
-        return ModelResponse(parts=[TextPart(''), ToolCallPart(info.result_tools[0].name, args_json)])
+        return ModelResponse(
+            parts=[
+                TextPart(''),
+                ToolCallPart(info.result_tools[0].name, args_json),
+            ]
+        )
 
     agent = Agent(FunctionModel(return_empty_text), result_type=tuple[str, str])
 
@@ -1253,10 +1347,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
         assert info.result_tools is not None
         parts: list[ModelResponsePart] = []
         if len(messages) == 1:
-            parts = [
-                TextPart(content='foo'),
-                ToolCallPart('get_location', {'loc_name': 'London'}),
-            ]
+            parts = [TextPart(content='foo'), ToolCallPart('get_location', {'loc_name': 'London'})]
         else:
             parts = [TextPart(content='final response')]
         return ModelResponse(parts=parts)
@@ -1274,18 +1365,11 @@ def test_heterogeneous_responses_non_streaming() -> None:
     assert result.data == 'final response'
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
-            ),
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
                     TextPart(content='foo'),
-                    ToolCallPart(
-                        tool_name='get_location',
-                        args={'loc_name': 'London'},
-                    ),
+                    ToolCallPart(tool_name='get_location', args={'loc_name': 'London'}, tool_call_id=IsStr()),
                 ],
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
@@ -1293,7 +1377,10 @@ def test_heterogeneous_responses_non_streaming() -> None:
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='get_location',
+                        content='{"lat": 51, "lng": 0}',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
             ),
@@ -1525,13 +1612,18 @@ def test_capture_run_messages_tool_agent() -> None:
         [
             ModelRequest(parts=[UserPromptPart(content='foobar', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='foobar', args={'x': 'a'})],
+                parts=[ToolCallPart(tool_name='foobar', args={'x': 'a'}, tool_call_id=IsStr())],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(tool_name='foobar', content='inner agent result', timestamp=IsNow(tz=timezone.utc))
+                    ToolReturnPart(
+                        tool_name='foobar',
+                        content='inner agent result',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
                 ]
             ),
             ModelResponse(

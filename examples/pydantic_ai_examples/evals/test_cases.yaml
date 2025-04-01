@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=test_cases_schema.json
+cases:
+- name: Event in 3 days
+  inputs:
+    prompt: Schedule a meeting for the same time in 3 days.
+    now: '2023-10-05T14:00:00Z'
+  metadata: {}
+  expected_output:
+    min_timestamp_with_offset: '2023-10-08T13:55:00Z'
+    max_timestamp_with_offset: '2023-10-08T14:05:00Z'
+    explanation: Assuming the user wants a 10-minute window around 14:00 in 3 days.
+  evaluators:
+  - IsInstance: TimeRangeBuilderSuccess
+- name: Specific past date
+  inputs:
+    prompt: What was the weather like on October 1, 2023?
+    now: '2023-10-05T14:00:00Z'
+  metadata: {}
+  expected_output:
+    min_timestamp_with_offset: '2023-10-01T00:00:00Z'
+    max_timestamp_with_offset: '2023-10-01T23:59:59Z'
+    explanation: Assuming the user wants the weather report for the entire day of
+      October 1, 2023.
+  evaluators: []
+- name: Ambiguous future event
+  inputs:
+    prompt: Let's plan for the next holiday season.
+    now: '2023-10-05T14:00:00Z'
+  metadata: {}
+  expected_output:
+    error_message: The prompt 'next holiday season' is too ambiguous to generate a
+      specific time range as holidays vary by region and context.
+  evaluators:
+    - LLMJudge: should return an error message
+    - IsInstance: TimeRangeBuilderError

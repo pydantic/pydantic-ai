@@ -29,7 +29,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import AgentStream, FinalResult, Usage
 from pydantic_graph import End
 
-from .conftest import IsNow
+from .conftest import IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -51,12 +51,16 @@ async def test_streamed_text_response():
             [
                 ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
-                    parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                        )
+                    ]
                 ),
             ]
         )
@@ -76,12 +80,16 @@ async def test_streamed_text_response():
             [
                 ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'})],
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
-                    parts=[ToolReturnPart(tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc))]
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='ret_a', content='a-apple', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                        )
+                    ]
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -281,12 +289,19 @@ async def test_call_tool():
             [
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}')],
+                    parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
-                    parts=[ToolReturnPart(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc))]
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='ret_a',
+                            content='hello world',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        )
+                    ]
                 ),
             ]
         )
@@ -295,18 +310,26 @@ async def test_call_tool():
             [
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}')],
+                    parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelRequest(
-                    parts=[ToolReturnPart(tool_name='ret_a', content='hello world', timestamp=IsNow(tz=timezone.utc))]
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='ret_a',
+                            content='hello world',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        )
+                    ]
                 ),
                 ModelResponse(
                     parts=[
                         ToolCallPart(
                             tool_name='final_result',
                             args='{"response": ["hello world", 2]}',
+                            tool_call_id=IsStr(),
                         )
                     ],
                     model_name='function::stream_structured_function',
@@ -318,6 +341,7 @@ async def test_call_tool():
                             tool_name='final_result',
                             content='Final result processed.',
                             timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
                         )
                     ]
                 ),
@@ -359,7 +383,7 @@ async def test_call_tool_wrong_name():
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='foobar', args='{}')],
+                parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
                 model_name='function::stream_structured_function',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -411,9 +435,9 @@ async def test_early_strategy_stops_after_first_final_result():
             ModelRequest(parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='final_result', args='{"value": "final"}'),
-                    ToolCallPart(tool_name='regular_tool', args='{"x": 1}'),
-                    ToolCallPart(tool_name='another_tool', args='{"y": 2}'),
+                    ToolCallPart(tool_name='final_result', args='{"value": "final"}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='regular_tool', args='{"x": 1}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='another_tool', args='{"y": 2}', tool_call_id=IsStr()),
                 ],
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
@@ -424,16 +448,19 @@ async def test_early_strategy_stops_after_first_final_result():
                         tool_name='final_result',
                         content='Final result processed.',
                         timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     ),
                     ToolReturnPart(
                         tool_name='regular_tool',
                         content='Tool not executed - a final result was already processed.',
                         timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     ),
                     ToolReturnPart(
                         tool_name='another_tool',
                         content='Tool not executed - a final result was already processed.',
                         timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     ),
                 ]
             ),
@@ -464,8 +491,8 @@ async def test_early_strategy_uses_first_final_result():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='final_result', args='{"value": "first"}'),
-                    ToolCallPart(tool_name='final_result', args='{"value": "second"}'),
+                    ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
                 ],
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
@@ -473,12 +500,16 @@ async def test_early_strategy_uses_first_final_result():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     ),
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Result tool not used - a final result was already processed.',
                         timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     ),
                 ]
             ),
@@ -523,11 +554,11 @@ async def test_exhaustive_strategy_executes_all_tools():
             ModelRequest(parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='final_result', args='{"value": "first"}'),
-                    ToolCallPart(tool_name='regular_tool', args='{"x": 42}'),
-                    ToolCallPart(tool_name='another_tool', args='{"y": 2}'),
-                    ToolCallPart(tool_name='final_result', args='{"value": "second"}'),
-                    ToolCallPart(tool_name='unknown_tool', args='{"value": "???"}'),
+                    ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='regular_tool', args='{"x": 42}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='another_tool', args='{"y": 2}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='unknown_tool', args='{"value": "???"}', tool_call_id=IsStr()),
                 ],
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
@@ -538,18 +569,26 @@ async def test_exhaustive_strategy_executes_all_tools():
                         tool_name='final_result',
                         content='Final result processed.',
                         timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     ),
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Result tool not used - a final result was already processed.',
                         timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     ),
                     RetryPromptPart(
+                        tool_name='unknown_tool',
                         content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
                         timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     ),
-                    ToolReturnPart(tool_name='regular_tool', content=42, timestamp=IsNow(tz=timezone.utc)),
-                    ToolReturnPart(tool_name='another_tool', content=2, timestamp=IsNow(tz=timezone.utc)),
+                    ToolReturnPart(
+                        tool_name='regular_tool', content=42, timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                    ),
+                    ToolReturnPart(
+                        tool_name='another_tool', content=2, timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                    ),
                 ]
             ),
         ]
@@ -607,25 +646,25 @@ async def test_early_strategy_with_final_result_in_middle():
                     ToolCallPart(
                         tool_name='regular_tool',
                         args='{"x": 1}',
-                        tool_call_id=None,
+                        tool_call_id=IsStr(),
                         part_kind='tool-call',
                     ),
                     ToolCallPart(
                         tool_name='final_result',
                         args='{"value": "final"}',
-                        tool_call_id=None,
+                        tool_call_id=IsStr(),
                         part_kind='tool-call',
                     ),
                     ToolCallPart(
                         tool_name='another_tool',
                         args='{"y": 2}',
-                        tool_call_id=None,
+                        tool_call_id=IsStr(),
                         part_kind='tool-call',
                     ),
                     ToolCallPart(
                         tool_name='unknown_tool',
                         args='{"value": "???"}',
-                        tool_call_id=None,
+                        tool_call_id=IsStr(),
                         part_kind='tool-call',
                     ),
                 ],
@@ -638,21 +677,21 @@ async def test_early_strategy_with_final_result_in_middle():
                     ToolReturnPart(
                         tool_name='regular_tool',
                         content='Tool not executed - a final result was already processed.',
-                        tool_call_id=None,
+                        tool_call_id=IsStr(),
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='tool-return',
                     ),
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id=None,
+                        tool_call_id=IsStr(),
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='tool-return',
                     ),
                     ToolReturnPart(
                         tool_name='another_tool',
                         content='Tool not executed - a final result was already processed.',
-                        tool_call_id=None,
+                        tool_call_id=IsStr(),
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='tool-return',
                     ),
@@ -661,8 +700,8 @@ async def test_early_strategy_with_final_result_in_middle():
                         "'unknown_tool'. Available tools: "
                         'regular_tool, another_tool, '
                         'final_result',
-                        tool_name=None,
-                        tool_call_id=None,
+                        tool_name='unknown_tool',
+                        tool_call_id=IsStr(),
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='retry-prompt',
                     ),
@@ -701,20 +740,29 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='regular_tool', args={'x': 0})],
-                model_name='test',
-                timestamp=IsNow(tz=timezone.utc),
-            ),
-            ModelRequest(parts=[ToolReturnPart(tool_name='regular_tool', content=0, timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'value': 'a'})],
+                parts=[ToolCallPart(tool_name='regular_tool', args={'x': 0}, tool_call_id=IsStr())],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result', content='Final result processed.', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='regular_tool', content=0, timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'value': 'a'}, tool_call_id=IsStr())],
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     )
                 ]
             ),

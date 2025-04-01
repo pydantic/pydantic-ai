@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import time
+import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, is_dataclass
@@ -39,7 +40,7 @@ def is_model_like(type_: Any) -> bool:
     return (
         isinstance(type_, type)
         and not isinstance(type_, GenericAlias)
-        and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))
+        and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))  # pyright: ignore[reportUnknownArgumentType]
     )
 
 
@@ -195,12 +196,17 @@ def now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-def guard_tool_call_id(
-    t: _messages.ToolCallPart | _messages.ToolReturnPart | _messages.RetryPromptPart, model_source: str
-) -> str:
-    """Type guard that checks a `tool_call_id` is not None both for static typing and runtime."""
-    assert t.tool_call_id is not None, f'{model_source} requires `tool_call_id` to be set: {t}'
-    return t.tool_call_id
+def guard_tool_call_id(t: _messages.ToolCallPart | _messages.ToolReturnPart | _messages.RetryPromptPart) -> str:
+    """Type guard that either returns the tool call id or generates a new one if it's None."""
+    return t.tool_call_id or generate_tool_call_id()
+
+
+def generate_tool_call_id() -> str:
+    """Generate a tool call id.
+
+    Ensure that the tool call id is unique.
+    """
+    return f'pyd_ai_{uuid.uuid4().hex}'
 
 
 class PeekableAsyncStream(Generic[T]):

@@ -38,6 +38,7 @@ with try_import() as imports_successful:
     from cohere.core.api_error import ApiError
 
     from pydantic_ai.models.cohere import CohereModel
+    from pydantic_ai.providers.cohere import CohereProvider
 
     # note: we use Union here for compatibility with Python 3.9
     MockChatResponse = Union[ChatResponse, Exception]
@@ -49,7 +50,7 @@ pytestmark = [
 
 
 def test_init():
-    m = CohereModel('command-r7b-12-2024', api_key='foobar')
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='foobar'))
     assert m.model_name == 'command-r7b-12-2024'
     assert m.system == 'cohere'
     assert m.base_url == 'https://api.cohere.com'
@@ -96,7 +97,7 @@ async def test_request_simple_success(allow_model_requests: None):
         )
     )
     mock_client = MockAsyncClientV2.create_mock(c)
-    m = CohereModel('command-r7b-12-2024', cohere_client=mock_client)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -135,7 +136,7 @@ async def test_request_simple_usage(allow_model_requests: None):
         ),
     )
     mock_client = MockAsyncClientV2.create_mock(c)
-    m = CohereModel('command-r7b-12-2024', cohere_client=mock_client)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run('Hello')
@@ -169,7 +170,7 @@ async def test_request_structured_response(allow_model_requests: None):
         )
     )
     mock_client = MockAsyncClientV2.create_mock(c)
-    m = CohereModel('command-r7b-12-2024', cohere_client=mock_client)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
     agent = Agent(m, result_type=list[int])
 
     result = await agent.run('Hello')
@@ -243,7 +244,7 @@ async def test_request_tool_call(allow_model_requests: None):
         ),
     ]
     mock_client = MockAsyncClientV2.create_mock(responses)
-    m = CohereModel('command-r7b-12-2024', cohere_client=mock_client)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
     agent = Agent(m, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -326,7 +327,7 @@ async def test_request_tool_call(allow_model_requests: None):
 async def test_multimodal(allow_model_requests: None):
     c = completion_message(AssistantMessageResponse(content=[TextAssistantMessageResponseContentItem(text='world')]))
     mock_client = MockAsyncClientV2.create_mock(c)
-    m = CohereModel('command-r7b-12-2024', cohere_client=mock_client)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
     agent = Agent(m)
 
     with pytest.raises(RuntimeError, match='Cohere does not yet support multi-modal inputs.'):
@@ -347,8 +348,16 @@ def test_model_status_error(allow_model_requests: None) -> None:
             body={'error': 'test error'},
         )
     )
-    m = CohereModel('command-r', cohere_client=mock_client)
+    m = CohereModel('command-r', provider=CohereProvider(cohere_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot("status_code: 500, model_name: command-r, body: {'error': 'test error'}")
+
+
+@pytest.mark.vcr()
+async def test_request_simple_success_with_vcr(allow_model_requests: None, co_api_key: str):
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+    agent = Agent(m)
+    result = await agent.run('hello')
+    assert result.data == snapshot('Hello! How can I assist you today?')

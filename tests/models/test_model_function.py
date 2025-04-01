@@ -6,7 +6,6 @@ from datetime import timezone
 
 import pydantic_core
 import pytest
-from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
@@ -25,7 +24,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Usage
 
-from ..conftest import IsNow
+from ..conftest import IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -98,14 +97,7 @@ async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
     assert {t.name for t in info.function_tools} == {'get_location', 'get_weather'}
     last = messages[-1].parts[-1]
     if isinstance(last, UserPromptPart):
-        return ModelResponse(
-            parts=[
-                ToolCallPart(
-                    'get_location',
-                    json.dumps({'location_description': last.content}),
-                )
-            ]
-        )
+        return ModelResponse(parts=[ToolCallPart('get_location', json.dumps({'location_description': last.content}))])
     elif isinstance(last, ToolReturnPart):
         if last.tool_name == 'get_location':
             return ModelResponse(parts=[ToolCallPart('get_weather', last.model_response_str())])
@@ -157,24 +149,38 @@ def test_weather():
         [
             ModelRequest(parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_location', args='{"location_description": "London"}')],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_location', args='{"location_description": "London"}', tool_call_id=IsStr()
+                    )
+                ],
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='get_location', content='{"lat": 51, "lng": 0}', timestamp=IsNow(tz=timezone.utc)
+                        tool_name='get_location',
+                        content='{"lat": 51, "lng": 0}',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
                     )
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_weather', args='{"lat": 51, "lng": 0}')],
+                parts=[ToolCallPart(tool_name='get_weather', args='{"lat": 51, "lng": 0}', tool_call_id=IsStr())],
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
-                parts=[ToolReturnPart(tool_name='get_weather', content='Raining', timestamp=IsNow(tz=timezone.utc))]
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='Raining',
+                        timestamp=IsNow(tz=timezone.utc),
+                        tool_call_id=IsStr(),
+                    )
+                ]
             ),
             ModelResponse(
                 parts=[TextPart(content='Raining in London')],
@@ -193,14 +199,7 @@ async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> Mod
     if isinstance(last, UserPromptPart):
         if isinstance(last.content, str) and last.content.startswith('{'):
             details = json.loads(last.content)
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        details['function'],
-                        json.dumps(details['arguments']),
-                    )
-                ]
-            )
+            return ModelResponse(parts=[ToolCallPart(details['function'], json.dumps(details['arguments']))])
     elif isinstance(last, ToolReturnPart):
         return ModelResponse(parts=[TextPart(pydantic_core.to_json(last).decode())])
 
@@ -225,8 +224,8 @@ def test_var_args():
         {
             'tool_name': 'get_var_args',
             'content': '{"args": [1, 2, 3]}',
-            'tool_call_id': None,
-            'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),
+            'tool_call_id': IsStr(),
+            'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),  # type: ignore[reportUnknownMemberType]
             'part_kind': 'tool-return',
         }
     )
@@ -281,7 +280,7 @@ def test_model_arg():
     result = agent.run_sync('Hello', model=FunctionModel(return_last))
     assert result.data == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
 
-    with pytest.raises(RuntimeError, match='`model` must be set either when creating the agent or when calling it.'):
+    with pytest.raises(RuntimeError, match='`model` must either be set on the agent or included when calling it.'):
         agent.run_sync('Hello')
 
 
@@ -345,22 +344,32 @@ def test_call_all():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='foo', args={'x': 0}),
-                    ToolCallPart(tool_name='bar', args={'x': 0}),
-                    ToolCallPart(tool_name='baz', args={'x': 0}),
-                    ToolCallPart(tool_name='qux', args={'x': 0}),
-                    ToolCallPart(tool_name='quz', args={'x': 'a'}),
+                    ToolCallPart(tool_name='foo', args={'x': 0}, tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='bar', args={'x': 0}, tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='baz', args={'x': 0}, tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='qux', args={'x': 0}, tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='quz', args={'x': 'a'}, tool_call_id=IsStr()),
                 ],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(tool_name='foo', content='1', timestamp=IsNow(tz=timezone.utc)),
-                    ToolReturnPart(tool_name='bar', content='2', timestamp=IsNow(tz=timezone.utc)),
-                    ToolReturnPart(tool_name='baz', content='3', timestamp=IsNow(tz=timezone.utc)),
-                    ToolReturnPart(tool_name='qux', content='4', timestamp=IsNow(tz=timezone.utc)),
-                    ToolReturnPart(tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc)),
+                    ToolReturnPart(
+                        tool_name='foo', content='1', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                    ),
+                    ToolReturnPart(
+                        tool_name='bar', content='2', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                    ),
+                    ToolReturnPart(
+                        tool_name='baz', content='3', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                    ),
+                    ToolReturnPart(
+                        tool_name='qux', content='4', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                    ),
+                    ToolReturnPart(
+                        tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                    ),
                 ]
             ),
             ModelResponse(

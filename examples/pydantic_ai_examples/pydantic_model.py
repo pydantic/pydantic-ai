@@ -6,13 +6,11 @@ Run with:
 """
 
 import os
-from typing import cast
 
 import logfire
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.models import KnownModelName
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -23,7 +21,7 @@ class MyModel(BaseModel):
     country: str
 
 
-model = cast(KnownModelName, os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-4o'))
+model = os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-4o')
 print(f'Using model: {model}')
 agent = Agent(model, result_type=MyModel, instrument=True)
 

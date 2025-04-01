@@ -152,6 +152,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
+                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -374,6 +376,8 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
+                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -457,6 +461,8 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
+                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -559,6 +565,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
+                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -652,7 +659,7 @@ Fix the errors and try again.\
                             ]
                         )
                     ),
-                    'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}}}',
+                    'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}, "model_request_parameters": {"type": "object"}}}',
                 },
             },
         ]
@@ -669,23 +676,19 @@ def test_messages_to_otel_events_serialization_errors():
             raise ValueError('error!')
 
     messages = [
-        ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()})]),
-        ModelRequest(parts=[ToolReturnPart('tool', Bar())]),
+        ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()}, tool_call_id='tool_call_id')]),
+        ModelRequest(parts=[ToolReturnPart('tool', Bar(), tool_call_id='return_tool_call_id')]),
     ]
 
-    assert [
-        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
-    ] == snapshot(
-        [
-            {
-                'body': "{'role': 'assistant', 'tool_calls': [{'id': None, 'type': 'function', 'function': {'name': 'tool', 'arguments': {'arg': Foo()}}}]}",
-                'gen_ai.message.index': 0,
-                'event.name': 'gen_ai.assistant.message',
-            },
-            {
-                'body': 'Unable to serialize: error!',
-                'gen_ai.message.index': 1,
-                'event.name': 'gen_ai.tool.message',
-            },
-        ]
-    )
+    assert [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)] == [
+        {
+            'body': "{'role': 'assistant', 'tool_calls': [{'id': 'tool_call_id', 'type': 'function', 'function': {'name': 'tool', 'arguments': {'arg': Foo()}}}]}",
+            'gen_ai.message.index': 0,
+            'event.name': 'gen_ai.assistant.message',
+        },
+        {
+            'body': 'Unable to serialize: error!',
+            'gen_ai.message.index': 1,
+            'event.name': 'gen_ai.tool.message',
+        },
+    ]
