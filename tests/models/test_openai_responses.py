@@ -118,6 +118,30 @@ async def test_openai_responses_reasoning_effort(allow_model_requests: None, ope
     )
 
 
+async def test_openai_responses_reasoning_generate_summary(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('computer-use-preview', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        model_settings=OpenAIResponsesModelSettings(
+            openai_reasoning_generate_summary='concise',
+            openai_truncation='auto',
+        ),
+    )
+    result = await agent.run('What should I do to cross the street?')
+    assert result.data == snapshot("""\
+To cross the street safely, follow these steps:
+
+1. **Use a Crosswalk**: Always use a designated crosswalk or pedestrian crossing whenever available.
+2. **Press the Button**: If there is a pedestrian signal button, press it and wait for the signal.
+3. **Look Both Ways**: Look left, right, and left again before stepping off the curb.
+4. **Wait for the Signal**: Cross only when the pedestrian signal indicates it is safe to do so or when there is a clear gap in traffic.
+5. **Stay Alert**: Be mindful of turning vehicles and stay attentive while crossing.
+6. **Walk, Don't Run**: Walk across the street; running can increase the risk of falling or not noticing an oncoming vehicle.
+
+Always follow local traffic rules and be cautious, even when crossing at a crosswalk. Safety is the priority.\
+""")
+
+
 async def test_openai_responses_system_prompt(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
