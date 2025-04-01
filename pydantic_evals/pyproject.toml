@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
+
+[project]
+name = "pydantic-evals"
+dynamic = ["version"]
+description = "Framework for evaluating stochastic code execution, especially code making use of LLMs"
+authors = [
+    { name = "David Montague", email = "david@pydantic.dev" },
+]
+license = "MIT"
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Unix",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: Console",
+    "Environment :: MacOS X",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "rich>=13.9.4",
+    "logfire-api>=1.2.0",
+    "pydantic>=2.10",
+    "anyio>=0",
+    "eval-type-backport>=0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+logfire = ["logfire>=2.3"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["pydantic_evals"]
+
+[tool.uv.sources]
+pydantic-evals = { workspace = true }

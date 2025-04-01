@@ -57,6 +57,7 @@ LatestGeminiModelNames = Literal[
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite-preview-02-05',
     'gemini-2.0-pro-exp-02-05',
+    'gemini-2.5-pro-exp-03-25',
 ]
 """Latest Gemini models."""
 
@@ -70,7 +71,10 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 
 
 class GeminiModelSettings(ModelSettings):
-    """Settings used for a Gemini model request."""
+    """Settings used for a Gemini model request.
+
+    ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
 
     gemini_safety_settings: list[GeminiSafetySettings]
 

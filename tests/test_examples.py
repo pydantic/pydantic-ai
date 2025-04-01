@@ -4,17 +4,21 @@ import json
 import os
 import re
 import sys
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass
+from inspect import FrameInfo
+from io import StringIO
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 import httpx
 import pytest
+from _pytest.mark import ParameterSet
 from devtools import debug
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_mock import MockerFixture
+from rich.console import Console
 
 from pydantic_ai import ModelHTTPError
 from pydantic_ai._utils import group_by_temporal
@@ -33,7 +37,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from .conftest import ClientWithHandler, TestEnv
+from .conftest import ClientWithHandler, TestEnv, try_import
 
 try:
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
@@ -47,28 +51,42 @@ except ImportError:
     logfire = None
 
 
-pytestmark = pytest.mark.skipif(
-    GoogleVertexProvider is None or logfire is None, reason='google-auth or logfire not installed'
-)
+with try_import() as imports_successful:
+    from pydantic_evals.reporting import EvaluationReport
 
 
-def find_filter_examples() -> Iterable[CodeExample]:
-    for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph'):
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
+    pytest.mark.skipif(GoogleVertexProvider is None or logfire is None, reason='google-auth or logfire not installed'),
+]
+
+
+def find_filter_examples() -> Iterable[ParameterSet]:
+    # Ensure this is run from the package root regardless of where/how the tests are run
+    os.chdir(Path(__file__).parent.parent)
+
+    for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if ex.path.name != '_utils.py':
-            yield ex
+            prefix_settings = ex.prefix_settings()
+            test_id = str(ex)
+            if opt_title := prefix_settings.get('title'):
+                test_id += f':{opt_title}'
+            yield pytest.param(ex, id=test_id)
 
 
-@pytest.mark.parametrize('example', find_filter_examples(), ids=str)
+@pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(  # noqa: C901
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
     client_with_handler: ClientWithHandler,
+    allow_model_requests: None,
     env: TestEnv,
     tmp_path: Path,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
+    mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
 
     mocker.patch('httpx.Client.get', side_effect=http_request)
     mocker.patch('httpx.Client.post', side_effect=http_request)
@@ -76,6 +94,17 @@ def test_docs_examples(  # noqa: C901
     mocker.patch('httpx.AsyncClient.post', side_effect=async_http_request)
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
+
+    class CustomEvaluationReport(EvaluationReport):
+        def print(self, *args: Any, **kwargs: Any) -> None:
+            if 'width' in kwargs:  # pragma: no cover
+                raise ValueError('width should not be passed to CustomEvaluationReport')
+            table = self.console_table(*args, **kwargs)
+            io_file = StringIO()
+            Console(file=io_file, width=150).print(table)
+            print(io_file.getvalue())
+
+    mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
 
     if sys.version_info >= (3, 10):
         mocker.patch('pydantic_ai.mcp.MCPServerHTTP', return_value=MockMCPServer())
@@ -112,7 +141,13 @@ def test_docs_examples(  # noqa: C901
         examples = [{'request': f'sql prompt {i}', 'sql': f'SELECT {i}'} for i in range(15)]
         with (tmp_path / 'examples.json').open('w') as f:
             json.dump(examples, f)
-    elif opt_title in {'ai_q_and_a_run.py', 'count_down_from_persistence.py'}:
+    elif opt_title in {
+        'ai_q_and_a_run.py',
+        'count_down_from_persistence.py',
+        'generate_dataset_example.py',
+        'generate_dataset_example_json.py',
+        'save_load_dataset_example.py',
+    }:
         os.chdir(tmp_path)
 
     ruff_ignore: list[str] = ['D', 'Q001']
@@ -129,14 +164,16 @@ def test_docs_examples(  # noqa: C901
 
     eval_example.set_config(ruff_ignore=ruff_ignore, target_version='py39', line_length=line_length)
     eval_example.print_callback = print_callback
+    eval_example.include_print = custom_include_print
 
     call_name = prefix_settings.get('call_name', 'main')
 
     if not opt_lint.startswith('skip'):
+        # ruff and seem to black disagree here, not sure if that's easily fixable
         if eval_example.update_examples:  # pragma: no cover
-            eval_example.format(example)
+            eval_example.format_ruff(example)
         else:
-            eval_example.lint(example)
+            eval_example.lint_ruff(example)
 
     if opt_test.startswith('skip'):
         print(opt_test[4:].lstrip(' -') or 'running code skipped')
@@ -161,6 +198,14 @@ def print_callback(s: str) -> str:
     s = re.sub(r'datetime\.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
     return re.sub(r'datetime.date\(', 'date(', s)
+
+
+def mock_render_duration(seconds: float, force_signed: bool) -> str:
+    return '10ms'
+
+
+def custom_include_print(path: Path, frame: FrameInfo, args: Sequence[Any]) -> bool:
+    return path.samefile(frame.filename) or frame.filename.endswith('test_examples.py')
 
 
 def http_request(url: str, **kwargs: Any) -> httpx.Response:
@@ -227,6 +272,7 @@ text_responses: dict[str, str | ToolCallPart] = {
     'I bet five is the winner': ToolCallPart(
         tool_name='roulette_wheel', args={'square': 5}, tool_call_id='pyd_ai_tool_call_id'
     ),
+    'My guess is 6': ToolCallPart(tool_name='roll_die', args={}, tool_call_id='pyd_ai_tool_call_id'),
     'My guess is 4': ToolCallPart(tool_name='roll_die', args={}, tool_call_id='pyd_ai_tool_call_id'),
     'Send a message to John Doe asking for coffee next week': ToolCallPart(
         tool_name='get_user_by_name', args={'name': 'John'}
@@ -313,6 +359,30 @@ text_responses: dict[str, str | ToolCallPart] = {
         args={'correct': True, 'comment': 'Well done, 1 + 1 = 2'},
         tool_call_id='pyd_ai_tool_call_id',
     ),
+    (
+        '<examples>\n'
+        '  <dish_name>Spaghetti Bolognese</dish_name>\n'
+        '  <dietary_restriction>vegetarian</dietary_restriction>\n'
+        '</examples>'
+    ): ToolCallPart(
+        tool_name='final_result',
+        args={
+            'ingredients': ['spaghetti', 'tomato sauce', 'vegetarian mince', 'onions', 'garlic'],
+            'steps': ['Cook the spaghetti in boiling water', '...'],
+        },
+    ),
+    (
+        '<examples>\n'
+        '  <dish_name>Chocolate Cake</dish_name>\n'
+        '  <dietary_restriction>gluten-free</dietary_restriction>\n'
+        '</examples>'
+    ): ToolCallPart(
+        tool_name='final_result',
+        args={
+            'ingredients': ['gluten-free flour', 'cocoa powder', 'sugar', 'eggs'],
+            'steps': ['Mix the ingredients', 'Bake at 350°F for 30 minutes'],
+        },
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -358,6 +428,40 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             )
         elif m.content == 'Ask a simple question with a single correct answer.' and len(messages) > 2:
             return ModelResponse(parts=[TextPart('what is 1 + 1?')])
+        elif '<Rubric>\n' in m.content:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='final_result', args={'reason': '-', 'pass': True, 'score': 1.0})]
+            )
+        elif 'Generate question-answer pairs about world capitals and landmarks.' in m.content:
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        content=json.dumps(
+                            {
+                                'cases': [
+                                    {
+                                        'name': 'Easy Capital Question',
+                                        'inputs': {'question': 'What is the capital of France?'},
+                                        'metadata': {'difficulty': 'easy', 'category': 'Geography'},
+                                        'expected_output': {'answer': 'Paris', 'confidence': 0.95},
+                                        'evaluators': ['EqualsExpected'],
+                                    },
+                                    {
+                                        'name': 'Challenging Landmark Question',
+                                        'inputs': {
+                                            'question': 'Which world-famous landmark is located on the banks of the Seine River?',
+                                        },
+                                        'metadata': {'difficulty': 'hard', 'category': 'Landmarks'},
+                                        'expected_output': {'answer': 'Eiffel Tower', 'confidence': 0.9},
+                                        'evaluators': ['EqualsExpected'],
+                                    },
+                                ],
+                                'evaluators': [],
+                            }
+                        )
+                    )
+                ]
+            )
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
@@ -374,7 +478,10 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             parts=[ToolCallPart(tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
-        return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
+        if 'Anne' in m.content:
+            return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
+        elif 'Yashar' in m.content:
+            return ModelResponse(parts=[TextPart('Tough luck, Yashar, you rolled a 4. Better luck next time.')])
     if (
         isinstance(m, RetryPromptPart)
         and isinstance(m.content, str)

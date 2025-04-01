@@ -331,10 +331,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.run_step += 1
 
         model_settings = merge_model_settings(ctx.deps.model_settings, None)
-        with ctx.deps.tracer.start_as_current_span(
-            'preparing model request params', attributes=dict(run_step=ctx.state.run_step)
-        ):
-            model_request_parameters = await _prepare_request_parameters(ctx)
+        model_request_parameters = await _prepare_request_parameters(ctx)
         return model_settings, model_request_parameters
 
     def _finish_handling(
@@ -374,9 +371,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> Union[ModelRequestNode[DepsT, NodeRunEndT], End[result.FinalResult[NodeRunEndT]]]:  # noqa UP007
         async with self.stream(ctx):
             pass
-
-        assert (next_node := self._next_node) is not None, 'the stream should set `self._next_node` before it ends'
-        return next_node
+        assert self._next_node is not None, 'the stream should set `self._next_node` before it ends'
+        return self._next_node
 
     @asynccontextmanager
     async def stream(
@@ -637,19 +633,24 @@ async def process_function_tools(
                 )
                 output_parts.append(part)
         else:
-            output_parts.append(_unknown_tool(call.tool_name, ctx))
+            output_parts.append(_unknown_tool(call.tool_name, call.tool_call_id, ctx))
 
     if not calls_to_run:
         return
 
     # Run all tool tasks in parallel
     results_by_index: dict[int, _messages.ModelRequestPart] = {}
-    tool_names = [call.tool_name for _, call in calls_to_run]
     with ctx.deps.tracer.start_as_current_span(
-        'running tools', attributes={'tools': tool_names, 'logfire.msg': f'running tools: {", ".join(tool_names)}'}
+        'running tools',
+        attributes={
+            'tools': [call.tool_name for _, call in calls_to_run],
+            'logfire.msg': f'running {len(calls_to_run)} tool{"" if len(calls_to_run) == 1 else "s"}',
+        },
     ):
-        # TODO: Should we wrap each individual tool call in a dedicated span?
-        tasks = [asyncio.create_task(tool.run(call, run_context), name=call.tool_name) for tool, call in calls_to_run]
+        tasks = [
+            asyncio.create_task(tool.run(call, run_context, ctx.deps.tracer), name=call.tool_name)
+            for tool, call in calls_to_run
+        ]
         pending = tasks
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
@@ -699,6 +700,7 @@ async def _tool_from_mcp_server(
 
 def _unknown_tool(
     tool_name: str,
+    tool_call_id: str,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
 ) -> _messages.RetryPromptPart:
     ctx.state.increment_retries(ctx.deps.max_result_retries)
@@ -711,7 +713,11 @@ def _unknown_tool(
     else:
         msg = 'No tools available.'
 
-    return _messages.RetryPromptPart(content=f'Unknown tool name: {tool_name!r}. {msg}')
+    return _messages.RetryPromptPart(
+        tool_name=tool_name,
+        tool_call_id=tool_call_id,
+        content=f'Unknown tool name: {tool_name!r}. {msg}',
+    )
 
 
 async def _validate_result(
