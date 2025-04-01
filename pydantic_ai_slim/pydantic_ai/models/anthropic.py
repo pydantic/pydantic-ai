@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from json import JSONDecodeError, loads as json_loads
 from typing import Any, Literal, Union, cast, overload
 
-from anthropic.types import DocumentBlockParam
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -39,6 +38,7 @@ try:
     from anthropic.types import (
         Base64PDFSourceParam,
         ContentBlock,
+        DocumentBlockParam,
         ImageBlockParam,
         Message as AnthropicMessage,
         MessageParam,
@@ -353,26 +353,13 @@ class AnthropicModel(Model):
                     else:
                         raise RuntimeError('Only images and PDFs are supported for binary content')
                 elif isinstance(item, ImageUrl):
-                    yield ImageBlockParam(
-                        source={
-                            'type': 'url',
-                            'url': item.url,
-                        },
-                        type='image',
-                    )
+                    yield ImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
                 elif isinstance(item, DocumentUrl):
-                    response = await cached_async_http_client().get(item.url)
-                    response.raise_for_status()
                     if item.media_type == 'application/pdf':
-                        yield DocumentBlockParam(
-                            source=Base64PDFSourceParam(
-                                data=io.BytesIO(response.content),
-                                media_type=item.media_type,
-                                type='base64',
-                            ),
-                            type='document',
-                        )
+                        yield DocumentBlockParam(source={'url': item.url, 'type': 'url'}, type='document')
                     elif item.media_type == 'text/plain':
+                        response = await cached_async_http_client().get(item.url)
+                        response.raise_for_status()
                         yield DocumentBlockParam(
                             source=PlainTextSourceParam(data=response.text, media_type=item.media_type, type='text'),
                             type='document',
