@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal, Union, cast, overload
 
-from openai import NotGiven
 from typing_extensions import assert_never
 
 from pydantic_ai.providers import Provider, infer_provider
@@ -43,7 +42,7 @@ from . import (
 )
 
 try:
-    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream, NotGiven
     from openai.types import ChatModel, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
