@@ -128,6 +128,29 @@ agent = Agent(model)
 ...
 ```
 
+### OpenAI Responses API
+
+PydanticAI also supports OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) through the [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] class.
+
+The Responses API has built-in tools that you can use instead of building your own:
+- [Web search](https://platform.openai.com/docs/guides/tools-web-search)
+- [File search](https://platform.openai.com/docs/guides/tools-file-search)
+- [Computer use](https://platform.openai.com/docs/guides/tools-computer-use)
+
+!!! warning "Work in progress"
+    We currently don't support the native OpenAI tools listed above in the `OpenAIResponsesModel` class.
+
+You can learn more about the differences between the Responses API and Chat Completions API in the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
+
+```python {title="openai_responses_model.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+model = OpenAIResponsesModel('gpt-4o')
+agent = Agent(model)
+...
+```
+
 ## Anthropic
 
 ### Install

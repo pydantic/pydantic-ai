@@ -361,12 +361,12 @@ def test_response_tuple():
                 name='final_result',
                 description='The final response which ends this conversation',
                 parameters_json_schema={
+                    'additionalProperties': False,
                     'properties': {
                         'response': {
                             'maxItems': 2,
                             'minItems': 2,
                             'prefixItems': [{'type': 'string'}, {'type': 'string'}],
-                            'title': 'Response',
                             'type': 'array',
                         }
                     },
@@ -421,8 +421,8 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
                 description='The final response which ends this conversation',
                 parameters_json_schema={
                     'properties': {
-                        'a': {'title': 'A', 'type': 'integer'},
-                        'b': {'title': 'B', 'type': 'string'},
+                        'a': {'type': 'integer'},
+                        'b': {'type': 'string'},
                     },
                     'required': ['a', 'b'],
                     'title': 'Foo',
@@ -497,8 +497,8 @@ class Bar(BaseModel):
                 description='Foo: The final response which ends this conversation',
                 parameters_json_schema={
                     'properties': {
-                        'a': {'title': 'A', 'type': 'integer'},
-                        'b': {'title': 'B', 'type': 'string'},
+                        'a': {'type': 'integer'},
+                        'b': {'type': 'string'},
                     },
                     'required': ['a', 'b'],
                     'title': 'Foo',
@@ -509,7 +509,7 @@ class Bar(BaseModel):
                 name='final_result_Bar',
                 description='This is a bar model.',
                 parameters_json_schema={
-                    'properties': {'b': {'title': 'B', 'type': 'string'}},
+                    'properties': {'b': {'type': 'string'}},
                     'required': ['b'],
                     'title': 'Bar',
                     'type': 'object',
