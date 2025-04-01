@@ -8,7 +8,7 @@ from contextlib import ExitStack
 from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from typing_inspection.introspection import get_literal_values
 
@@ -16,7 +16,6 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, PartDeltaEvent, TextPartDelta
 from pydantic_ai.models import KnownModelName
-from pydantic_graph._utils import get_event_loop
 
 try:
     import argcomplete
@@ -69,7 +68,7 @@ Markdown.elements.update(
 )
 
 
-def cli(args_list: Sequence[str] | None = None) -> int:  # noqa: C901  # pragma: no cover
+def cli(args_list: Sequence[str] | None = None) -> int:  # pragma: no cover
     parser = argparse.ArgumentParser(
         prog='pai',
         description=f"""\
@@ -155,14 +154,19 @@ Special prompt:
         return 0
 
     history = Path.home() / '.pai-prompt-history.txt'
-    session = PromptSession(history=FileHistory(str(history)))  # type: ignore
+    session = PromptSession[Any](history=FileHistory(str(history)))
+
+    return asyncio.run(run_chat(session, stream, agent, console, code_theme))
+
+
+async def run_chat(session: PromptSession[Any], stream: bool, agent: Agent, console: Console, code_theme: str) -> int:
     multiline = False
     messages: list[ModelMessage] = []
 
     while True:
         try:
             auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit'])
-            text = cast(str, session.prompt('pai ➤ ', auto_suggest=auto_suggest, multiline=multiline))
+            text = await session.prompt_async('pai ➤ ', auto_suggest=auto_suggest, multiline=multiline)
         except (KeyboardInterrupt, EOFError):
             return 0
 
@@ -171,44 +175,12 @@ Special prompt:
 
         ident_prompt = text.lower().strip(' ').replace(' ', '-').lstrip(' ')
         if ident_prompt.startswith('/'):
-            if ident_prompt == '/markdown':
-                try:
-                    parts = messages[-1].parts
-                except IndexError:
-                    console.print('[dim]No markdown output available.[/dim]')
-                    continue
-                console.print('[dim]Markdown output of last question:[/dim]\n')
-                for part in parts:
-                    if part.part_kind == 'text':
-                        console.print(
-                            Syntax(
-                                part.content,
-                                lexer='markdown',
-                                theme=code_theme,
-                                word_wrap=True,
-                                background_color='default',
-                            )
-                        )
-
-            elif ident_prompt == '/multiline':
-                multiline = not multiline
-                if multiline:
-                    console.print(
-                        'Enabling multiline mode. '
-                        '[dim]Press [Meta+Enter] or [Esc] followed by [Enter] to accept input.[/dim]'
-                    )
-                else:
-                    console.print('Disabling multiline mode.')
-            elif ident_prompt == '/exit':
-                console.print('[dim]Exiting…[/dim]')
-                return 0
-            else:
-                console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
+            result = handle_slash_command(ident_prompt, messages, multiline, console, code_theme)
+            if result is not None:
+                return result
         else:
             try:
-                messages = get_event_loop().run_until_complete(
-                    ask_agent(agent, text, stream, console, code_theme, messages)
-                )
+                messages = await ask_agent(agent, text, stream, console, code_theme, messages)
             except KeyboardInterrupt:
                 console.print('[dim]Interrupted[/dim]')
                 messages = []
@@ -265,6 +237,43 @@ class CustomAutoSuggest(AutoSuggestFromHistory):
             if special.startswith(text):
                 return Suggestion(special[len(text) :])
         return suggestion
+
+
+def handle_slash_command(
+    ident_prompt: str, messages: list[ModelMessage], multiline: bool, console: Console, code_theme: str
+) -> int | None:
+    if ident_prompt == '/markdown':
+        try:
+            parts = messages[-1].parts
+        except IndexError:
+            console.print('[dim]No markdown output available.[/dim]')
+            return 0
+        console.print('[dim]Markdown output of last question:[/dim]\n')
+        for part in parts:
+            if part.part_kind == 'text':
+                console.print(
+                    Syntax(
+                        part.content,
+                        lexer='markdown',
+                        theme=code_theme,
+                        word_wrap=True,
+                        background_color='default',
+                    )
+                )
+
+    elif ident_prompt == '/multiline':
+        multiline = not multiline
+        if multiline:
+            console.print(
+                'Enabling multiline mode. [dim]Press [Meta+Enter] or [Esc] followed by [Enter] to accept input.[/dim]'
+            )
+        else:
+            console.print('Disabling multiline mode.')
+    elif ident_prompt == '/exit':
+        console.print('[dim]Exiting…[/dim]')
+        return 0
+    else:
+        console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
 
 
 def app():  # pragma: no cover
