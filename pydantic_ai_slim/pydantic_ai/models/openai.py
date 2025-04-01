@@ -8,8 +8,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal, Union, cast, overload
 
-from openai import NotGiven
-from openai.types import Reasoning
 from typing_extensions import assert_never
 
 from pydantic_ai.providers import Provider, infer_provider
@@ -44,7 +42,7 @@ from . import (
 )
 
 try:
-    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream, NotGiven
     from openai.types import ChatModel, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -95,8 +93,7 @@ class OpenAIModelSettings(ModelSettings, total=False):
     """
 
     openai_reasoning_effort: ReasoningEffort
-    """
-    Constrains effort on reasoning for [reasoning models](https://platform.openai.com/docs/guides/reasoning).
+    """Constrains effort on reasoning for [reasoning models](https://platform.openai.com/docs/guides/reasoning).
 
     Currently supported values are `low`, `medium`, and `high`. Reducing reasoning effort can
     result in faster responses and fewer tokens used on reasoning in a response.
@@ -119,6 +116,27 @@ class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
     """The provided OpenAI built-in tools to use.
 
     See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
+    """
+
+    openai_reasoning_generate_summary: Literal['detailed', 'concise']
+    """A summary of the reasoning performed by the model.
+
+    This can be useful for debugging and understanding the model's reasoning process.
+    One of `concise` or `detailed`.
+
+    Check the [OpenAI Computer use documentation](https://platform.openai.com/docs/guides/tools-computer-use#1-send-a-request-to-the-model)
+    for more details.
+    """
+
+    openai_truncation: Literal['disabled', 'auto']
+    """The truncation strategy to use for the model response.
+
+    It can be either:
+    - `disabled` (default): If a model response will exceed the context window size for a model, the
+        request will fail with a 400 error.
+    - `auto`: If the context of this response and previous ones exceeds the model's context window size,
+        the model will truncate the response to fit the context window by dropping input items in the
+        middle of the conversation.
     """
 
 
@@ -567,12 +585,7 @@ class OpenAIResponsesModel(Model):
             tool_choice = 'auto'
 
         system_prompt, openai_messages = await self._map_message(messages)
-
-        reasoning_effort = model_settings.get('openai_reasoning_effort', NOT_GIVEN)
-        if not isinstance(reasoning_effort, NotGiven):
-            reasoning = Reasoning(effort=reasoning_effort)
-        else:
-            reasoning = NOT_GIVEN
+        reasoning = self._get_reasoning(model_settings)
 
         try:
             return await self.client.responses.create(
@@ -586,6 +599,7 @@ class OpenAIResponsesModel(Model):
                 stream=stream,
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
+                truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 reasoning=reasoning,
                 user=model_settings.get('user', NOT_GIVEN),
@@ -594,6 +608,14 @@ class OpenAIResponsesModel(Model):
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise
+
+    def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
+        reasoning_effort = model_settings.get('openai_reasoning_effort', None)
+        reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
+
+        if reasoning_effort is None and reasoning_generate_summary is None:
+            return NOT_GIVEN
+        return Reasoning(effort=reasoning_effort, generate_summary=reasoning_generate_summary)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
