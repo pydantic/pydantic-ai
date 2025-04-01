@@ -2,14 +2,12 @@ from __future__ import annotations as _annotations
 
 import base64
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal, Union, cast, overload
 
-from openai import NotGiven
-from openai.types import Reasoning
 from typing_extensions import assert_never
 
 from pydantic_ai.providers import Provider, infer_provider
@@ -44,7 +42,7 @@ from . import (
 )
 
 try:
-    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream, NotGiven
     from openai.types import ChatModel, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -55,6 +53,7 @@ try:
     )
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
+    from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
@@ -63,6 +62,14 @@ except ImportError as _import_error:
         'Please install `openai` to use the OpenAI model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+__all__ = (
+    'OpenAIModel',
+    'OpenAIResponsesModel',
+    'OpenAIModelSettings',
+    'OpenAIResponsesModelSettings',
+    'OpenAIModelName',
+)
 
 OpenAIModelName = Union[str, ChatModel]
 """
@@ -86,8 +93,7 @@ class OpenAIModelSettings(ModelSettings, total=False):
     """
 
     openai_reasoning_effort: ReasoningEffort
-    """
-    Constrains effort on reasoning for [reasoning models](https://platform.openai.com/docs/guides/reasoning).
+    """Constrains effort on reasoning for [reasoning models](https://platform.openai.com/docs/guides/reasoning).
 
     Currently supported values are `low`, `medium`, and `high`. Reducing reasoning effort can
     result in faster responses and fewer tokens used on reasoning in a response.
@@ -97,6 +103,40 @@ class OpenAIModelSettings(ModelSettings, total=False):
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
 
     See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
+    """
+
+
+class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
+    """Settings used for an OpenAI Responses model request.
+
+    ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+    openai_builtin_tools: Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam]
+    """The provided OpenAI built-in tools to use.
+
+    See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
+    """
+
+    openai_reasoning_generate_summary: Literal['detailed', 'concise']
+    """A summary of the reasoning performed by the model.
+
+    This can be useful for debugging and understanding the model's reasoning process.
+    One of `concise` or `detailed`.
+
+    Check the [OpenAI Computer use documentation](https://platform.openai.com/docs/guides/tools-computer-use#1-send-a-request-to-the-model)
+    for more details.
+    """
+
+    openai_truncation: Literal['disabled', 'auto']
+    """The truncation strategy to use for the model response.
+
+    It can be either:
+    - `disabled` (default): If a model response will exceed the context window size for a model, the
+        request will fail with a 400 error.
+    - `auto`: If the context of this response and previous ones exceeds the model's context window size,
+        the model will truncate the response to fit the context window by dropping input items in the
+        middle of the conversation.
     """
 
 
@@ -417,6 +457,8 @@ class OpenAIResponsesModel(Model):
     - [File search](https://platform.openai.com/docs/guides/tools-file-search)
     - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use)
 
+    Use the `openai_builtin_tools` setting to add these tools to your model.
+
     If you are interested in the differences between the Responses API and the Chat Completions API,
     see the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
     """
@@ -462,7 +504,7 @@ class OpenAIResponsesModel(Model):
     ) -> tuple[ModelResponse, usage.Usage]:
         check_allow_model_requests()
         response = await self._responses_create(
-            messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+            messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
         return self._process_response(response), _map_usage(response)
 
@@ -475,7 +517,7 @@ class OpenAIResponsesModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._responses_create(
-            messages, True, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+            messages, True, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
             yield await self._process_streamed_response(response)
@@ -511,7 +553,7 @@ class OpenAIResponsesModel(Model):
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: Literal[False],
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response: ...
 
@@ -520,7 +562,7 @@ class OpenAIResponsesModel(Model):
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: Literal[True],
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[responses.ResponseStreamEvent]: ...
 
@@ -528,10 +570,11 @@ class OpenAIResponsesModel(Model):
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: bool,
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
         tools = self._get_tools(model_request_parameters)
+        tools = list(model_settings.get('openai_builtin_tools', [])) + tools
 
         # standalone function to make it easier to override
         if not tools:
@@ -542,12 +585,7 @@ class OpenAIResponsesModel(Model):
             tool_choice = 'auto'
 
         system_prompt, openai_messages = await self._map_message(messages)
-
-        reasoning_effort = model_settings.get('openai_reasoning_effort', NOT_GIVEN)
-        if not isinstance(reasoning_effort, NotGiven):
-            reasoning = Reasoning(effort=reasoning_effort)
-        else:
-            reasoning = NOT_GIVEN
+        reasoning = self._get_reasoning(model_settings)
 
         try:
             return await self.client.responses.create(
@@ -561,6 +599,7 @@ class OpenAIResponsesModel(Model):
                 stream=stream,
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
+                truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 reasoning=reasoning,
                 user=model_settings.get('user', NOT_GIVEN),
@@ -569,6 +608,14 @@ class OpenAIResponsesModel(Model):
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise
+
+    def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
+        reasoning_effort = model_settings.get('openai_reasoning_effort', None)
+        reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
+
+        if reasoning_effort is None and reasoning_generate_summary is None:
+            return NOT_GIVEN
+        return Reasoning(effort=reasoning_effort, generate_summary=reasoning_generate_summary)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
@@ -848,7 +895,7 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             },
         )
     else:
-        details: dict[str, int] = {}
+        details = {}
         if response_usage.completion_tokens_details is not None:
             details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
         if response_usage.prompt_tokens_details is not None:

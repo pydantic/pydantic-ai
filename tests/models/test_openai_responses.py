@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
 from ..conftest import IsDatetime, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIModelSettings, OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIModelSettings, OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
@@ -116,6 +116,30 @@ async def test_openai_responses_reasoning_effort(allow_model_requests: None, ope
             'Enjoy your homemade Uruguayan alfajores!',
         ]
     )
+
+
+async def test_openai_responses_reasoning_generate_summary(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('computer-use-preview', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        model_settings=OpenAIResponsesModelSettings(
+            openai_reasoning_generate_summary='concise',
+            openai_truncation='auto',
+        ),
+    )
+    result = await agent.run('What should I do to cross the street?')
+    assert result.data == snapshot("""\
+To cross the street safely, follow these steps:
+
+1. **Use a Crosswalk**: Always use a designated crosswalk or pedestrian crossing whenever available.
+2. **Press the Button**: If there is a pedestrian signal button, press it and wait for the signal.
+3. **Look Both Ways**: Look left, right, and left again before stepping off the curb.
+4. **Wait for the Signal**: Cross only when the pedestrian signal indicates it is safe to do so or when there is a clear gap in traffic.
+5. **Stay Alert**: Be mindful of turning vehicles and stay attentive while crossing.
+6. **Walk, Don't Run**: Walk across the street; running can increase the risk of falling or not noticing an oncoming vehicle.
+
+Always follow local traffic rules and be cautious, even when crossing at a crosswalk. Safety is the priority.\
+""")
 
 
 async def test_openai_responses_system_prompt(allow_model_requests: None, openai_api_key: str):
@@ -286,3 +310,39 @@ async def test_openai_responses_model_http_error(allow_model_requests: None, ope
     with pytest.raises(ModelHTTPError):
         async with agent.run_stream('What is the capital of France?'):
             ...
+
+
+async def test_openai_responses_model_builtin_tools(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(openai_builtin_tools=[{'type': 'web_search_preview'}])
+    agent = Agent(model=model, model_settings=settings)
+    result = await agent.run('Give me the best news about LLMs from the last 24 hours. Be short.')
+
+    # NOTE: We don't have the tool call because OpenAI calls the tool internally.
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Give me the best news about LLMs from the last 24 hours. Be short.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+In the past 24 hours, OpenAI announced plans to release its first open-weight language model with reasoning capabilities since GPT-2. This model will allow developers to fine-tune it for specific applications without needing the original training data. To gather feedback and refine the model, OpenAI will host developer events starting in San Francisco and expanding to Europe and Asia-Pacific regions. ([reuters.com](https://www.reuters.com/technology/artificial-intelligence/openai-plans-release-open-weight-language-model-coming-months-2025-03-31/?utm_source=openai))
+
+
+## OpenAI to Release Open-Weight Language Model:
+- [OpenAI plans to release open-weight language model in coming months](https://www.reuters.com/technology/artificial-intelligence/openai-plans-release-open-weight-language-model-coming-months-2025-03-31/?utm_source=openai) \
+"""
+                    )
+                ],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
