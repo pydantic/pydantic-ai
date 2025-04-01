@@ -40,7 +40,7 @@ from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
 from .otel import SpanTree
 from .otel._context_in_memory_span_exporter import context_subtree
-from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate
+from .reporting import EvaluationReport, ReportCase
 
 if sys.version_info < (3, 11):  # pragma: no cover
     from exceptiongroup import ExceptionGroup
@@ -125,14 +125,14 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
     """Name of the case. This is used to identify the case in the report and can be used to filter cases."""
     inputs: InputsT
     """Inputs to the task. This is the input to the task that will be evaluated."""
-    metadata: MetadataT | None
+    metadata: MetadataT | None = None
     """Metadata to be used in the evaluation.
 
     This can be used to provide additional information about the case to the evaluators.
     """
-    expected_output: OutputT | None
+    expected_output: OutputT | None = None
     """Expected output of the task. This is the expected output of the task that will be evaluated."""
-    evaluators: list[Evaluator[InputsT, OutputT, MetadataT]]
+    evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = field(default_factory=list)
     """Evaluators to be used just on this case."""
 
     def __init__(
@@ -290,7 +290,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             # TODO(DavidM): This attribute will be too big in general; remove it once we can use child spans in details panel:
             eval_span.set_attribute('cases', report.cases)
             # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
-            eval_span.set_attribute('averages', ReportCaseAggregate.average(report.cases))
+            eval_span.set_attribute('averages', report.averages())
 
         return report
 
@@ -634,24 +634,21 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         in_type, out_type, meta_type = cls._params()
 
-        class ClsDatasetRow(BaseModel, extra='forbid'):
-            name: str
+        # Note: we shadow the `Case` and `Dataset` class names here to generate a clean JSON schema
+        class Case(BaseModel, extra='forbid'):  # pyright: ignore[reportUnusedClass]  # this _is_ used below, but pyright doesn't seem to notice..
+            name: str | None = None
             inputs: in_type  # pyright: ignore[reportInvalidTypeForm]
-            metadata: meta_type  # pyright: ignore[reportInvalidTypeForm]
+            metadata: meta_type | None = None  # pyright: ignore[reportInvalidTypeForm,reportUnknownVariableType]
             expected_output: out_type | None = None  # pyright: ignore[reportInvalidTypeForm,reportUnknownVariableType]
             if evaluator_schema_types:
                 evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa UP007
 
-        ClsDatasetRow.__name__ = cls.__name__ + 'Row'
-
-        class ClsDataset(BaseModel, extra='forbid'):
-            cases: list[ClsDatasetRow]
+        class Dataset(BaseModel, extra='forbid'):
+            cases: list[Case]
             if evaluator_schema_types:
                 evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa UP007
 
-        ClsDataset.__name__ = cls.__name__
-
-        json_schema = ClsDataset.model_json_schema()
+        json_schema = Dataset.model_json_schema()
         # See `_add_json_schema` below, since `$schema` is added to the JSON, it has to be supported in the JSON
         json_schema['properties']['$schema'] = {'type': 'string'}
         return json_schema

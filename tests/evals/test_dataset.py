@@ -164,16 +164,12 @@ async def test_add_evaluator(
         'cases': [
             {
                 'evaluators': [{'Python': 'ctx.output == 2'}],
-                'expected_output': None,
                 'inputs': {'query': 'What is 1+1?'},
-                'metadata': None,
                 'name': 'My Case 1',
             },
             {
                 'evaluators': [{'Python': 'ctx.output == 4'}],
-                'expected_output': None,
                 'inputs': {'query': 'What is 2+2?'},
-                'metadata': None,
                 'name': 'My Case 2',
             },
         ],
