@@ -158,12 +158,15 @@ class EvaluationReport(BaseModel):
         width: int | None = None,
         baseline: EvaluationReport | None = None,
         include_input: bool = False,
+        include_metadata: bool = False,
+        include_expected_output: bool = False,
         include_output: bool = False,
         include_durations: bool = True,
         include_total_duration: bool = False,
         include_removed_cases: bool = False,
         include_averages: bool = True,
         input_config: RenderValueConfig | None = None,
+        metadata_config: RenderValueConfig | None = None,
         output_config: RenderValueConfig | None = None,
         score_configs: dict[str, RenderNumberConfig] | None = None,
         label_configs: dict[str, RenderValueConfig] | None = None,
@@ -177,12 +180,15 @@ class EvaluationReport(BaseModel):
         table = self.console_table(
             baseline=baseline,
             include_input=include_input,
+            include_metadata=include_metadata,
+            include_expected_output=include_expected_output,
             include_output=include_output,
             include_durations=include_durations,
             include_total_duration=include_total_duration,
             include_removed_cases=include_removed_cases,
             include_averages=include_averages,
             input_config=input_config,
+            metadata_config=metadata_config,
             output_config=output_config,
             score_configs=score_configs,
             label_configs=label_configs,
@@ -195,12 +201,15 @@ class EvaluationReport(BaseModel):
         self,
         baseline: EvaluationReport | None = None,
         include_input: bool = False,
+        include_metadata: bool = False,
+        include_expected_output: bool = False,
         include_output: bool = False,
         include_durations: bool = True,
         include_total_duration: bool = False,
         include_removed_cases: bool = False,
         include_averages: bool = True,
         input_config: RenderValueConfig | None = None,
+        metadata_config: RenderValueConfig | None = None,
         output_config: RenderValueConfig | None = None,
         score_configs: dict[str, RenderNumberConfig] | None = None,
         label_configs: dict[str, RenderValueConfig] | None = None,
@@ -213,12 +222,15 @@ class EvaluationReport(BaseModel):
         """
         renderer = EvaluationRenderer(
             include_input=include_input,
+            include_metadata=include_metadata,
+            include_expected_output=include_expected_output,
             include_output=include_output,
             include_durations=include_durations,
             include_total_duration=include_total_duration,
             include_removed_cases=include_removed_cases,
             include_averages=include_averages,
             input_config={**_DEFAULT_VALUE_CONFIG, **(input_config or {})},
+            metadata_config={**_DEFAULT_VALUE_CONFIG, **(metadata_config or {})},
             output_config=output_config or _DEFAULT_VALUE_CONFIG,
             score_configs=score_configs or {},
             label_configs=label_configs or {},
@@ -496,6 +508,8 @@ T = TypeVar('T')
 @dataclass
 class ReportCaseRenderer:
     include_input: bool
+    include_metadata: bool
+    include_expected_output: bool
     include_output: bool
     include_scores: bool
     include_labels: bool
@@ -505,6 +519,7 @@ class ReportCaseRenderer:
     include_total_duration: bool
 
     input_renderer: _ValueRenderer
+    metadata_renderer: _ValueRenderer
     output_renderer: _ValueRenderer
     score_renderers: dict[str, _NumberRenderer]
     label_renderers: dict[str, _ValueRenderer]
@@ -517,6 +532,10 @@ class ReportCaseRenderer:
         table.add_column('Case ID', style='bold')
         if self.include_input:
             table.add_column('Inputs', overflow='fold')
+        if self.include_metadata:
+            table.add_column('Metadata', overflow='fold')
+        if self.include_expected_output:
+            table.add_column('Expected Output', overflow='fold')
         if self.include_output:
             table.add_column('Outputs', overflow='fold')
         if self.include_scores:
@@ -537,6 +556,12 @@ class ReportCaseRenderer:
 
         if self.include_input:
             row.append(self.input_renderer.render_value(None, case.inputs) or EMPTY_CELL_STR)
+
+        if self.include_metadata:
+            row.append(self.input_renderer.render_value(None, case.metadata) or EMPTY_CELL_STR)
+
+        if self.include_expected_output:
+            row.append(self.input_renderer.render_value(None, case.expected_output) or EMPTY_CELL_STR)
 
         if self.include_output:
             row.append(self.output_renderer.render_value(None, case.output) or EMPTY_CELL_STR)
@@ -563,6 +588,12 @@ class ReportCaseRenderer:
         row = [f'[b i]{aggregate.name}[/]']
 
         if self.include_input:
+            row.append(EMPTY_AGGREGATE_CELL_STR)
+
+        if self.include_metadata:
+            row.append(EMPTY_AGGREGATE_CELL_STR)
+
+        if self.include_expected_output:
             row.append(EMPTY_AGGREGATE_CELL_STR)
 
         if self.include_output:
@@ -597,6 +628,19 @@ class ReportCaseRenderer:
         if self.include_input:
             input_diff = self.input_renderer.render_diff(None, baseline.inputs, new_case.inputs) or EMPTY_CELL_STR
             row.append(input_diff)
+
+        if self.include_metadata:
+            metadata_diff = (
+                self.metadata_renderer.render_diff(None, baseline.metadata, new_case.metadata) or EMPTY_CELL_STR
+            )
+            row.append(metadata_diff)
+
+        if self.include_expected_output:
+            expected_output_diff = (
+                self.output_renderer.render_diff(None, baseline.expected_output, new_case.expected_output)
+                or EMPTY_CELL_STR
+            )
+            row.append(expected_output_diff)
 
         if self.include_output:
             output_diff = self.output_renderer.render_diff(None, baseline.output, new_case.output) or EMPTY_CELL_STR
@@ -640,6 +684,12 @@ class ReportCaseRenderer:
         row = [f'[b i]{baseline.name}[/]']
 
         if self.include_input:
+            row.append(EMPTY_AGGREGATE_CELL_STR)
+
+        if self.include_metadata:
+            row.append(EMPTY_AGGREGATE_CELL_STR)
+
+        if self.include_expected_output:
             row.append(EMPTY_AGGREGATE_CELL_STR)
 
         if self.include_output:
@@ -777,6 +827,8 @@ class EvaluationRenderer:
 
     # Columns to include
     include_input: bool
+    include_metadata: bool
+    include_expected_output: bool
     include_output: bool
     include_durations: bool
     include_total_duration: bool
@@ -786,6 +838,7 @@ class EvaluationRenderer:
     include_averages: bool
 
     input_config: RenderValueConfig
+    metadata_config: RenderValueConfig
     output_config: RenderValueConfig
     score_configs: dict[str, RenderNumberConfig]
     label_configs: dict[str, RenderValueConfig]
@@ -820,6 +873,7 @@ class EvaluationRenderer:
         self, report: EvaluationReport, baseline: EvaluationReport | None = None
     ) -> ReportCaseRenderer:
         input_renderer = _ValueRenderer.from_config(self.input_config)
+        metadata_renderer = _ValueRenderer.from_config(self.metadata_config)
         output_renderer = _ValueRenderer.from_config(self.output_config)
         score_renderers = self._infer_score_renderers(report, baseline)
         label_renderers = self._infer_label_renderers(report, baseline)
@@ -830,6 +884,8 @@ class EvaluationRenderer:
 
         return ReportCaseRenderer(
             include_input=self.include_input,
+            include_metadata=self.include_metadata,
+            include_expected_output=self.include_expected_output,
             include_output=self.include_output,
             include_scores=self.include_scores(report, baseline),
             include_labels=self.include_labels(report, baseline),
@@ -838,6 +894,7 @@ class EvaluationRenderer:
             include_durations=self.include_durations,
             include_total_duration=self.include_total_duration,
             input_renderer=input_renderer,
+            metadata_renderer=metadata_renderer,
             output_renderer=output_renderer,
             score_renderers=score_renderers,
             label_renderers=label_renderers,

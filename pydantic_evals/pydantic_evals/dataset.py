@@ -26,7 +26,7 @@ import logfire_api
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_serializer
 from pydantic._internal import _typing_extra
-from pydantic_core import to_json, to_jsonable_python
+from pydantic_core import to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import NotRequired, Self, TypedDict, TypeVar
 
@@ -907,11 +907,9 @@ async def _run_task_and_evaluators(
             span_id = f'{context.span_id:016x}'
         fallback_duration = time.time() - t0
 
-    report_inputs = to_jsonable_python(case.inputs)
-
     return ReportCase(
         name=report_case_name,
-        inputs=report_inputs,
+        inputs=case.inputs,
         metadata=case.metadata,
         expected_output=case.expected_output,
         output=scoring_context.output,
