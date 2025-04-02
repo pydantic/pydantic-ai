@@ -31,3 +31,44 @@ where:
 - `warmup` will run a minimal Python script to download and cache the Python
   standard library. This is also useful to check the server is running
   correctly.
+
+To use `mcp-run-python` with the Python MCP client over `stdio`, use:
+
+```python
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+code = """
+import numpy
+a = numpy.array([1, 2, 3])
+print(a)
+a
+"""
+server_params = StdioServerParameters(
+    command='npx',
+    args=[
+        'run',
+        '-N',
+        '-R=node_modules',
+        '-W=node_modules',
+        '--node-modules-dir=auto',
+        'jsr:@pydantic/mcp-run-python',
+        'stdio',
+    ],
+)
+
+async def main():
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            tools = await session.list_tools()
+            print(tools)
+            result = await session.call_tool('run_python_code', {'python_code': code})
+            print(result)
+
+if __name__ == '__main__':
+    import asyncio
+    asyncio.run(main())
+```
+
+Usage of `@pydantic/mcp-run-python` with PydanticAI is described in the [client documentation](https://ai.pydantic.dev/mcp/client#mcp-stdio-server).

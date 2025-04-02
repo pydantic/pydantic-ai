@@ -1,3 +1,4 @@
+import './polyfill.ts'
 import http from 'node:http'
 import { parseArgs } from '@std/cli/parse-args'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
@@ -8,7 +9,7 @@ import { z } from 'zod'
 
 import { asXml, runCode } from './runCode.ts'
 
-const VERSION = '0.0.8'
+const VERSION = '0.0.9'
 
 export async function main() {
   const { args } = Deno
@@ -125,7 +126,7 @@ function runSse(port: number) {
       res.statusCode = status
       res.end(`${text}\n`)
     }
-    console.log(`${req.method} ${url}`)
+    // console.log(`${req.method} ${url}`)
 
     if (match('GET', '/sse')) {
       const transport = new SSEServerTransport('/messages', res)

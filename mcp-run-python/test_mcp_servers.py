@@ -1,17 +1,20 @@
 from __future__ import annotations as _annotations
 
+import asyncio
+import subprocess
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 import pytest
+from httpx import AsyncClient, HTTPError
 from inline_snapshot import snapshot
 from mcp import ClientSession, StdioServerParameters, types
+from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 
 if TYPE_CHECKING:
     from mcp import ClientSession
 
-MAIN_TS = 'mcp-run-python/src/main.ts'
 pytestmark = pytest.mark.anyio
 DENO_ARGS = [
     'run',
@@ -19,7 +22,7 @@ DENO_ARGS = [
     '-R=mcp-run-python/node_modules',
     '-W=mcp-run-python/node_modules',
     '--node-modules-dir=auto',
-    MAIN_TS,
+    'mcp-run-python/src/main.ts',
 ]
 
 
@@ -28,8 +31,7 @@ def anyio_backend():
     return 'asyncio'
 
 
-# @pytest.fixture(name='mcp_session', params=['stdio', 'sse'])
-@pytest.fixture(name='mcp_session', params=['stdio'])
+@pytest.fixture(name='mcp_session', params=['stdio', 'sse'])
 async def fixture_mcp_session(request: pytest.FixtureRequest) -> AsyncIterator[ClientSession]:
     if request.param == 'stdio':
         server_params = StdioServerParameters(command='deno', args=[*DENO_ARGS, 'stdio'])
@@ -37,31 +39,28 @@ async def fixture_mcp_session(request: pytest.FixtureRequest) -> AsyncIterator[C
             async with ClientSession(read, write) as session:
                 yield session
     else:
-        raise NotImplementedError('SSE currently not working')
-        # port = 3101
+        port = 3101
 
-        # env = dict(os.environ)
-        # env['PORT'] = str(port)
-        # p = subprocess.Popen(['node', CLI_JS_PATH, 'sse'], env=env)
-        # try:
-        #     url = f'http://localhost:{port}'
-        #     async with AsyncClient() as client:
-        #         for _ in range(5):
-        #             try:
-        #                 await client.get(url, timeout=0.01)
-        #             except HTTPError:
-        #                 await asyncio.sleep(0.1)
-        #             else:
-        #                 break
+        p = subprocess.Popen(['deno', *DENO_ARGS, 'sse', f'--port={port}'])
+        try:
+            url = f'http://localhost:{port}'
+            async with AsyncClient() as client:
+                for _ in range(10):
+                    try:
+                        await client.get(url, timeout=0.01)
+                    except HTTPError:
+                        await asyncio.sleep(0.1)
+                    else:
+                        break
 
-        #     async with sse_client(f'{url}/sse') as (read, write):
-        #         async with ClientSession(read, write) as session:
-        #             yield session
-        # finally:
-        #     p.terminate()
-        #     exit_code = p.wait()
-        #     if exit_code > 0:
-        #         pytest.fail(f'Process exited with code {exit_code}')
+            async with sse_client(f'{url}/sse') as (read, write):
+                async with ClientSession(read, write) as session:
+                    yield session
+        finally:
+            p.terminate()
+            exit_code = p.wait()
+            if exit_code > 0:
+                pytest.fail(f'Process exited with code {exit_code}')
 
 
 async def test_list_tools(mcp_session: ClientSession) -> None:
@@ -95,7 +94,7 @@ x=4
 4
 </return_value>\
 """),
-            id='basic_code',
+            id='basic-code',
         ),
         pytest.param(
             [
@@ -113,7 +112,28 @@ x=4
 ]
 </return_value>\
 """),
-            id='import_numpy',
+            id='import-numpy',
+        ),
+        pytest.param(
+            [
+                '# /// script',
+                '# dependencies = ["pydantic", "email-validator"]',
+                '# ///',
+                'import pydantic',
+                'class Model(pydantic.BaseModel):',
+                '    email: pydantic.EmailStr',
+                "Model(email='hello@pydantic.dev')",
+            ],
+            snapshot("""\
+<status>success</status>
+<dependencies>["pydantic","email-validator"]</dependencies>
+<return_value>
+{
+  "email": "hello@pydantic.dev"
+}
+</return_value>\
+"""),
+            id='magic-comment-import',
         ),
         pytest.param(
             [
@@ -130,7 +150,7 @@ NameError: name 'unknown' is not defined
 
 </error>\
 """),
-            id='undefined_variable',
+            id='undefined-variable',
         ),
     ],
 )

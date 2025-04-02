@@ -1,27 +1,43 @@
 # MCP Run Python
 
-The **MCP Run Python** package is an MCP server that allows agents to execute Python code in a secure, sandboxed environment. It uses [Pyodide](https://pyodide.org/) to run Python code in a JavaScript environment, isolating execution from the host system.
+The **MCP Run Python** package is an MCP server that allows agents to execute Python code in a secure, sandboxed environment. It uses [Pyodide](https://pyodide.org/) to run Python code in a JavaScript environment with [deno](https://deno.com/), isolating execution from the host system.
 
 ## Features
 
-* **Secure Execution**: Run Python code in a sandboxed WebAssembly environment
-* **Package Management**: Automatically detects and installs required dependencies
-* **Complete Results**: Captures standard output, standard error, and return values
-* **Asynchronous Support**: Runs async code properly
-* **Error Handling**: Provides detailed error reports for debugging
+- **Secure Execution**: Run Python code in a sandboxed WebAssembly environment
+- **Package Management**: Automatically detects and installs required dependencies
+- **Complete Results**: Captures standard output, standard error, and return values
+- **Asynchronous Support**: Runs async code properly
+- **Error Handling**: Provides detailed error reports for debugging
 
 ## Installation
 
-The MCP Run Python server is distributed as an [NPM package](https://www.npmjs.com/package/@pydantic/mcp-run-python) and can be run directly using [`npx`](https://docs.npmjs.com/cli/v8/commands/npx):
+The MCP Run Python server is distributed as an [NPM package](https://jsr.io/@pydantic/mcp-run-python) and can be run directly using [`deno run`](https://deno.com/):
 
 ```bash
-npx @pydantic/mcp-run-python [stdio|sse]
+deno run \
+  -N -R=node_modules -W=node_modules \
+  --node-modules-dir=auto \
+  jsr:@pydantic/mcp-run-python \
+  [stdio|sse|warmup]
 ```
 
-Where:
+where:
 
-* `stdio`: Runs the server with [stdin/stdout transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) (for subprocess usage)
-* `sse`: Runs the server with [HTTP Server-Sent Events transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) (for remote connections)
+- `-N -R=node_modules -W=node_modules` (alias of
+  `--allow-net --allow-read=node_modules --allow-write=node_modules`) allows
+  network access and read+write access to `./node_modules`. These are required
+  so pyodide can download and cache the Python standard library and packages
+- `--node-modules-dir=auto` tells deno to use a local `node_modules` directory
+- `stdio` runs the server with the
+  [Stdio MCP transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio)
+  — suitable for running the process as a subprocess locally
+- `sse` runs the server with the
+  [SSE MCP transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse)
+  — running the server as an HTTP server to connect locally or remotely
+- `warmup` will run a minimal Python script to download and cache the Python
+  standard library. This is also useful to check the server is running
+  correctly.
 
 Usage of `@pydantic/mcp-run-python` with PydanticAI is described in the [client](client.md#mcp-stdio-server) documentation.
 
@@ -39,12 +55,21 @@ a = numpy.array([1, 2, 3])
 print(a)
 a
 """
+server_params = StdioServerParameters(
+    command='deno',
+    args=[
+        'run',
+        '-N',
+        '-R=node_modules',
+        '-W=node_modules',
+        '--node-modules-dir=auto',
+        'jsr:@pydantic/mcp-run-python',
+        'stdio',
+    ],
+)
 
 
 async def main():
-    server_params = StdioServerParameters(
-        command='npx', args=['-y', '@pydantic/mcp-run-python', 'stdio']
-    )
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -96,8 +121,11 @@ As introduced in PEP 723, explained [here](https://packaging.python.org/en/lates
 This allows use of dependencies that aren't imported in the code, and is more explicit.
 
 ```py {title="inline_script_metadata.py" py="3.10"}
-from mcp import ClientSession, StdioServerParameters
+from mcp import ClientSession
 from mcp.client.stdio import stdio_client
+
+# using `server_params` from the above example.
+from mcp_run_python import server_params
 
 code = """\
 # /// script
@@ -113,9 +141,6 @@ print(Model(email='hello@pydantic.dev'))
 
 
 async def main():
-    server_params = StdioServerParameters(
-        command='npx', args=['-y', '@pydantic/mcp-run-python', 'stdio']
-    )
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
