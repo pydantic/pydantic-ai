@@ -83,6 +83,8 @@ def _stringify(value: Any) -> str:
     if isinstance(value, str):
         return value
     try:
+        # If the value can be serialized to JSON, use that.
+        # If that behavior is undesirable, the user could manually call repr on the arguments to the judge_* functions
         return to_json(value).decode()
     except Exception:
         return repr(value)
