@@ -1,0 +1,18 @@
+{
+  "name": "@pydantic/mcp-run-python",
+  "version": "0.0.5",
+  "license": "MIT",
+  "nodeModulesDir": "auto",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "tasks": {
+    "lint-format": "deno fmt && deno lint && deno check src"
+  },
+  "imports": {
+    "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@^1.8.0",
+    "express": "npm:express@^4.21.2",
+    "pyodide": "npm:pyodide@^0.27.4",
+    "zod": "npm:zod@^3.24.2"
+  }
+}

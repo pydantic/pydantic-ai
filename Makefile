@@ -37,7 +37,7 @@ lint: ## Lint the code
 
 .PHONY: lint-js
 lint-js: ## Lint JS and TS code
-	cd mcp-run-python && npm run lint
+	cd mcp-run-python && deno task lint-format
 
 .PHONY: typecheck-pyright
 typecheck-pyright:
