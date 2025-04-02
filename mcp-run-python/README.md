@@ -7,10 +7,16 @@ The code is executed using [pyodide](https://pyodide.org) in
 [deno](https://deno.com/) and is therefore isolated from the rest of the
 operating system.
 
-The server can be run with just npx thus:
+The server can be run with [deno](https://deno.com/) installed:
 
 ```bash
-npx @pydantic/mcp-run-python [stdio|sse]
+deno run \
+  --allow-net \
+  --allow-read=node_modules \
+  --allow-write=node_modules \
+  --allow-env=NO_DEPRECATION,TRACE_DEPRECATION \
+  jsr:@pydantic/mcp-run-python \
+  [stdio|sse]
 ```
 
 where:

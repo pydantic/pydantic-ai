@@ -1,10 +1,10 @@
 {
   "name": "@pydantic/mcp-run-python",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "license": "MIT",
   "nodeModulesDir": "auto",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./src/main.ts"
   },
   "tasks": {
     "lint-format": "deno fmt && deno lint && deno check src"

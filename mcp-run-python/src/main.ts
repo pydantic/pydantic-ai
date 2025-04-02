@@ -1,4 +1,4 @@
-import express, { type Request, type Response } from "express";
+import http from "node:http";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -93,34 +93,52 @@ with a comment of the form:
  */
 function runSse() {
   const mcpServer = createServer();
-  const app = express();
   const transports: { [sessionId: string]: SSEServerTransport } = {};
 
-  app.get("/sse", async (_: Request, res: Response) => {
-    const transport = new SSEServerTransport("/messages", res);
-    transports[transport.sessionId] = transport;
-    res.on("close", () => {
-      delete transports[transport.sessionId];
-    });
-    await mcpServer.connect(transport);
-  });
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(
+      req.url ?? "",
+      `http://${req.headers.host ?? "unknown"}`,
+    );
+    console.log({ url, method: req.method });
+    let pathMatch = false;
+    function match(methods: string[], path: string): boolean {
+      if (url.pathname === path) {
+        pathMatch = true;
+        return methods.includes(req.method!);
+      }
+      return false;
+    }
 
-  app.post("/messages", async (req: Request, res: Response) => {
-    const sessionId = req.query.sessionId as string;
-    const transport = transports[sessionId];
-    if (transport) {
-      await transport.handlePostMessage(req, res);
+    if (match(["GET", "POST"], "/sse")) {
+      const transport = new SSEServerTransport("/sse", res);
+      transports[transport.sessionId] = transport;
+      res.on("close", () => {
+        delete transports[transport.sessionId];
+      });
+      await mcpServer.connect(transport);
+    } else if (match(["POST"], "/messages")) {
+      const sessionId = url.searchParams.get("sessionId") ?? "";
+      const transport = transports[sessionId];
+      if (transport) {
+        await transport.handlePostMessage(req, res);
+      } else {
+        res.setHeader("Content-Type", "text/plain");
+        res.statusCode = 400;
+        res.end(`No transport found for sessionId '${sessionId}'`);
+      }
     } else {
-      res.status(400).send(`No transport found for sessionId '${sessionId}'`);
+      res.setHeader("Content-Type", "text/plain");
+      res.statusCode = pathMatch ? 405 : 404;
+      res.end(pathMatch ? "Method not allowed\n" : "Page not found\n");
     }
   });
 
   // const port = Deno.env.PORT ? parseInt(Deno.env.PORT) : 3001;
   const port = 3001;
-  // const host = Deno.env.HOST || "localhost";
-  const host = "localhost";
-  console.log(`Running MCP server with SSE transport on ${host}:${port}`);
-  app.listen(port, host);
+  server.listen(port, () => {
+    console.log(`Running MCP server with SSE transport on port ${port}`);
+  });
 }
 
 /*
