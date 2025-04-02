@@ -23,43 +23,65 @@
 
 ---
 
-PydanticAI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.
+PydanticAI is a Python agent framework designed to make it less painful to build
+production grade applications with Generative AI.
 
-FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic](https://docs.pydantic.dev).
+FastAPI revolutionized web development by offering an innovative and ergonomic
+design, built on the foundation of [Pydantic](https://docs.pydantic.dev).
 
-Similarly, virtually every agent framework and LLM library in Python uses Pydantic, yet when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+Similarly, virtually every agent framework and LLM library in Python uses
+Pydantic, yet when we began to use LLMs in
+[Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that
+gave us the same feeling.
 
-We built PydanticAI with one simple aim: to bring that FastAPI feeling to GenAI app development.
+We built PydanticAI with one simple aim: to bring that FastAPI feeling to GenAI
+app development.
 
 ## Why use PydanticAI
 
-* __Built by the Pydantic Team__
-Built by the team behind [Pydantic](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
+- **Built by the Pydantic Team** Built by the team behind
+  [Pydantic](https://docs.pydantic.dev/latest/) (the validation layer of the
+  OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers,
+  CrewAI, Instructor and many more).
 
-* __Model-agnostic__
-Supports OpenAI, Anthropic, Gemini, Deepseek, Ollama, Groq, Cohere, and Mistral, and there is a simple interface to implement support for [other models](https://ai.pydantic.dev/models/).
+- **Model-agnostic** Supports OpenAI, Anthropic, Gemini, Deepseek, Ollama, Groq,
+  Cohere, and Mistral, and there is a simple interface to implement support for
+  [other models](https://ai.pydantic.dev/models/).
 
-* __Pydantic Logfire Integration__
-Seamlessly [integrates](https://ai.pydantic.dev/logfire/) with [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, performance monitoring, and behavior tracking of your LLM-powered applications.
+- **Pydantic Logfire Integration** Seamlessly
+  [integrates](https://ai.pydantic.dev/logfire/) with
+  [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging,
+  performance monitoring, and behavior tracking of your LLM-powered
+  applications.
 
-* __Type-safe__
-Designed to make [type checking](https://ai.pydantic.dev/agents/#static-type-checking) as powerful and informative as possible for you.
+- **Type-safe** Designed to make
+  [type checking](https://ai.pydantic.dev/agents/#static-type-checking) as
+  powerful and informative as possible for you.
 
-* __Python-centric Design__
-Leverages Python's familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project.
+- **Python-centric Design** Leverages Python's familiar control flow and agent
+  composition to build your AI-driven projects, making it easy to apply standard
+  Python best practices you'd use in any other (non-AI) project.
 
-* __Structured Responses__
-Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](https://ai.pydantic.dev/results/#structured-result-validation) model outputs, ensuring responses are consistent across runs.
+- **Structured Responses** Harnesses the power of
+  [Pydantic](https://docs.pydantic.dev/latest/) to
+  [validate and structure](https://ai.pydantic.dev/results/#structured-result-validation)
+  model outputs, ensuring responses are consistent across runs.
 
-* __Dependency Injection System__
-Offers an optional [dependency injection](https://ai.pydantic.dev/dependencies/) system to provide data and services to your agent's [system prompts](https://ai.pydantic.dev/agents/#system-prompts), [tools](https://ai.pydantic.dev/tools/) and [result validators](https://ai.pydantic.dev/results/#result-validators-functions).
-This is useful for testing and eval-driven iterative development.
+- **Dependency Injection System** Offers an optional
+  [dependency injection](https://ai.pydantic.dev/dependencies/) system to
+  provide data and services to your agent's
+  [system prompts](https://ai.pydantic.dev/agents/#system-prompts),
+  [tools](https://ai.pydantic.dev/tools/) and
+  [result validators](https://ai.pydantic.dev/results/#result-validators-functions).
+  This is useful for testing and eval-driven iterative development.
 
-* __Streamed Responses__
-Provides the ability to [stream](https://ai.pydantic.dev/results/#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate results.
+- **Streamed Responses** Provides the ability to
+  [stream](https://ai.pydantic.dev/results/#streamed-results) LLM outputs
+  continuously, with immediate validation, ensuring rapid and accurate results.
 
-* __Graph Support__
-[Pydantic Graph](https://ai.pydantic.dev/graph) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.
+- **Graph Support** [Pydantic Graph](https://ai.pydantic.dev/graph) provides a
+  powerful way to define graphs using typing hints, this is useful in complex
+  applications where standard control flow can degrade to spaghetti code.
 
 ## Hello World Example
 
@@ -88,13 +110,15 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 _(This example is complete, it can be run "as is")_
 
-Not very interesting yet, but we can easily add "tools", dynamic system prompts, and structured responses to build more powerful agents.
+Not very interesting yet, but we can easily add "tools", dynamic system prompts,
+and structured responses to build more powerful agents.
 
 ## Tools & Dependency Injection Example
 
 Here is a concise example using PydanticAI to build a support agent for a bank:
 
-**(Better documented example [in the docs](https://ai.pydantic.dev/#tools-dependency-injection-example))**
+**(Better documented example
+[in the docs](https://ai.pydantic.dev/#tools-dependency-injection-example))**
 
 ```python
 from dataclasses import dataclass
@@ -186,8 +210,11 @@ async def main():
 
 ## Next Steps
 
-To try PydanticAI yourself, follow the instructions [in the examples](https://ai.pydantic.dev/examples/).
+To try PydanticAI yourself, follow the instructions
+[in the examples](https://ai.pydantic.dev/examples/).
 
-Read the [docs](https://ai.pydantic.dev/agents/) to learn more about building applications with PydanticAI.
+Read the [docs](https://ai.pydantic.dev/agents/) to learn more about building
+applications with PydanticAI.
 
-Read the [API Reference](https://ai.pydantic.dev/api/agent/) to understand PydanticAI's interface.
+Read the [API Reference](https://ai.pydantic.dev/api/agent/) to understand
+PydanticAI's interface.

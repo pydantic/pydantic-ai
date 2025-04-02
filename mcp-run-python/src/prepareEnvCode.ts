@@ -199,4 +199,4 @@ def _find_imports_to_install(imports: list[str]) -> Iterable[str]:
                 yield package_name
             elif '.' not in module:
                 yield module
-`;
+`
