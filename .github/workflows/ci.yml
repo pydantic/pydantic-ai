@@ -245,13 +245,14 @@ jobs:
       - run: uv run --package mcp-run-python pytest mcp-run-python -v
 
       # check warmup works
-      - run: >
-          deno run
-            -N
-            -R=node_modules
-            -W=node_modules
-            --node-modules-dir=auto
-            src/main.ts
+      - name: warmup
+        run: |
+          deno run \
+            -N \
+            -R=node_modules \
+            -W=node_modules \
+            --node-modules-dir=auto \
+            src/main.ts \
             warmup
         working-directory: mcp-run-python
 
