@@ -237,7 +237,7 @@ jobs:
           deno-version: v2.x
 
       - run: |
-          deno run format
+          deno run fmt
           deno run lint
           deno run check
         working-directory: mcp-run-python
