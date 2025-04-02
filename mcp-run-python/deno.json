@@ -19,6 +19,18 @@
     "lineWidth": 120,
     "semiColons": false,
     "singleQuote": true,
-    "include": ["src/"]
+    "include": [
+      "src/"
+    ]
+  },
+  "compilerOptions": {
+    "types": [
+      "node"
+    ],
+    "lib": [
+      "ESNext",
+      "deno.ns",
+      "dom" // console needs this
+    ]
   }
 }

@@ -1,3 +1,5 @@
+/// <reference types="npm:@types/node" />
+
 import './polyfill.ts'
 import http from 'node:http'
 import { parseArgs } from '@std/cli/parse-args'
