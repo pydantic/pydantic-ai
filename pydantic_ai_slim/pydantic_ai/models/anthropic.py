@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import base64
 import io
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
@@ -31,7 +32,13 @@ from ..messages import (
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client, check_allow_model_requests
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    cached_async_http_client,
+    check_allow_model_requests,
+)
 
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
@@ -145,7 +152,10 @@ class AnthropicModel(Model):
     ) -> tuple[ModelResponse, usage.Usage]:
         check_allow_model_requests()
         response = await self._messages_create(
-            messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
+            messages,
+            False,
+            cast(AnthropicModelSettings, model_settings or {}),
+            model_request_parameters,
         )
         return self._process_response(response), _map_usage(response)
 
@@ -158,7 +168,10 @@ class AnthropicModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._messages_create(
-            messages, True, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
+            messages,
+            True,
+            cast(AnthropicModelSettings, model_settings or {}),
+            model_request_parameters,
         )
         async with response:
             yield await self._process_streamed_response(response)
@@ -263,7 +276,9 @@ class AnthropicModel(Model):
         # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
         timestamp = datetime.now(tz=timezone.utc)
         return AnthropicStreamedResponse(
-            _model_name=self._model_name, _response=peekable_response, _timestamp=timestamp
+            _model_name=self._model_name,
+            _response=peekable_response,
+            _timestamp=timestamp,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolParam]:
@@ -288,6 +303,20 @@ class AnthropicModel(Model):
                         async for content in self._map_user_prompt(request_part):
                             user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
+                        if isinstance(request_part.content, BinaryContent) and request_part.content.is_image:
+                            content = [
+                                {
+                                    'type': 'image',
+                                    'source': {
+                                        'type': 'base64',
+                                        'media_type': request_part.content.media_type,
+                                        'data': base64.b64encode(request_part.content.data).decode('utf-8'),
+                                    },
+                                }
+                            ]
+                        else:
+                            content = request_part.model_response_str()
+
                         tool_result_block_param = ToolResultBlockParam(
                             tool_use_id=_guard_tool_call_id(t=request_part),
                             type='tool_result',
@@ -361,7 +390,11 @@ class AnthropicModel(Model):
                         response = await cached_async_http_client().get(item.url)
                         response.raise_for_status()
                         yield DocumentBlockParam(
-                            source=PlainTextSourceParam(data=response.text, media_type=item.media_type, type='text'),
+                            source=PlainTextSourceParam(
+                                data=response.text,
+                                media_type=item.media_type,
+                                type='text',
+                            ),
                             type='document',
                         )
                     else:  # pragma: no cover
