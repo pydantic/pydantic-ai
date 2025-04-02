@@ -237,9 +237,9 @@ jobs:
           deno-version: v2.x
 
       - run: |
-          deno run fmt
-          deno run lint
-          deno run check
+          deno fmt
+          deno lint
+          deno check src
         working-directory: mcp-run-python
 
       - run: uv run --package mcp-run-python pytest mcp-run-python -v
