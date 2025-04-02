@@ -871,11 +871,12 @@ async def _run_task_and_evaluators(
         A ReportCase containing the evaluation results.
     """
     with _logfire.span(
-        '{task_name}: {case_name}',
+        'case: {case_name}',
         task_name=get_unwrapped_function_name(task),
         case_name=case.name,
         inputs=case.inputs,
         metadata=case.metadata,
+        expected_output=case.expected_output,
     ) as case_span:
         t0 = time.time()
         scoring_context = await _run_task(task, case)
