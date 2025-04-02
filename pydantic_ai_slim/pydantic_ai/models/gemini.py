@@ -135,7 +135,8 @@ class GeminiModel(Model):
         async with self._make_request(
             messages, False, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
         ) as http_response:
-            response = _gemini_response_ta.validate_json(await http_response.aread())
+            data = await http_response.aread()
+            response = _gemini_response_ta.validate_json(data)
         return self._process_response(response), _metadata_as_usage(response)
 
     @asynccontextmanager
@@ -640,10 +641,7 @@ class _GeminiFunction(TypedDict):
 
 def _function_from_abstract_tool(tool: ToolDefinition) -> _GeminiFunction:
     json_schema = _GeminiJsonSchema(tool.parameters_json_schema).simplify()
-    f = _GeminiFunction(
-        name=tool.name,
-        description=tool.description,
-    )
+    f = _GeminiFunction(name=tool.name, description=tool.description)
     if json_schema.get('properties'):
         f['parameters'] = json_schema
     return f
@@ -770,6 +768,7 @@ class _GeminiJsonSchema:
     def _simplify(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
         schema.pop('title', None)
         schema.pop('default', None)
+        schema.pop('$schema', None)
         schema.pop('exclusiveMaximum', None)
         schema.pop('exclusiveMinimum', None)
         if ref := schema.pop('$ref', None):
