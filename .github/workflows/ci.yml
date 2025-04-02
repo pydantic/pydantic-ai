@@ -143,6 +143,10 @@ jobs:
         with:
           enable-cache: true
 
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
       - run: mkdir coverage
 
       # run tests with just `pydantic-ai-slim` dependencies
