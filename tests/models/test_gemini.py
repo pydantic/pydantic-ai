@@ -998,3 +998,6 @@ async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_
 
     result = await agent.run('I want to know my chinese zodiac. I am 20 years old.')
     assert result.data == snapshot('Your Chinese zodiac is Dragon.\n')
+
+    result = await agent.run('I want to know my chinese zodiac. I am 17 years old.')
+    assert result.data == snapshot('I am sorry, I cannot fulfill this request. The age needs to be greater than 18.\n')
