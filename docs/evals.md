@@ -82,6 +82,7 @@ class MyEvaluator(Evaluator):
 
 dataset.add_evaluator(MyEvaluator())
 ```
+
 1. You can add built-in evaluators to a dataset using the [`add_evaluator`][pydantic_evals.Dataset.add_evaluator] method.
 2. This custom evaluator returns a simple score based on whether the output matches the expected output.
 
