@@ -30,7 +30,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client
+from pydantic_ai.models import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    cached_async_http_client,
+)
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -267,7 +272,12 @@ class BedrockConverseModel(Model):
             'system': [{'text': system_prompt}],
             'inferenceConfig': inference_config,
             **(
-                {'toolConfig': {'tools': tools, **({'toolChoice': tool_choice} if tool_choice else {})}}
+                {
+                    'toolConfig': {
+                        'tools': tools,
+                        **({'toolChoice': tool_choice} if tool_choice else {}),
+                    }
+                }
                 if tools
                 else {}
             ),
@@ -312,6 +322,39 @@ class BedrockConverseModel(Model):
                         bedrock_messages.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
+                        if isinstance(part.content, BinaryContent):
+                            if part.content.is_image:
+                                content = [
+                                    {
+                                        'image': {
+                                            'format': part.content.format,
+                                            'source': {'bytes': part.content.data},
+                                        }
+                                    }
+                                ]
+                            if part.content.is_audio:
+                                content = [
+                                    {
+                                        'audio': {
+                                            'format': part.content.format,
+                                            'source': {'bytes': part.content.data},
+                                        }
+                                    }
+                                ]
+                            if part.content.is_document:
+                                content = [
+                                    {
+                                        'document': {
+                                            'format': part.content.format,
+                                            'source': {'bytes': part.content.data},
+                                        }
+                                    }
+                                ]
+                        elif isinstance(part.content, dict):
+                            content = [{'json': part.content}]
+                        else:
+                            content = [{'text': part.model_response_str()}]
+
                         bedrock_messages.append(
                             {
                                 'role': 'user',
@@ -319,7 +362,7 @@ class BedrockConverseModel(Model):
                                     {
                                         'toolResult': {
                                             'toolUseId': part.tool_call_id,
-                                            'content': [{'text': part.model_response_str()}],
+                                            'content': content,
                                             'status': 'success',
                                         }
                                     }
@@ -329,7 +372,12 @@ class BedrockConverseModel(Model):
                     elif isinstance(part, RetryPromptPart):
                         # TODO(Marcelo): We need to add a test here.
                         if part.tool_name is None:  # pragma: no cover
-                            bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
+                            bedrock_messages.append(
+                                {
+                                    'role': 'user',
+                                    'content': [{'text': part.model_response()}],
+                                }
+                            )
                         else:
                             assert part.tool_call_id is not None
                             bedrock_messages.append(
@@ -374,11 +422,36 @@ class BedrockConverseModel(Model):
                     if item.is_document:
                         document_count += 1
                         name = f'Document {document_count}'
-                        assert format in ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
-                        content.append({'document': {'name': name, 'format': format, 'source': {'bytes': item.data}}})
+                        assert format in (
+                            'pdf',
+                            'txt',
+                            'csv',
+                            'doc',
+                            'docx',
+                            'xls',
+                            'xlsx',
+                            'html',
+                            'md',
+                        )
+                        content.append(
+                            {
+                                'document': {
+                                    'name': name,
+                                    'format': format,
+                                    'source': {'bytes': item.data},
+                                }
+                            }
+                        )
                     elif item.is_image:
                         assert format in ('jpeg', 'png', 'gif', 'webp')
-                        content.append({'image': {'format': format, 'source': {'bytes': item.data}}})
+                        content.append(
+                            {
+                                'image': {
+                                    'format': format,
+                                    'source': {'bytes': item.data},
+                                }
+                            }
+                        )
                     else:
                         raise NotImplementedError('Binary content is not supported yet.')
                 elif isinstance(item, (ImageUrl, DocumentUrl)):
@@ -386,14 +459,30 @@ class BedrockConverseModel(Model):
                     response.raise_for_status()
                     if item.kind == 'image-url':
                         format = item.media_type.split('/')[1]
-                        assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
-                        image: ImageBlockTypeDef = {'format': format, 'source': {'bytes': response.content}}
+                        assert format in (
+                            'jpeg',
+                            'png',
+                            'gif',
+                            'webp',
+                        ), f'Unsupported image format: {format}'
+                        image: ImageBlockTypeDef = {
+                            'format': format,
+                            'source': {'bytes': response.content},
+                        }
                         content.append({'image': image})
                     elif item.kind == 'document-url':
                         document_count += 1
                         name = f'Document {document_count}'
                         data = response.content
-                        content.append({'document': {'name': name, 'format': item.format, 'source': {'bytes': data}}})
+                        content.append(
+                            {
+                                'document': {
+                                    'name': name,
+                                    'format': item.format,
+                                    'source': {'bytes': data},
+                                }
+                            }
+                        )
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 else:
@@ -403,7 +492,11 @@ class BedrockConverseModel(Model):
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
         return {
-            'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
+            'toolUse': {
+                'toolUseId': _utils.guard_tool_call_id(t=t),
+                'name': t.tool_name,
+                'input': t.args_as_dict(),
+            }
         }
 
 
