@@ -1,11 +1,9 @@
 # MCP Run Python
 
-[Model Context Protocol](https://modelcontextprotocol.io/) server to run Python
-code in a sandbox.
+[Model Context Protocol](https://modelcontextprotocol.io/) server to run Python code in a sandbox.
 
-The code is executed using [pyodide](https://pyodide.org) in
-[deno](https://deno.com/) and is therefore isolated from the rest of the
-operating system.
+The code is executed using [pyodide](https://pyodide.org) in [deno](https://deno.com/) and is therefore
+isolated from the rest of the operating system.
 
 The server can be run with [deno](https://deno.com/) installed using:
 
