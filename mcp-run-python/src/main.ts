@@ -1,4 +1,5 @@
 import http from "node:http";
+import { parseArgs } from "@std/cli/parse-args";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -14,12 +15,25 @@ export async function main() {
   const { args } = Deno;
   if (args.length === 1 && args[0] === "stdio") {
     await runStdio();
-  } else if (args.length === 1 && args[0] === "sse") {
-    runSse();
+  } else if (args.length >= 1 && args[0] === "sse") {
+    const flags = parseArgs(Deno.args, {
+      string: ["port"],
+      default: { port: "3001" },
+    });
+    const port = parseInt(flags.port);
+    runSse(port);
   } else if (args.length === 1 && args[0] === "warmup") {
     await warmup();
   } else {
-    console.error("Usage: npx @pydantic/mcp-run-python [stdio|sse|warmup]");
+    console.error(
+      `\
+Invalid arguments.
+
+Usage: deno run -N -R=node_modules -W=node_modules --node-modules-dir=auto jsr:@pydantic/mcp-run-python [stdio|sse|warmup]
+
+options:
+  --port <port>  Port to run the SSE server on (default: 3001)`,
+    );
     Deno.exit(1);
   }
 }
@@ -55,6 +69,7 @@ with a comment of the form:
 # /// script
 # dependencies = ['pydantic']
 # ///
+print('python code here')
 `;
 
   let setLogLevel: LoggingLevel = "emergency";
@@ -91,7 +106,7 @@ with a comment of the form:
 /*
  * Run the MCP server using the SSE transport, e.g. over HTTP.
  */
-function runSse() {
+function runSse(port: number) {
   const mcpServer = createServer();
   const transports: { [sessionId: string]: SSEServerTransport } = {};
 
@@ -134,8 +149,6 @@ function runSse() {
     }
   });
 
-  // const port = Deno.env.PORT ? parseInt(Deno.env.PORT) : 3001;
-  const port = 3001;
   server.listen(port, () => {
     console.log(`Running MCP server with SSE transport on port ${port}`);
   });

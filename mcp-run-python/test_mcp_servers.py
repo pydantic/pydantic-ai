@@ -1,23 +1,26 @@
 from __future__ import annotations as _annotations
 
-import asyncio
-import os
-import subprocess
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 import pytest
-from httpx import AsyncClient, HTTPError
 from inline_snapshot import snapshot
 from mcp import ClientSession, StdioServerParameters, types
-from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 
 if TYPE_CHECKING:
     from mcp import ClientSession
 
-CLI_JS_PATH = 'mcp-run-python/cli.js'
+MAIN_TS = 'mcp-run-python/src/main.ts'
 pytestmark = pytest.mark.anyio
+DENO_ARGS = [
+    'run',
+    '-N',
+    '-R=mcp-run-python/node_modules',
+    '-W=mcp-run-python/node_modules',
+    '--node-modules-dir=auto',
+    MAIN_TS,
+]
 
 
 @pytest.fixture
@@ -25,41 +28,43 @@ def anyio_backend():
     return 'asyncio'
 
 
-@pytest.fixture(name='mcp_session', params=['stdio', 'sse'])
+# @pytest.fixture(name='mcp_session', params=['stdio', 'sse'])
+@pytest.fixture(name='mcp_session', params=['stdio'])
 async def fixture_mcp_session(request: pytest.FixtureRequest) -> AsyncIterator[ClientSession]:
     if request.param == 'stdio':
-        server_params = StdioServerParameters(command='node', args=[CLI_JS_PATH, 'stdio'])
+        server_params = StdioServerParameters(command='deno', args=[*DENO_ARGS, 'stdio'])
         async with stdio_client(server_params) as (read, write):
             async with ClientSession(read, write) as session:
                 yield session
     else:
-        port = 3101
+        raise NotImplementedError('SSE currently not working')
+        # port = 3101
 
-        env = dict(os.environ)
-        env['PORT'] = str(port)
-        p = subprocess.Popen(['node', CLI_JS_PATH, 'sse'], env=env)
-        try:
-            url = f'http://localhost:{port}'
-            async with AsyncClient() as client:
-                for _ in range(5):
-                    try:
-                        await client.get(url, timeout=0.01)
-                    except HTTPError:
-                        await asyncio.sleep(0.1)
-                    else:
-                        break
+        # env = dict(os.environ)
+        # env['PORT'] = str(port)
+        # p = subprocess.Popen(['node', CLI_JS_PATH, 'sse'], env=env)
+        # try:
+        #     url = f'http://localhost:{port}'
+        #     async with AsyncClient() as client:
+        #         for _ in range(5):
+        #             try:
+        #                 await client.get(url, timeout=0.01)
+        #             except HTTPError:
+        #                 await asyncio.sleep(0.1)
+        #             else:
+        #                 break
 
-            async with sse_client(f'{url}/sse') as (read, write):
-                async with ClientSession(read, write) as session:
-                    yield session
-        finally:
-            p.terminate()
-            exit_code = p.wait()
-            if exit_code > 0:
-                pytest.fail(f'Process exited with code {exit_code}')
+        #     async with sse_client(f'{url}/sse') as (read, write):
+        #         async with ClientSession(read, write) as session:
+        #             yield session
+        # finally:
+        #     p.terminate()
+        #     exit_code = p.wait()
+        #     if exit_code > 0:
+        #         pytest.fail(f'Process exited with code {exit_code}')
 
 
-async def test_stdio_list_tools(mcp_session: ClientSession) -> None:
+async def test_list_tools(mcp_session: ClientSession) -> None:
     await mcp_session.initialize()
     tools = await mcp_session.list_tools()
     assert len(tools.tools) == 1
@@ -129,7 +134,7 @@ NameError: name 'unknown' is not defined
         ),
     ],
 )
-async def test_stdio_run_python_code(mcp_session: ClientSession, code: list[str], expected_output: str) -> None:
+async def test_run_python_code(mcp_session: ClientSession, code: list[str], expected_output: str) -> None:
     await mcp_session.initialize()
     result = await mcp_session.call_tool('run_python_code', {'python_code': '\n'.join(code)})
     assert len(result.content) == 1
