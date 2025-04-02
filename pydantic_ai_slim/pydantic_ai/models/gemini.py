@@ -770,6 +770,8 @@ class _GeminiJsonSchema:
     def _simplify(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
         schema.pop('title', None)
         schema.pop('default', None)
+        schema.pop('exclusiveMaximum', None)
+        schema.pop('exclusiveMinimum', None)
         if ref := schema.pop('$ref', None):
             # noinspection PyTypeChecker
             key = re.sub(r'^#/\$defs/', '', ref)
