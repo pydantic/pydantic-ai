@@ -847,7 +847,6 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         self._instructions_function = func
         return func
 
-
     @overload
     def system_prompt(
         self, func: Callable[[RunContext[AgentDepsT]], str], /
@@ -1358,6 +1357,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             yield
         finally:
             await exit_stack.aclose()
+
 
 @dataclasses.dataclass(repr=False)
 class AgentRun(Generic[AgentDepsT, ResultDataT]):
