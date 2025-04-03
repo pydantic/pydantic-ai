@@ -1,4 +1,4 @@
-/// <reference types="npm:@types/node" />
+/// <reference types="npm:@types/node@22.12.0" />
 
 import './polyfill.ts'
 import http from 'node:http'
