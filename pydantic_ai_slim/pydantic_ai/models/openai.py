@@ -630,7 +630,8 @@ class OpenAIResponsesModel(Model):
             'parameters': f.parameters_json_schema,
             'type': 'function',
             'description': f.description,
-            'strict': True,
+            # TODO(Marcelo): We should make this configurable, and if True, set `additionalProperties` to False.
+            'strict': False,
         }
 
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[responses.ResponseInputItemParam]]:
