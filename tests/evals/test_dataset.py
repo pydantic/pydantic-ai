@@ -13,11 +13,12 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from ..conftest import try_import
+from .utils import render_table
 
 with try_import() as imports_successful:
     from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
-    from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, LlmJudge, Python
+    from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, LLMJudge, Python
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.reporting import ReportCase
 
@@ -164,16 +165,12 @@ async def test_add_evaluator(
         'cases': [
             {
                 'evaluators': [{'Python': 'ctx.output == 2'}],
-                'expected_output': None,
                 'inputs': {'query': 'What is 1+1?'},
-                'metadata': None,
                 'name': 'My Case 1',
             },
             {
                 'evaluators': [{'Python': 'ctx.output == 4'}],
-                'expected_output': None,
                 'inputs': {'query': 'What is 2+2?'},
-                'metadata': None,
                 'name': 'My Case 2',
             },
         ],
@@ -346,40 +343,42 @@ async def test_increment_eval_metric(example_dataset: Dataset[TaskInput, TaskOut
         return TaskOutput(answer=f'answer to {inputs.query}')
 
     report = await example_dataset.evaluate(my_task)
-    assert report.cases == [
-        ReportCase(
-            name='case1',
-            inputs={'query': 'What is 2+2?'},
-            metadata=TaskMetadata(difficulty='easy', category='general'),
-            expected_output=TaskOutput(answer='4', confidence=1.0),
-            output=TaskOutput(answer='answer to What is 2+2?', confidence=1.0),
-            metrics={'chars': 12},
-            attributes={'is_about_france': False},
-            scores={},
-            labels={},
-            assertions={},
-            task_duration=1.0,
-            total_duration=3.0,
-            trace_id='00000000000000000000000000000001',
-            span_id='0000000000000003',
-        ),
-        ReportCase(
-            name='case2',
-            inputs={'query': 'What is the capital of France?'},
-            metadata=TaskMetadata(difficulty='medium', category='geography'),
-            expected_output=TaskOutput(answer='Paris', confidence=1.0),
-            output=TaskOutput(answer='answer to What is the capital of France?', confidence=1.0),
-            metrics={'chars': 30},
-            attributes={'is_about_france': True},
-            scores={},
-            labels={},
-            assertions={},
-            task_duration=1.0,
-            total_duration=3.0,
-            trace_id='00000000000000000000000000000001',
-            span_id='0000000000000007',
-        ),
-    ]
+    assert report.cases == snapshot(
+        [
+            ReportCase(
+                name='case1',
+                inputs=TaskInput(query='What is 2+2?'),
+                metadata=TaskMetadata(difficulty='easy', category='general'),
+                expected_output=TaskOutput(answer='4', confidence=1.0),
+                output=TaskOutput(answer='answer to What is 2+2?', confidence=1.0),
+                metrics={'chars': 12},
+                attributes={'is_about_france': False},
+                scores={},
+                labels={},
+                assertions={},
+                task_duration=1.0,
+                total_duration=3.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000003',
+            ),
+            ReportCase(
+                name='case2',
+                inputs=TaskInput(query='What is the capital of France?'),
+                metadata=TaskMetadata(difficulty='medium', category='geography'),
+                expected_output=TaskOutput(answer='Paris', confidence=1.0),
+                output=TaskOutput(answer='answer to What is the capital of France?', confidence=1.0),
+                metrics={'chars': 30},
+                attributes={'is_about_france': True},
+                scores={},
+                labels={},
+                assertions={},
+                task_duration=1.0,
+                total_duration=3.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000007',
+            ),
+        ]
+    )
 
 
 async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
@@ -397,7 +396,7 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
         [
             ReportCase(
                 name='case1',
-                inputs={'query': 'What is 2+2?'},
+                inputs=TaskInput(query='What is 2+2?'),
                 metadata=TaskMetadata(difficulty='easy', category='general'),
                 expected_output=TaskOutput(answer='4', confidence=1.0),
                 output=TaskOutput(answer='answer to What is 2+2?', confidence=1.0),
@@ -423,7 +422,7 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
             ),
             ReportCase(
                 name='case2',
-                inputs={'query': 'What is the capital of France?'},
+                inputs=TaskInput(query='What is the capital of France?'),
                 metadata=TaskMetadata(difficulty='medium', category='geography'),
                 expected_output=TaskOutput(answer='Paris', confidence=1.0),
                 output=TaskOutput(answer='answer to What is the capital of France?', confidence=1.0),
@@ -471,7 +470,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
         [
             ReportCase(
                 name='case1',
-                inputs={'query': 'What is 2+2?'},
+                inputs=TaskInput(query='What is 2+2?'),
                 metadata=TaskMetadata(difficulty='easy', category='general'),
                 expected_output=TaskOutput(answer='4', confidence=1.0),
                 output=TaskOutput(answer='answer to What is 2+2?', confidence=1.0),
@@ -487,7 +486,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
             ),
             ReportCase(
                 name='case2',
-                inputs={'query': 'What is the capital of France?'},
+                inputs=TaskInput(query='What is the capital of France?'),
                 metadata=TaskMetadata(difficulty='medium', category='geography'),
                 expected_output=TaskOutput(answer='Paris', confidence=1.0),
                 output=TaskOutput(answer='answer to What is the capital of France?', confidence=1.0),
@@ -562,10 +561,10 @@ async def test_from_text():
                 'inputs': {'query': 'What is the capital of Germany?'},
                 'expected_output': {'answer': 'Berlin', 'confidence': 0.9},
                 'metadata': {'difficulty': 'hard', 'category': 'geography'},
-                'evaluators': [{'LlmJudge': 'my rubric'}],
+                'evaluators': [{'LLMJudge': 'my rubric'}],
             },
         ],
-        'evaluators': [{'LlmJudge': 'my rubric'}],
+        'evaluators': [{'LLMJudge': 'my rubric'}],
     }
 
     loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
@@ -583,11 +582,11 @@ async def test_from_text():
                 inputs=TaskInput(query='What is the capital of Germany?'),
                 metadata=TaskMetadata(difficulty='hard', category='geography'),
                 expected_output=TaskOutput(answer='Berlin', confidence=0.9),
-                evaluators=(LlmJudge(rubric='my rubric'),),
+                evaluators=(LLMJudge(rubric='my rubric'),),
             ),
         ]
     )
-    assert loaded_dataset.evaluators == snapshot([LlmJudge(rubric='my rubric')])
+    assert loaded_dataset.evaluators == snapshot([LLMJudge(rubric='my rubric')])
 
 
 async def test_from_text_failure():
@@ -612,10 +611,10 @@ async def test_from_text_failure():
                 '2 error(s) loading evaluators from registry',
                 [
                     ValueError(
-                        "Evaluator 'NotAnEvaluator' is not in the provided registry. Registered choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LlmJudge', 'HasMatchingSpan']"
+                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
                     ),
                     ValueError(
-                        "Evaluator 'NotAnEvaluator' is not in the provided registry. Registered choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LlmJudge', 'HasMatchingSpan']"
+                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
                     ),
                 ],
             )
@@ -629,10 +628,10 @@ async def test_from_text_failure():
                 'inputs': {'query': 'What is the capital of Germany?'},
                 'expected_output': {'answer': 'Berlin', 'confidence': 0.9},
                 'metadata': {'difficulty': 'hard', 'category': 'geography'},
-                'evaluators': ['LlmJudge'],
+                'evaluators': ['LLMJudge'],
             }
         ],
-        'evaluators': ['LlmJudge'],
+        'evaluators': ['LLMJudge'],
     }
     with pytest.raises(ExceptionGroup) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
@@ -643,10 +642,10 @@ async def test_from_text_failure():
                     '2 error(s) loading evaluators from registry',
                     [
                         ValueError(
-                            "Failed to instantiate evaluator 'LlmJudge' for dataset: LlmJudge.__init__() missing 1 required positional argument: 'rubric'"
+                            "Failed to instantiate evaluator 'LLMJudge' for dataset: LLMJudge.__init__() missing 1 required positional argument: 'rubric'"
                         ),
                         ValueError(
-                            "Failed to instantiate evaluator 'LlmJudge' for case 'text_case': LlmJudge.__init__() missing 1 required positional argument: 'rubric'"
+                            "Failed to instantiate evaluator 'LLMJudge' for case 'text_case': LLMJudge.__init__() missing 1 required positional argument: 'rubric'"
                         ),
                     ],
                 )
@@ -659,10 +658,10 @@ async def test_from_text_failure():
                     '2 error(s) loading evaluators from registry',
                     [
                         ValueError(
-                            "Failed to instantiate evaluator 'LlmJudge' for dataset: __init__() missing 1 required positional argument: 'rubric'"
+                            "Failed to instantiate evaluator 'LLMJudge' for dataset: __init__() missing 1 required positional argument: 'rubric'"
                         ),
                         ValueError(
-                            "Failed to instantiate evaluator 'LlmJudge' for case 'text_case': __init__() missing 1 required positional argument: 'rubric'"
+                            "Failed to instantiate evaluator 'LLMJudge' for case 'text_case': __init__() missing 1 required positional argument: 'rubric'"
                         ),
                     ],
                 )
@@ -992,3 +991,47 @@ def test_import_generate_dataset():
     from pydantic_evals.generation import generate_dataset
 
     assert generate_dataset
+
+
+def test_evaluate_non_serializable_inputs():
+    @dataclass
+    class MyInputs:
+        result_type: type[str] | type[int]
+
+    my_dataset = Dataset[MyInputs, Any, Any](
+        cases=[
+            Case(
+                name='str',
+                inputs=MyInputs(result_type=str),
+                expected_output='abc',
+            ),
+            Case(
+                name='int',
+                inputs=MyInputs(result_type=int),
+                expected_output=123,
+            ),
+        ],
+    )
+
+    async def my_task(my_inputs: MyInputs) -> int | str:
+        if issubclass(my_inputs.result_type, str):
+            return my_inputs.result_type('abc')
+        else:
+            return my_inputs.result_type(123)
+
+    report = my_dataset.evaluate_sync(task=my_task)
+    assert [c.inputs for c in report.cases] == snapshot([MyInputs(result_type=str), MyInputs(result_type=int)])
+
+    table = report.console_table(include_input=True)
+    assert render_table(table) == snapshot("""\
+                                        Evaluation Summary: my_task
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID  ┃ Inputs                                                                             ┃ Duration ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ str      │ test_evaluate_non_serializable_inputs.<locals>.MyInputs(result_type=<class 'str'>) │     1.0s │
+├──────────┼────────────────────────────────────────────────────────────────────────────────────┼──────────┤
+│ int      │ test_evaluate_non_serializable_inputs.<locals>.MyInputs(result_type=<class 'int'>) │     1.0s │
+├──────────┼────────────────────────────────────────────────────────────────────────────────────┼──────────┤
+│ Averages │                                                                                    │     1.0s │
+└──────────┴────────────────────────────────────────────────────────────────────────────────────┴──────────┘
+""")

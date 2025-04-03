@@ -106,6 +106,7 @@ KnownModelName = TypeAliasType(
         'google-gla:gemini-2.0-flash',
         'google-gla:gemini-2.0-flash-lite-preview-02-05',
         'google-gla:gemini-2.0-pro-exp-02-05',
+        'google-gla:gemini-2.5-pro-exp-03-25',
         'google-vertex:gemini-1.0-pro',
         'google-vertex:gemini-1.5-flash',
         'google-vertex:gemini-1.5-flash-8b',
@@ -116,6 +117,7 @@ KnownModelName = TypeAliasType(
         'google-vertex:gemini-2.0-flash',
         'google-vertex:gemini-2.0-flash-lite-preview-02-05',
         'google-vertex:gemini-2.0-pro-exp-02-05',
+        'google-vertex:gemini-2.5-pro-exp-03-25',
         'gpt-3.5-turbo',
         'gpt-3.5-turbo-0125',
         'gpt-3.5-turbo-0301',
@@ -150,17 +152,28 @@ KnownModelName = TypeAliasType(
         'gpt-4o-mini-search-preview-2025-03-11',
         'gpt-4o-search-preview',
         'gpt-4o-search-preview-2025-03-11',
+        'groq:distil-whisper-large-v3-en',
         'groq:gemma2-9b-it',
-        'groq:llama-3.1-8b-instant',
-        'groq:llama-3.2-11b-vision-preview',
-        'groq:llama-3.2-1b-preview',
-        'groq:llama-3.2-3b-preview',
-        'groq:llama-3.2-90b-vision-preview',
-        'groq:llama-3.3-70b-specdec',
         'groq:llama-3.3-70b-versatile',
+        'groq:llama-3.1-8b-instant',
+        'groq:llama-guard-3-8b',
         'groq:llama3-70b-8192',
         'groq:llama3-8b-8192',
-        'groq:mixtral-8x7b-32768',
+        'groq:whisper-large-v3',
+        'groq:whisper-large-v3-turbo',
+        'groq:playai-tts',
+        'groq:playai-tts-arabic',
+        'groq:qwen-qwq-32b',
+        'groq:mistral-saba-24b',
+        'groq:qwen-2.5-coder-32b',
+        'groq:qwen-2.5-32b',
+        'groq:deepseek-r1-distill-qwen-32b',
+        'groq:deepseek-r1-distill-llama-70b',
+        'groq:llama-3.3-70b-specdec',
+        'groq:llama-3.2-1b-preview',
+        'groq:llama-3.2-3b-preview',
+        'groq:llama-3.2-11b-vision-preview',
+        'groq:llama-3.2-90b-vision-preview',
         'mistral:codestral-latest',
         'mistral:mistral-large-latest',
         'mistral:mistral-moderation-latest',
@@ -375,7 +388,7 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-def infer_model(model: Model | KnownModelName) -> Model:
+def infer_model(model: Model | KnownModelName | str) -> Model:
     """Infer the model from the name."""
     if isinstance(model, Model):
         return model

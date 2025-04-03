@@ -1,18 +1,27 @@
 {
   "$defs": {
-    "ClsDatasetRow": {
+    "Case": {
       "additionalProperties": false,
       "properties": {
         "name": {
-          "title": "Name",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
         },
         "inputs": {
           "$ref": "#/$defs/TimeRangeInputs"
         },
         "metadata": {
+          "default": null,
           "title": "Metadata",
-          "type": "object"
+          "type": "null"
         },
         "expected_output": {
           "anyOf": [
@@ -34,15 +43,6 @@
           "items": {
             "anyOf": [
               {
-                "$ref": "#/$defs/short_evaluator_LlmJudge"
-              },
-              {
-                "$ref": "#/$defs/evaluator_LlmJudge"
-              },
-              {
-                "$ref": "#/$defs/short_evaluator_IsInstance"
-              },
-              {
                 "$ref": "#/$defs/short_evaluator_Equals"
               },
               {
@@ -56,10 +56,19 @@
                 "$ref": "#/$defs/evaluator_Contains"
               },
               {
+                "$ref": "#/$defs/short_evaluator_IsInstance"
+              },
+              {
                 "$ref": "#/$defs/short_evaluator_MaxDuration"
               },
               {
-                "$ref": "#/$defs/short_evaluator_SpanQuery"
+                "$ref": "#/$defs/short_evaluator_LLMJudge"
+              },
+              {
+                "$ref": "#/$defs/evaluator_LLMJudge"
+              },
+              {
+                "$ref": "#/$defs/short_evaluator_HasMatchingSpan"
               }
             ]
           },
@@ -68,11 +77,9 @@
         }
       },
       "required": [
-        "name",
-        "inputs",
-        "metadata"
+        "inputs"
       ],
-      "title": "TimeRangeDatasetRow",
+      "title": "Case",
       "type": "object"
     },
     "KnownModelName": {
@@ -197,17 +204,28 @@
         "gpt-4o-mini-search-preview-2025-03-11",
         "gpt-4o-search-preview",
         "gpt-4o-search-preview-2025-03-11",
+        "groq:distil-whisper-large-v3-en",
         "groq:gemma2-9b-it",
-        "groq:llama-3.1-8b-instant",
-        "groq:llama-3.2-11b-vision-preview",
-        "groq:llama-3.2-1b-preview",
-        "groq:llama-3.2-3b-preview",
-        "groq:llama-3.2-90b-vision-preview",
-        "groq:llama-3.3-70b-specdec",
         "groq:llama-3.3-70b-versatile",
+        "groq:llama-3.1-8b-instant",
+        "groq:llama-guard-3-8b",
         "groq:llama3-70b-8192",
         "groq:llama3-8b-8192",
-        "groq:mixtral-8x7b-32768",
+        "groq:whisper-large-v3",
+        "groq:whisper-large-v3-turbo",
+        "groq:playai-tts",
+        "groq:playai-tts-arabic",
+        "groq:qwen-qwq-32b",
+        "groq:mistral-saba-24b",
+        "groq:qwen-2.5-coder-32b",
+        "groq:qwen-2.5-32b",
+        "groq:deepseek-r1-distill-qwen-32b",
+        "groq:deepseek-r1-distill-llama-70b",
+        "groq:llama-3.3-70b-specdec",
+        "groq:llama-3.2-1b-preview",
+        "groq:llama-3.2-3b-preview",
+        "groq:llama-3.2-11b-vision-preview",
+        "groq:llama-3.2-90b-vision-preview",
         "mistral:codestral-latest",
         "mistral:mistral-large-latest",
         "mistral:mistral-moderation-latest",
@@ -268,7 +286,7 @@
       "type": "string"
     },
     "SpanQuery": {
-      "description": "A serializable query for filtering SpanNodes based on various conditions.\n\nAll fields are optional and combined with AND logic by default.\n\nDue to the presence of `__calL__`, a `SpanQuery` can be used as a predicate in `SpanTree.find_first`, etc.",
+      "description": "A serializable query for filtering SpanNodes based on various conditions.\n\nAll fields are optional and combined with AND logic by default.",
       "properties": {
         "name_equals": {
           "title": "Name Equals",
@@ -334,6 +352,14 @@
           "title": "Or",
           "type": "array"
         },
+        "min_child_count": {
+          "title": "Min Child Count",
+          "type": "integer"
+        },
+        "max_child_count": {
+          "title": "Max Child Count",
+          "type": "integer"
+        },
         "some_child_has": {
           "$ref": "#/$defs/SpanQuery"
         },
@@ -343,12 +369,15 @@
         "no_child_has": {
           "$ref": "#/$defs/SpanQuery"
         },
-        "min_child_count": {
-          "title": "Min Child Count",
+        "stop_recursing_when": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "min_descendant_count": {
+          "title": "Min Descendant Count",
           "type": "integer"
         },
-        "max_child_count": {
-          "title": "Max Child Count",
+        "max_descendant_count": {
+          "title": "Max Descendant Count",
           "type": "integer"
         },
         "some_descendant_has": {
@@ -358,6 +387,23 @@
           "$ref": "#/$defs/SpanQuery"
         },
         "no_descendant_has": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "min_depth": {
+          "title": "Min Depth",
+          "type": "integer"
+        },
+        "max_depth": {
+          "title": "Max Depth",
+          "type": "integer"
+        },
+        "some_ancestor_has": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "all_ancestors_have": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "no_ancestor_has": {
           "$ref": "#/$defs/SpanQuery"
         }
       },
@@ -447,17 +493,17 @@
       "title": "evaluator_Contains",
       "type": "object"
     },
-    "evaluator_LlmJudge": {
+    "evaluator_LLMJudge": {
       "additionalProperties": false,
       "properties": {
-        "LlmJudge": {
-          "$ref": "#/$defs/evaluator_params_LlmJudge"
+        "LLMJudge": {
+          "$ref": "#/$defs/evaluator_params_LLMJudge"
         }
       },
       "required": [
-        "LlmJudge"
+        "LLMJudge"
       ],
-      "title": "evaluator_LlmJudge",
+      "title": "evaluator_LLMJudge",
       "type": "object"
     },
     "evaluator_params_Contains": {
@@ -481,7 +527,7 @@
       "title": "evaluator_params_Contains",
       "type": "object"
     },
-    "evaluator_params_LlmJudge": {
+    "evaluator_params_LLMJudge": {
       "additionalProperties": false,
       "properties": {
         "rubric": {
@@ -489,7 +535,8 @@
           "type": "string"
         },
         "model": {
-          "$ref": "#/$defs/KnownModelName"
+          "$ref": "#/$defs/KnownModelName",
+          "title": "Model"
         },
         "include_input": {
           "title": "Include Input",
@@ -499,7 +546,7 @@
       "required": [
         "rubric"
       ],
-      "title": "evaluator_params_LlmJudge",
+      "title": "evaluator_params_LLMJudge",
       "type": "object"
     },
     "short_evaluator_Contains": {
@@ -528,6 +575,19 @@
       "title": "short_evaluator_Equals",
       "type": "object"
     },
+    "short_evaluator_HasMatchingSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "HasMatchingSpan": {
+          "$ref": "#/$defs/SpanQuery"
+        }
+      },
+      "required": [
+        "HasMatchingSpan"
+      ],
+      "title": "short_evaluator_HasMatchingSpan",
+      "type": "object"
+    },
     "short_evaluator_IsInstance": {
       "additionalProperties": false,
       "properties": {
@@ -542,18 +602,18 @@
       "title": "short_evaluator_IsInstance",
       "type": "object"
     },
-    "short_evaluator_LlmJudge": {
+    "short_evaluator_LLMJudge": {
       "additionalProperties": false,
       "properties": {
-        "LlmJudge": {
+        "LLMJudge": {
           "title": "Llmjudge",
           "type": "string"
         }
       },
       "required": [
-        "LlmJudge"
+        "LLMJudge"
       ],
-      "title": "short_evaluator_LlmJudge",
+      "title": "short_evaluator_LLMJudge",
       "type": "object"
     },
     "short_evaluator_MaxDuration": {
@@ -577,26 +637,13 @@
       ],
       "title": "short_evaluator_MaxDuration",
       "type": "object"
-    },
-    "short_evaluator_SpanQuery": {
-      "additionalProperties": false,
-      "properties": {
-        "SpanQuery": {
-          "$ref": "#/$defs/SpanQuery"
-        }
-      },
-      "required": [
-        "SpanQuery"
-      ],
-      "title": "short_evaluator_SpanQuery",
-      "type": "object"
     }
   },
   "additionalProperties": false,
   "properties": {
     "cases": {
       "items": {
-        "$ref": "#/$defs/ClsDatasetRow"
+        "$ref": "#/$defs/Case"
       },
       "title": "Cases",
       "type": "array"
@@ -605,15 +652,6 @@
       "default": [],
       "items": {
         "anyOf": [
-          {
-            "$ref": "#/$defs/short_evaluator_LlmJudge"
-          },
-          {
-            "$ref": "#/$defs/evaluator_LlmJudge"
-          },
-          {
-            "$ref": "#/$defs/short_evaluator_IsInstance"
-          },
           {
             "$ref": "#/$defs/short_evaluator_Equals"
           },
@@ -628,20 +666,32 @@
             "$ref": "#/$defs/evaluator_Contains"
           },
           {
+            "$ref": "#/$defs/short_evaluator_IsInstance"
+          },
+          {
             "$ref": "#/$defs/short_evaluator_MaxDuration"
           },
           {
-            "$ref": "#/$defs/short_evaluator_SpanQuery"
+            "$ref": "#/$defs/short_evaluator_LLMJudge"
+          },
+          {
+            "$ref": "#/$defs/evaluator_LLMJudge"
+          },
+          {
+            "$ref": "#/$defs/short_evaluator_HasMatchingSpan"
           }
         ]
       },
       "title": "Evaluators",
       "type": "array"
+    },
+    "$schema": {
+      "type": "string"
     }
   },
   "required": [
     "cases"
   ],
-  "title": "TimeRangeDataset",
+  "title": "Dataset",
   "type": "object"
 }

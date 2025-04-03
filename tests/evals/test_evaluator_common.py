@@ -21,7 +21,7 @@ with try_import() as imports_successful:
         EqualsExpected,
         HasMatchingSpan,
         IsInstance,
-        LlmJudge,
+        LLMJudge,
         MaxDuration,
         Python,
     )
@@ -189,7 +189,7 @@ async def test_max_duration():
 
 @pytest.mark.anyio
 async def test_llm_judge_evaluator(mocker: MockerFixture):
-    """Test LlmJudge evaluator."""
+    """Test LLMJudge evaluator."""
     # Create a mock GradingOutput
     mock_grading_output = mocker.MagicMock()
     mock_grading_output.pass_ = True
@@ -216,16 +216,16 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     )
 
     # Test without input
-    evaluator = LlmJudge(rubric='Content contains a greeting')
+    evaluator = LLMJudge(rubric='Content contains a greeting')
     result = await evaluator.evaluate(ctx)
     assert isinstance(result, EvaluationReason)
     assert result.value is True
     assert result.reason == 'Test passed'
 
-    mock_judge_output.assert_called_once_with('Hello world', 'Content contains a greeting', 'openai:gpt-4o')
+    mock_judge_output.assert_called_once_with('Hello world', 'Content contains a greeting', None)
 
     # Test with input
-    evaluator = LlmJudge(rubric='Output contains input', include_input=True)
+    evaluator = LLMJudge(rubric='Output contains input', include_input=True, model='openai:gpt-4o')
     result = await evaluator.evaluate(ctx)
     assert isinstance(result, EvaluationReason)
     assert result.value is True

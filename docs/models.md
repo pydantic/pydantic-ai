@@ -128,6 +128,51 @@ agent = Agent(model)
 ...
 ```
 
+### OpenAI Responses API
+
+PydanticAI also supports OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) through the [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] class.
+
+```python {title="openai_responses_model.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+model = OpenAIResponsesModel('gpt-4o')
+agent = Agent(model)
+...
+```
+
+The Responses API has built-in tools that you can use instead of building your own:
+
+- [Web search](https://platform.openai.com/docs/guides/tools-web-search): allow models to search the web for the latest information before generating a response.
+- [File search](https://platform.openai.com/docs/guides/tools-file-search): allow models to search your files for relevant information before generating a response.
+- [Computer use](https://platform.openai.com/docs/guides/tools-computer-use): allow models to use a computer to perform tasks on your behalf.
+
+You can use the [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]
+class to make use of those built-in tools:
+
+```python {title="openai_responses_model_settings.py"}
+from openai.types.responses import WebSearchToolParam  # (1)!
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model_settings = OpenAIResponsesModelSettings(
+    openai_builtin_tools=[WebSearchToolParam(type='web_search_preview')],
+)
+model = OpenAIResponsesModel('gpt-4o')
+agent = Agent(model=model, model_settings=model_settings)
+
+result = agent.run_sync('What is the weather in Tokyo?')
+print(result.data)
+"""
+As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).
+"""
+```
+
+1. The file search tool and computer use tool can also be imported from `openai.types.responses`.
+
+You can learn more about the differences between the Responses API and Chat Completions API in the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
+
 ## Anthropic
 
 ### Install

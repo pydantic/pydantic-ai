@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
@@ -8,6 +9,10 @@ from unittest.mock import patch
 import httpx
 import pytest
 from inline_snapshot import snapshot
+from pytest_mock import MockerFixture
+
+from pydantic_ai.agent import Agent
+from pydantic_ai.models.gemini import GeminiModel
 
 from ..conftest import try_import
 
@@ -136,3 +141,31 @@ def save_service_account(service_account_path: Path, project_id: str) -> None:
     service_account = prepare_service_account_contents(project_id)
 
     service_account_path.write_text(json.dumps(service_account, indent=2))
+
+
+@pytest.fixture(autouse=True)
+def vertex_provider_auth(mocker: MockerFixture) -> None:
+    # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
+    if not os.getenv('CI'):
+        return  # pragma: no cover
+
+    @dataclass
+    class NoOpCredentials:
+        token = 'my-token'
+
+        def refresh(self, request: Request): ...
+
+    return_value = (NoOpCredentials(), 'pydantic-ai')
+    mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
+
+
+@pytest.mark.skipif(
+    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+)
+@pytest.mark.vcr()
+async def test_vertexai_provider(allow_model_requests: None):
+    m = GeminiModel('gemini-2.0-flash', provider='google-vertex')
+    agent = Agent(m)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.data == snapshot('The capital of France is **Paris**.\n')

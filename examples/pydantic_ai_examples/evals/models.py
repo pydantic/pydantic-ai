@@ -1,10 +1,6 @@
 from __future__ import annotations as _annotations
 
-from typing import Any
-
 from pydantic import AwareDatetime, BaseModel
-from pydantic_evals.dataset import Dataset
-from pydantic_evals.evaluators.common import IsInstance, LlmJudge
 from typing_extensions import TypedDict
 
 
@@ -59,25 +55,3 @@ class TimeRangeInputs(TypedDict):
 
     prompt: str
     now: AwareDatetime
-
-
-# TODO(DavidM): Drop the MetadataT type parameter and use the default below once pydantic 2.11 is in use
-class TimeRangeDataset(Dataset[TimeRangeInputs, TimeRangeResponse, dict[str, Any]]):
-    """A dataset of examples for the time range inference agent."""
-
-    pass
-
-
-if __name__ == '__main__':
-
-    def main():
-        """Usage example."""
-        from pathlib import Path
-
-        path = Path(__file__).parent / 'test_cases.yaml'
-        if not path.exists():
-            TimeRangeDataset(cases=[], evaluators=[LlmJudge(rubric='abc')]).to_file(
-                path, custom_evaluator_types=[LlmJudge, IsInstance]
-            )
-
-    main()

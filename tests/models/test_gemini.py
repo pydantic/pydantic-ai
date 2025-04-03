@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
+from typing import Annotated
 
 import httpx
 import pytest
@@ -984,3 +985,19 @@ async def test_document_url_input(allow_model_requests: None, gemini_api_key: st
 
     result = await agent.run(['What is the main content on this document?', document_url])
     assert result.data == snapshot('The main content of this document is that it is a **dummy PDF file**.')
+
+
+@pytest.mark.vcr()
+async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_chinese_zodiac(age: Annotated[int, Field(gt=18)]) -> str:
+        return 'Dragon'
+
+    result = await agent.run('I want to know my chinese zodiac. I am 20 years old.')
+    assert result.data == snapshot('Your Chinese zodiac is Dragon.\n')
+
+    result = await agent.run('I want to know my chinese zodiac. I am 17 years old.')
+    assert result.data == snapshot('I am sorry, I cannot fulfill this request. The age needs to be greater than 18.\n')

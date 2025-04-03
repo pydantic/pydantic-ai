@@ -26,7 +26,7 @@ import logfire_api
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_serializer
 from pydantic._internal import _typing_extra
-from pydantic_core import to_json, to_jsonable_python
+from pydantic_core import to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import NotRequired, Self, TypedDict, TypeVar
 
@@ -40,7 +40,7 @@ from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
 from .otel import SpanTree
 from .otel._context_in_memory_span_exporter import context_subtree
-from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate
+from .reporting import EvaluationReport, ReportCase
 
 if sys.version_info < (3, 11):  # pragma: no cover
     from exceptiongroup import ExceptionGroup
@@ -125,14 +125,14 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
     """Name of the case. This is used to identify the case in the report and can be used to filter cases."""
     inputs: InputsT
     """Inputs to the task. This is the input to the task that will be evaluated."""
-    metadata: MetadataT | None
+    metadata: MetadataT | None = None
     """Metadata to be used in the evaluation.
 
     This can be used to provide additional information about the case to the evaluators.
     """
-    expected_output: OutputT | None
+    expected_output: OutputT | None = None
     """Expected output of the task. This is the expected output of the task that will be evaluated."""
-    evaluators: list[Evaluator[InputsT, OutputT, MetadataT]]
+    evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = field(default_factory=list)
     """Evaluators to be used just on this case."""
 
     def __init__(
@@ -290,7 +290,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             # TODO(DavidM): This attribute will be too big in general; remove it once we can use child spans in details panel:
             eval_span.set_attribute('cases', report.cases)
             # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
-            eval_span.set_attribute('averages', ReportCaseAggregate.average(report.cases))
+            eval_span.set_attribute('averages', report.averages())
 
         return report
 
@@ -388,9 +388,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 return args
         else:  # pragma: no cover
             warnings.warn(
-                f'Could not determine the generic parameters for {cls}; using `Any` for each. '
-                f'You should explicitly set the generic parameters via `Dataset[MyInputs, MyOutput, MyMetadata]`'
-                f'when serializing or deserializing.',
+                f'Could not determine the generic parameters for {cls}; using `Any` for each.'
+                f' You should explicitly set the generic parameters via `Dataset[MyInputs, MyOutput, MyMetadata]`'
+                f' when serializing or deserializing.',
                 UserWarning,
             )
             return Any, Any, Any  # type: ignore
@@ -634,24 +634,21 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         in_type, out_type, meta_type = cls._params()
 
-        class ClsDatasetRow(BaseModel, extra='forbid'):
-            name: str
+        # Note: we shadow the `Case` and `Dataset` class names here to generate a clean JSON schema
+        class Case(BaseModel, extra='forbid'):  # pyright: ignore[reportUnusedClass]  # this _is_ used below, but pyright doesn't seem to notice..
+            name: str | None = None
             inputs: in_type  # pyright: ignore[reportInvalidTypeForm]
-            metadata: meta_type  # pyright: ignore[reportInvalidTypeForm]
+            metadata: meta_type | None = None  # pyright: ignore[reportInvalidTypeForm,reportUnknownVariableType]
             expected_output: out_type | None = None  # pyright: ignore[reportInvalidTypeForm,reportUnknownVariableType]
             if evaluator_schema_types:
                 evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa UP007
 
-        ClsDatasetRow.__name__ = cls.__name__ + 'Row'
-
-        class ClsDataset(BaseModel, extra='forbid'):
-            cases: list[ClsDatasetRow]
+        class Dataset(BaseModel, extra='forbid'):
+            cases: list[Case]
             if evaluator_schema_types:
                 evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa UP007
 
-        ClsDataset.__name__ = cls.__name__
-
-        json_schema = ClsDataset.model_json_schema()
+        json_schema = Dataset.model_json_schema()
         # See `_add_json_schema` below, since `$schema` is added to the JSON, it has to be supported in the JSON
         json_schema['properties']['$schema'] = {'type': 'string'}
         return json_schema
@@ -874,11 +871,12 @@ async def _run_task_and_evaluators(
         A ReportCase containing the evaluation results.
     """
     with _logfire.span(
-        '{task_name}: {case_name}',
+        'case: {case_name}',
         task_name=get_unwrapped_function_name(task),
         case_name=case.name,
         inputs=case.inputs,
         metadata=case.metadata,
+        expected_output=case.expected_output,
     ) as case_span:
         t0 = time.time()
         scoring_context = await _run_task(task, case)
@@ -910,11 +908,9 @@ async def _run_task_and_evaluators(
             span_id = f'{context.span_id:016x}'
         fallback_duration = time.time() - t0
 
-    report_inputs = to_jsonable_python(case.inputs)
-
     return ReportCase(
         name=report_case_name,
-        inputs=report_inputs,
+        inputs=case.inputs,
         metadata=case.metadata,
         expected_output=case.expected_output,
         output=scoring_context.output,
@@ -1073,7 +1069,8 @@ def _load_evaluator_from_registry(
     evaluator_class = registry.get(spec.name)
     if evaluator_class is None:
         raise ValueError(
-            f'Evaluator {spec.name!r} is not in the provided registry. Registered choices: {list(registry.keys())}'
+            f'Evaluator {spec.name!r} is not in the provided `custom_evaluator_types`. Valid choices: {list(registry.keys())}.'
+            f' If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument.'
         )
     try:
         return evaluator_class(*spec.args, **spec.kwargs)
