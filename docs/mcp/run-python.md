@@ -18,7 +18,7 @@ The **MCP Run Python** package is an MCP server that allows agents to execute Py
 
 The MCP Run Python server is distributed as a [JSR package](https://jsr.io/@pydantic/mcp-run-python) and can be run directly using [`deno run`](https://deno.com/):
 
-```bash
+```bash {title="terminal"}
 deno run \
   -N -R=node_modules -W=node_modules --node-modules-dir=auto \
   jsr:@pydantic/mcp-run-python [stdio|sse|warmup]
