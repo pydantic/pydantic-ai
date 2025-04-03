@@ -416,7 +416,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # No events are emitted during the handling of text responses, so we don't need to yield anything
                     self._next_node = await self._handle_text_response(ctx, texts)
                 else:
-                    raise exceptions.UnexpectedModelBehavior('Received empty model response')
+                    raise exceptions.UnexpectedModelBehavior(f'Received empty model response: {self.model_response}')
 
             self._events_iterator = _run_stream()
 
