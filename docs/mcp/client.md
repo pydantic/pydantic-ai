@@ -12,7 +12,7 @@ pip/uv-add "pydantic-ai-slim[mcp]"
 ```
 
 !!! note
-MCP integration requires Python 3.10 or higher.
+    MCP integration requires Python 3.10 or higher.
 
 ## Usage
 
@@ -36,7 +36,9 @@ The name "HTTP" is used since this implemented will be adapted in future to use 
 Before creating the SSE client, we need to run the server (docs [here](run-python.md)):
 
 ```bash {title="terminal (run sse server)"}
-npx @pydantic/mcp-run-python sse
+deno run \
+  -N -R=node_modules -W=node_modules --node-modules-dir=auto \
+  jsr:@pydantic/mcp-run-python sse
 ```
 
 ```python {title="mcp_sse_client.py" py="3.10"}
@@ -93,7 +95,8 @@ When using [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] servers, the [`age
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
-server = MCPServerStdio('deno',
+server = MCPServerStdio(  # (1)!
+    'deno',
     args=[
         'run',
         '-N',
@@ -102,7 +105,8 @@ server = MCPServerStdio('deno',
         '--node-modules-dir=auto',
         'jsr:@pydantic/mcp-run-python',
         'stdio',
-    ])
+    ]
+)
 agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
 
@@ -112,3 +116,5 @@ async def main():
     print(result.data)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
+
+1. See [MCP Run Python](run-python.md) for more information.

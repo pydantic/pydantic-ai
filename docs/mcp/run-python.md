@@ -1,6 +1,6 @@
 # MCP Run Python
 
-The **MCP Run Python** package is an MCP server that allows agents to execute Python code in a secure, sandboxed environment. It uses [Pyodide](https://pyodide.org/) to run Python code in a JavaScript environment with [deno](https://deno.com/), isolating execution from the host system.
+The **MCP Run Python** package is an MCP server that allows agents to execute Python code in a secure, sandboxed environment. It uses [Pyodide](https://pyodide.org/) to run Python code in a JavaScript environment with [Deno](https://deno.com/), isolating execution from the host system.
 
 ## Features
 
@@ -12,14 +12,16 @@ The **MCP Run Python** package is an MCP server that allows agents to execute Py
 
 ## Installation
 
-The MCP Run Python server is distributed as an [NPM package](https://jsr.io/@pydantic/mcp-run-python) and can be run directly using [`deno run`](https://deno.com/):
+!!! warning "Switch from npx to deno"
+    We previously distributed `mcp-run-python` as an `npm` package to use via `npx`.
+    We now recommend using `deno` instead as it provides better sandboxing and security.
+
+The MCP Run Python server is distributed as a [JSR package](https://jsr.io/@pydantic/mcp-run-python) and can be run directly using [`deno run`](https://deno.com/):
 
 ```bash
 deno run \
-  -N -R=node_modules -W=node_modules \
-  --node-modules-dir=auto \
-  jsr:@pydantic/mcp-run-python \
-  [stdio|sse|warmup]
+  -N -R=node_modules -W=node_modules --node-modules-dir=auto \
+  jsr:@pydantic/mcp-run-python [stdio|sse|warmup]
 ```
 
 where:
@@ -27,7 +29,7 @@ where:
 - `-N -R=node_modules -W=node_modules` (alias of
   `--allow-net --allow-read=node_modules --allow-write=node_modules`) allows
   network access and read+write access to `./node_modules`. These are required
-  so pyodide can download and cache the Python standard library and packages
+  so Pyodide can download and cache the Python standard library and packages
 - `--node-modules-dir=auto` tells deno to use a local `node_modules` directory
 - `stdio` runs the server with the
   [Stdio MCP transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio)
@@ -39,7 +41,7 @@ where:
   standard library. This is also useful to check the server is running
   correctly.
 
-Usage of `@pydantic/mcp-run-python` with PydanticAI is described in the [client](client.md#mcp-stdio-server) documentation.
+Usage of `jsr:@pydantic/mcp-run-python` with PydanticAI is described in the [client](client.md#mcp-stdio-server) documentation.
 
 ## Direct Usage
 

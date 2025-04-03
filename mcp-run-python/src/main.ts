@@ -11,7 +11,7 @@ import { z } from 'zod'
 
 import { asXml, runCode } from './runCode.ts'
 
-const VERSION = '0.0.10'
+const VERSION = '0.0.11'
 
 export async function main() {
   const { args } = Deno

@@ -2,17 +2,17 @@
 
 [Model Context Protocol](https://modelcontextprotocol.io/) server to run Python code in a sandbox.
 
-The code is executed using [pyodide](https://pyodide.org) in [deno](https://deno.com/) and is therefore
+The code is executed using [Pyodide](https://pyodide.org) in [Deno](https://deno.com/) and is therefore
 isolated from the rest of the operating system.
 
-The server can be run with [deno](https://deno.com/) installed using:
+**See <https://ai.pydantic.dev/mcp/run-python/> for complete documentation.**
+
+The server can be run with `deno` installed using:
 
 ```bash
 deno run \
-  -N -R=node_modules -W=node_modules \
-  --node-modules-dir=auto \
-  jsr:@pydantic/mcp-run-python \
-  [stdio|sse|warmup]
+  -N -R=node_modules -W=node_modules --node-modules-dir=auto \
+  jsr:@pydantic/mcp-run-python [stdio|sse|warmup]
 ```
 
 where:
@@ -32,20 +32,19 @@ where:
   standard library. This is also useful to check the server is running
   correctly.
 
-To use `mcp-run-python` with the Python MCP client over `stdio`, use:
+Here's an example of using `@pydantic/mcp-run-python` with PydanticAI:
 
 ```python
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
 
-code = """
-import numpy
-a = numpy.array([1, 2, 3])
-print(a)
-a
-"""
-server_params = StdioServerParameters(
-    command='npx',
+import logfire
+
+logfire.configure()
+logfire.instrument_mcp()
+logfire.instrument_pydantic_ai()
+
+server = MCPServerStdio('deno',
     args=[
         'run',
         '-N',
@@ -54,21 +53,17 @@ server_params = StdioServerParameters(
         '--node-modules-dir=auto',
         'jsr:@pydantic/mcp-run-python',
         'stdio',
-    ],
-)
+    ])
+agent = Agent('claude-3-5-haiku-latest', mcp_servers=[server])
+
 
 async def main():
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            tools = await session.list_tools()
-            print(tools)
-            result = await session.call_tool('run_python_code', {'python_code': code})
-            print(result)
+    async with agent.run_mcp_servers():
+        result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
+    print(result.data)
+    #> There are 9,208 days between January 1, 2000, and March 18, 2025.w
 
 if __name__ == '__main__':
     import asyncio
     asyncio.run(main())
 ```
-
-Usage of `@pydantic/mcp-run-python` with PydanticAI is described in the [client documentation](https://ai.pydantic.dev/mcp/client#mcp-stdio-server).
