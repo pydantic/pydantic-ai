@@ -8,8 +8,12 @@
 .pre-commit: ## Check that pre-commit is installed
 	@pre-commit -V || echo 'Please install pre-commit: https://pre-commit.com/'
 
+.PHONY: .deno
+.deno: ## Check that deno is installed
+	@deno --version > /dev/null 2>&1 || (printf "\033[0;31m✖ Error: deno is not installed, but is needed for mcp-run-python\033[0m\n    Please install deno: https://docs.deno.com/runtime/getting_started/installation/\n" && exit 1)
+
 .PHONY: install
-install: .uv .pre-commit ## Install the package, dependencies, and pre-commit for local development
+install: .uv .pre-commit .deno ## Install the package, dependencies, and pre-commit for local development
 	uv sync --frozen --all-extras --all-packages --group lint --group docs
 	pre-commit install --install-hooks
 
