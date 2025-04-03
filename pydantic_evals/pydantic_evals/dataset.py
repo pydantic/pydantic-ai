@@ -1069,8 +1069,8 @@ def _load_evaluator_from_registry(
     evaluator_class = registry.get(spec.name)
     if evaluator_class is None:
         raise ValueError(
-            f'Evaluator {spec.name!r} is not in the provided registry. Registered choices: {list(registry.keys())}.'
-            f'If you are using a custom evaluator, ensure its type is included in the `custom_evaluator_types` argument.'
+            f'Evaluator {spec.name!r} is not in the provided `custom_evaluator_types`. Valid choices: {list(registry.keys())}.'
+            f' If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument.'
         )
     try:
         return evaluator_class(*spec.args, **spec.kwargs)
