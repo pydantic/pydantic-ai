@@ -155,10 +155,14 @@ class MaxDuration(Evaluator[object, object, object]):
 
 @dataclass
 class LLMJudge(Evaluator[object, object, object]):
-    """Judge whether the output of a language model meets the criteria of a provided rubric."""
+    """Judge whether the output of a language model meets the criteria of a provided rubric.
+
+    If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-4o', but can be
+    overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
+    """
 
     rubric: str
-    model: models.Model | models.KnownModelName = 'openai:gpt-4o'
+    model: models.Model | models.KnownModelName | None = None
     include_input: bool = False
 
     async def evaluate(
@@ -174,6 +178,17 @@ class LLMJudge(Evaluator[object, object, object]):
 
             grading_output = await judge_output(ctx.output, self.rubric, self.model)
         return EvaluationReason(value=grading_output.pass_, reason=grading_output.reason)
+
+    def build_serialization_arguments(self):
+        result = super().build_serialization_arguments()
+        # always serialize the model as a string when present; use its name if it's a KnownModelName
+        if (model := result.get('model')) and isinstance(model, models.Model):
+            result['model'] = f'{model.system}:{model.model_name}'
+
+        # Note: this may lead to confusion if you try to serialize-then-deserialize with a custom model.
+        # I expect that is rare enough to be worth not solving yet, but common enough that we probably will want to
+        # solve it eventually. I'm imagining some kind of model registry, but don't want to work out the details yet.
+        return result
 
 
 @dataclass
