@@ -36,7 +36,9 @@ The name "HTTP" is used since this implemented will be adapted in future to use 
 Before creating the SSE client, we need to run the server (docs [here](run-python.md)):
 
 ```bash {title="terminal (run sse server)"}
-npx @pydantic/mcp-run-python sse
+deno run \
+  -N -R=node_modules -W=node_modules --node-modules-dir=auto \
+  jsr:@pydantic/mcp-run-python sse
 ```
 
 ```python {title="mcp_sse_client.py" py="3.10"}
@@ -62,12 +64,12 @@ _(This example is complete, it can be run "as is" with Python 3.10+ — you'll n
 
 **What's happening here?**
 
-* The model is receiving the prompt "how many days between 2000-01-01 and 2025-03-18?"
-* The model decides "Oh, I've got this `run_python_code` tool, that will be a good way to answer this question", and writes some python code to calculate the answer.
-* The model returns a tool call
-* PydanticAI sends the tool call to the MCP server using the SSE transport
-* The model is called again with the return value of running the code
-* The model returns the final answer
+- The model is receiving the prompt "how many days between 2000-01-01 and 2025-03-18?"
+- The model decides "Oh, I've got this `run_python_code` tool, that will be a good way to answer this question", and writes some python code to calculate the answer.
+- The model returns a tool call
+- PydanticAI sends the tool call to the MCP server using the SSE transport
+- The model is called again with the return value of running the code
+- The model returns the final answer
 
 You can visualise this clearly, and even see the code that's run by adding three lines of code to instrument the example with [logfire](https://logfire.pydantic.dev/docs):
 
@@ -87,14 +89,24 @@ Will display as follows:
 The other transport offered by MCP is the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. In this case, you'd use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class.
 
 !!! note
-    When using [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] servers, the [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers] context manager is responsible for starting and stopping the server.
-
+When using [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] servers, the [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers] context manager is responsible for starting and stopping the server.
 
 ```python {title="mcp_stdio_client.py" py="3.10"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
-server = MCPServerStdio('npx', ['-y', '@pydantic/mcp-run-python', 'stdio'])
+server = MCPServerStdio(  # (1)!
+    'deno',
+    args=[
+        'run',
+        '-N',
+        '-R=node_modules',
+        '-W=node_modules',
+        '--node-modules-dir=auto',
+        'jsr:@pydantic/mcp-run-python',
+        'stdio',
+    ]
+)
 agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
 
@@ -104,3 +116,5 @@ async def main():
     print(result.data)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
+
+1. See [MCP Run Python](run-python.md) for more information.
