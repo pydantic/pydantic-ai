@@ -22,6 +22,7 @@ from ..messages import (
     AudioUrl,
     BinaryContent,
     DocumentUrl,
+    FileUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -325,6 +326,9 @@ class GeminiModel(Model):
                         inline_data={'data': base64.b64encode(response.content).decode('utf-8'), 'mime_type': mime_type}
                     )
                     content.append(inline_data)
+                elif isinstance(item, FileUrl):
+                    file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
+                    content.append(file_data)
                 else:
                     assert_never(item)
         return content
@@ -535,7 +539,7 @@ class _GeminiFileData(TypedDict):
     """See <https://ai.google.dev/api/caching#FileData>."""
 
     file_uri: Annotated[str, pydantic.Field(alias='fileUri')]
-    mime_type: Annotated[str, pydantic.Field(alias='mimeType')]
+    mime_type: Annotated[str | None, pydantic.Field(alias='mimeType')]
 
 
 class _GeminiFileDataPart(TypedDict):
