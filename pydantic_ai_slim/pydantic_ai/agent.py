@@ -131,7 +131,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     _result_schema: _result.ResultSchema[ResultDataT] | None = dataclasses.field(repr=False)
     _result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]] = dataclasses.field(repr=False)
     _instructions: str | None = dataclasses.field(repr=False)
-    _instructions_function: _system_prompt.SystemPromptFunc[AgentDepsT] | None = dataclasses.field(repr=False)
+    _instructions_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
@@ -224,8 +224,13 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         )
         self._result_validators = []
 
+        if instructions is not None and len(system_prompt) > 0:
+            raise exceptions.UserError('Cannot provide both `instructions` and `system_prompt`.')
+
+        self._instructions_functions = (
+            [_system_prompt.SystemPromptRunner(instructions)] if callable(instructions) else []
+        )
         self._instructions = instructions if isinstance(instructions, str) else None
-        self._instructions_function = instructions if callable(instructions) else None
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -488,6 +493,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
+            instructions=self._instructions,
+            instructions_functions=self._instructions_functions,
             system_prompts=self._system_prompts,
             system_prompt_functions=self._system_prompt_functions,
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
@@ -816,9 +823,12 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
     def instructions(
         self,
-        func: _system_prompt.SystemPromptFunc[AgentDepsT],
+        func: _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
         /,
-    ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
+    ) -> (
+        Callable[[_system_prompt.SystemPromptFunc[AgentDepsT]], _system_prompt.SystemPromptFunc[AgentDepsT]]
+        | _system_prompt.SystemPromptFunc[AgentDepsT]
+    ):
         """Decorator to register an instructions function.
 
         Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
@@ -844,8 +854,21 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             return f'{ctx.deps} is the best'
         ```
         """
-        self._instructions_function = func
-        return func
+        if self._system_prompts or self._system_prompt_functions or self._system_prompt_dynamic_functions:
+            raise exceptions.UserError('Cannot set `instructions` after `system_prompt` have been set.')
+
+        if func is None:
+
+            def decorator(
+                func_: _system_prompt.SystemPromptFunc[AgentDepsT],
+            ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
+                self._instructions_functions.append(_system_prompt.SystemPromptRunner(func_))
+                return func_
+
+            return decorator
+        else:
+            self._instructions_functions.append(_system_prompt.SystemPromptRunner(func))
+            return func
 
     @overload
     def system_prompt(
@@ -909,6 +932,9 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             return f'{ctx.deps} is the best'
         ```
         """
+        if self._instructions or self._instructions_functions:
+            raise exceptions.UserError('Cannot set `system_prompt` after `instructions` have been set.')
+
         if func is None:
 
             def decorator(

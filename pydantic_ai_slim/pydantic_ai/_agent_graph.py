@@ -126,6 +126,9 @@ def is_agent_node(
 class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     user_prompt: str | Sequence[_messages.UserContent]
 
+    instructions: str | None
+    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]]
+
     system_prompts: tuple[str, ...]
     system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]]
     system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]]
@@ -166,16 +169,22 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 messages = ctx_messages.messages
                 ctx_messages.used = True
 
-        if message_history:
-            # Shallow copy messages
-            messages.extend(message_history)
-            # Reevaluate any dynamic system prompt parts
-            await self._reevaluate_dynamic_prompts(messages, run_context)
-            return messages, _messages.ModelRequest([_messages.UserPromptPart(user_prompt)])
+        if self.instructions or self.instructions_functions:
+            instructions = await self._instructions(run_context)
+            if message_history:
+                messages.extend(message_history)
+            return messages, _messages.ModelRequest([_messages.UserPromptPart(user_prompt)], instructions=instructions)
         else:
-            parts = await self._sys_parts(run_context)
-            parts.append(_messages.UserPromptPart(user_prompt))
-            return messages, _messages.ModelRequest(parts)
+            if message_history:
+                # Shallow copy messages
+                messages.extend(message_history)
+                # Reevaluate any dynamic system prompt parts
+                await self._reevaluate_dynamic_prompts(messages, run_context)
+                return messages, _messages.ModelRequest([_messages.UserPromptPart(user_prompt)])
+            else:
+                parts = await self._sys_parts(run_context)
+                parts.append(_messages.UserPromptPart(user_prompt))
+                return messages, _messages.ModelRequest(parts)
 
     async def _reevaluate_dynamic_prompts(
         self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
@@ -204,6 +213,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             else:
                 messages.append(_messages.SystemPromptPart(prompt))
         return messages
+
+    async def _instructions(self, run_context: RunContext[DepsT]) -> str:
+        instructions = self.instructions or ''
+        for instructions_runner in self.instructions_functions:
+            instructions += await instructions_runner.run(run_context)
+        return instructions
 
 
 async def _prepare_request_parameters(

@@ -637,9 +637,14 @@ class OpenAIResponsesModel(Model):
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
         system_prompt: str = ''
+        instructions: str = ''
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
             if isinstance(message, ModelRequest):
+                # TODO(Marcelo): The logic here overwrites the instructions. If the last agent doesn't have instructions,
+                # it will inherit from the previous agent. Shall we actually not do it like this?
+                if message.instructions:
+                    instructions = message.instructions
                 for part in message.parts:
                     if isinstance(part, SystemPromptPart):
                         system_prompt += part.content
@@ -679,6 +684,9 @@ class OpenAIResponsesModel(Model):
                         assert_never(item)
             else:
                 assert_never(message)
+
+        if instructions:
+            return instructions, openai_messages
         return system_prompt, openai_messages
 
     @staticmethod
