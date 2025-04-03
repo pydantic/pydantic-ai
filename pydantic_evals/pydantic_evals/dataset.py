@@ -388,9 +388,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 return args
         else:  # pragma: no cover
             warnings.warn(
-                f'Could not determine the generic parameters for {cls}; using `Any` for each. '
-                f'You should explicitly set the generic parameters via `Dataset[MyInputs, MyOutput, MyMetadata]`'
-                f'when serializing or deserializing.',
+                f'Could not determine the generic parameters for {cls}; using `Any` for each.'
+                f' You should explicitly set the generic parameters via `Dataset[MyInputs, MyOutput, MyMetadata]`'
+                f' when serializing or deserializing.',
                 UserWarning,
             )
             return Any, Any, Any  # type: ignore
@@ -1069,7 +1069,8 @@ def _load_evaluator_from_registry(
     evaluator_class = registry.get(spec.name)
     if evaluator_class is None:
         raise ValueError(
-            f'Evaluator {spec.name!r} is not in the provided registry. Registered choices: {list(registry.keys())}'
+            f'Evaluator {spec.name!r} is not in the provided registry. Registered choices: {list(registry.keys())}.'
+            f'If you are using a custom evaluator, ensure its type is included in the `custom_evaluator_types` argument.'
         )
     try:
         return evaluator_class(*spec.args, **spec.kwargs)
