@@ -29,6 +29,7 @@ class SystemPromptPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp of the prompt."""
 
+    # TODO(Marcelo): I'm trying to remove this field in this PR.
     dynamic_ref: str | None = None
     """The ref of the dynamic system prompt function that generated this part.
 
@@ -376,6 +377,9 @@ class ModelRequest:
 
     parts: list[ModelRequestPart]
     """The parts of the user message."""
+
+    instructions: str | None = None
+    """The instructions for the model."""
 
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""

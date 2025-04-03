@@ -130,6 +130,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     _result_tool_description: str | None = dataclasses.field(repr=False)
     _result_schema: _result.ResultSchema[ResultDataT] | None = dataclasses.field(repr=False)
     _result_validators: list[_result.ResultValidator[AgentDepsT, ResultDataT]] = dataclasses.field(repr=False)
+    _instructions: str | None = dataclasses.field(repr=False)
+    _instructions_function: _system_prompt.SystemPromptFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
@@ -147,6 +149,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         result_type: type[ResultDataT] = str,
+        instructions: str | _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -167,6 +170,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             model: The default model to use for this agent, if not provide,
                 you must provide the model when calling it. We allow str here since the actual list of allowed models changes frequently.
             result_type: The type of the result data, used to validate the result data, defaults to `str`.
+            instructions: Instructions to use for this agent, you can also register instructions via a function with
+                [`instructions`][pydantic_ai.Agent.instructions].
             system_prompt: Static system prompts to use for this agent, you can also register system
                 prompts via a function with [`system_prompt`][pydantic_ai.Agent.system_prompt].
             deps_type: The type used for dependency injection, this parameter exists solely to allow you to fully
@@ -218,6 +223,9 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             result_type, result_tool_name, result_tool_description
         )
         self._result_validators = []
+
+        self._instructions = instructions if isinstance(instructions, str) else None
+        self._instructions_function = instructions if callable(instructions) else None
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -791,6 +799,56 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 self._override_model = override_model_before
 
     @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], str], /
+    ) -> Callable[[RunContext[AgentDepsT]], str]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]: ...
+
+    @overload
+    def instructions(self, func: Callable[[], str], /) -> Callable[[], str]: ...
+
+    @overload
+    def instructions(self, func: Callable[[], Awaitable[str]], /) -> Callable[[], Awaitable[str]]: ...
+
+    def instructions(
+        self,
+        func: _system_prompt.SystemPromptFunc[AgentDepsT],
+        /,
+    ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
+        """Decorator to register an instructions function.
+
+        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
+        Can decorate a sync or async functions.
+
+        The decorator can be used bare (`agent.instructions`).
+
+        Overloads for every possible signature of `instructions` are included so the decorator doesn't obscure
+        the type of the function.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent, RunContext
+
+        agent = Agent('test', deps_type=str)
+
+        @agent.instructions
+        def simple_instructions() -> str:
+            return 'foobar'
+
+        @agent.instructions
+        async def async_instructions(ctx: RunContext[str]) -> str:
+            return f'{ctx.deps} is the best'
+        ```
+        """
+        self._instructions_function = func
+        return func
+
+
+    @overload
     def system_prompt(
         self, func: Callable[[RunContext[AgentDepsT]], str], /
     ) -> Callable[[RunContext[AgentDepsT]], str]: ...
@@ -1300,7 +1358,6 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             yield
         finally:
             await exit_stack.aclose()
-
 
 @dataclasses.dataclass(repr=False)
 class AgentRun(Generic[AgentDepsT, ResultDataT]):
