@@ -5,11 +5,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Literal, Union, cast
+from typing import Annotated, Any, Literal, Union, cast
 
 import httpx
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel, Discriminator, Field
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
@@ -47,7 +48,12 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_message_tool_call import Function
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
-    from pydantic_ai.models.openai import OpenAIModel, OpenAIModelSettings, OpenAISystemPromptRole
+    from pydantic_ai.models.openai import (
+        OpenAIModel,
+        OpenAIModelSettings,
+        OpenAISystemPromptRole,
+        _MakeSchemaStrict,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.openai import OpenAIProvider
 
     # note: we use Union here so that casting works with Python 3.9
@@ -822,3 +828,72 @@ async def test_strict_mode_settings(allow_model_requests: None):
     assert 'strict' not in explicit_not_strict['function']
     assert inherit_strict['function']['strict'] is True
     assert inherit_strict['function']['parameters']['additionalProperties'] is False
+
+
+def test_strict_schema():
+    class Apple(BaseModel):
+        kind: Literal['apple'] = 'apple'
+
+    class Banana(BaseModel):
+        kind: Literal['banana'] = 'banana'
+
+    class MyModel(BaseModel):
+        # We have all these different crazy fields to achieve coverage
+        my_recursive: MyModel | None = None
+        my_patterns: dict[Annotated[str, Field(pattern='^my-pattern$')], str]
+        my_tuple: tuple[int]
+        my_list: list[float]
+        my_discriminated_union: Annotated[Apple | Banana, Discriminator('kind')]
+
+    assert _MakeSchemaStrict().handle_schema(MyModel.model_json_schema()) == snapshot(
+        {
+            '$defs': {
+                'Apple': {
+                    'additionalProperties': False,
+                    'properties': {'kind': {'const': 'apple', 'default': 'apple', 'title': 'Kind', 'type': 'string'}},
+                    'required': ['kind'],
+                    'title': 'Apple',
+                    'type': 'object',
+                },
+                'Banana': {
+                    'additionalProperties': False,
+                    'properties': {'kind': {'const': 'banana', 'default': 'banana', 'title': 'Kind', 'type': 'string'}},
+                    'required': ['kind'],
+                    'title': 'Banana',
+                    'type': 'object',
+                },
+                'MyModel': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'my_discriminated_union': {
+                            'discriminator': {
+                                'mapping': {'apple': '#/$defs/Apple', 'banana': '#/$defs/Banana'},
+                                'propertyName': 'kind',
+                            },
+                            'oneOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}],
+                            'title': 'My Discriminated Union',
+                        },
+                        'my_list': {'items': {'type': 'number'}, 'title': 'My List', 'type': 'array'},
+                        'my_patterns': {
+                            'additionalProperties': False,
+                            'patternProperties': {'^my-pattern$': {'type': 'string'}},
+                            'title': 'My Patterns',
+                            'type': 'object',
+                        },
+                        'my_recursive': {'anyOf': [{'$ref': '#/$defs/MyModel'}, {'type': 'null'}], 'default': None},
+                        'my_tuple': {
+                            'maxItems': 1,
+                            'minItems': 1,
+                            'prefixItems': [{'type': 'integer'}],
+                            'title': 'My Tuple',
+                            'type': 'array',
+                        },
+                    },
+                    'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
+                    'title': 'MyModel',
+                    'type': 'object',
+                },
+            },
+            '$ref': '#/$defs/MyModel',
+        }
+    )
