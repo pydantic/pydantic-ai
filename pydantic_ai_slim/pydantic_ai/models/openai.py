@@ -6,7 +6,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal, Union, cast, overload
+from typing import Any, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
@@ -56,7 +56,7 @@ try:
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.shared import ReasoningEffort
-    from openai.types.shared_params import Reasoning
+    from openai.types.shared_params import FunctionDefinition, Reasoning
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
@@ -361,14 +361,20 @@ class OpenAIModel(Model):
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition, strict: bool) -> chat.ChatCompletionToolParam:
+        function_definition: FunctionDefinition = {
+            'name': f.name,
+            'description': f.description,
+            'parameters': f.parameters_json_schema,
+            'strict': strict,
+        }
+
+        if strict:
+            function_definition['strict'] = True
+            function_definition['parameters'] = _MakeSchemaStrict().handle_schema(function_definition['parameters'])
+
         return {
             'type': 'function',
-            'function': {
-                'name': f.name,
-                'description': f.description,
-                'parameters': f.parameters_json_schema,
-                'strict': strict,
-            },
+            'function': function_definition,
         }
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
@@ -918,3 +924,60 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             total_tokens=response_usage.total_tokens,
             details=details,
         )
+
+
+class _MakeSchemaStrict:
+    def handle_schema(self, schema: dict[str, Any]) -> dict[str, Any]:
+        """Recursively handle the schema to make it compatible with OpenAI strict mode.
+
+        See https://platform.openai.com/docs/guides/function-calling?api-mode=responses#strict-mode for more details,
+        but this basically just requires:
+        * `additionalProperties` must be set to false for each object in the parameters
+        * all fields in properties must be marked as required
+        """
+        assert isinstance(schema, dict), 'Schema must be a dictionary, this is probably a bug'
+
+        # Create a copy to avoid modifying the original schema
+        schema = schema.copy()
+
+        # Handle $defs
+        if defs := schema.get('$defs'):
+            schema['$defs'] = {k: self.handle_schema(v) for k, v in defs.items()}
+
+        # Process schema based on its type
+        schema_type = schema.get('type')
+        if schema_type == 'object':
+            # Handle object type by setting additionalProperties to false
+            # and adding all properties to required list
+            self._handle_object_schema(schema)
+        elif schema_type == 'array':
+            # Handle array types by processing their items
+            if 'items' in schema:
+                items: Any = schema['items']
+                schema['items'] = self.handle_schema(items)
+            if 'prefixItems' in schema:
+                prefix_items: list[Any] = schema['prefixItems']
+                schema['prefixItems'] = [self.handle_schema(item) for item in prefix_items]
+
+        elif schema_type in ['string', 'number', 'integer', 'boolean', 'null']:
+            pass  # Primitive types need no special handling
+        elif 'oneOf' in schema:
+            schema['oneOf'] = [self.handle_schema(item) for item in schema['oneOf']]
+        elif 'anyOf' in schema:
+            schema['anyOf'] = [self.handle_schema(item) for item in schema['anyOf']]
+
+        return schema
+
+    def _handle_object_schema(self, schema: dict[str, Any]) -> None:
+        schema['additionalProperties'] = False
+
+        # Handle patternProperties; note this may not be compatible with strict mode but is included for completeness
+        if 'patternProperties' in schema and isinstance(schema['patternProperties'], dict):
+            pattern_props: dict[str, Any] = schema['patternProperties']
+            schema['patternProperties'] = {str(k): self.handle_schema(v) for k, v in pattern_props.items()}
+
+        # Handle properties — update their schemas recursively, and make all properties required
+        if 'properties' in schema and isinstance(schema['properties'], dict):
+            properties: dict[str, Any] = schema['properties']
+            schema['properties'] = {k: self.handle_schema(v) for k, v in properties.items()}
+            schema['required'] = list(properties.keys())
