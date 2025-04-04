@@ -31,7 +31,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..settings import ModelSettings
+from ..settings import ForcedFunctionToolChoice, ModelSettings
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -50,6 +50,7 @@ try:
         ChatCompletionContentPartInputAudioParam,
         ChatCompletionContentPartParam,
         ChatCompletionContentPartTextParam,
+        ChatCompletionToolChoiceOptionParam,
     )
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
@@ -244,14 +245,7 @@ class OpenAIModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
-
-        # standalone function to make it easier to override
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_result:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
+        tool_choice = self._map_tool_choice(model_settings, model_request_parameters, tools)
 
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         for m in messages:
@@ -308,6 +302,26 @@ class OpenAIModel(Model):
             _response=peekable_response,
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
+
+    @staticmethod
+    def _map_tool_choice(
+        model_settings: OpenAIModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        tools: list[chat.ChatCompletionToolParam],
+    ) -> ChatCompletionToolChoiceOptionParam | None:
+        """Determine the `tool_choice` setting for the model."""
+        tool_choice = model_settings.get('tool_choice', 'auto')
+
+        if tool_choice == 'auto' and tools and not model_request_parameters.allow_text_result:
+            return 'required'
+        elif tool_choice == 'auto':
+            return None
+        elif tool_choice in ('none', 'required'):
+            return tool_choice
+        elif isinstance(tool_choice, ForcedFunctionToolChoice):
+            return {'type': 'function', 'function': {'name': tool_choice.name}}
+        else:
+            assert_never(tool_choice)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
