@@ -974,7 +974,7 @@ class _StrictSchemaHelper:
             schema['properties'] = {k: self.make_schema_strict(v) for k, v in properties.items()}
             schema['required'] = list(properties.keys())
 
-    def is_schema_strict(self, schema: dict[str, Any]) -> bool:  # noqa C901
+    def is_schema_strict(self, schema: dict[str, Any]) -> bool:
         """Check if the schema is strict-mode-compatible.
 
         A schema is compatible if:
@@ -983,12 +983,13 @@ class _StrictSchemaHelper:
 
         See https://platform.openai.com/docs/guides/function-calling?api-mode=responses#strict-mode for more details.
         """
-        if not isinstance(schema, dict):
-            return False
+        assert isinstance(schema, dict), 'Schema must be a dictionary, this is probably a bug'
 
-        # Check $defs
+        # Note that checking the defs first is usually the fastest way to proceed, but
+        # it makes it hard/impossible to hit coverage below, hence all the pragma no covers.
+        # I still included the handling below because I'm not _confident_ those code paths can't be hit.
         if defs := schema.get('$defs'):
-            if not all(self.is_schema_strict(v) for v in defs.values()):
+            if not all(self.is_schema_strict(v) for v in defs.values()):  # pragma: no branch
                 return False
 
         schema_type = schema.get('type')
@@ -998,18 +999,19 @@ class _StrictSchemaHelper:
         elif schema_type == 'array':
             if 'items' in schema:
                 items: Any = schema['items']
-                if not self.is_schema_strict(items):
+                if not self.is_schema_strict(items):  # pragma: no cover
                     return False
             if 'prefixItems' in schema:
                 prefix_items: list[Any] = schema['prefixItems']
-                if not all(self.is_schema_strict(item) for item in prefix_items):
+                if not all(self.is_schema_strict(item) for item in prefix_items):  # pragma: no cover
                     return False
         elif schema_type in {'string', 'number', 'integer', 'boolean', 'null'}:
             pass
-        elif 'oneOf' in schema:
+        elif 'oneOf' in schema:  # pragma: no cover
             if not all(self.is_schema_strict(item) for item in schema['oneOf']):
                 return False
-        elif 'anyOf' in schema:
+
+        elif 'anyOf' in schema:  # pragma: no cover
             if not all(self.is_schema_strict(item) for item in schema['anyOf']):
                 return False
 
@@ -1019,14 +1021,18 @@ class _StrictSchemaHelper:
         """Check if the schema is an object and has additionalProperties set to false."""
         if schema.get('additionalProperties') is not False:
             return False
-        if 'properties' not in schema:
+        if 'properties' not in schema:  # pragma: no cover
+            return False
+        if 'required' not in schema:  # pragma: no cover
             return False
 
-        return (
-            schema.get('additionalProperties') is False
-            and 'properties' in schema
-            and all(k in schema.get('required', []) for k in schema['properties'].keys())
-        )
+        for k, v in schema['properties'].items():
+            if k not in schema['required']:
+                return False
+            if not self.is_schema_strict(v):  # pragma: no cover
+                return False
+
+        return True
 
 
 def _customize_request_parameters(model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
@@ -1036,8 +1042,9 @@ def _customize_request_parameters(model_request_parameters: ModelRequestParamete
         if t.strict is True:
             parameters_json_schema = _StrictSchemaHelper().make_schema_strict(t.parameters_json_schema)
             return replace(t, parameters_json_schema=parameters_json_schema)
-        elif t.strict is None and _StrictSchemaHelper().is_schema_strict(t.parameters_json_schema):
-            return replace(t, strict=True)
+        elif t.strict is None:
+            strict = _StrictSchemaHelper().is_schema_strict(t.parameters_json_schema)
+            return replace(t, strict=strict)
         return t
 
     return ModelRequestParameters(

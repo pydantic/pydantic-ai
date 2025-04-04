@@ -10,7 +10,7 @@ from typing import Annotated, Any, Callable, Literal, Union, cast
 import httpx
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Discriminator, Field
+from pydantic import BaseModel, Discriminator, Field, Tag
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
@@ -717,24 +717,64 @@ async def test_user_id(allow_model_requests: None, openai_api_key: str):
     await agent.run('hello')
 
 
-def strict_compatible_tool(x: int = 1) -> str:
-    """A tool that cannot be inferred to be strict due to the default parameter."""
+@dataclass
+class MyDefaultDc:
+    x: int = 1
+
+
+@dataclass
+class MyRecursiveDc:
+    field: MyRecursiveDc | None
+
+
+@dataclass
+class MyDefaultRecursiveDc:
+    field: MyDefaultRecursiveDc | None = None
+
+
+class MyModel(BaseModel, extra='allow'):
+    pass
+
+
+def strict_compatible_tool(x: int) -> str:
     return str(x)  # pragma: no cover
 
 
 def tool_with_default(x: int = 1) -> str:
-    """A tool that cannot be inferred to be strict due to the default parameter."""
     return f'{x}'  # pragma: no cover
 
 
-def tool_with_additional_properties(x: int, y: dict[str, Any]) -> str:
-    """A tool that cannot be inferred to be strict due to the default parameter."""
+def tool_with_recursion(x: MyRecursiveDc, y: MyDefaultRecursiveDc):
     return f'{x} {y}'  # pragma: no cover
 
 
+def tool_with_additional_properties(x: MyModel) -> str:
+    return f'{x}'  # pragma: no cover
+
+
 def tool_with_kwargs(x: int, **kwargs: Any) -> str:
-    """A tool that cannot be inferred to be strict due to the default parameter."""
     return f'{x} {kwargs}'  # pragma: no cover
+
+
+def tool_with_union(x: int | MyDefaultDc) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_discriminated_union(
+    x: Annotated[
+        Annotated[int, Tag('int')] | Annotated[MyDefaultDc, Tag('MyDefaultDc')],
+        Discriminator(lambda x: type(x).__name__),
+    ],
+) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_lists(x: list[int], y: list[MyDefaultDc]) -> str:
+    return f'{x} {y}'  # pragma: no cover
+
+
+def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
+    return f'{x} {y}'  # pragma: no cover
 
 
 @pytest.mark.parametrize(
@@ -742,29 +782,329 @@ def tool_with_kwargs(x: int, **kwargs: Any) -> str:
     [
         (
             strict_compatible_tool,
-            True,
+            False,
             snapshot(
                 {
                     'additionalProperties': False,
                     'properties': {'x': {'type': 'integer'}},
-                    'type': 'object',
                     'required': ['x'],
+                    'type': 'object',
                 }
             ),
-            snapshot(True),
-        ),
-        (
-            strict_compatible_tool,
-            False,
-            snapshot({'additionalProperties': False, 'properties': {'x': {'type': 'integer'}}, 'type': 'object'}),
             snapshot(None),
         ),
         (
             strict_compatible_tool,
             None,
-            snapshot({'additionalProperties': False, 'properties': {'x': {'type': 'integer'}}, 'type': 'object'}),
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'type': 'integer'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_recursion,
+            None,
+            snapshot(
+                {
+                    '$defs': {
+                        'MyDefaultRecursiveDc': {
+                            'properties': {
+                                'field': {
+                                    'anyOf': [{'$ref': '#/$defs/MyDefaultRecursiveDc'}, {'type': 'null'}],
+                                    'default': None,
+                                }
+                            },
+                            'title': 'MyDefaultRecursiveDc',
+                            'type': 'object',
+                        },
+                        'MyRecursiveDc': {
+                            'properties': {'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]}},
+                            'required': ['field'],
+                            'title': 'MyRecursiveDc',
+                            'type': 'object',
+                        },
+                    },
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {'$ref': '#/$defs/MyRecursiveDc'},
+                        'y': {'$ref': '#/$defs/MyDefaultRecursiveDc'},
+                    },
+                    'required': ['x', 'y'],
+                    'type': 'object',
+                }
+            ),
             snapshot(None),
         ),
+        (
+            tool_with_recursion,
+            True,
+            snapshot(
+                {
+                    '$defs': {
+                        'MyDefaultRecursiveDc': {
+                            'properties': {
+                                'field': {
+                                    'anyOf': [{'$ref': '#/$defs/MyDefaultRecursiveDc'}, {'type': 'null'}],
+                                    'default': None,
+                                }
+                            },
+                            'title': 'MyDefaultRecursiveDc',
+                            'type': 'object',
+                            'additionalProperties': False,
+                            'required': ['field'],
+                        },
+                        'MyRecursiveDc': {
+                            'properties': {'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]}},
+                            'title': 'MyRecursiveDc',
+                            'type': 'object',
+                            'additionalProperties': False,
+                            'required': ['field'],
+                        },
+                    },
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {'$ref': '#/$defs/MyRecursiveDc'},
+                        'y': {'$ref': '#/$defs/MyDefaultRecursiveDc'},
+                    },
+                    'required': ['x', 'y'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_additional_properties,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': True,
+                    'properties': {},
+                    'title': 'MyModel',
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_additional_properties,
+            True,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {},
+                    'title': 'MyModel',
+                    'required': [],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_kwargs,
+            None,
+            snapshot(
+                {
+                    'properties': {'x': {'type': 'integer'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_kwargs,
+            True,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'type': 'integer'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_union,
+            None,
+            snapshot(
+                {
+                    '$defs': {
+                        'MyDefaultDc': {
+                            'properties': {'x': {'default': 1, 'type': 'integer'}},
+                            'title': 'MyDefaultDc',
+                            'type': 'object',
+                        }
+                    },
+                    'additionalProperties': False,
+                    'properties': {'x': {'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/MyDefaultDc'}]}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_union,
+            True,
+            snapshot(
+                {
+                    '$defs': {
+                        'MyDefaultDc': {
+                            'properties': {'x': {'default': 1, 'type': 'integer'}},
+                            'required': ['x'],
+                            'title': 'MyDefaultDc',
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                    'additionalProperties': False,
+                    'properties': {'x': {'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/MyDefaultDc'}]}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_discriminated_union,
+            None,
+            snapshot(
+                {
+                    '$defs': {
+                        'MyDefaultDc': {
+                            'properties': {'x': {'default': 1, 'type': 'integer'}},
+                            'title': 'MyDefaultDc',
+                            'type': 'object',
+                        }
+                    },
+                    'additionalProperties': False,
+                    'properties': {'x': {'oneOf': [{'type': 'integer'}, {'$ref': '#/$defs/MyDefaultDc'}]}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_discriminated_union,
+            True,
+            snapshot(
+                {
+                    '$defs': {
+                        'MyDefaultDc': {
+                            'properties': {'x': {'default': 1, 'type': 'integer'}},
+                            'required': ['x'],
+                            'title': 'MyDefaultDc',
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                    'additionalProperties': False,
+                    'properties': {'x': {'oneOf': [{'type': 'integer'}, {'$ref': '#/$defs/MyDefaultDc'}]}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_lists,
+            None,
+            snapshot(
+                {
+                    '$defs': {
+                        'MyDefaultDc': {
+                            'properties': {'x': {'default': 1, 'type': 'integer'}},
+                            'title': 'MyDefaultDc',
+                            'type': 'object',
+                        }
+                    },
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {'items': {'type': 'integer'}, 'type': 'array'},
+                        'y': {'items': {'$ref': '#/$defs/MyDefaultDc'}, 'type': 'array'},
+                    },
+                    'required': ['x', 'y'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_lists,
+            True,
+            snapshot(
+                {
+                    '$defs': {
+                        'MyDefaultDc': {
+                            'properties': {'x': {'default': 1, 'type': 'integer'}},
+                            'required': ['x'],
+                            'title': 'MyDefaultDc',
+                            'type': 'object',
+                            'additionalProperties': False,
+                        }
+                    },
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {'items': {'type': 'integer'}, 'type': 'array'},
+                        'y': {'items': {'$ref': '#/$defs/MyDefaultDc'}, 'type': 'array'},
+                    },
+                    'required': ['x', 'y'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_tuples,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                        'y': {
+                            'maxItems': 1,
+                            'minItems': 1,
+                            'prefixItems': [{'type': 'string'}],
+                            'type': 'array',
+                        },
+                    },
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_tuples,
+            True,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                        'y': {
+                            'maxItems': 1,
+                            'minItems': 1,
+                            'prefixItems': [{'type': 'string'}],
+                            'type': 'array',
+                        },
+                    },
+                    'required': ['x', 'y'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        # (tool, None, snapshot({}), snapshot({})),
+        # (tool, True, snapshot({}), snapshot({})),
     ],
 )
 async def test_strict_mode_cannot_infer_strict(
@@ -788,10 +1128,12 @@ async def test_strict_mode_cannot_infer_strict(
     await agent.run('hello')
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert 'tools' in kwargs, kwargs
+
     assert kwargs['tools'][0]['function']['parameters'] == expected_params
-    assert kwargs['tools'][0]['function'].get('strict') == expected_strict
-    if expected_strict is None:
-        # if present, it must be non-None
+    actual_strict = kwargs['tools'][0]['function'].get('strict')
+    assert actual_strict == expected_strict
+    if actual_strict is None:
+        # If strict is included, it should be non-None
         assert 'strict' not in kwargs['tools'][0]['function']
 
 
