@@ -58,14 +58,21 @@ def test_check_object_json_schema():
         },
         '$ref': '#/$defs/JsonModel',
     }
+
+    # Can't remove the recursive ref here:
     assert check_object_json_schema(ref_schema) == {
-        'properties': {
-            'type': {'title': 'Type', 'type': 'string'},
-            'items': {'anyOf': [{'$ref': '#/$defs/JsonModel'}, {'type': 'null'}]},
+        '$defs': {
+            'JsonModel': {
+                'properties': {
+                    'items': {'anyOf': [{'$ref': '#/$defs/JsonModel'}, {'type': 'null'}]},
+                    'type': {'title': 'Type', 'type': 'string'},
+                },
+                'required': ['type', 'items'],
+                'title': 'JsonModel',
+                'type': 'object',
+            }
         },
-        'required': ['type', 'items'],
-        'title': 'JsonModel',
-        'type': 'object',
+        '$ref': '#/$defs/JsonModel',
     }
 
     array_schema = {'type': 'array', 'items': {'type': 'string'}}
