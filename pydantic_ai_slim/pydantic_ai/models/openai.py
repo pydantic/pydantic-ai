@@ -150,7 +150,7 @@ class OpenAIModel(Model):
     """
 
     client: AsyncOpenAI = field(repr=False)
-    system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
+    system_prompt_role: OpenAISystemPromptRole | None = field(default=None, repr=False)
 
     _model_name: OpenAIModelName = field(repr=False)
     _system: str = field(default='openai', repr=False)

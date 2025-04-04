@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-import os
 import subprocess
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
@@ -16,8 +15,15 @@ from mcp.client.stdio import stdio_client
 if TYPE_CHECKING:
     from mcp import ClientSession
 
-CLI_JS_PATH = 'mcp-run-python/cli.js'
 pytestmark = pytest.mark.anyio
+DENO_ARGS = [
+    'run',
+    '-N',
+    '-R=mcp-run-python/node_modules',
+    '-W=mcp-run-python/node_modules',
+    '--node-modules-dir=auto',
+    'mcp-run-python/src/main.ts',
+]
 
 
 @pytest.fixture
@@ -28,20 +34,18 @@ def anyio_backend():
 @pytest.fixture(name='mcp_session', params=['stdio', 'sse'])
 async def fixture_mcp_session(request: pytest.FixtureRequest) -> AsyncIterator[ClientSession]:
     if request.param == 'stdio':
-        server_params = StdioServerParameters(command='node', args=[CLI_JS_PATH, 'stdio'])
+        server_params = StdioServerParameters(command='deno', args=[*DENO_ARGS, 'stdio'])
         async with stdio_client(server_params) as (read, write):
             async with ClientSession(read, write) as session:
                 yield session
     else:
         port = 3101
 
-        env = dict(os.environ)
-        env['PORT'] = str(port)
-        p = subprocess.Popen(['node', CLI_JS_PATH, 'sse'], env=env)
+        p = subprocess.Popen(['deno', *DENO_ARGS, 'sse', f'--port={port}'])
         try:
             url = f'http://localhost:{port}'
             async with AsyncClient() as client:
-                for _ in range(5):
+                for _ in range(10):
                     try:
                         await client.get(url, timeout=0.01)
                     except HTTPError:
@@ -59,7 +63,7 @@ async def fixture_mcp_session(request: pytest.FixtureRequest) -> AsyncIterator[C
                 pytest.fail(f'Process exited with code {exit_code}')
 
 
-async def test_stdio_list_tools(mcp_session: ClientSession) -> None:
+async def test_list_tools(mcp_session: ClientSession) -> None:
     await mcp_session.initialize()
     tools = await mcp_session.list_tools()
     assert len(tools.tools) == 1
@@ -90,7 +94,7 @@ x=4
 4
 </return_value>\
 """),
-            id='basic_code',
+            id='basic-code',
         ),
         pytest.param(
             [
@@ -108,7 +112,28 @@ x=4
 ]
 </return_value>\
 """),
-            id='import_numpy',
+            id='import-numpy',
+        ),
+        pytest.param(
+            [
+                '# /// script',
+                '# dependencies = ["pydantic", "email-validator"]',
+                '# ///',
+                'import pydantic',
+                'class Model(pydantic.BaseModel):',
+                '    email: pydantic.EmailStr',
+                "Model(email='hello@pydantic.dev')",
+            ],
+            snapshot("""\
+<status>success</status>
+<dependencies>["pydantic","email-validator"]</dependencies>
+<return_value>
+{
+  "email": "hello@pydantic.dev"
+}
+</return_value>\
+"""),
+            id='magic-comment-import',
         ),
         pytest.param(
             [
@@ -125,11 +150,11 @@ NameError: name 'unknown' is not defined
 
 </error>\
 """),
-            id='undefined_variable',
+            id='undefined-variable',
         ),
     ],
 )
-async def test_stdio_run_python_code(mcp_session: ClientSession, code: list[str], expected_output: str) -> None:
+async def test_run_python_code(mcp_session: ClientSession, code: list[str], expected_output: str) -> None:
     await mcp_session.initialize()
     result = await mcp_session.call_tool('run_python_code', {'python_code': '\n'.join(code)})
     assert len(result.content) == 1

@@ -223,6 +223,28 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
         Returns:
             A JSON-serializable representation of this evaluator as an EvaluatorSpec.
         """
+        raw_arguments = self.build_serialization_arguments()
+
+        arguments: None | tuple[Any,] | dict[str, Any]
+        if len(raw_arguments) == 0:
+            arguments = None
+        elif len(raw_arguments) == 1:
+            arguments = (next(iter(raw_arguments.values())),)
+        else:
+            arguments = raw_arguments
+        return to_jsonable_python(
+            EvaluatorSpec(name=self.name(), arguments=arguments), context=info.context, serialize_unknown=True
+        )
+
+    def build_serialization_arguments(self) -> dict[str, Any]:
+        """Build the arguments for serialization.
+
+        Evaluators are serialized for inclusion as the "source" in an `EvaluationResult`.
+        If you want to modify how the evaluator is serialized for that or other purposes, you can override this method.
+
+        Returns:
+            A dictionary of arguments to be used during serialization.
+        """
         raw_arguments: dict[str, Any] = {}
         for field in fields(self):
             value = getattr(self, field.name)
@@ -234,12 +256,4 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
                 if value == field.default_factory():
                     continue
             raw_arguments[field.name] = value
-
-        arguments: None | tuple[Any,] | dict[str, Any]
-        if len(raw_arguments) == 0:
-            arguments = None
-        elif len(raw_arguments) == 1:
-            arguments = (next(iter(raw_arguments.values())),)
-        else:
-            arguments = raw_arguments
-        return to_jsonable_python(EvaluatorSpec(name=self.name(), arguments=arguments), context=info.context)
+        return raw_arguments
