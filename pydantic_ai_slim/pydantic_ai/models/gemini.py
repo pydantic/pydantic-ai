@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import base64
 import re
 from collections.abc import AsyncIterator, Sequence
@@ -186,6 +187,10 @@ class GeminiModel(Model):
         model_settings: GeminiModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[HTTPResponse]:
+        max_retries = 5
+        retry_delay = 2  # seconds
+        last_exception: Exception | None = None
+
         tools = self._get_tools(model_request_parameters)
         tool_config = self._get_tool_config(model_request_parameters, tools)
         sys_prompt_parts, contents = await self._message_to_gemini_content(messages)
@@ -219,19 +224,46 @@ class GeminiModel(Model):
         url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
 
         request_json = _gemini_request_ta.dump_json(request_data, by_alias=True)
-        async with self.client.stream(
-            'POST',
-            url,
-            content=request_json,
-            headers=headers,
-            timeout=model_settings.get('timeout', USE_CLIENT_DEFAULT),
-        ) as r:
-            if (status_code := r.status_code) != 200:
-                await r.aread()
-                if status_code >= 400:
-                    raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=r.text)
-                raise UnexpectedModelBehavior(f'Unexpected response from gemini {status_code}', r.text)
-            yield r
+
+        for attempt in range(max_retries):
+            try:
+                async with self.client.stream(
+                    'POST',
+                    url,
+                    content=request_json,
+                    headers=headers,
+                    timeout=model_settings.get('timeout', USE_CLIENT_DEFAULT),
+                ) as r:
+                    if (status_code := r.status_code) == 200:
+                        yield r
+                        return  # Success, exit context manager and loop
+
+                    # Handle non-200 status codes
+                    await r.aread()
+                    if status_code >= 400:
+                        last_exception = ModelHTTPError(status_code=status_code, model_name=self.model_name, body=r.text)
+                    else:
+                        last_exception = UnexpectedModelBehavior(f'Unexpected response from gemini {status_code}', r.text)
+
+                    if attempt == max_retries - 1:
+                        raise last_exception  # Raise on the last attempt
+
+            except httpx.RequestError as e:
+                last_exception = e
+                if attempt == max_retries - 1:
+                    raise  # Re-raise the network error on the last attempt
+
+            # If we reach here, it means an error occurred but it's not the last attempt
+            await asyncio.sleep(retry_delay)
+
+        # Should not be reached if max_retries > 0, but added for safety.
+        # If the loop finishes without success or raising an exception on the last try,
+        # raise the last recorded exception.
+        if last_exception:
+            raise last_exception
+        else:
+            # This case should ideally not happen if the loop runs at least once.
+            raise UnexpectedModelBehavior("Gemini request failed after multiple retries without a specific exception.")
 
     def _process_response(self, response: _GeminiResponse) -> ModelResponse:
         if len(response['candidates']) != 1:
