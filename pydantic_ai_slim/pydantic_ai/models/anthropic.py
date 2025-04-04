@@ -95,6 +95,20 @@ class AnthropicModelSettings(ModelSettings):
     Contains `user_id`, an external identifier for the user who is associated with the request."""
 
 
+class AnthropicMaxTokenStopReasonError(Exception):
+    """An error that occurs when the model hits its token limit, potentially during a tool call."""
+
+    def __init__(self, breaking_tool_call_part: ToolCallPart, max_tokens: int):
+        self.message = (
+            f'Tool call failed, TOKEN LIMIT REACHED. The model hit its token limit ({max_tokens}) while generating arguments for the last tool call. '
+            'This can happen when trying to generate large text content for a single tool call argument. '
+            'Consider breaking your request into smaller chunks and using multiple tool calls, or combinations of other tools to accomplish the task.'
+        )
+        self.breaking_tool_call_part = breaking_tool_call_part
+
+        super().__init__(self.message)
+
+
 @dataclass(init=False)
 class AnthropicModel(Model):
     """A model that uses the Anthropic API.
@@ -147,7 +161,25 @@ class AnthropicModel(Model):
         response = await self._messages_create(
             messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response), _map_usage(response)
+        try:
+            return self._process_response(response), _map_usage(response)
+        except AnthropicMaxTokenStopReasonError as e:
+            # hack append our error message to the last message
+            messages.append(ModelResponse(parts=[e.breaking_tool_call_part]))
+
+            messages.append(
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name=e.breaking_tool_call_part.tool_name,
+                            tool_call_id=e.breaking_tool_call_part.tool_call_id,
+                            content=str(e.message),
+                        )
+                    ]
+                )
+            )
+
+            return await self.request(messages, model_settings, model_request_parameters)
 
     @asynccontextmanager
     async def request_stream(
@@ -244,6 +276,17 @@ class AnthropicModel(Model):
                 items.append(TextPart(content=item.text))
             else:
                 assert isinstance(item, ToolUseBlock), 'unexpected item type'
+
+                if getattr(response, 'stop_reason', None) == 'max_tokens' and item == response.content[-1]:
+                    raise AnthropicMaxTokenStopReasonError(
+                        breaking_tool_call_part=ToolCallPart(
+                            tool_name=item.name,
+                            args=cast(dict[str, Any], item.input),
+                            tool_call_id=item.id,
+                        ),
+                        max_tokens=getattr(response, 'max_tokens', 0),
+                    )
+
                 items.append(
                     ToolCallPart(
                         tool_name=item.name,
