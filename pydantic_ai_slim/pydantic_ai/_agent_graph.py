@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import json
+from collections import Counter
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -222,8 +223,15 @@ async def _prepare_request_parameters(
     async def add_mcp_server_tools(server: MCPServer) -> None:
         if not server.is_running:
             raise exceptions.UserError(f'MCP server is not running: {server}')
-        tool_defs = await server.list_tools()
-        # TODO(Marcelo): We should check if the tool names are unique. If not, we should raise an error.
+        tool_defs: list[ToolDefinition] = await server.list_tools()
+
+        tool_name_counts: Counter[str] = Counter(tool_def.name for tool_def in tool_defs)
+        most_common_tool: tuple[str, int] = tool_name_counts.most_common(1)[0]
+        if most_common_tool[1] > 1:
+            raise exceptions.UserError(
+                f'Tool names must be unique: Tool {most_common_tool[0]} is provided multiple times. (MCP server: {server})'
+            )
+
         function_tool_defs.extend(tool_defs)
 
     await asyncio.gather(
