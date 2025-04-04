@@ -138,6 +138,7 @@ class ModelSettings(TypedDict, total=False):
 
     When enabled, the model is constrained to generate output that exactly matches the provided schema.
     This can improve reliability of responses but may be incompatible with schemas using additionalProperties.
+    If not provided, the behavior is what the vendor defaults to (in the case of OpenAI, this is `False`).
 
     Supported by:
 

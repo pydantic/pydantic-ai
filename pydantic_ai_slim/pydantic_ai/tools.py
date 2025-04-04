@@ -425,8 +425,14 @@ class ToolDefinition:
     """
 
     strict: bool | None = None
-    """Whether to enable OpenAI's strict mode for this tool.
+    """Whether to enforce (vendor-specific) strict JSON schema validation for tool calls.
 
-    When True, the model will be constrained to generate output that exactly matches the JSON schema.
-    When None or False, the JSON schema is used as a guide, but the model is free to generate other properties or types.
+    Setting this to `True` while using a supported model generally imposes some restrictions on the tool's JSON schema
+    in exchange for guaranteeing the API responses strictly match that schema.
+
+    When `False`, the model may be free to generate other properties or types (depending on the vendor).
+    When `None` (the default), the value will be taken from the model settings for the relevant requests.
+
+    This is currently only supported by [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel].
+    See the documentation of the `strict` field on [`ModelSettings`][pydantic_ai.settings.ModelSettings] for more info.
     """
