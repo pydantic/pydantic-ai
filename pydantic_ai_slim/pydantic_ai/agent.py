@@ -997,8 +997,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
-            strict: If True, enable OpenAI's strict mode for this tool to enforce JSON schema validation.
-                When None, uses the value from the agent's model settings.
+            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
         if func is None:
 
@@ -1106,8 +1106,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
-            strict: If True, enable OpenAI's strict mode for this tool to enforce JSON schema validation.
-                When None, uses the value from the agent's model settings.
+            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
         if func is None:
 
@@ -1151,7 +1151,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         docstring_format: DocstringFormat,
         require_parameter_descriptions: bool,
         schema_generator: type[GenerateJsonSchema],
-        strict: bool | None = None,
+        strict: bool | None,
     ) -> None:
         """Private utility to register a function as a tool."""
         retries_ = retries if retries is not None else self._default_retries

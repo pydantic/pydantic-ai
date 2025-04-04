@@ -1,12 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from httpx import Timeout
 from typing_extensions import TypedDict
-
-if TYPE_CHECKING:
-    pass
 
 
 class ModelSettings(TypedDict, total=False):
@@ -131,18 +126,6 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Groq
-    """
-
-    strict: bool
-    """Enforce strict JSON schema validation for tool calls.
-
-    When enabled, the model is constrained to generate output that exactly matches the provided schema.
-    This can improve reliability of responses but may be incompatible with schemas using additionalProperties.
-    If not provided, the behavior is what the vendor defaults to (in the case of OpenAI, this is `False`).
-
-    Supported by:
-
-    * OpenAI
     """
 
 

@@ -15,7 +15,7 @@ from typing_inspection.introspection import get_literal_values
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, PartDeltaEvent, TextPartDelta
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import KnownModelName, infer_model
 
 try:
@@ -222,10 +222,8 @@ async def ask_agent(
                         status.stop()  # stopping multiple times is idempotent
                         stack.enter_context(live)  # entering multiple times is idempotent
 
-                        async for event in handle_stream:
-                            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-                                content += event.delta.content_delta
-                                live.update(Markdown(content, code_theme=code_theme))
+                        async for content in handle_stream.stream_output():
+                            live.update(Markdown(content, code_theme=code_theme))
 
         assert agent_run.result is not None
         return agent_run.result.all_messages()

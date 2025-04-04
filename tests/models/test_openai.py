@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Annotated, Any, Literal, Union, cast
+from typing import Annotated, Any, Callable, Literal, Union, cast
 
 import httpx
 import pytest
@@ -52,7 +52,7 @@ with try_import() as imports_successful:
         OpenAIModel,
         OpenAIModelSettings,
         OpenAISystemPromptRole,
-        _MakeSchemaStrict,  # pyright: ignore[reportPrivateUsage]
+        _StrictSchemaHelper,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -717,117 +717,82 @@ async def test_user_id(allow_model_requests: None, openai_api_key: str):
     await agent.run('hello')
 
 
-async def test_strict_mode_settings(allow_model_requests: None):
+def strict_compatible_tool(x: int = 1) -> str:
+    """A tool that cannot be inferred to be strict due to the default parameter."""
+    return str(x)  # pragma: no cover
+
+
+def tool_with_default(x: int = 1) -> str:
+    """A tool that cannot be inferred to be strict due to the default parameter."""
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_additional_properties(x: int, y: dict[str, Any]) -> str:
+    """A tool that cannot be inferred to be strict due to the default parameter."""
+    return f'{x} {y}'  # pragma: no cover
+
+
+def tool_with_kwargs(x: int, **kwargs: Any) -> str:
+    """A tool that cannot be inferred to be strict due to the default parameter."""
+    return f'{x} {kwargs}'  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    'tool,tool_strict,expected_params,expected_strict',
+    [
+        (
+            strict_compatible_tool,
+            True,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'type': 'integer'}},
+                    'type': 'object',
+                    'required': ['x'],
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            strict_compatible_tool,
+            False,
+            snapshot({'additionalProperties': False, 'properties': {'x': {'type': 'integer'}}, 'type': 'object'}),
+            snapshot(None),
+        ),
+        (
+            strict_compatible_tool,
+            None,
+            snapshot({'additionalProperties': False, 'properties': {'x': {'type': 'integer'}}, 'type': 'object'}),
+            snapshot(None),
+        ),
+    ],
+)
+async def test_strict_mode_cannot_infer_strict(
+    allow_model_requests: None,
+    tool: Callable[..., Any],
+    tool_strict: bool | None,
+    expected_params: dict[str, Any],
+    expected_strict: bool | None,
+):
     """Test that strict mode settings are properly passed to OpenAI and respect precedence rules."""
     # Create a mock completion for testing
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
 
-    # Test 1: Default behavior (no strict setting)
+    # Test 1: Default behavior (strict setting not explicitly specified; function is strict-mode-compatible)
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    @agent.tool_plain
-    def default_tool(x: int) -> str:
-        """A tool with default strict setting."""
-        return str(x)  # pragma: no cover
+    agent.tool_plain(strict=tool_strict)(tool)
 
     await agent.run('hello')
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert 'tools' in kwargs
-    tool_def = kwargs['tools'][0]
-    assert 'strict' not in tool_def['function']
-
-    # Test 2: Agent-level strict setting
-    mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, model_settings=ModelSettings(strict=True))
-
-    @agent.tool_plain
-    def agent_level_tool(x: int) -> str:
-        """A tool that should inherit agent-level strict setting."""
-        return str(x)  # pragma: no cover
-
-    await agent.run('hello')
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert 'tools' in kwargs
-    tool_def = kwargs['tools'][0]
-    assert tool_def['function']['strict'] is True
-    assert tool_def['function']['parameters']['additionalProperties'] is False
-
-    # Test 3: Run-level strict setting (overrides agent-level)
-    mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, model_settings=ModelSettings(strict=True))
-
-    @agent.tool_plain
-    def run_override_tool(x: int) -> str:
-        """A tool that should be affected by run-level strict setting."""
-        return str(x)  # pragma: no cover
-
-    await agent.run('hello', model_settings=ModelSettings(strict=False))
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert 'tools' in kwargs
-    tool_def = kwargs['tools'][0]
-    assert 'strict' not in tool_def['function']
-
-    # Test 4: Tool-level strict setting (highest precedence)
-    mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, model_settings=ModelSettings(strict=False))
-
-    @agent.tool_plain(strict=True)
-    def tool_level_strict(x: int) -> str:
-        """A tool with explicit strict=True that should override other settings."""
-        return str(x)  # pragma: no cover
-
-    @agent.tool_plain(strict=False)
-    def tool_level_not_strict(x: int) -> str:
-        """A tool with explicit strict=False that should override other settings."""
-        return str(x)  # pragma: no cover
-
-    await agent.run('hello', model_settings=ModelSettings(strict=True))
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-
-    strict_tool = next(t for t in kwargs['tools'] if t['function']['name'] == 'tool_level_strict')
-    not_strict_tool = next(t for t in kwargs['tools'] if t['function']['name'] == 'tool_level_not_strict')
-
-    assert strict_tool['function']['strict'] is True
-    assert strict_tool['function']['parameters']['additionalProperties'] is False
-    assert 'strict' not in not_strict_tool['function']
-
-    # Test 5: Mixed precedence with multiple tools
-    mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m)
-
-    @agent.tool_plain(strict=True)
-    def explicit_strict_tool(x: int) -> str:
-        """A tool with explicit strict=True."""
-        return str(x)  # pragma: no cover
-
-    @agent.tool_plain(strict=False)
-    def explicit_not_strict_tool(x: int) -> str:
-        """A tool with explicit strict=False."""
-        return str(x)  # pragma: no cover
-
-    @agent.tool_plain
-    def inherit_strict_tool(x: int) -> str:
-        """A tool that inherits strict setting from run."""
-        return str(x)  # pragma: no cover
-
-    await agent.run('hello', model_settings=ModelSettings(strict=True))
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-
-    explicit_strict = next(t for t in kwargs['tools'] if t['function']['name'] == 'explicit_strict_tool')
-    explicit_not_strict = next(t for t in kwargs['tools'] if t['function']['name'] == 'explicit_not_strict_tool')
-    inherit_strict = next(t for t in kwargs['tools'] if t['function']['name'] == 'inherit_strict_tool')
-
-    assert explicit_strict['function']['strict'] is True
-    assert explicit_strict['function']['parameters']['additionalProperties'] is False
-    assert 'strict' not in explicit_not_strict['function']
-    assert inherit_strict['function']['strict'] is True
-    assert inherit_strict['function']['parameters']['additionalProperties'] is False
+    assert 'tools' in kwargs, kwargs
+    assert kwargs['tools'][0]['function']['parameters'] == expected_params
+    assert kwargs['tools'][0]['function'].get('strict') == expected_strict
+    if expected_strict is None:
+        # if present, it must be non-None
+        assert 'strict' not in kwargs['tools'][0]['function']
 
 
 def test_strict_schema():
@@ -845,7 +810,7 @@ def test_strict_schema():
         my_list: list[float]
         my_discriminated_union: Annotated[Apple | Banana, Discriminator('kind')]
 
-    assert _MakeSchemaStrict().handle_schema(MyModel.model_json_schema()) == snapshot(
+    assert _StrictSchemaHelper().make_schema_strict(MyModel.model_json_schema()) == snapshot(
         {
             '$defs': {
                 'Apple': {

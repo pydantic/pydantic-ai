@@ -179,7 +179,12 @@ class Tool(Generic[AgentDepsT]):
     _positional_fields: list[str] = field(init=False)
     _var_positional_field: str | None = field(init=False)
     _validator: SchemaValidator = field(init=False, repr=False)
-    _parameters_json_schema: ObjectJsonSchema = field(init=False)
+    _base_parameters_json_schema: ObjectJsonSchema = field(init=False)
+    """
+    The base JSON schema for the tool's parameters.
+
+    This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
+    """
 
     # TODO: Move this state off the Tool class, which is otherwise stateless.
     #   This should be tracked inside a specific agent run, not the tool.
@@ -248,8 +253,8 @@ class Tool(Generic[AgentDepsT]):
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
-            strict: If True, enable OpenAI's strict mode for this tool to enforce JSON schema validation.
-                When None, uses the value from the agent's model settings.
+            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
         if takes_ctx is None:
             takes_ctx = _pydantic.takes_ctx(function)
@@ -271,7 +276,7 @@ class Tool(Generic[AgentDepsT]):
         self._positional_fields = f['positional_fields']
         self._var_positional_field = f['var_positional_field']
         self._validator = f['validator']
-        self._parameters_json_schema = f['json_schema']
+        self._base_parameters_json_schema = f['json_schema']
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
@@ -285,7 +290,7 @@ class Tool(Generic[AgentDepsT]):
         tool_def = ToolDefinition(
             name=self.name,
             description=self.description,
-            parameters_json_schema=self._parameters_json_schema,
+            parameters_json_schema=self._base_parameters_json_schema,
             strict=self.strict,
         )
         if self.prepare is not None:
@@ -406,7 +411,7 @@ With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `ext
 class ToolDefinition:
     """Definition of a tool passed to a model.
 
-    This is used for both function tools result tools.
+    This is used for both function tools and result tools.
     """
 
     name: str
@@ -431,8 +436,7 @@ class ToolDefinition:
     in exchange for guaranteeing the API responses strictly match that schema.
 
     When `False`, the model may be free to generate other properties or types (depending on the vendor).
-    When `None` (the default), the value will be taken from the model settings for the relevant requests.
+    When `None` (the default), the value will be inferred based on the compatibility of the parameters_json_schema.
 
-    This is currently only supported by [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel].
-    See the documentation of the `strict` field on [`ModelSettings`][pydantic_ai.settings.ModelSettings] for more info.
+    Note: this is currently only supported by OpenAI models.
     """

@@ -4,7 +4,7 @@ import base64
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Literal, Union, cast, overload
 
@@ -208,6 +208,9 @@ class OpenAIModel(Model):
         async with response:
             yield await self._process_streamed_response(response)
 
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        return _customize_request_parameters(model_request_parameters)
+
     @property
     def model_name(self) -> OpenAIModelName:
         """The model name."""
@@ -243,7 +246,7 @@ class OpenAIModel(Model):
         model_settings: OpenAIModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
-        tools = self._get_tools(model_request_parameters, model_settings.get('strict') if model_settings else None)
+        tools = self._get_tools(model_request_parameters)
 
         # standalone function to make it easier to override
         if not tools:
@@ -309,12 +312,10 @@ class OpenAIModel(Model):
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 
-    def _get_tools(
-        self, model_request_parameters: ModelRequestParameters, strict: bool | None
-    ) -> list[chat.ChatCompletionToolParam]:
-        tools = [self._map_tool_definition(r, strict) for r in model_request_parameters.function_tools]
+    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
+        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
         if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r, strict) for r in model_request_parameters.result_tools]
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
         return tools
 
     async def _map_message(self, message: ModelMessage) -> AsyncIterable[chat.ChatCompletionMessageParam]:
@@ -352,8 +353,8 @@ class OpenAIModel(Model):
         )
 
     @staticmethod
-    def _map_tool_definition(f: ToolDefinition, strict: bool | None) -> chat.ChatCompletionToolParam:
-        tool_def: chat.ChatCompletionToolParam = {
+    def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
+        tool_param: chat.ChatCompletionToolParam = {
             'type': 'function',
             'function': {
                 'name': f.name,
@@ -361,11 +362,9 @@ class OpenAIModel(Model):
                 'parameters': f.parameters_json_schema,
             },
         }
-        if f.strict is False or (f.strict is None and strict is not True):
-            return tool_def
-        tool_def['function']['strict'] = True
-        tool_def['function']['parameters'] = _MakeSchemaStrict().handle_schema(f.parameters_json_schema)
-        return tool_def
+        if f.strict:
+            tool_param['function']['strict'] = f.strict
+        return tool_param
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
@@ -529,6 +528,9 @@ class OpenAIResponsesModel(Model):
         async with response:
             yield await self._process_streamed_response(response)
 
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        return _customize_request_parameters(model_request_parameters)
+
     def _process_response(self, response: responses.Response) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created_at, tz=timezone.utc)
@@ -637,8 +639,8 @@ class OpenAIResponsesModel(Model):
             'parameters': f.parameters_json_schema,
             'type': 'function',
             'description': f.description,
-            # TODO(Marcelo): We should make this configurable, and if True, set `additionalProperties` to False.
-            'strict': False,
+            # note: f.strict should already be a boolean thanks to customize_request_parameters
+            'strict': f.strict or False,
         }
 
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[responses.ResponseInputItemParam]]:
@@ -916,8 +918,8 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
         )
 
 
-class _MakeSchemaStrict:
-    def handle_schema(self, schema: dict[str, Any]) -> dict[str, Any]:
+class _StrictSchemaHelper:
+    def make_schema_strict(self, schema: dict[str, Any]) -> dict[str, Any]:
         """Recursively handle the schema to make it compatible with OpenAI strict mode.
 
         See https://platform.openai.com/docs/guides/function-calling?api-mode=responses#strict-mode for more details,
@@ -932,42 +934,114 @@ class _MakeSchemaStrict:
 
         # Handle $defs
         if defs := schema.get('$defs'):
-            schema['$defs'] = {k: self.handle_schema(v) for k, v in defs.items()}
+            schema['$defs'] = {k: self.make_schema_strict(v) for k, v in defs.items()}
 
         # Process schema based on its type
         schema_type = schema.get('type')
         if schema_type == 'object':
             # Handle object type by setting additionalProperties to false
             # and adding all properties to required list
-            self._handle_object_schema(schema)
+            self._make_object_schema_strict(schema)
         elif schema_type == 'array':
             # Handle array types by processing their items
             if 'items' in schema:
                 items: Any = schema['items']
-                schema['items'] = self.handle_schema(items)
+                schema['items'] = self.make_schema_strict(items)
             if 'prefixItems' in schema:
                 prefix_items: list[Any] = schema['prefixItems']
-                schema['prefixItems'] = [self.handle_schema(item) for item in prefix_items]
+                schema['prefixItems'] = [self.make_schema_strict(item) for item in prefix_items]
 
-        elif schema_type in ['string', 'number', 'integer', 'boolean', 'null']:
+        elif schema_type in {'string', 'number', 'integer', 'boolean', 'null'}:
             pass  # Primitive types need no special handling
         elif 'oneOf' in schema:
-            schema['oneOf'] = [self.handle_schema(item) for item in schema['oneOf']]
+            schema['oneOf'] = [self.make_schema_strict(item) for item in schema['oneOf']]
         elif 'anyOf' in schema:
-            schema['anyOf'] = [self.handle_schema(item) for item in schema['anyOf']]
+            schema['anyOf'] = [self.make_schema_strict(item) for item in schema['anyOf']]
 
         return schema
 
-    def _handle_object_schema(self, schema: dict[str, Any]) -> None:
+    def _make_object_schema_strict(self, schema: dict[str, Any]) -> None:
         schema['additionalProperties'] = False
 
         # Handle patternProperties; note this may not be compatible with strict mode but is included for completeness
         if 'patternProperties' in schema and isinstance(schema['patternProperties'], dict):
             pattern_props: dict[str, Any] = schema['patternProperties']
-            schema['patternProperties'] = {str(k): self.handle_schema(v) for k, v in pattern_props.items()}
+            schema['patternProperties'] = {str(k): self.make_schema_strict(v) for k, v in pattern_props.items()}
 
         # Handle properties — update their schemas recursively, and make all properties required
         if 'properties' in schema and isinstance(schema['properties'], dict):
             properties: dict[str, Any] = schema['properties']
-            schema['properties'] = {k: self.handle_schema(v) for k, v in properties.items()}
+            schema['properties'] = {k: self.make_schema_strict(v) for k, v in properties.items()}
             schema['required'] = list(properties.keys())
+
+    def is_schema_strict(self, schema: dict[str, Any]) -> bool:  # noqa C901
+        """Check if the schema is strict-mode-compatible.
+
+        A schema is compatible if:
+        * `additionalProperties` is set to false for each object in the parameters
+        * all fields in properties are marked as required
+
+        See https://platform.openai.com/docs/guides/function-calling?api-mode=responses#strict-mode for more details.
+        """
+        if not isinstance(schema, dict):
+            return False
+
+        # Check $defs
+        if defs := schema.get('$defs'):
+            if not all(self.is_schema_strict(v) for v in defs.values()):
+                return False
+
+        schema_type = schema.get('type')
+        if schema_type == 'object':
+            if not self._is_object_schema_strict(schema):
+                return False
+        elif schema_type == 'array':
+            if 'items' in schema:
+                items: Any = schema['items']
+                if not self.is_schema_strict(items):
+                    return False
+            if 'prefixItems' in schema:
+                prefix_items: list[Any] = schema['prefixItems']
+                if not all(self.is_schema_strict(item) for item in prefix_items):
+                    return False
+        elif schema_type in {'string', 'number', 'integer', 'boolean', 'null'}:
+            pass
+        elif 'oneOf' in schema:
+            if not all(self.is_schema_strict(item) for item in schema['oneOf']):
+                return False
+        elif 'anyOf' in schema:
+            if not all(self.is_schema_strict(item) for item in schema['anyOf']):
+                return False
+
+        return True
+
+    def _is_object_schema_strict(self, schema: dict[str, Any]) -> bool:
+        """Check if the schema is an object and has additionalProperties set to false."""
+        if schema.get('additionalProperties') is not False:
+            return False
+        if 'properties' not in schema:
+            return False
+
+        return (
+            schema.get('additionalProperties') is False
+            and 'properties' in schema
+            and all(k in schema.get('required', []) for k in schema['properties'].keys())
+        )
+
+
+def _customize_request_parameters(model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+    """Customize the request parameters for OpenAI models."""
+
+    def _customize_tool_def(t: ToolDefinition):
+        if t.strict is True:
+            parameters_json_schema = _StrictSchemaHelper().make_schema_strict(t.parameters_json_schema)
+            return replace(t, parameters_json_schema=parameters_json_schema)
+        elif t.strict is None and _StrictSchemaHelper().is_schema_strict(t.parameters_json_schema):
+            return replace(t, strict=True)
+        return t
+
+    return ModelRequestParameters(
+        function_tools=[_customize_tool_def(tool) for tool in model_request_parameters.function_tools],
+        allow_text_result=model_request_parameters.allow_text_result,
+        result_tools=[_customize_tool_def(tool) for tool in model_request_parameters.result_tools],
+    )
