@@ -253,6 +253,7 @@ class OpenAIModel(Model):
         else:
             tool_choice = 'auto'
 
+        # TODO(Marcelo): What do I do here regarding the `instructions`? Nothing?
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         for m in messages:
             async for msg in self._map_message(m):
@@ -584,14 +585,14 @@ class OpenAIResponsesModel(Model):
         else:
             tool_choice = 'auto'
 
-        system_prompt, openai_messages = await self._map_message(messages)
+        instructions, openai_messages = await self._map_messages(messages)
         reasoning = self._get_reasoning(model_settings)
 
         try:
             return await self.client.responses.create(
                 input=openai_messages,
                 model=self._model_name,
-                instructions=system_prompt,
+                instructions=instructions,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
@@ -634,20 +635,16 @@ class OpenAIResponsesModel(Model):
             'strict': False,
         }
 
-    async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[responses.ResponseInputItemParam]]:
+    async def _map_messages(
+        self, messages: list[ModelMessage]
+    ) -> tuple[str | NotGiven, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
-        system_prompt: str = ''
-        instructions: str = ''
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
             if isinstance(message, ModelRequest):
-                # TODO(Marcelo): The logic here overwrites the instructions. If the last agent doesn't have instructions,
-                # it will inherit from the previous agent. Shall we actually not do it like this?
-                if message.instructions:
-                    instructions = message.instructions
                 for part in message.parts:
                     if isinstance(part, SystemPromptPart):
-                        system_prompt += part.content
+                        openai_messages.append(responses.EasyInputMessageParam(role='system', content=part.content))
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
@@ -684,10 +681,8 @@ class OpenAIResponsesModel(Model):
                         assert_never(item)
             else:
                 assert_never(message)
-
-        if instructions:
-            return instructions, openai_messages
-        return system_prompt, openai_messages
+        instructions = getattr(messages[-1], 'instructions', NOT_GIVEN)
+        return instructions, openai_messages
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> responses.ResponseFunctionToolCallParam:
