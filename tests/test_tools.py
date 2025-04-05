@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 
-from pydantic_ai import Agent, RunContext, Tool, UserError
+from pydantic_ai import Agent, RunContext, Tool, UserError, _pydantic
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -21,7 +21,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import GenerateToolJsonSchema, ToolDefinition
 
 
 def test_tool_no_ctx():
@@ -500,6 +500,59 @@ def test_init_tool_plain():
     assert call_args == snapshot([0, 0])
     assert agent_infer._function_tools['plain_tool'].takes_ctx is False
     assert agent_infer._function_tools['plain_tool'].max_retries == 7
+
+
+def test_init_tool_with_function_schema():
+    def x_tool(x: int) -> None:
+        raise NotImplementedError
+
+    def y_tool(y: str) -> None:
+        raise NotImplementedError
+
+    y_fs = _pydantic.function_schema(
+        y_tool,
+        takes_ctx=False,
+        docstring_format='auto',
+        require_parameter_descriptions=False,
+        schema_generator=GenerateToolJsonSchema,
+    )
+    agent = Agent('test', tools=[Tool(x_tool, function_schema=y_fs)])
+
+    # make sure the function schema for y_tool is used instead of the default of x_tool.
+    assert agent._function_tools['x_tool']._parameters_json_schema == snapshot(
+        {
+            'additionalProperties': False,
+            'properties': {'y': {'type': 'string'}},
+            'required': ['y'],
+            'type': 'object',
+        }
+    )
+
+
+def test_init_tool_ctx_with_function_schema():
+    def x_tool(ctx: RunContext[int], x: int) -> None:
+        raise NotImplementedError
+
+    def y_tool(ctx: RunContext[int], y: str) -> None:
+        raise NotImplementedError
+
+    y_fs = _pydantic.function_schema(
+        y_tool,
+        takes_ctx=True,
+        docstring_format='auto',
+        require_parameter_descriptions=False,
+        schema_generator=GenerateToolJsonSchema,
+    )
+    agent = Agent('test', tools=[Tool(x_tool, function_schema=y_fs, takes_ctx=True)], deps_type=int)
+
+    assert agent._function_tools['x_tool']._parameters_json_schema == snapshot(
+        {
+            'additionalProperties': False,
+            'properties': {'y': {'type': 'string'}},
+            'required': ['y'],
+            'type': 'object',
+        }
+    )
 
 
 def ctx_tool(ctx: RunContext[int], x: int) -> int:
