@@ -10,7 +10,6 @@ from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
 
-from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.test import TestModel
 
@@ -24,6 +23,11 @@ with try_import() as imports_successful:
     from pydantic_ai._cli import cli, cli_agent, handle_slash_command
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
+
+
+@pytest.fixture(autouse=True)
+def mcp_servers_config(mocker: MockerFixture):
+    mocker.patch('pydantic_ai._cli.mcp_servers_from_config', return_value=[])
 
 
 def test_cli_version(capfd: CaptureFixture[str]):
@@ -168,24 +172,18 @@ def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli([])
-    mock_run_chat.assert_awaited_once_with(
-        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai'
-    )
+    mock_run_chat.assert_awaited_once_with(IsInstance(PromptSession), True, IsInstance(Console), 'monokai')
 
 
 def test_code_theme_light(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=light'])
-    mock_run_chat.assert_awaited_once_with(
-        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'default'
-    )
+    mock_run_chat.assert_awaited_once_with(IsInstance(PromptSession), True, IsInstance(Console), 'default')
 
 
 def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=dark'])
-    mock_run_chat.assert_awaited_once_with(
-        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai'
-    )
+    mock_run_chat.assert_awaited_once_with(IsInstance(PromptSession), True, IsInstance(Console), 'monokai')

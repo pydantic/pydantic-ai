@@ -53,6 +53,34 @@ You can specify which model to use with the `--model` flag:
 $ pai --model=openai:gpt-4 "What's the capital of France?"
 ```
 
+### Configure MCP Servers
+
+You can configure MCP (Model Control Protocol) servers using the `--edit-mcp-servers` flag:
+
+```bash
+$ pai --edit-mcp-servers
+```
+
+This will open your default text editor (or the one specified in your `EDITOR` environment variable)
+to edit the MCP servers configuration file located at `~/.pydantic-ai/mcp_servers.json`.
+The configuration file uses the following format:
+
+```json
+{
+  "mcpServers": {
+    "my-stdio-server": {
+      "command": "uvx",
+      "args": ["mcp_server"]
+    },
+    "my-http-server": {
+      "url": "http://localhost:8000/sse"
+    }
+  }
+}
+```
+
+For more information about MCP servers and their configuration, visit the [MCP documentation](mcp/index.md).
+
 ### Usage with `uvx`
 
 If you have [uv](https://docs.astral.sh/uv/) installed, the quickest way to run the CLI is with `uvx`:
