@@ -510,13 +510,13 @@ async def main():
             #> Node: CountDown()
             #> Node: CountDown()
             #> Node: End(data=0)
-    print('Final result:', run.result.output)  # (3)!
-    #> Final result: 0
+    print('Final output:', run.result.output)  # (3)!
+    #> Final output: 0
 ```
 
 1. `Graph.iter(...)` returns a [`GraphRun`][pydantic_graph.graph.GraphRun].
 2. Here, we step through each node as it is executed.
-3. Once the graph returns an [`End`][pydantic_graph.nodes.End], the loop ends, and `run.final_output` becomes a [`GraphRunResult`][pydantic_graph.graph.GraphRunResult] containing the final outcome (`0` here).
+3. Once the graph returns an [`End`][pydantic_graph.nodes.End], the loop ends, and `run.result` becomes a [`GraphRunResult`][pydantic_graph.graph.GraphRunResult] containing the final outcome (`0` here).
 
 ### Using `GraphRun.next(node)` manually
 
@@ -559,7 +559,7 @@ async def main():
 
 1. We start by grabbing the first node that will be run in the agent's graph.
 2. The agent run is finished once an `End` node has been produced; instances of `End` cannot be passed to `next`.
-3. If the user decides to stop early, we break out of the loop. The graph run won't have a real final result in that case (`run.final_output` remains `None`).
+3. If the user decides to stop early, we break out of the loop. The graph run won't have a real final result in that case (`run.result` remains `None`).
 4. At each step, we call `await run.next(node)` to run it and get the next node (or an `End`).
 5. Because we did not continue the run until it finished, the `result` is not set.
 6. The run's history is still populated with the steps we executed so far.
@@ -724,10 +724,10 @@ Instead of running the entire graph in a single process invocation, we run the g
                 message_history=ctx.state.evaluate_agent_messages,
             )
             ctx.state.evaluate_agent_messages += result.all_messages()
-            if result.data.correct:
-                return End(result.data.comment)
+            if result.output.correct:
+                return End(result.output.comment)
             else:
-                return Reprimand(result.data.comment)
+                return Reprimand(result.output.comment)
 
 
     @dataclass

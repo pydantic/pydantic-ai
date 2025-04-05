@@ -24,7 +24,7 @@ interactions:
       tool_choice: required
       tools:
       - description: The final response which ends this conversation
-        name: final_result
+        name: final_output
         parameters:
           additionalProperties: false
           properties:
@@ -35,7 +35,7 @@ interactions:
           required:
           - name
           - age
-          title: MyResult
+          title: MyOutput
           type: object
         strict: true
         type: function
@@ -74,7 +74,7 @@ interactions:
       - arguments: '{"name":"Brazil","age":2023}'
         call_id: call_Ve7O5nYyD0JkuZuqOwBVkNe0
         id: fc_67e57425a6b48191b74a3c62b1df1a19009eb9aa6872824c
-        name: final_result
+        name: final_output
         status: completed
         type: function_call
       parallel_tool_calls: true
@@ -91,7 +91,7 @@ interactions:
       tool_choice: required
       tools:
       - description: The final response which ends this conversation
-        name: final_result
+        name: final_output
         parameters:
           additionalProperties: false
           properties:
@@ -102,7 +102,7 @@ interactions:
           required:
           - name
           - age
-          title: MyResult
+          title: MyOutput
           type: object
         strict: true
         type: function

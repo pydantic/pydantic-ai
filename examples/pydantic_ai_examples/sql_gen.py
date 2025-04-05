@@ -118,21 +118,21 @@ today's date = {date.today()}
 
 
 @agent.output_validator
-async def validate_result(ctx: RunContext[Deps], result: Response) -> Response:
-    if isinstance(result, InvalidRequest):
-        return result
+async def validate_output(ctx: RunContext[Deps], output: Response) -> Response:
+    if isinstance(output, InvalidRequest):
+        return output
 
     # gemini often adds extraneous backslashes to SQL
-    result.sql_query = result.sql_query.replace('\\', '')
-    if not result.sql_query.upper().startswith('SELECT'):
+    output.sql_query = output.sql_query.replace('\\', '')
+    if not output.sql_query.upper().startswith('SELECT'):
         raise ModelRetry('Please create a SELECT query')
 
     try:
-        await ctx.deps.conn.execute(f'EXPLAIN {result.sql_query}')
+        await ctx.deps.conn.execute(f'EXPLAIN {output.sql_query}')
     except asyncpg.exceptions.PostgresError as e:
         raise ModelRetry(f'Invalid query: {e}') from e
     else:
-        return result
+        return output
 
 
 async def main():

@@ -5,8 +5,8 @@ Example demonstrating how to use PydanticAI to generate SQL queries based on use
 Demonstrates:
 
 * [dynamic system prompt](../agents.md#system-prompts)
-* [structured `result_type`](../output.md#structured-output)
-* [result validation](../output.md#output-validator-functions)
+* [structured `output_type`](../output.md#structured-output)
+* [output validation](../output.md#output-validator-functions)
 * [agent dependencies](../dependencies.md)
 
 ## Running the Example

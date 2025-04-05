@@ -240,10 +240,10 @@ KnownModelName = TypeAliasType(
 
 @dataclass
 class ModelRequestParameters:
-    """Configuration for an agent's request to a model, specifically related to tools and result handling."""
+    """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition]
-    allow_text_result: bool
+    allow_text_output: bool
     output_tools: list[ToolDefinition]
 
 

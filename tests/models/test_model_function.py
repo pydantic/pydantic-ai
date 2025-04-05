@@ -93,7 +93,7 @@ def test_simple():
 
 
 async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
-    assert info.allow_text_result
+    assert info.allow_text_output
     assert {t.name for t in info.function_tools} == {'get_location', 'get_weather'}
     last = messages[-1].parts[-1]
     if isinstance(last, UserPromptPart):
@@ -322,13 +322,13 @@ def test_register_all():
         return ModelResponse(
             parts=[
                 TextPart(
-                    f'messages={len(messages)} allow_text_result={info.allow_text_result} tools={len(info.function_tools)}'
+                    f'messages={len(messages)} allow_text_output={info.allow_text_output} tools={len(info.function_tools)}'
                 )
             ]
         )
 
     result = agent_all.run_sync('Hello', model=FunctionModel(f))
-    assert result.output == snapshot('messages=1 allow_text_result=True tools=5')
+    assert result.output == snapshot('messages=1 allow_text_output=True tools=5')
 
 
 def test_call_all():
@@ -393,11 +393,11 @@ def test_retry_str():
     agent = Agent(FunctionModel(try_again))
 
     @agent.output_validator
-    async def validate_result(r: str) -> str:
-        if r == '1':
+    async def validate_output(o: str) -> str:
+        if o == '1':
             raise ModelRetry('Try again')
         else:
-            return r
+            return o
 
     result = agent.run_sync('')
     assert result.output == snapshot('2')
@@ -418,11 +418,11 @@ def test_retry_result_type():
     agent = Agent(FunctionModel(try_again), output_type=Foo)
 
     @agent.output_validator
-    async def validate_result(r: Foo) -> Foo:
-        if r.x == 1:
+    async def validate_output(o: Foo) -> Foo:
+        if o.x == 1:
             raise ModelRetry('Try again')
         else:
-            return r
+            return o
 
     result = agent.run_sync('')
     assert result.output == snapshot(Foo(x=2))
@@ -458,9 +458,9 @@ async def test_stream_structure():
     async def stream_structured_function(
         _messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls]:
-        assert agent_info.result_tools is not None
-        assert len(agent_info.result_tools) == 1
-        name = agent_info.result_tools[0].name
+        assert agent_info.output_tools is not None
+        assert len(agent_info.output_tools) == 1
+        name = agent_info.output_tools[0].name
         yield {0: DeltaToolCall(name=name)}
         yield {0: DeltaToolCall(json_args='{"x": ')}
         yield {0: DeltaToolCall(json_args='1}')}

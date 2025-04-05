@@ -241,9 +241,9 @@ print(dice_result['b'].output)
 
 _(This example is complete, it can be run "as is")_
 
-## Function Tools vs. Structured Results
+## Function Tools vs. Structured Outputs
 
-As the name suggests, function tools use the model's "tools" or "functions" API to let the model know what is available to call. Tools or functions are also used to define the schema(s) for structured responses, thus a model might have access to many tools, some of which call function tools while others end the run and return a result.
+As the name suggests, function tools use the model's "tools" or "functions" API to let the model know what is available to call. Tools or functions are also used to define the schema(s) for structured responses, thus a model might have access to many tools, some of which call function tools while others end the run and produce a final output.
 
 ## Function tools and schema
 

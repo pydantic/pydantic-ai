@@ -7,16 +7,16 @@ but multiple agents can also interact to embody more complex workflows.
 
 The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptually you can think of an agent as a container for:
 
-| **Component**                                 | **Description**                                                                                          |
-|-----------------------------------------------|----------------------------------------------------------------------------------------------------------|
-| [System prompt(s)](#system-prompts)           | A set of instructions for the LLM written by the developer.                                              |
-| [Function tool(s)](tools.md)                  | Functions that the LLM may call to get information while generating a response.                          |
-| [Structured result type](output.md)           | The structured datatype the LLM must return at the end of a run, if specified.                           |
-| [Dependency type constraint](dependencies.md) | System prompt functions, tools, and result validators may all use dependencies when they're run.         |
-| [LLM model](api/models/base.md)               | Optional default LLM model associated with the agent. Can also be specified when running the agent.      |
-| [Model Settings](#additional-configuration)   | Optional default model settings to help fine tune requests. Can also be specified when running the agent.|
+| **Component**                                 | **Description**                                                                                           |
+|-----------------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| [System prompt(s)](#system-prompts)           | A set of instructions for the LLM written by the developer.                                               |
+| [Function tool(s)](tools.md)                  | Functions that the LLM may call to get information while generating a response.                           |
+| [Structured output type](output.md)           | The structured datatype the LLM must return at the end of a run, if specified.                            |
+| [Dependency type constraint](dependencies.md) | System prompt functions, tools, and output validators may all use dependencies when they're run.          |
+| [LLM model](api/models/base.md)               | Optional default LLM model associated with the agent. Can also be specified when running the agent.       |
+| [Model Settings](#additional-configuration)   | Optional default model settings to help fine tune requests. Can also be specified when running the agent. |
 
-In typing terms, agents are generic in their dependency and result types, e.g., an agent which required dependencies of type `#!python Foobar` and returned results of type `#!python list[str]` would have type `Agent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with PydanticAI.
+In typing terms, agents are generic in their dependency and output types, e.g., an agent which required dependencies of type `#!python Foobar` and produced outputs of type `#!python list[str]` would have type `Agent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with PydanticAI.
 
 Here's a toy example of an agent that simulates a roulette wheel:
 
@@ -51,10 +51,10 @@ print(result.output)
 #> False
 ```
 
-1. Create an agent, which expects an integer dependency and returns a boolean result. This agent will have type `#!python Agent[int, bool]`.
+1. Create an agent, which expects an integer dependency and produces a boolean output. This agent will have type `#!python Agent[int, bool]`.
 2. Define a tool that checks if the square is a winner. Here [`RunContext`][pydantic_ai.tools.RunContext] is parameterized with the dependency type `int`; if you got the dependency type wrong you'd get a typing error.
 3. In reality, you might want to use a random number here e.g. `random.randint(0, 36)`.
-4. `result.data` will be a boolean indicating if the square is a winner. Pydantic performs the result validation, it'll be typed as a `bool` since its type is derived from the `result_type` generic parameter of the agent.
+4. `result.output` will be a boolean indicating if the square is a winner. Pydantic performs the output validation, and it'll be typed as a `bool` since its type is derived from the `output_type` generic parameter of the agent.
 
 
 !!! tip "Agents are designed for reuse, like FastAPI Apps"
@@ -212,11 +212,11 @@ async def main():
 3. When you call `await agent_run.next(node)`, it executes that node in the agent's graph, updates the run's history, and returns the *next* node to run.
 4. You could also inspect or mutate the new `node` here as needed.
 
-#### Accessing usage and the final result
+#### Accessing usage and the final output
 
 You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`Usage`][pydantic_ai.usage.Usage] object containing the usage data.
 
-Once the run finishes, `agent_run.final_output` becomes a [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
+Once the run finishes, `agent_run.result` becomes a [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
 ---
 
@@ -309,7 +309,7 @@ async def main():
                                 )
                         elif isinstance(event, FinalResultEvent):
                             output_messages.append(
-                                f'[Result] The model produced a final result (tool_name={event.tool_name})'
+                                f'[Result] The model produced a final output (tool_name={event.tool_name})'
                             )
             elif Agent.is_call_tools_node(node):
                 # A handle-response node => The model returned some data, potentially calls a tool
@@ -350,7 +350,7 @@ if __name__ == '__main__':
         "[Tools] Tool call '0001' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
         '=== ModelRequestNode: streaming partial request tokens ===',
         "[Request] Starting part 0: TextPart(content='It will be ', part_kind='text')",
-        '[Result] The model produced a final result (tool_name=None)',
+        '[Result] The model produced a final output (tool_name=None)',
         "[Request] Part 0 text delta: 'warm and sunny '",
         "[Request] Part 0 text delta: 'in Paris on '",
         "[Request] Part 0 text delta: 'Tuesday.'",
@@ -510,7 +510,6 @@ except UnexpectedModelBehavior as e:
 ```
 
 1. This error is raised because the safety thresholds were exceeded.
-Generally, `result` would contain a normal `ModelResponse`.
 
 ## Runs vs. Conversations
 
@@ -548,11 +547,11 @@ PydanticAI is designed to work well with static type checkers, like mypy and pyr
 !!! tip "Typing is (somewhat) optional"
     PydanticAI is designed to make type checking as useful as possible for you if you choose to use it, but you don't have to use types everywhere all the time.
 
-    That said, because PydanticAI uses Pydantic, and Pydantic uses type hints as the definition for schema and validation, some types (specifically type hints on parameters to tools, and the `result_type` arguments to [`Agent`][pydantic_ai.Agent]) are used at runtime.
+    That said, because PydanticAI uses Pydantic, and Pydantic uses type hints as the definition for schema and validation, some types (specifically type hints on parameters to tools, and the `output_type` arguments to [`Agent`][pydantic_ai.Agent]) are used at runtime.
 
     We (the library developers) have messed up if type hints are confusing you more than helping you, if you find this, please create an [issue](https://github.com/pydantic/pydantic-ai/issues) explaining what's annoying you!
 
-In particular, agents are generic in both the type of their dependencies and the type of results they return, so you can use the type hints to ensure you're using the right types.
+In particular, agents are generic in both the type of their dependencies and the type of the outputs they return, so you can use the type hints to ensure you're using the right types.
 
 Consider the following script with type mistakes:
 
@@ -651,12 +650,12 @@ _(This example is complete, it can be run "as is")_
 
 ## Reflection and self-correction
 
-Validation errors from both function tool parameter validation and [structured result validation](output.md#structured-output) can be passed back to the model with a request to retry.
+Validation errors from both function tool parameter validation and [structured output validation](output.md#structured-output) can be passed back to the model with a request to retry.
 
-You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [result validator function](output.md#output-validator-functions) to tell the model it should retry generating a response.
+You can also raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within a [tool](tools.md) or [output validator function](output.md#output-validator-functions) to tell the model it should retry generating a response.
 
-- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific tool][pydantic_ai.Agent.tool], or a [result validator][pydantic_ai.Agent.__init__].
-- You can access the current retry count from within a tool or result validator via [`ctx.retry`][pydantic_ai.tools.RunContext].
+- The default retry count is **1** but can be altered for the [entire agent][pydantic_ai.Agent.__init__], a [specific tool][pydantic_ai.Agent.tool], or an [output validator][pydantic_ai.Agent.__init__].
+- You can access the current retry count from within a tool or output validator via [`ctx.retry`][pydantic_ai.tools.RunContext].
 
 Here's an example:
 

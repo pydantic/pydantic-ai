@@ -58,7 +58,7 @@ class Answer(BaseNode[QuestionState]):
         return Evaluate(answer)
 
 
-class EvaluationResult(BaseModel, use_attribute_docstrings=True):
+class EvaluationOutput(BaseModel, use_attribute_docstrings=True):
     correct: bool
     """Whether the answer is correct."""
     comment: str
@@ -67,7 +67,7 @@ class EvaluationResult(BaseModel, use_attribute_docstrings=True):
 
 evaluate_agent = Agent(
     'openai:gpt-4o',
-    output_type=EvaluationResult,
+    output_type=EvaluationOutput,
     system_prompt='Given a question and answer, evaluate if the answer is correct.',
 )
 

@@ -366,7 +366,7 @@ text_responses: dict[str, str | ToolCallPart] = {
         '  <dietary_restriction>vegetarian</dietary_restriction>\n'
         '</examples>'
     ): ToolCallPart(
-        tool_name='final_result',
+        tool_name='final_output',
         args={
             'ingredients': ['spaghetti', 'tomato sauce', 'vegetarian mince', 'onions', 'garlic'],
             'steps': ['Cook the spaghetti in boiling water', '...'],
@@ -378,7 +378,7 @@ text_responses: dict[str, str | ToolCallPart] = {
         '  <dietary_restriction>gluten-free</dietary_restriction>\n'
         '</examples>'
     ): ToolCallPart(
-        tool_name='final_result',
+        tool_name='final_output',
         args={
             'ingredients': ['gluten-free flour', 'cocoa powder', 'sugar', 'eggs'],
             'steps': ['Mix the ingredients', 'Bake at 350°F for 30 minutes'],
@@ -431,7 +431,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
             return ModelResponse(parts=[TextPart('what is 1 + 1?')])
         elif '<Rubric>\n' in m.content:
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'reason': '-', 'pass': True, 'score': 1.0})]
+                parts=[ToolCallPart(tool_name='final_output', args={'reason': '-', 'pass': True, 'score': 1.0})]
             )
         elif 'Generate question-answer pairs about world capitals and landmarks.' in m.content:
             return ModelResponse(

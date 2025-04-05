@@ -123,7 +123,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
-                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "output_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:success_response:',
                     'gen_ai.system': 'function',
@@ -193,7 +193,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                 'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
-                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "output_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
                     'gen_ai.system': 'function',

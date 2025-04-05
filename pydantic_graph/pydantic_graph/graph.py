@@ -169,9 +169,9 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             async for _node in graph_run:
                 pass
 
-        final_output = graph_run.result
-        assert final_output is not None, 'GraphRun should have a final result'
-        return final_output
+        result = graph_run.result
+        assert result is not None, 'GraphRun should have a result'
+        return result
 
     def run_sync(
         self,

@@ -38,7 +38,7 @@ class SupportDependencies:
     db: DatabaseConn
 
 
-class SupportResult(BaseModel):
+class SupportOutput(BaseModel):
     support_advice: str = Field(description='Advice returned to the customer')
     block_card: bool = Field(description='Whether to block their card or not')
     risk: int = Field(description='Risk level of query', ge=0, le=10)
@@ -47,7 +47,7 @@ class SupportResult(BaseModel):
 support_agent = Agent(
     'openai:gpt-4o',
     deps_type=SupportDependencies,
-    output_type=SupportResult,
+    output_type=SupportOutput,
     system_prompt=(
         'You are a support agent in our bank, give the '
         'customer support and judge the risk level of their query. '

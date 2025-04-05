@@ -400,7 +400,7 @@ With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `ext
 class ToolDefinition:
     """Definition of a tool passed to a model.
 
-    This is used for both function tools result tools.
+    This is used for both function tools and output tools.
     """
 
     name: str
@@ -413,7 +413,7 @@ class ToolDefinition:
     """The JSON schema for the tool's parameters."""
 
     outer_typed_dict_key: str | None = None
-    """The key in the outer [TypedDict] that wraps a result tool.
+    """The key in the outer [TypedDict] that wraps an output tool.
 
-    This will only be set for result tools which don't have an `object` JSON schema.
+    This will only be set for output tools which don't have an `object` JSON schema.
     """

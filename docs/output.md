@@ -25,22 +25,22 @@ print(result.usage())
 
 _(This example is complete, it can be run "as is")_
 
-Runs end when either a plain text response is received or the model calls a tool associated with one of the structured result types (run can also be cancelled if usage limits are exceeded, see [Usage Limits](agents.md#usage-limits)).
+Runs end when either a plain text response is received or the model calls a tool associated with one of the structured output types (run can also be cancelled if usage limits are exceeded, see [Usage Limits](agents.md#usage-limits)).
 
 ## Output data {#structured-output}
 
-When the result type is `str`, or a union including `str`, plain text responses are enabled on the model, and the raw text response from the model is used as the response data.
+When the output type is `str`, or a union including `str`, plain text responses are enabled on the model, and the raw text response from the model is used as the response data.
 
-If the result type is a union with multiple members (after removing `str` from the members), each member is registered as a separate tool with the model in order to reduce the complexity of the tool schemas and maximise the chances a model will respond correctly.
+If the output type is a union with multiple members (after removing `str` from the members), each member is registered as a separate tool with the model in order to reduce the complexity of the tool schemas and maximise the chances a model will respond correctly.
 
-If the result type schema is not of type `"object"` (e.g. it's `int` or `list[int]`), the result type is wrapped in a single element object, so the schema of all tools registered with the model are object schemas.
+If the output type schema is not of type `"object"` (e.g. it's `int` or `list[int]`), the output type is wrapped in a single element object, so the schema of all tools registered with the model are object schemas.
 
 Structured outputs (like tools) use Pydantic to build the JSON schema used for the tool, and to validate the data returned by the model.
 
 !!! note "Bring on PEP-747"
     Until [PEP-747](https://peps.python.org/pep-0747/) "Annotating Type Forms" lands, unions are not valid as `type`s in Python.
 
-    When creating the agent we need to `# type: ignore` the `result_type` argument, and add a type hint to tell type checkers about the type of the agent.
+    When creating the agent we need to `# type: ignore` the `output_type` argument, and add a type hint to tell type checkers about the type of the agent.
 
 Here's an example of returning either text or a structured value
 
@@ -161,11 +161,11 @@ _(This example is complete, it can be run "as is")_
 There two main challenges with streamed results:
 
 1. Validating structured responses before they're complete, this is achieved by "partial validation" which was recently added to Pydantic in [pydantic/pydantic#10748](https://github.com/pydantic/pydantic/pull/10748).
-2. When receiving a response, we don't know if it's the final response without starting to stream it and peeking at the content. PydanticAI streams just enough of the response to sniff out if it's a tool call or a result, then streams the whole thing and calls tools, or returns the stream as a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult].
+2. When receiving a response, we don't know if it's the final response without starting to stream it and peeking at the content. PydanticAI streams just enough of the response to sniff out if it's a tool call or an output, then streams the whole thing and calls tools, or returns the stream as a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult].
 
 ### Streaming Text
 
-Example of streamed text result:
+Example of streamed text output:
 
 ```python {title="streamed_hello_world.py" line_length="120"}
 from pydantic_ai import Agent

@@ -93,7 +93,7 @@ class OutputSchema(Generic[OutputDataT]):
         name: str | None = None,
         description: str | None = None,
     ) -> OutputSchema[T] | None:
-        """Build a ResultSchema dataclass from a response type."""
+        """Build an OutputSchema dataclass from a response type."""
         if output_type is str:
             return None
 

@@ -171,7 +171,7 @@ class GeminiModel(Model):
     def _get_tool_config(
         self, model_request_parameters: ModelRequestParameters, tools: _GeminiTools | None
     ) -> _GeminiToolConfig | None:
-        if model_request_parameters.allow_text_result:
+        if model_request_parameters.allow_text_output:
             return None
         elif tools:
             return _tool_config([t['name'] for t in tools['function_declarations']])

@@ -61,7 +61,7 @@ async def test_model_simple(allow_model_requests: None):
     assert m.model_name == 'gemini-1.5-flash'
     assert 'x-goog-api-key' in m.client.headers
 
-    arc = ModelRequestParameters(function_tools=[], allow_text_result=True, output_tools=[])
+    arc = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[])
     tools = m._get_tools(arc)
     tool_config = m._get_tool_config(arc, tools)
     assert tools is None
@@ -87,13 +87,13 @@ async def test_model_tools(allow_model_requests: None):
             },
         ),
     ]
-    result_tool = ToolDefinition(
+    output_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}, 'required': ['spam']},
     )
 
-    arc = ModelRequestParameters(function_tools=tools, allow_text_result=True, output_tools=[result_tool])
+    arc = ModelRequestParameters(function_tools=tools, allow_text_output=True, output_tools=[output_tool])
     tools = m._get_tools(arc)
     tool_config = m._get_tool_config(arc, tools)
     assert tools == snapshot(
@@ -129,12 +129,12 @@ async def test_model_tools(allow_model_requests: None):
 
 async def test_require_response_tool(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
-    result_tool = ToolDefinition(
+    output_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
     )
-    arc = ModelRequestParameters(function_tools=[], allow_text_result=False, output_tools=[result_tool])
+    arc = ModelRequestParameters(function_tools=[], allow_text_output=False, output_tools=[output_tool])
     tools = m._get_tools(arc)
     tool_config = m._get_tool_config(arc, tools)
     assert tools == snapshot(
@@ -188,13 +188,13 @@ async def test_json_def_replaced(allow_model_requests: None):
     )
 
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
-    result_tool = ToolDefinition(
+    output_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         json_schema,
     )
     assert m._get_tools(
-        ModelRequestParameters(function_tools=[], allow_text_result=True, output_tools=[result_tool])
+        ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
     ) == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -235,13 +235,13 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
     json_schema = Locations.model_json_schema()
 
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
-    result_tool = ToolDefinition(
+    output_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         json_schema,
     )
     assert m._get_tools(
-        ModelRequestParameters(function_tools=[], allow_text_result=True, output_tools=[result_tool])
+        ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
     ) == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -298,13 +298,13 @@ async def test_json_def_recursive(allow_model_requests: None):
     )
 
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
-    result_tool = ToolDefinition(
+    output_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         json_schema,
     )
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
-        m._get_tools(ModelRequestParameters(function_tools=[], allow_text_result=True, output_tools=[result_tool]))
+        m._get_tools(ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool]))
 
 
 async def test_json_def_date(allow_model_requests: None):
@@ -330,13 +330,13 @@ async def test_json_def_date(allow_model_requests: None):
     )
 
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
-    result_tool = ToolDefinition(
+    output_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         json_schema,
     )
     assert m._get_tools(
-        ModelRequestParameters(function_tools=[], allow_text_result=True, output_tools=[result_tool])
+        ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
     ) == snapshot(
         _GeminiTools(
             function_declarations=[

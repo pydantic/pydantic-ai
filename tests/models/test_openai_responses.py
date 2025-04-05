@@ -59,14 +59,14 @@ async def test_openai_responses_model_simple_response_with_tool_call(allow_model
     assert result.output == snapshot('The capital of PotatoLand is Potato City.')
 
 
-async def test_openai_responses_result_type(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_output_type(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
-    class MyResult(TypedDict):
+    class MyOutput(TypedDict):
         name: str
         age: int
 
-    agent = Agent(model=model, output_type=MyResult)
+    agent = Agent(model=model, output_type=MyOutput)
     result = await agent.run('Give me the name and age of Brazil, Argentina, and Chile.')
     assert result.output == snapshot({'name': 'Brazil', 'age': 2023})  # pragma: no cover
 

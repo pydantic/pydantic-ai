@@ -57,13 +57,13 @@ async def generate_dataset(
     Raises:
         ValidationError: If the LLM's response cannot be parsed as a valid dataset.
     """
-    result_schema = dataset_type.model_json_schema_with_evaluators(custom_evaluator_types)
+    output_schema = dataset_type.model_json_schema_with_evaluators(custom_evaluator_types)
 
     # TODO(DavidM): Update this once we add better response_format and/or ResultTool support to PydanticAI
     agent = Agent(
         model,
         system_prompt=(
-            f'Generate an object that is in compliance with this JSON schema:\n{result_schema}\n\n'
+            f'Generate an object that is in compliance with this JSON schema:\n{output_schema}\n\n'
             f'Include {n_examples} example cases.'
             ' You must not include any characters in your response before the opening { of the JSON object, or after the closing }.'
         ),

@@ -163,7 +163,7 @@ model = OpenAIResponsesModel('gpt-4o')
 agent = Agent(model=model, model_settings=model_settings)
 
 result = agent.run_sync('What is the weather in Tokyo?')
-print(result.data)
+print(result.output)
 """
 As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).
 """
@@ -1099,7 +1099,7 @@ print(response.all_messages())
 """
 ```
 
-The `ModelResponse` message above indicates in the `model_name` field that the result was returned by the Anthropic model, which is the second model specified in the `FallbackModel`.
+The `ModelResponse` message above indicates in the `model_name` field that the result was produced by the Anthropic model, which is the second model specified in the `FallbackModel`.
 
 !!! note
     Each model's options should be configured individually. For example, `base_url`, `api_key`, and custom clients should be set on each model itself, not on the `FallbackModel`.

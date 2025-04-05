@@ -221,7 +221,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                                 'outer_typed_dict_key': None,
                             }
                         ],
-                        'allow_text_result': True,
+                        'allow_text_output': True,
                         'output_tools': [],
                     }
                 )

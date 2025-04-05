@@ -63,7 +63,7 @@ Usage(
 2. The "delegate" agent, which is called from within a tool of the parent agent.
 3. Call the delegate agent from within a tool of the parent agent.
 4. Pass the usage from the parent agent to the delegate agent so the final [`result.usage()`][pydantic_ai.agent.AgentRunResult.usage] includes the usage from both agents.
-5. Since the function returns `#!python list[str]`, and the `result_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.data` from the tool.
+5. Since the function returns `#!python list[str]`, and the `output_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.output` from the tool.
 
 _(This example is complete, it can be run "as is")_
 
@@ -248,7 +248,7 @@ async def find_flight(usage: Usage) -> Union[FlightDetails, None]:  # (4)!
             return result.output
         else:
             message_history = result.all_messages(
-                result_tool_return_content='Please try again.'
+                output_tool_return_content='Please try again.'
             )
 
 
@@ -300,7 +300,7 @@ async def main():  # (7)!
         #> Seat preference: row=1 seat='A'
 ```
 
-1. Define the first agent, which finds a flight. We use an explicit type annotation until [PEP-747](https://peps.python.org/pep-0747/) lands, see [structured results](output.md#structured-output). We use a union as the result type so the model can communicate if it's unable to find a satisfactory choice; internally, each member of the union will be registered as a separate tool.
+1. Define the first agent, which finds a flight. We use an explicit type annotation until [PEP-747](https://peps.python.org/pep-0747/) lands, see [structured output](output.md#structured-output). We use a union as the output type so the model can communicate if it's unable to find a satisfactory choice; internally, each member of the union will be registered as a separate tool.
 2. Define a tool on the agent to find a flight. In this simple case we could dispense with the tool and just define the agent to return structured data, then search for a flight, but in more complex scenarios the tool would be necessary.
 3. Define usage limits for the entire app.
 4. Define a function to find a flight, which asks the user for their preferences and then calls the agent to find a flight.

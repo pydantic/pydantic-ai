@@ -37,9 +37,9 @@ pytestmark = pytest.mark.anyio
 
 def test_result_tuple():
     def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
-        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), output_type=tuple[str, str])
 
@@ -54,9 +54,9 @@ class Foo(BaseModel):
 
 def test_result_pydantic_model():
     def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         args_json = '{"a": 1, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), output_type=Foo)
 
@@ -67,12 +67,12 @@ def test_result_pydantic_model():
 
 def test_result_pydantic_model_retry():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         if len(messages) == 1:
             args_json = '{"a": "wrong", "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), output_type=Foo)
 
@@ -129,12 +129,12 @@ def test_result_pydantic_model_retry():
 
 def test_result_pydantic_model_validation_error():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         if len(messages) == 1:
             args_json = '{"a": 1, "b": "foo"}'
         else:
             args_json = '{"a": 1, "b": "bar"}'
-        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     class Bar(BaseModel):
         a: int
@@ -183,20 +183,20 @@ Fix the errors and try again.""")
 
 def test_output_validator():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         if len(messages) == 1:
             args_json = '{"a": 41, "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), output_type=Foo)
 
     @agent.output_validator
-    def validate_result(ctx: RunContext[None], r: Foo) -> Foo:
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
         assert ctx.tool_name == 'final_output'
-        if r.a == 42:
-            return r
+        if o.a == 42:
+            return o
         else:
             raise ModelRetry('"a" should be 42')
 
@@ -246,13 +246,13 @@ def test_plain_response_then_tuple():
     def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_index
 
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         call_index += 1
         if call_index == 1:
             return ModelResponse(parts=[TextPart('hello')])
         else:
             args_json = '{"response": ["foo", "bar"]}'
-            return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), output_type=tuple[str, str])
 
@@ -295,8 +295,8 @@ def test_plain_response_then_tuple():
             ),
         ]
     )
-    assert result._result_tool_name == 'final_output'  # pyright: ignore[reportPrivateUsage]
-    assert result.all_messages(result_tool_return_content='foobar')[-1] == snapshot(
+    assert result._output_tool_name == 'final_output'  # pyright: ignore[reportPrivateUsage]
+    assert result.all_messages(output_tool_return_content='foobar')[-1] == snapshot(
         ModelRequest(
             parts=[
                 ToolReturnPart(
@@ -319,25 +319,25 @@ def test_plain_response_then_tuple():
     )
 
 
-def test_result_tool_return_content_str_return():
+def test_output_tool_return_content_str_return():
     agent = Agent('test')
 
     result = agent.run_sync('Hello')
     assert result.output == 'success (no tool calls)'
 
-    msg = re.escape('Cannot set result tool return content when the return type is `str`.')
+    msg = re.escape('Cannot set output tool return content when the return type is `str`.')
     with pytest.raises(ValueError, match=msg):
-        result.all_messages(result_tool_return_content='foobar')
+        result.all_messages(output_tool_return_content='foobar')
 
 
-def test_result_tool_return_content_no_tool():
+def test_output_tool_return_content_no_tool():
     agent = Agent('test', output_type=int)
 
     result = agent.run_sync('Hello')
     assert result.output == 0
-    result._result_tool_name = 'wrong'  # pyright: ignore[reportPrivateUsage]
+    result._output_tool_name = 'wrong'  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(LookupError, match=re.escape("No tool call found with tool name 'wrong'.")):
-        result.all_messages(result_tool_return_content='foobar')
+        result.all_messages(output_tool_return_content='foobar')
 
 
 def test_response_tuple():
@@ -351,7 +351,7 @@ def test_response_tuple():
 
     assert m.last_model_request_parameters is not None
     assert m.last_model_request_parameters.function_tools == snapshot([])
-    assert m.last_model_request_parameters.allow_text_result is False
+    assert m.last_model_request_parameters.allow_text_output is False
 
     assert m.last_model_request_parameters.output_tools is not None
     assert len(m.last_model_request_parameters.output_tools) == 1
@@ -396,10 +396,10 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     got_tool_call_name = 'unset'
 
     @agent.output_validator
-    def validate_result(ctx: RunContext[None], r: Any) -> Any:
+    def validate_output(ctx: RunContext[None], o: Any) -> Any:
         nonlocal got_tool_call_name
         got_tool_call_name = ctx.tool_name
-        return r
+        return o
 
     assert agent._output_schema.allow_text_output is True  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
 
@@ -409,7 +409,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
 
     assert m.last_model_request_parameters is not None
     assert m.last_model_request_parameters.function_tools == snapshot([])
-    assert m.last_model_request_parameters.allow_text_result is True
+    assert m.last_model_request_parameters.allow_text_output is True
 
     assert m.last_model_request_parameters.output_tools is not None
     assert len(m.last_model_request_parameters.output_tools) == 1
@@ -474,10 +474,10 @@ class Bar(BaseModel):
     got_tool_call_name = 'unset'
 
     @agent.output_validator
-    def validate_result(ctx: RunContext[None], r: Any) -> Any:
+    def validate_output(ctx: RunContext[None], o: Any) -> Any:
         nonlocal got_tool_call_name
         got_tool_call_name = ctx.tool_name
-        return r
+        return o
 
     result = agent.run_sync('Hello')
     assert result.output == mod.Foo(a=0, b='a')
@@ -485,7 +485,7 @@ class Bar(BaseModel):
 
     assert m.last_model_request_parameters is not None
     assert m.last_model_request_parameters.function_tools == snapshot([])
-    assert m.last_model_request_parameters.allow_text_result is False
+    assert m.last_model_request_parameters.allow_text_output is False
 
     assert m.last_model_request_parameters.output_tools is not None
     assert len(m.last_model_request_parameters.output_tools) == 2
@@ -592,7 +592,7 @@ def test_run_with_history_new():
     )
     assert result2._new_message_index == snapshot(4)  # pyright: ignore[reportPrivateUsage]
     assert result2.output == snapshot('{"ret_a":"a-apple"}')
-    assert result2._result_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
+    assert result2._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
     assert result2.usage() == snapshot(
         Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None)
     )
@@ -644,7 +644,7 @@ def test_run_with_history_new():
     )
     assert result3._new_message_index == snapshot(4)  # pyright: ignore[reportPrivateUsage]
     assert result3.output == snapshot('{"ret_a":"a-apple"}')
-    assert result3._result_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
+    assert result3._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
     assert result3.usage() == snapshot(
         Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None)
     )
@@ -768,7 +768,7 @@ def test_run_with_history_new_structured():
     )
     assert result2.output == snapshot(Response(a=0))
     assert result2._new_message_index == snapshot(5)  # pyright: ignore[reportPrivateUsage]
-    assert result2._result_tool_name == snapshot('final_output')  # pyright: ignore[reportPrivateUsage]
+    assert result2._output_tool_name == snapshot('final_output')  # pyright: ignore[reportPrivateUsage]
     assert result2.usage() == snapshot(
         Usage(requests=1, request_tokens=59, response_tokens=13, total_tokens=72, details=None)
     )
@@ -993,7 +993,7 @@ class TestMultipleToolCalls:
         tool_called = []
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            assert info.result_tools is not None
+            assert info.output_tools is not None
             return ModelResponse(
                 parts=[
                     ToolCallPart('final_output', {'value': 'final'}),
@@ -1050,7 +1050,7 @@ class TestMultipleToolCalls:
         """Test that 'early' strategy uses the first final result and ignores subsequent ones."""
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            assert info.result_tools is not None
+            assert info.output_tools is not None
             return ModelResponse(
                 parts=[
                     ToolCallPart('final_output', {'value': 'first'}),
@@ -1075,7 +1075,7 @@ class TestMultipleToolCalls:
                 ),
                 ToolReturnPart(
                     tool_name='final_output',
-                    content='Result tool not used - a final result was already processed.',
+                    content='Output tool not used - a final result was already processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -1087,7 +1087,7 @@ class TestMultipleToolCalls:
         tool_called: list[str] = []
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            assert info.result_tools is not None
+            assert info.output_tools is not None
             return ModelResponse(
                 parts=[
                     ToolCallPart('regular_tool', {'x': 42}),
@@ -1147,7 +1147,7 @@ class TestMultipleToolCalls:
                         ),
                         ToolReturnPart(
                             tool_name='final_output',
-                            content='Result tool not used - a final result was already processed.',
+                            content='Output tool not used - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
@@ -1176,7 +1176,7 @@ class TestMultipleToolCalls:
         tool_called = []
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            assert info.result_tools is not None
+            assert info.output_tools is not None
             return ModelResponse(
                 parts=[
                     ToolCallPart('regular_tool', {'x': 1}),
@@ -1277,7 +1277,7 @@ class TestMultipleToolCalls:
         """Tests that if multiple final results are returned, but one fails validation, the other is used."""
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            assert info.result_tools is not None
+            assert info.output_tools is not None
             return ModelResponse(
                 parts=[
                     ToolCallPart('final_output', {'bad_value': 'first'}, tool_call_id='first'),
@@ -1297,7 +1297,7 @@ class TestMultipleToolCalls:
                 ToolReturnPart(
                     tool_name='final_output',
                     tool_call_id='first',
-                    content='Result tool not used - result failed validation.',
+                    content='Output tool not used - result failed validation.',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturnPart(
@@ -1325,12 +1325,12 @@ async def test_model_settings_override() -> None:
 
 async def test_empty_text_part():
     def return_empty_text(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
         return ModelResponse(
             parts=[
                 TextPart(''),
-                ToolCallPart(info.result_tools[0].name, args_json),
+                ToolCallPart(info.output_tools[0].name, args_json),
             ]
         )
 
@@ -1344,7 +1344,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
     """Indicates that tool calls are prioritized over text in heterogeneous responses."""
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         parts: list[ModelResponsePart] = []
         if len(messages) == 1:
             parts = [TextPart(content='foo'), ToolCallPart('get_location', {'loc_name': 'London'})]
@@ -1597,7 +1597,7 @@ def test_dynamic_true_reevaluate_system_prompt():
 
 def test_capture_run_messages_tool_agent() -> None:
     agent_outer = Agent('test')
-    agent_inner = Agent(TestModel(custom_result_text='inner agent result'))
+    agent_inner = Agent(TestModel(custom_output_text='inner agent result'))
 
     @agent_outer.tool_plain
     async def foobar(x: str) -> str:
@@ -1665,10 +1665,10 @@ def test_custom_output_type_invalid() -> None:
     agent = Agent('test')
 
     @agent.output_validator
-    def validate_result(ctx: RunContext[None], r: Any) -> Any:  # pragma: no cover
-        return r
+    def validate_output(ctx: RunContext[None], o: Any) -> Any:  # pragma: no cover
+        return o
 
-    with pytest.raises(UserError, match='Cannot set a custom run `output_type` when the agent has result validators'):
+    with pytest.raises(UserError, match='Cannot set a custom run `output_type` when the agent has output validators'):
         agent.run_sync('Hello', output_type=int)
 
 

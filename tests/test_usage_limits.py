@@ -35,7 +35,7 @@ def test_request_token_limit() -> None:
 
 def test_response_token_limit() -> None:
     test_agent = Agent(
-        TestModel(custom_result_text='Unfortunately, this response exceeds the response tokens limit by a few!')
+        TestModel(custom_output_text='Unfortunately, this response exceeds the response tokens limit by a few!')
     )
 
     with pytest.raises(
@@ -45,7 +45,7 @@ def test_response_token_limit() -> None:
 
 
 def test_total_token_limit() -> None:
-    test_agent = Agent(TestModel(custom_result_text='This utilizes 4 tokens!'))
+    test_agent = Agent(TestModel(custom_output_text='This utilizes 4 tokens!'))
 
     with pytest.raises(UsageLimitExceeded, match=re.escape('Exceeded the total_tokens_limit of 50 (total_tokens=55)')):
         test_agent.run_sync('Hello', usage_limits=UsageLimits(total_tokens_limit=50))

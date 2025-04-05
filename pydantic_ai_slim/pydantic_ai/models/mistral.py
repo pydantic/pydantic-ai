@@ -31,9 +31,9 @@ from ..messages import (
     UserPromptPart,
 )
 from ..providers import Provider, infer_provider
-from ..result import Usage
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
+from ..usage import Usage
 from . import (
     Model,
     ModelRequestParameters,
@@ -191,7 +191,7 @@ class MistralModel(Model):
                 model=str(self._model_name),
                 messages=list(chain(*(self._map_message(m) for m in messages))),
                 n=1,
-                tools=self._map_function_and_result_tools_definition(model_request_parameters) or UNSET,
+                tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
                 tool_choice=self._get_tool_choice(model_request_parameters),
                 stream=False,
                 max_tokens=model_settings.get('max_tokens', UNSET),
@@ -228,7 +228,7 @@ class MistralModel(Model):
                 model=str(self._model_name),
                 messages=mistral_messages,
                 n=1,
-                tools=self._map_function_and_result_tools_definition(model_request_parameters) or UNSET,
+                tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
                 tool_choice=self._get_tool_choice(model_request_parameters),
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
@@ -271,17 +271,17 @@ class MistralModel(Model):
         """
         if not model_request_parameters.function_tools and not model_request_parameters.output_tools:
             return None
-        elif not model_request_parameters.allow_text_result:
+        elif not model_request_parameters.allow_text_output:
             return 'required'
         else:
             return 'auto'
 
-    def _map_function_and_result_tools_definition(
+    def _map_function_and_output_tools_definition(
         self, model_request_parameters: ModelRequestParameters
     ) -> list[MistralTool] | None:
-        """Map function and result tools to MistralTool format.
+        """Map function and output tools to MistralTool format.
 
-        Returns None if both function_tools and result_tools are empty.
+        Returns None if both function_tools and output_tools are empty.
         """
         all_tools: list[ToolDefinition] = (
             model_request_parameters.function_tools + model_request_parameters.output_tools
@@ -320,7 +320,7 @@ class MistralModel(Model):
 
     async def _process_streamed_response(
         self,
-        result_tools: list[ToolDefinition],
+        output_tools: list[ToolDefinition],
         response: MistralEventStreamAsync[MistralCompletionEvent],
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -338,7 +338,7 @@ class MistralModel(Model):
             _response=peekable_response,
             _model_name=self._model_name,
             _timestamp=timestamp,
-            _result_tools={c.name: c for c in result_tools},
+            _output_tools={c.name: c for c in output_tools},
         )
 
     @staticmethod
@@ -511,7 +511,7 @@ class MistralStreamedResponse(StreamedResponse):
     _model_name: MistralModelName
     _response: AsyncIterable[MistralCompletionEvent]
     _timestamp: datetime
-    _result_tools: dict[str, ToolDefinition]
+    _output_tools: dict[str, ToolDefinition]
 
     _delta_content: str = field(default='', init=False)
 
@@ -529,13 +529,13 @@ class MistralStreamedResponse(StreamedResponse):
             content = choice.delta.content
             text = _map_content(content)
             if text:
-                # Attempt to produce a result tool call from the received text
-                if self._result_tools:
+                # Attempt to produce an output tool call from the received text
+                if self._output_tools:
                     self._delta_content += text
-                    maybe_tool_call_part = self._try_get_result_tool_from_text(self._delta_content, self._result_tools)
+                    maybe_tool_call_part = self._try_get_output_tool_from_text(self._delta_content, self._output_tools)
                     if maybe_tool_call_part:
                         yield self._parts_manager.handle_tool_call_part(
-                            vendor_part_id='result',
+                            vendor_part_id='output',
                             tool_name=maybe_tool_call_part.tool_name,
                             args=maybe_tool_call_part.args_as_dict(),
                             tool_call_id=maybe_tool_call_part.tool_call_id,
@@ -561,20 +561,20 @@ class MistralStreamedResponse(StreamedResponse):
         return self._timestamp
 
     @staticmethod
-    def _try_get_result_tool_from_text(text: str, result_tools: dict[str, ToolDefinition]) -> ToolCallPart | None:
+    def _try_get_output_tool_from_text(text: str, output_tools: dict[str, ToolDefinition]) -> ToolCallPart | None:
         output_json: dict[str, Any] | None = pydantic_core.from_json(text, allow_partial='trailing-strings')
         if output_json:
-            for result_tool in result_tools.values():
-                # NOTE: Additional verification to prevent JSON validation to crash in `_result.py`
+            for output_tool in output_tools.values():
+                # NOTE: Additional verification to prevent JSON validation to crash
                 # Ensures required parameters in the JSON schema are respected, especially for stream-based return types.
                 # Example with BaseModel and required fields.
                 if not MistralStreamedResponse._validate_required_json_schema(
-                    output_json, result_tool.parameters_json_schema
+                    output_json, output_tool.parameters_json_schema
                 ):
                     continue
 
                 # The following part_id will be thrown away
-                return ToolCallPart(tool_name=result_tool.name, args=output_json)
+                return ToolCallPart(tool_name=output_tool.name, args=output_json)
 
     @staticmethod
     def _validate_required_json_schema(json_dict: dict[str, Any], json_schema: dict[str, Any]) -> bool:
@@ -642,21 +642,21 @@ def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk)
 
 def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None:
     """Maps the delta content from a Mistral Completion Chunk to a string or None."""
-    result: str | None = None
+    output: str | None = None
 
     if isinstance(content, MistralUnset) or not content:
-        result = None
+        output = None
     elif isinstance(content, list):
         for chunk in content:
             if isinstance(chunk, MistralTextChunk):
-                result = result or '' + chunk.text
+                output = output or '' + chunk.text
             else:
                 assert False, f'Other data types like (Image, Reference) are not yet supported,  got {type(chunk)}'
     elif isinstance(content, str):
-        result = content
+        output = content
 
     # Note: Check len to handle potential mismatch between function calls and responses from the API. (`msg: not the same number of function class and responses`)
-    if result and len(result) == 0:
-        result = None
+    if output and len(output) == 0:
+        output = None
 
-    return result
+    return output

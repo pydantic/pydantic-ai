@@ -123,9 +123,9 @@ async def test_streamed_structured_response():
 
 async def test_structured_response_iter():
     async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        assert agent_info.result_tools is not None
-        assert len(agent_info.result_tools) == 1
-        name = agent_info.result_tools[0].name
+        assert agent_info.output_tools is not None
+        assert len(agent_info.output_tools) == 1
+        name = agent_info.output_tools[0].name
         json_data = json.dumps({'response': [1, 2, 3, 4]})
         yield {0: DeltaToolCall(name=name)}
         yield {0: DeltaToolCall(json_args=json_data[:15])}
@@ -148,7 +148,7 @@ async def test_structured_response_iter():
 
 
 async def test_streamed_text_stream():
-    m = TestModel(custom_result_text='The cat sat on the mat.')
+    m = TestModel(custom_output_text='The cat sat on the mat.')
 
     agent = Agent(m)
 
@@ -269,9 +269,9 @@ async def test_call_tool():
             last = messages[-1]
             assert isinstance(last, ModelRequest)
             assert isinstance(last.parts[0], ToolReturnPart)
-            assert agent_info.result_tools is not None
-            assert len(agent_info.result_tools) == 1
-            name = agent_info.result_tools[0].name
+            assert agent_info.output_tools is not None
+            assert len(agent_info.output_tools) == 1
+            name = agent_info.output_tools[0].name
             json_data = json.dumps({'response': [last.parts[0].content, 2]})
             yield {0: DeltaToolCall(name=name)}
             yield {0: DeltaToolCall(json_args=json_data[:5])}
@@ -402,7 +402,7 @@ async def test_early_strategy_stops_after_first_final_output():
     tool_called: list[str] = []
 
     async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         yield {1: DeltaToolCall('final_output', '{"value": "final"}')}
         yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
         yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
@@ -472,7 +472,7 @@ async def test_early_strategy_uses_first_final_output():
     """Test that 'early' strategy uses the first final result and ignores subsequent ones."""
 
     async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         yield {1: DeltaToolCall('final_output', '{"value": "first"}')}
         yield {2: DeltaToolCall('final_output', '{"value": "second"}')}
 
@@ -507,7 +507,7 @@ async def test_early_strategy_uses_first_final_output():
                     ),
                     ToolReturnPart(
                         tool_name='final_output',
-                        content='Result tool not used - a final result was already processed.',
+                        content='Output tool not used - a final result was already processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     ),
@@ -522,7 +522,7 @@ async def test_exhaustive_strategy_executes_all_tools():
     tool_called: list[str] = []
 
     async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         yield {1: DeltaToolCall('final_output', '{"value": "first"}')}
         yield {2: DeltaToolCall('regular_tool', '{"x": 42}')}
         yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
@@ -573,7 +573,7 @@ async def test_exhaustive_strategy_executes_all_tools():
                     ),
                     ToolReturnPart(
                         tool_name='final_output',
-                        content='Result tool not used - a final result was already processed.',
+                        content='Output tool not used - a final result was already processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     ),
@@ -600,7 +600,7 @@ async def test_early_strategy_with_final_output_in_middle():
     tool_called: list[str] = []
 
     async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         yield {1: DeltaToolCall('regular_tool', '{"x": 1}')}
         yield {2: DeltaToolCall('final_output', '{"value": "final"}')}
         yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
@@ -795,7 +795,7 @@ async def test_custom_output_type_default_structured() -> None:
 
 
 async def test_iter_stream_output():
-    m = TestModel(custom_result_text='The cat sat on the mat.')
+    m = TestModel(custom_output_text='The cat sat on the mat.')
 
     agent = Agent(m)
 
@@ -836,7 +836,7 @@ async def test_iter_stream_output():
 
 
 async def test_iter_stream_responses():
-    m = TestModel(custom_result_text='The cat sat on the mat.')
+    m = TestModel(custom_output_text='The cat sat on the mat.')
 
     agent = Agent(m)
 
@@ -874,7 +874,7 @@ async def test_iter_stream_responses():
         ]
     ]
 
-    # Note: as you can see above, the result validator is not applied to the streamed responses, just the final result:
+    # Note: as you can see above, the output validator is not applied to the streamed responses, just the final result:
     assert run.result is not None
     assert run.result.output == 'The bat sat on the mat.'
 
