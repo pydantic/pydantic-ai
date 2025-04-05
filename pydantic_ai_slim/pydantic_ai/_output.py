@@ -12,7 +12,7 @@ from typing_inspection.introspection import is_union_origin
 
 from . import _utils, messages as _messages
 from .exceptions import ModelRetry
-from .result import DEFAULT_OUTPUT_TOOL_NAME, OutputDataT, OutputDataT_inv, OutputValidatorFunc, ToolStructuredOutput
+from .result import DEFAULT_OUTPUT_TOOL_NAME, OutputDataT, OutputDataT_inv, OutputTool, OutputValidatorFunc
 from .tools import AgentDepsT, GenerateToolJsonSchema, RunContext, ToolDefinition
 
 T = TypeVar('T')
@@ -83,13 +83,13 @@ class OutputSchema(Generic[OutputDataT]):
     Similar to `Tool` but for the final output of running an agent.
     """
 
-    tools: dict[str, OutputTool[OutputDataT]]
+    tools: dict[str, OutputSchemaTool[OutputDataT]]
     allow_text_output: bool
 
     @classmethod
     def build(
         cls: type[OutputSchema[T]],
-        output_type: type[T] | ToolStructuredOutput[T],
+        output_type: type[T] | OutputTool[T],
         name: str | None = None,
         description: str | None = None,
     ) -> OutputSchema[T] | None:
@@ -97,7 +97,7 @@ class OutputSchema(Generic[OutputDataT]):
         if output_type is str:
             return None
 
-        if isinstance(output_type, ToolStructuredOutput):
+        if isinstance(output_type, OutputTool):
             # do we need to error on conflicts here?
             name = output_type.name
             description = output_type.description
@@ -111,22 +111,22 @@ class OutputSchema(Generic[OutputDataT]):
         else:
             allow_text_output = False
 
-        tools: dict[str, OutputTool[T]] = {}
+        tools: dict[str, OutputSchemaTool[T]] = {}
         if args := get_union_args(output_type_):
             for i, arg in enumerate(args, start=1):
                 tool_name = raw_tool_name = union_tool_name(name, arg)
                 while tool_name in tools:
                     tool_name = f'{raw_tool_name}_{i}'
-                tools[tool_name] = cast(OutputTool[T], OutputTool(arg, tool_name, description, True))
+                tools[tool_name] = cast(OutputSchemaTool[T], OutputSchemaTool(arg, tool_name, description, True))
         else:
             name = name or DEFAULT_OUTPUT_TOOL_NAME
-            tools[name] = cast(OutputTool[T], OutputTool(output_type_, name, description, False))
+            tools[name] = cast(OutputSchemaTool[T], OutputSchemaTool(output_type_, name, description, False))
 
         return cls(tools=tools, allow_text_output=allow_text_output)
 
     def find_named_tool(
         self, parts: Iterable[_messages.ModelResponsePart], tool_name: str
-    ) -> tuple[_messages.ToolCallPart, OutputTool[OutputDataT]] | None:
+    ) -> tuple[_messages.ToolCallPart, OutputSchemaTool[OutputDataT]] | None:
         """Find a tool that matches one of the calls, with a specific name."""
         for part in parts:
             if isinstance(part, _messages.ToolCallPart):
@@ -136,7 +136,7 @@ class OutputSchema(Generic[OutputDataT]):
     def find_tool(
         self,
         parts: Iterable[_messages.ModelResponsePart],
-    ) -> Iterator[tuple[_messages.ToolCallPart, OutputTool[OutputDataT]]]:
+    ) -> Iterator[tuple[_messages.ToolCallPart, OutputSchemaTool[OutputDataT]]]:
         """Find a tool that matches one of the calls."""
         for part in parts:
             if isinstance(part, _messages.ToolCallPart):
@@ -156,7 +156,7 @@ DEFAULT_DESCRIPTION = 'The final response which ends this conversation'
 
 
 @dataclass(init=False)
-class OutputTool(Generic[OutputDataT]):
+class OutputSchemaTool(Generic[OutputDataT]):
     tool_def: ToolDefinition
     type_adapter: TypeAdapter[Any]
 

@@ -11,7 +11,7 @@ from .exceptions import (
     UserError,
 )
 from .messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl
-from .result import ToolStructuredOutput
+from .result import OutputTool
 from .tools import RunContext, Tool
 
 __all__ = (
@@ -40,6 +40,6 @@ __all__ = (
     'Tool',
     'RunContext',
     # result
-    'ToolStructuredOutput',
+    'OutputTool',
 )
 __version__ = version('pydantic_ai_slim')

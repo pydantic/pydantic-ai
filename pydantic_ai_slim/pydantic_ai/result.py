@@ -17,7 +17,7 @@ from .usage import Usage, UsageLimits
 if TYPE_CHECKING:
     from . import _output
 
-__all__ = 'OutputDataT', 'OutputDataT_inv', 'ToolStructuredOutput', 'OutputValidatorFunc'
+__all__ = 'OutputDataT', 'OutputDataT_inv', 'OutputTool', 'OutputValidatorFunc'
 
 
 T = TypeVar('T')
@@ -55,18 +55,44 @@ Usage `ResultValidatorFunc[AgentDepsT, T]`.
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 
 
-@dataclass
-class ToolStructuredOutput(Generic[OutputDataT]):
+@dataclass(init=False)
+class OutputTool(Generic[OutputDataT]):
     """Marker class to use tools for structured outputs, and customize the tool."""
 
     output_type: type[OutputDataT]
-    name: str = 'final_result'
-    description: str | None = None
-    max_retries: int | None = None
+    # TODO: Add `output_call` support, for calling a function to get the output
+    # output_call: Callable[..., OutputDataT] | None
+    name: str
+    description: str | None
+    max_retries: int | None
+
+    def __init__(
+        self,
+        *,
+        type_: type[OutputDataT],
+        # call: Callable[..., OutputDataT] | None = None,
+        name: str = 'final_result',
+        description: str | None = None,
+        max_retries: int | None = None,
+    ):
+        self.output_type = type_
+        self.name = name
+        self.description = description
+        self.max_retries = max_retries
+
+        # TODO: add support for call and make type_ optional, with the following logic:
+        # if type_ is None and call is None:
+        #     raise ValueError('Either type_ or call must be provided')
+        # if call is not None:
+        #     if type_ is None:
+        #         type_ = get_type_hints(call).get('return')
+        #         if type_ is None:
+        #             raise ValueError('Unable to determine type_ from call signature; please provide it explicitly')
+        # self.output_call = call
 
     @staticmethod
-    def unwrap_type(output_type: type[T] | ToolStructuredOutput[T]) -> type[T]:
-        if isinstance(output_type, ToolStructuredOutput):
+    def unwrap_type(output_type: type[T] | OutputTool[T]) -> type[T]:
+        if isinstance(output_type, OutputTool):
             return output_type.output_type
         else:
             return output_type

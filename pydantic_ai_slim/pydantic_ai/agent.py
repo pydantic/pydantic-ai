@@ -28,7 +28,7 @@ from . import (
     usage as _usage,
 )
 from .models.instrumented import InstrumentationSettings, InstrumentedModel
-from .result import FinalResult, OutputDataT, StreamedRunResult, ToolStructuredOutput
+from .result import FinalResult, OutputDataT, OutputTool, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDepsT,
@@ -116,7 +116,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     be merged with this value, with the runtime argument taking priority.
     """
 
-    output_type: type[OutputDataT] | ToolStructuredOutput[OutputDataT]
+    output_type: type[OutputDataT] | OutputTool[OutputDataT]
     """
     The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`.
     """
@@ -148,7 +148,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        output_type: type[OutputDataT] | ToolStructuredOutput[OutputDataT] = str,
+        output_type: type[OutputDataT] | OutputTool[OutputDataT] = str,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -190,7 +190,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        # TODO change this back to `output_type: type[OutputDataT] | ToolStructuredOutput[OutputDataT = str,` when we remove the overloads
+        # TODO change this back to `output_type: type[OutputDataT] | OutputTool[OutputDataT] = str,` when we remove the overloads
         output_type: Any = str,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
@@ -257,7 +257,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning)
             output_type = _deprecated_kwargs['result_type']
 
-        self.output_type = ToolStructuredOutput.unwrap_type(output_type)
+        self.output_type = OutputTool.unwrap_type(output_type)
 
         self.instrument = instrument
 
@@ -266,14 +266,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._deprecated_result_tool_name = _deprecated_kwargs.get('result_tool_name')
         if self._deprecated_result_tool_name is not None:  # pragma: no cover
             warnings.warn(
-                '`result_tool_name` is deprecated, use `output_type` with `ToolStructuredOutput` instead',
+                '`result_tool_name` is deprecated, use `output_type` with `OutputTool` instead',
                 DeprecationWarning,
             )
 
         self._deprecated_result_tool_description = _deprecated_kwargs.get('result_tool_description')
         if self._deprecated_result_tool_description is not None:  # pragma: no cover
             warnings.warn(
-                '`result_tool_description` is deprecated, use `output_type` with `ToolStructuredOutput` instead',
+                '`result_tool_description` is deprecated, use `output_type` with `OutputTool` instead',
                 DeprecationWarning,
             )
         result_retries = _deprecated_kwargs.get('result_retries')
@@ -328,7 +328,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent],
         *,
-        output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT],
+        output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -358,7 +358,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent],
         *,
-        output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT] | None = None,
+        output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -430,7 +430,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent],
         *,
-        output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT] | None = None,
+        output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -462,7 +462,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent],
         *,
-        output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT] | None = None,
+        output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -555,7 +555,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         new_message_index = len(message_history) if message_history else 0
         output_schema = self._prepare_output_schema(output_type)
 
-        output_type_ = ToolStructuredOutput.unwrap_type(output_type or self.output_type)
+        output_type_ = OutputTool.unwrap_type(output_type or self.output_type)
 
         # Build the graph
         graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (
@@ -648,7 +648,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent],
         *,
-        output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT] | None,
+        output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT] | None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -678,7 +678,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent],
         *,
-        output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT] | None = None,
+        output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -761,7 +761,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent],
         *,
-        output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT],
+        output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -792,7 +792,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent],
         *,
-        output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT] | None = None,
+        output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -1415,7 +1415,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         raise AttributeError('The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.')
 
     def _prepare_output_schema(
-        self, output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT] | None
+        self, output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT] | None
     ) -> _output.OutputSchema[RunOutputDataT] | None:
         if output_type is not None:
             if self._output_validators:
