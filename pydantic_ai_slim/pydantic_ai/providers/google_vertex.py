@@ -7,7 +7,6 @@ from typing import Literal, overload
 
 import anyio.to_thread
 import httpx
-
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.providers import Provider
@@ -37,10 +36,12 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
     @property
     def base_url(self) -> str:
         return (
-            f'https://{self.region}-aiplatform.googleapis.com/v1'
-            f'/projects/{self.project_id}'
-            f'/locations/{self.region}'
-            f'/publishers/{self.model_publisher}/models/'
+            'https://'
+            + (f'{self.region}-' if self.region != 'global' else '')
+            + 'aiplatform.googleapis.com/v1'
+            + f'/projects/{self.project_id}'
+            + f'/locations/{self.region}'
+            + f'/publishers/{self.model_publisher}/models/'
         )
 
     @property
@@ -208,6 +209,7 @@ VertexAiRegion = Literal[
     'europe-west6',
     'europe-west8',
     'europe-west9',
+    'global',
     'me-central1',
     'me-central2',
     'me-west1',
@@ -224,4 +226,6 @@ VertexAiRegion = Literal[
 """Regions available for Vertex AI.
 
 More details [here](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#genai-locations).
+
+More detail on 'global' region [here](https://github.com/GoogleCloudPlatform/generative-ai/blob/main/gemini/global-endpoint/intro_global_endpoint.ipynb)
 """
