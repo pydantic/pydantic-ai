@@ -12,7 +12,7 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models import Model
 
 pytestmark = [
@@ -141,7 +141,17 @@ structured_params = [p for p in params if p.id != 'ollama']
 @pytest.mark.parametrize('get_model', structured_params)
 async def test_structured(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
     agent = Agent(get_model(http_client, tmp_path), output_type=MyModel, model_settings={'temperature': 0.0}, retries=2)
-    result = await agent.run('What is the capital of the UK?')
+    e: UnexpectedModelBehavior | None = None
+    async with agent.iter('What is the capital of France?') as run:
+        try:
+            async for _ in run:
+                pass
+        except UnexpectedModelBehavior as e:
+            raise RuntimeError(run._graph_run.state) from e  # pyright: ignore[reportPrivateUsage])
+
+    result = run.result
+    assert result is not None
+
     print('Structured response:', result.output)
     assert result.output.city.lower() == 'london'
     print('Structured usage:', result.usage())

@@ -168,7 +168,7 @@ class Bar:
     b: str
 
 
-union_agent: Agent[None, Union[Foo, Bar]] = Agent(output_type=Union[Foo, Bar])  # type: ignore[arg-type]
+union_agent: Agent[None, Union[Foo, Bar]] = Agent(output_type=Union[Foo, Bar])  # type: ignore[call-overload]
 assert_type(union_agent, Agent[None, Union[Foo, Bar]])
 
 
@@ -179,7 +179,7 @@ def run_sync3() -> None:
 
 
 MyUnion: TypeAlias = 'Foo | Bar'
-union_agent2: Agent[None, MyUnion] = Agent(output_type=MyUnion)  # type: ignore[arg-type]
+union_agent2: Agent[None, MyUnion] = Agent(output_type=MyUnion)  # type: ignore[call-overload]
 assert_type(union_agent2, Agent[None, MyUnion])
 
 
