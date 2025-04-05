@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from itertools import chain
 from typing import Literal, Union, cast
 
-from cohere import TextAssistantMessageContentItem
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, result
@@ -38,6 +37,7 @@ try:
         ChatMessageV2,
         ChatResponse,
         SystemChatMessageV2,
+        TextAssistantMessageContentItem,
         ToolCallV2,
         ToolCallV2Function,
         ToolChatMessageV2,
@@ -80,7 +80,10 @@ See [Cohere's docs](https://docs.cohere.com/v2/docs/models) for a list of all av
 
 
 class CohereModelSettings(ModelSettings):
-    """Settings used for a Cohere model request."""
+    """Settings used for a Cohere model request.
+
+    ALL FIELDS MUST BE `cohere_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
 
     # This class is a placeholder for any future cohere-specific settings
 

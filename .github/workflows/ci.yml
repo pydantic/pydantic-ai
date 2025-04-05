@@ -11,7 +11,7 @@ on:
 env:
   COLUMNS: 150
   UV_PYTHON: 3.12
-  UV_FROZEN: '1'
+  UV_FROZEN: "1"
 
 permissions:
   contents: read
@@ -29,10 +29,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --all-packages --group lint
 
-      - uses: actions/setup-node@v4
-
-      - run: npm install
-        working-directory: mcp-run-python
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
 
       - uses: pre-commit/action@v3.0.0
         with:
@@ -136,12 +135,17 @@ jobs:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
+      CI: true
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
 
       - run: mkdir coverage
 
@@ -232,21 +236,28 @@ jobs:
         with:
           enable-cache: true
 
-      - uses: actions/setup-node@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
 
-      - run: npm install
-        working-directory: mcp-run-python
-
-      - run: npm run lint
-        working-directory: mcp-run-python
-
-      - run: npm run prepare
+      - run: |
+          deno fmt
+          deno lint
+          deno check src
         working-directory: mcp-run-python
 
       - run: uv run --package mcp-run-python pytest mcp-run-python -v
 
-      # check npx works
-      - run: npx . warmup
+      # check warmup works
+      - name: warmup
+        run: |
+          deno run \
+            -N \
+            -R=node_modules \
+            -W=node_modules \
+            --node-modules-dir=auto \
+            src/main.ts \
+            warmup
         working-directory: mcp-run-python
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
@@ -315,11 +326,6 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-
-      - name: check GITHUB_REF matches package version
-        uses: samuelcolvin/check-python-version@v4.1
-        with:
-          version_file_path: pyproject.toml
 
       - run: uv build --all-packages
 

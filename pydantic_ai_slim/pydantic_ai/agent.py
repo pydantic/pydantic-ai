@@ -14,7 +14,7 @@ from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Never, TypeGuard, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
-from pydantic_graph._utils import run_until_complete
+from pydantic_graph._utils import get_event_loop
 
 from . import (
     _agent_graph,
@@ -95,9 +95,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     ```
     """
 
-    # we use dataclass fields in order to conveniently know what attributes are available
-    model: models.Model | models.KnownModelName | None
-    """The default model configured for this agent."""
+    model: models.Model | models.KnownModelName | str | None
+    """The default model configured for this agent.
+
+    We allow str here since the actual list of allowed models changes frequently.
+    """
 
     name: str | None
     """The name of the agent, used for logging.
@@ -144,7 +146,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     def __init__(
         self,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: type[OutputDataT] | ToolStructuredOutput[OutputDataT] = str,
         system_prompt: str | Sequence[str] = (),
@@ -166,7 +168,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     )
     def __init__(
         self,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         *,
         result_type: type[OutputDataT] = str,
         system_prompt: str | Sequence[str] = (),
@@ -186,7 +188,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     def __init__(
         self,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         *,
         # TODO change this back to `output_type: type[OutputDataT] | ToolStructuredOutput[OutputDataT = str,` when we remove the overloads
         output_type: Any = str,
@@ -207,7 +209,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         Args:
             model: The default model to use for this agent, if not provide,
-                you must provide the model when calling it.
+                you must provide the model when calling it. We allow str here since the actual list of allowed models changes frequently.
             output_type: The type of the output data, used to validate the data returned by the model,
                 defaults to `str`.
             system_prompt: Static system prompts to use for this agent, you can also register system
@@ -291,10 +293,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = []
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
-        self._system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
-        self._system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = {}
+        self._system_prompt_functions = []
+        self._system_prompt_dynamic_functions = {}
 
-        self._function_tools: dict[str, Tool[AgentDepsT]] = {}
+        self._function_tools = {}
 
         self._default_retries = retries
         self._max_result_retries = output_retries if output_retries is not None else retries
@@ -317,7 +319,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -332,7 +334,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -348,7 +350,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         result_type: type[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -362,7 +364,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -424,8 +426,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             async for _ in agent_run:
                 pass
 
-        assert (final_output := agent_run.result) is not None, 'The graph run did not finish properly'
-        return final_output
+        assert agent_run.result is not None, 'The graph run did not finish properly'
+        return agent_run.result
 
     @overload
     def iter(
@@ -434,7 +436,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -451,7 +453,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         result_type: type[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -466,7 +468,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -637,7 +639,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent],
         *,
         message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -652,7 +654,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT] | None,
         message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -668,7 +670,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         result_type: type[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -682,7 +684,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -730,7 +732,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
             output_type = _deprecated_kwargs['result_type']
 
-        return run_until_complete(
+        return get_event_loop().run_until_complete(
             self.run(
                 user_prompt,
                 output_type=output_type,
@@ -765,7 +767,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -781,7 +783,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         result_type: type[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -796,7 +798,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         output_type: type[RunOutputDataT] | ToolStructuredOutput[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
-        model: models.Model | models.KnownModelName | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -942,12 +944,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         *,
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
-        model: models.Model | models.KnownModelName | _utils.Unset = _utils.UNSET,
+        model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent dependencies and model.
 
         This is particularly useful when testing.
-        You can find an example of this [here](../testing-evals.md#overriding-model-via-pytest-fixtures).
+        You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
 
         Args:
             deps: The dependencies to use instead of the dependencies passed to the agent run.
@@ -959,11 +961,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         else:
             override_deps_before = _utils.UNSET
 
-        # noinspection PyTypeChecker
         if _utils.is_set(model):
             override_model_before = self._override_model
-            # noinspection PyTypeChecker
-            self._override_model = _utils.Some(models.infer_model(model))  # pyright: ignore[reportArgumentType]
+            self._override_model = _utils.Some(models.infer_model(model))
         else:
             override_model_before = _utils.UNSET
 
@@ -1342,7 +1342,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         self._function_tools[tool.name] = tool
 
-    def _get_model(self, model: models.Model | models.KnownModelName | None) -> models.Model:
+    def _get_model(self, model: models.Model | models.KnownModelName | str | None) -> models.Model:
         """Create a model configured for this agent.
 
         Args:
@@ -1356,7 +1356,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             # we don't want `override()` to cover up errors from the model not being defined, hence this check
             if model is None and self.model is None:
                 raise exceptions.UserError(
-                    '`model` must be set either when creating the agent or when calling it. '
+                    '`model` must either be set on the agent or included when calling it. '
                     '(Even when `override(model=...)` is customizing the model that will actually be called)'
                 )
             model_ = some_model.value
@@ -1366,7 +1366,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             # noinspection PyTypeChecker
             model_ = self.model = models.infer_model(self.model)
         else:
-            raise exceptions.UserError('`model` must be set either when creating the agent or when calling it.')
+            raise exceptions.UserError('`model` must either be set on the agent or included when calling it.')
 
         instrument = self.instrument
         if instrument is None:

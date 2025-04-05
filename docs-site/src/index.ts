@@ -18,6 +18,7 @@ export default {
 
 const redirect_lookup: Record<string, string> = {
   '/common_tools': '/common-tools/',
+  '/testing-evals': '/testing/',
   '/result': '/output/',
 }
 

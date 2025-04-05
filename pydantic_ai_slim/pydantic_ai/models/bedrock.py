@@ -112,6 +112,13 @@ P = ParamSpec('P')
 T = typing.TypeVar('T')
 
 
+class BedrockModelSettings(ModelSettings):
+    """Settings for Bedrock models.
+
+    ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+
 @dataclass(init=False)
 class BedrockConverseModel(Model):
     """A model that uses the Bedrock Converse API."""

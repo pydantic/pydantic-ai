@@ -361,12 +361,12 @@ def test_response_tuple():
                 name='final_output',
                 description='The final response which ends this conversation',
                 parameters_json_schema={
+                    'additionalProperties': False,
                     'properties': {
                         'response': {
                             'maxItems': 2,
                             'minItems': 2,
                             'prefixItems': [{'type': 'string'}, {'type': 'string'}],
-                            'title': 'Response',
                             'type': 'array',
                         }
                     },
@@ -421,8 +421,8 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
                 description='The final response which ends this conversation',
                 parameters_json_schema={
                     'properties': {
-                        'a': {'title': 'A', 'type': 'integer'},
-                        'b': {'title': 'B', 'type': 'string'},
+                        'a': {'type': 'integer'},
+                        'b': {'type': 'string'},
                     },
                     'required': ['a', 'b'],
                     'title': 'Foo',
@@ -497,8 +497,8 @@ class Bar(BaseModel):
                 description='Foo: The final response which ends this conversation',
                 parameters_json_schema={
                     'properties': {
-                        'a': {'title': 'A', 'type': 'integer'},
-                        'b': {'title': 'B', 'type': 'string'},
+                        'a': {'type': 'integer'},
+                        'b': {'type': 'string'},
                     },
                     'required': ['a', 'b'],
                     'title': 'Foo',
@@ -509,7 +509,7 @@ class Bar(BaseModel):
                 name='final_output_Bar',
                 description='This is a bar model.',
                 parameters_json_schema={
-                    'properties': {'b': {'title': 'B', 'type': 'string'}},
+                    'properties': {'b': {'type': 'string'}},
                     'required': ['b'],
                     'title': 'Bar',
                     'type': 'object',
@@ -818,6 +818,7 @@ def test_unknown_tool():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
+                        tool_name='foobar',
                         content="Unknown tool name: 'foobar'. No tools available.",
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
@@ -855,6 +856,7 @@ def test_unknown_tool_fix():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
+                        tool_name='foobar',
                         content="Unknown tool name: 'foobar'. No tools available.",
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
@@ -887,10 +889,20 @@ def test_override_model(env: TestEnv):
         assert result.output == snapshot((0, 'a'))
 
 
+def test_set_model(env: TestEnv):
+    env.set('GEMINI_API_KEY', 'foobar')
+    agent = Agent(output_type=tuple[int, str])
+
+    agent.model = 'test'
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot((0, 'a'))
+
+
 def test_override_model_no_model():
     agent = Agent()
 
-    with pytest.raises(UserError, match=r'`model` must be set either.+Even when `override\(model=...\)` is customiz'):
+    with pytest.raises(UserError, match=r'`model` must either be set.+Even when `override\(model=...\)` is customiz'):
         with agent.override(model='test'):
             agent.run_sync('Hello')
 
@@ -1140,6 +1152,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
+                            tool_name='unknown_tool',
                             content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_output",
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
@@ -1233,6 +1246,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
+                            tool_name='unknown_tool',
                             content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_output",
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),

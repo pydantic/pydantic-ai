@@ -13,7 +13,7 @@ from typing_inspection.introspection import is_union_origin
 from . import _utils, messages as _messages
 from .exceptions import ModelRetry
 from .result import DEFAULT_OUTPUT_TOOL_NAME, OutputDataT, OutputDataT_inv, OutputValidatorFunc, ToolStructuredOutput
-from .tools import AgentDepsT, RunContext, ToolDefinition
+from .tools import AgentDepsT, GenerateToolJsonSchema, RunContext, ToolDefinition
 
 T = TypeVar('T')
 """An invariant TypeVar."""
@@ -168,13 +168,20 @@ class OutputTool(Generic[OutputDataT]):
             self.type_adapter = TypeAdapter(output_type)
             outer_typed_dict_key: str | None = None
             # noinspection PyArgumentList
-            parameters_json_schema = _utils.check_object_json_schema(self.type_adapter.json_schema())
+            parameters_json_schema = _utils.check_object_json_schema(
+                self.type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+            )
         else:
-            response_data_typed_dict = TypedDict('response_data_typed_dict', {'response': output_type})  # noqa
+            response_data_typed_dict = TypedDict(  # noqa: UP013
+                'response_data_typed_dict',
+                {'response': output_type},  # pyright: ignore[reportInvalidTypeForm]
+            )
             self.type_adapter = TypeAdapter(response_data_typed_dict)
             outer_typed_dict_key = 'response'
             # noinspection PyArgumentList
-            parameters_json_schema = _utils.check_object_json_schema(self.type_adapter.json_schema())
+            parameters_json_schema = _utils.check_object_json_schema(
+                self.type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+            )
             # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
             parameters_json_schema.pop('title')
 

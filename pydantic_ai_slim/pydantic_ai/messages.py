@@ -9,7 +9,7 @@ from typing import Annotated, Any, Literal, Union, cast, overload
 
 import pydantic
 import pydantic_core
-from opentelemetry._events import Event
+from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
 from typing_extensions import TypeAlias
 
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
