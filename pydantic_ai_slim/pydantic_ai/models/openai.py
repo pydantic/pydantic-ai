@@ -639,7 +639,7 @@ class OpenAIResponsesModel(Model):
             'parameters': f.parameters_json_schema,
             'type': 'function',
             'description': f.description,
-            # note: f.strict should already be a boolean thanks to customize_request_parameters
+            # NOTE: f.strict should already be a boolean thanks to customize_request_parameters
             'strict': f.strict or False,
         }
 
