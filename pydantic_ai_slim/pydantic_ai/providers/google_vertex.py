@@ -227,5 +227,5 @@ VertexAiRegion = Literal[
 
 More details [here](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#genai-locations).
 
-More detail on 'global' region [here](https://github.com/GoogleCloudPlatform/generative-ai/blob/main/gemini/global-endpoint/intro_global_endpoint.ipynb)
+More details on 'global' region [here](https://github.com/GoogleCloudPlatform/generative-ai/blob/main/gemini/global-endpoint/intro_global_endpoint.ipynb)
 """
