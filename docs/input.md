@@ -19,8 +19,8 @@ result = agent.run_sync(
         ImageUrl(url='https://iili.io/3Hs4FMg.png'),
     ]
 )
-print(result.data)
-#> This is the logo for Pydantic, a data validation and settings management library in Python.
+print(result.output)
+# > This is the logo for Pydantic, a data validation and settings management library in Python.
 ```
 
 If you have the image locally, you can also use [`BinaryContent`][pydantic_ai.BinaryContent]:
@@ -39,8 +39,8 @@ result = agent.run_sync(
         BinaryContent(data=image_response.content, media_type='image/png'),  # (1)!
     ]
 )
-print(result.data)
-#> This is the logo for Pydantic, a data validation and settings management library in Python.
+print(result.output)
+# > This is the logo for Pydantic, a data validation and settings management library in Python.
 ```
 
 1. To ensure the example is runnable we download this image from the web, but you can also use `Path().read_bytes()` to read a local file's contents.
@@ -79,8 +79,8 @@ result = agent.run_sync(
         DocumentUrl(url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf'),
     ]
 )
-print(result.data)
-#> This document is the technical report introducing Gemini 1.5, Google's latest large language model...
+print(result.output)
+# > This document is the technical report introducing Gemini 1.5, Google's latest large language model...
 ```
 
 The supported document formats vary by model.
@@ -99,6 +99,6 @@ result = agent.run_sync(
         BinaryContent(data=pdf_path.read_bytes(), media_type='application/pdf'),
     ]
 )
-print(result.data)
-#> The document discusses...
+print(result.output)
+# > The document discusses...
 ```

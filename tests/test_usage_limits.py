@@ -35,7 +35,7 @@ def test_request_token_limit() -> None:
 
 def test_response_token_limit() -> None:
     test_agent = Agent(
-        TestModel(custom_result_text='Unfortunately, this response exceeds the response tokens limit by a few!')
+        TestModel(custom_output_text='Unfortunately, this response exceeds the response tokens limit by a few!')
     )
 
     with pytest.raises(
@@ -45,7 +45,7 @@ def test_response_token_limit() -> None:
 
 
 def test_total_token_limit() -> None:
-    test_agent = Agent(TestModel(custom_result_text='This utilizes 4 tokens!'))
+    test_agent = Agent(TestModel(custom_output_text='This utilizes 4 tokens!'))
 
     with pytest.raises(UsageLimitExceeded, match=re.escape('Exceeded the total_tokens_limit of 50 (total_tokens=55)')):
         test_agent.run_sync('Hello', usage_limits=UsageLimits(total_tokens_limit=50))
@@ -137,7 +137,7 @@ def test_usage_so_far() -> None:
 
 
 async def test_multi_agent_usage_no_incr():
-    delegate_agent = Agent(TestModel(), result_type=int)
+    delegate_agent = Agent(TestModel(), output_type=int)
 
     controller_agent1 = Agent(TestModel())
     run_1_usages: list[Usage] = []
@@ -148,10 +148,10 @@ async def test_multi_agent_usage_no_incr():
         delegate_usage = delegate_result.usage()
         run_1_usages.append(delegate_usage)
         assert delegate_usage == snapshot(Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55))
-        return delegate_result.data
+        return delegate_result.output
 
     result1 = await controller_agent1.run('foobar')
-    assert result1.data == snapshot('{"delegate_to_other_agent1":0}')
+    assert result1.output == snapshot('{"delegate_to_other_agent1":0}')
     run_1_usages.append(result1.usage())
     assert result1.usage() == snapshot(Usage(requests=2, request_tokens=103, response_tokens=13, total_tokens=116))
 
@@ -162,10 +162,10 @@ async def test_multi_agent_usage_no_incr():
         delegate_result = await delegate_agent.run(sentence, usage=ctx.usage)
         delegate_usage = delegate_result.usage()
         assert delegate_usage == snapshot(Usage(requests=2, request_tokens=102, response_tokens=9, total_tokens=111))
-        return delegate_result.data
+        return delegate_result.output
 
     result2 = await controller_agent2.run('foobar')
-    assert result2.data == snapshot('{"delegate_to_other_agent2":0}')
+    assert result2.output == snapshot('{"delegate_to_other_agent2":0}')
     assert result2.usage() == snapshot(Usage(requests=3, request_tokens=154, response_tokens=17, total_tokens=171))
 
     # confirm the usage from result2 is the sum of the usage from result1
@@ -183,5 +183,5 @@ async def test_multi_agent_usage_sync():
         return 0
 
     result = await controller_agent.run('foobar')
-    assert result.data == snapshot('{"delegate_to_other_agent":0}')
+    assert result.output == snapshot('{"delegate_to_other_agent":0}')
     assert result.usage() == snapshot(Usage(requests=7, request_tokens=105, response_tokens=16, total_tokens=120))

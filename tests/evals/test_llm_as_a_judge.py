@@ -70,15 +70,15 @@ async def test_judge_output_mock(mocker: MockerFixture):
     """Test judge_output function with mocked agent."""
     # Mock the agent run method
     mock_result = mocker.MagicMock()
-    mock_result.data = GradingOutput(reason='Test passed', pass_=True, score=1.0)
+    mock_result.output = GradingOutput(reason='Test passed', pass_=True, score=1.0)
     mock_run = mocker.patch('pydantic_ai.Agent.run', return_value=mock_result)
 
     # Test with string output
-    result = await judge_output('Hello world', 'Content contains a greeting')
-    assert isinstance(result, GradingOutput)
-    assert result.reason == 'Test passed'
-    assert result.pass_ is True
-    assert result.score == 1.0
+    grading_output = await judge_output('Hello world', 'Content contains a greeting')
+    assert isinstance(grading_output, GradingOutput)
+    assert grading_output.reason == 'Test passed'
+    assert grading_output.pass_ is True
+    assert grading_output.score == 1.0
 
     # Verify the agent was called with correct prompt
     mock_run.assert_called_once()
@@ -92,7 +92,7 @@ async def test_judge_input_output_mock(mocker: MockerFixture):
     """Test judge_input_output function with mocked agent."""
     # Mock the agent run method
     mock_result = mocker.MagicMock()
-    mock_result.data = GradingOutput(reason='Test passed', pass_=True, score=1.0)
+    mock_result.output = GradingOutput(reason='Test passed', pass_=True, score=1.0)
     mock_run = mocker.patch('pydantic_ai.Agent.run', return_value=mock_result)
 
     # Test with string input and output

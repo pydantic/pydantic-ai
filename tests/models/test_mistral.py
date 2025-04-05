@@ -197,13 +197,13 @@ async def test_multiple_completions(allow_model_requests: None):
 
     result = await agent.run('hello')
 
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
     assert result.usage().total_tokens == 1
 
     result = await agent.run('hello again', message_history=result.new_messages())
-    assert result.data == 'hello again'
+    assert result.output == 'hello again'
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
     assert result.usage().total_tokens == 1
@@ -240,19 +240,19 @@ async def test_three_completions(allow_model_requests: None):
 
     result = await agent.run('hello')
 
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
     assert result.usage().total_tokens == 1
 
     result = await agent.run('hello again', message_history=result.all_messages())
-    assert result.data == 'hello again'
+    assert result.output == 'hello again'
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
     assert result.usage().total_tokens == 1
 
     result = await agent.run('final message', message_history=result.all_messages())
-    assert result.data == 'final message'
+    assert result.output == 'final message'
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
     assert result.usage().total_tokens == 1
@@ -371,11 +371,11 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
     )
     mock_client = MockMistralAI.create_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model=model, result_type=CityLocation)
+    agent = Agent(model=model, output_type=CityLocation)
 
     result = await agent.run('User prompt value')
 
-    assert result.data == CityLocation(city='paris', country='france')
+    assert result.output == CityLocation(city='paris', country='france')
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 2
     assert result.usage().total_tokens == 3
@@ -429,11 +429,11 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
     )
     mock_client = MockMistralAI.create_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model=model, result_type=CityLocation)
+    agent = Agent(model=model, output_type=CityLocation)
 
     result = await agent.run('User prompt value')
 
-    assert result.data == CityLocation(city='paris', country='france')
+    assert result.output == CityLocation(city='paris', country='france')
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
     assert result.usage().total_tokens == 1
@@ -482,11 +482,11 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
     )
     mock_client = MockMistralAI.create_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model=model, result_type=int, system_prompt='System prompt value')
+    agent = Agent(model=model, output_type=int, system_prompt='System prompt value')
 
     result = await agent.run('User prompt value')
 
-    assert result.data == 42
+    assert result.output == 42
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
     assert result.usage().total_tokens == 1
@@ -567,7 +567,7 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
 
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model, result_type=MyTypedDict)
+    agent = Agent(model, output_type=MyTypedDict)
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
@@ -677,7 +677,7 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
 
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model=model, result_type=MyTypedDict)
+    agent = Agent(model=model, output_type=MyTypedDict)
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
@@ -733,7 +733,7 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
 
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model=model, result_type=int)
+    agent = Agent(model=model, output_type=int)
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
@@ -792,7 +792,7 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
 
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model, result_type=list[str])
+    agent = Agent(model, output_type=list[str])
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
@@ -885,7 +885,7 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
 
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model=model, result_type=MyTypedBaseModel)
+    agent = Agent(model=model, output_type=MyTypedBaseModel)
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
@@ -970,7 +970,7 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
 
     mock_client = MockMistralAI.create_stream_mock(stream)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model=model, result_type=MyTypedBaseModel)
+    agent = Agent(model=model, output_type=MyTypedBaseModel)
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
@@ -1053,7 +1053,7 @@ async def test_request_tool_call(allow_model_requests: None):
 
     result = await agent.run('Hello')
 
-    assert result.data == 'final response'
+    assert result.output == 'final response'
     assert result.usage().request_tokens == 6
     assert result.usage().response_tokens == 4
     assert result.usage().total_tokens == 10
@@ -1179,7 +1179,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
     ]
     mock_client = MockMistralAI.create_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model, system_prompt='this is the system prompt', result_type=MyTypedDict)
+    agent = Agent(model, system_prompt='this is the system prompt', output_type=MyTypedDict)
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -1190,7 +1190,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
 
     result = await agent.run('Hello')
 
-    assert result.data == {'lat': 51, 'lng': 0}
+    assert result.output == {'lat': 51, 'lng': 0}
     assert result.usage().request_tokens == 7
     assert result.usage().response_tokens == 4
     assert result.usage().total_tokens == 12
@@ -1315,7 +1315,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
 
     mock_client = MockMistralAI.create_stream_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model, system_prompt='this is the system prompt', result_type=MyTypedDict)
+    agent = Agent(model, system_prompt='this is the system prompt', output_type=MyTypedDict)
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -1381,7 +1381,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         ]
     )
 
-    assert await result.get_data() == {'won': True}
+    assert await result.get_output() == {'won': True}
 
 
 async def test_stream_tool_call(allow_model_requests: None):

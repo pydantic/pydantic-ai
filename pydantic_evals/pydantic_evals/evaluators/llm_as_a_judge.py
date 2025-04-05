@@ -39,7 +39,7 @@ _judge_output_agent = Agent(
         {"reason": "'avast ye' is a common pirate term", "pass": false, "score": 0.0}
         """
     ),
-    result_type=GradingOutput,
+    output_type=GradingOutput,
 )
 
 
@@ -52,7 +52,7 @@ async def judge_output(
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = f'<Output>\n{_stringify(output)}\n</Output>\n<Rubric>\n{rubric}\n</Rubric>'
-    return (await _judge_output_agent.run(user_prompt, model=model or _default_model)).data
+    return (await _judge_output_agent.run(user_prompt, model=model or _default_model)).output
 
 
 _judge_input_output_agent = Agent(
@@ -74,7 +74,7 @@ _judge_input_output_agent = Agent(
         {"reason": "'avast ye' is a common pirate term", "pass": false, "score": 0.0}
         """
     ),
-    result_type=GradingOutput,
+    output_type=GradingOutput,
 )
 
 
@@ -87,7 +87,7 @@ async def judge_input_output(
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = f'<Input>\n{_stringify(inputs)}\n</Input>\n<Output>\n{_stringify(output)}\n</Output>\n<Rubric>\n{rubric}\n</Rubric>'
-    return (await _judge_input_output_agent.run(user_prompt, model=model or _default_model)).data
+    return (await _judge_input_output_agent.run(user_prompt, model=model or _default_model)).output
 
 
 def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:  # pragma: no cover

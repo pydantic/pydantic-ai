@@ -96,7 +96,7 @@ def test_list_models(capfd: CaptureFixture[str]):
 
 def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
-    with cli_agent.override(model=TestModel(custom_result_text='# result\n\n```py\nx = 1\n```')):
+    with cli_agent.override(model=TestModel(custom_output_text='# result\n\n```py\nx = 1\n```')):
         assert cli(['hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
         assert cli(['--no-stream', 'hello']) == 0
@@ -113,7 +113,7 @@ def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
         session = PromptSession[Any](input=inp, output=DummyOutput())
         m = mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
         m.return_value = session
-        m = TestModel(custom_result_text='goodbye')
+        m = TestModel(custom_output_text='goodbye')
         with cli_agent.override(model=m):
             assert cli([]) == 0
         assert capfd.readouterr().out.splitlines() == snapshot(

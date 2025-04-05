@@ -6,7 +6,7 @@ Demonstrates:
 
 * [reusing chat history](../message-history.md)
 * [serializing messages](../message-history.md#accessing-messages-from-results)
-* [streaming responses](../results.md#streamed-results)
+* [streaming responses](../output.md#streamed-results)
 
 This demonstrates storing chat history between requests and using it to give the model context for new responses.
 

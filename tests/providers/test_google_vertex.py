@@ -168,4 +168,4 @@ async def test_vertexai_provider(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('What is the capital of France?')
-    assert result.data == snapshot('The capital of France is **Paris**.\n')
+    assert result.output == snapshot('The capital of France is **Paris**.\n')

@@ -78,7 +78,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
         return str(x + 1)
 
     result = my_agent.run_sync('Hello')
-    assert result.data == snapshot('{"my_ret":"1"}')
+    assert result.output == snapshot('{"my_ret":"1"}')
 
     summary = get_logfire_summary()
     if instrument is False:
@@ -222,8 +222,8 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                                 'strict': None,
                             }
                         ],
-                        'allow_text_result': True,
-                        'result_tools': [],
+                        'allow_text_output': True,
+                        'output_tools': [],
                     }
                 )
             ),
