@@ -183,7 +183,7 @@ async def test_async_request_text_response(allow_model_requests: None):
 
 async def test_request_structured_response(allow_model_requests: None):
     c = completion_message(
-        [ToolUseBlock(id='123', input={'response': [1, 2, 3]}, name='final_output', type='tool_use')],
+        [ToolUseBlock(id='123', input={'response': [1, 2, 3]}, name='final_result', type='tool_use')],
         usage=AnthropicUsage(input_tokens=3, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
@@ -198,7 +198,7 @@ async def test_request_structured_response(allow_model_requests: None):
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         args={'response': [1, 2, 3]},
                         tool_call_id='123',
                     )
@@ -209,7 +209,7 @@ async def test_request_structured_response(allow_model_requests: None):
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),

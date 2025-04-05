@@ -199,7 +199,7 @@ async def test_request_structured_response(allow_model_requests: None):
             tool_calls=[
                 chat.ChatCompletionMessageToolCall(
                     id='123',
-                    function=Function(arguments='{"response": [1, 2, 123]}', name='final_output'),
+                    function=Function(arguments='{"response": [1, 2, 123]}', name='final_result'),
                     type='function',
                 )
             ],
@@ -217,7 +217,7 @@ async def test_request_structured_response(allow_model_requests: None):
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         args='{"response": [1, 2, 123]}',
                         tool_call_id='123',
                     )
@@ -228,7 +228,7 @@ async def test_request_structured_response(allow_model_requests: None):
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
@@ -441,7 +441,7 @@ async def test_stream_structured(allow_model_requests: None):
         chunk([ChoiceDelta(tool_calls=[])]),
         chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
         chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
-        struc_chunk('final_output', None),
+        struc_chunk('final_result', None),
         chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
         struc_chunk(None, '{"first": "One'),
         struc_chunk(None, '", "second": "Two"'),
@@ -470,7 +470,7 @@ async def test_stream_structured(allow_model_requests: None):
 
 async def test_stream_structured_finish_reason(allow_model_requests: None):
     stream = [
-        struc_chunk('final_output', None),
+        struc_chunk('final_result', None),
         struc_chunk(None, '{"first": "One'),
         struc_chunk(None, '", "second": "Two"'),
         struc_chunk(None, '}'),
@@ -574,7 +574,7 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
             tool_calls=[
                 chat.ChatCompletionMessageToolCall(
                     id='123',
-                    function=Function(arguments='{"response": [1, 2, 3]}', name='final_output'),
+                    function=Function(arguments='{"response": [1, 2, 3]}', name='final_result'),
                     type='function',
                 )
             ],

@@ -153,12 +153,12 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                     ]
                 )
             ),
-            'final_output': '{"my_ret":"1"}',
+            'final_result': '{"my_ret":"1"}',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
                         'type': 'object',
-                        'properties': {'all_messages_events': {'type': 'array'}, 'final_output': {'type': 'object'}},
+                        'properties': {'all_messages_events': {'type': 'array'}, 'final_result': {'type': 'object'}},
                     }
                 )
             ),

@@ -52,7 +52,7 @@ A function that always takes and returns the same type of data (which is the res
 Usage `ResultValidatorFunc[AgentDepsT, T]`.
 """
 
-DEFAULT_OUTPUT_TOOL_NAME = 'final_output'
+DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 
 
 @dataclass
@@ -60,7 +60,7 @@ class ToolStructuredOutput(Generic[OutputDataT]):
     """Marker class to use tools for structured outputs, and customize the tool."""
 
     output_type: type[OutputDataT]
-    name: str = 'final_output'
+    name: str = 'final_result'
     description: str | None = None
     max_retries: int | None = None
 

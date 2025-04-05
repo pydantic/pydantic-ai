@@ -149,8 +149,8 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 1,
                     'all_messages_events': '[{"content": "hello", "role": "user", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}, {"role": "assistant", "content": "success", "gen_ai.message.index": 1, "event.name": "gen_ai.assistant.message"}]',
-                    'final_output': 'success',
-                    'logfire.json_schema': '{"type": "object", "properties": {"all_messages_events": {"type": "array"}, "final_output": {"type": "object"}}}',
+                    'final_result': 'success',
+                    'logfire.json_schema': '{"type": "object", "properties": {"all_messages_events": {"type": "array"}, "final_result": {"type": "object"}}}',
                 },
             },
         ]

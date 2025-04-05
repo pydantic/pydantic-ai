@@ -484,7 +484,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 'all_messages_events': json.dumps(
                     [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)]
                 ),
-                'final_output': final_result.output
+                'final_result': final_result.output
                 if isinstance(final_result.output, str)
                 else json.dumps(InstrumentedModel.serialize_any(final_result.output)),
             }
@@ -496,7 +496,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         'type': 'object',
                         'properties': {
                             'all_messages_events': {'type': 'array'},
-                            'final_output': {'type': 'object'},
+                            'final_result': {'type': 'object'},
                         },
                     }
                 ),
@@ -529,7 +529,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 _messages.ModelRequest(
                     parts=[
                         _messages.RetryPromptPart(
-                            content='Plain text responses are not permitted, please include your response in a tool call.',
+                            content='Plain text responses are not permitted, please include your response in a tool call',
                         )
                     ]
                 )

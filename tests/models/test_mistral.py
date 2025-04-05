@@ -362,7 +362,7 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
             tool_calls=[
                 MistralToolCall(
                     id='123',
-                    function=MistralFunctionCall(arguments={'city': 'paris', 'country': 'france'}, name='final_output'),
+                    function=MistralFunctionCall(arguments={'city': 'paris', 'country': 'france'}, name='final_result'),
                     type='function',
                 )
             ],
@@ -385,7 +385,7 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         args={'city': 'paris', 'country': 'france'},
                         tool_call_id='123',
                     )
@@ -396,7 +396,7 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
@@ -420,7 +420,7 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
                 MistralToolCall(
                     id='123',
                     function=MistralFunctionCall(
-                        arguments='{"city": "paris", "country": "france"}', name='final_output'
+                        arguments='{"city": "paris", "country": "france"}', name='final_result'
                     ),
                     type='function',
                 )
@@ -444,7 +444,7 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         args='{"city": "paris", "country": "france"}',
                         tool_call_id='123',
                     )
@@ -455,7 +455,7 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
@@ -474,7 +474,7 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
             tool_calls=[
                 MistralToolCall(
                     id='123',
-                    function=MistralFunctionCall(arguments='{"response": 42}', name='final_output'),
+                    function=MistralFunctionCall(arguments='{"response": 42}', name='final_result'),
                     type='function',
                 )
             ],
@@ -502,7 +502,7 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         args='{"response": 42}',
                         tool_call_id='123',
                     )
@@ -513,7 +513,7 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
@@ -1165,7 +1165,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 tool_calls=[
                     MistralToolCall(
                         id='1',
-                        function=MistralFunctionCall(arguments='{"lat": 51, "lng": 0}', name='final_output'),
+                        function=MistralFunctionCall(arguments='{"lat": 51, "lng": 0}', name='final_result'),
                         type='function',
                     )
                 ],
@@ -1247,7 +1247,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         args='{"lat": 51, "lng": 0}',
                         tool_call_id='1',
                     )
@@ -1258,7 +1258,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
@@ -1304,7 +1304,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 tool_calls=[
                     MistralToolCall(
                         id='1',
-                        function=MistralFunctionCall(arguments='{"won": true}', name='final_output'),
+                        function=MistralFunctionCall(arguments='{"won": true}', name='final_result'),
                         type=None,
                     )
                 ],
@@ -1364,14 +1364,14 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_output', args='{"won": true}', tool_call_id='1')],
+                parts=[ToolCallPart(tool_name='final_result', args='{"won": true}', tool_call_id='1')],
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),

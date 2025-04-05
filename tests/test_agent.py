@@ -86,14 +86,14 @@ def test_result_pydantic_model_retry():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_output', args='{"a": "wrong", "b": "foo"}', tool_call_id=IsStr())],
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": "wrong", "b": "foo"}', tool_call_id=IsStr())],
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content=[
                             {
                                 'type': 'int_parsing',
@@ -108,14 +108,14 @@ def test_result_pydantic_model_retry():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_output', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
@@ -194,7 +194,7 @@ def test_output_validator():
 
     @agent.output_validator
     def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
-        assert ctx.tool_name == 'final_output'
+        assert ctx.tool_name == 'final_result'
         if o.a == 42:
             return o
         else:
@@ -207,7 +207,7 @@ def test_output_validator():
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_output', args='{"a": 41, "b": "foo"}', tool_call_id=IsStr())],
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": 41, "b": "foo"}', tool_call_id=IsStr())],
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -215,21 +215,21 @@ def test_output_validator():
                 parts=[
                     RetryPromptPart(
                         content='"a" should be 42',
-                        tool_name='final_output',
+                        tool_name='final_result',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_output', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
+                parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
@@ -270,7 +270,7 @@ def test_plain_response_then_tuple():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Plain text responses are not permitted, please call one of the functions instead.',
+                        content='Plain text responses are not permitted, please include your response in a tool call',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     )
@@ -278,7 +278,7 @@ def test_plain_response_then_tuple():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='final_output', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
+                    ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
                 ],
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
@@ -286,7 +286,7 @@ def test_plain_response_then_tuple():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
@@ -295,12 +295,12 @@ def test_plain_response_then_tuple():
             ),
         ]
     )
-    assert result._output_tool_name == 'final_output'  # pyright: ignore[reportPrivateUsage]
+    assert result._output_tool_name == 'final_result'  # pyright: ignore[reportPrivateUsage]
     assert result.all_messages(output_tool_return_content='foobar')[-1] == snapshot(
         ModelRequest(
             parts=[
                 ToolReturnPart(
-                    tool_name='final_output', content='foobar', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                    tool_name='final_result', content='foobar', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                 )
             ]
         )
@@ -309,7 +309,7 @@ def test_plain_response_then_tuple():
         ModelRequest(
             parts=[
                 ToolReturnPart(
-                    tool_name='final_output',
+                    tool_name='final_result',
                     content='Final result processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
@@ -358,7 +358,7 @@ def test_response_tuple():
     assert m.last_model_request_parameters.output_tools == snapshot(
         [
             ToolDefinition(
-                name='final_output',
+                name='final_result',
                 description='The final response which ends this conversation',
                 parameters_json_schema={
                     'additionalProperties': False,
@@ -417,7 +417,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     assert m.last_model_request_parameters.output_tools == snapshot(
         [
             ToolDefinition(
-                name='final_output',
+                name='final_result',
                 description='The final response which ends this conversation',
                 parameters_json_schema={
                     'properties': {
@@ -481,7 +481,7 @@ class Bar(BaseModel):
 
     result = agent.run_sync('Hello')
     assert result.output == mod.Foo(a=0, b='a')
-    assert got_tool_call_name == snapshot('final_output_Foo')
+    assert got_tool_call_name == snapshot('final_result_Foo')
 
     assert m.last_model_request_parameters is not None
     assert m.last_model_request_parameters.function_tools == snapshot([])
@@ -493,7 +493,7 @@ class Bar(BaseModel):
     assert m.last_model_request_parameters.output_tools == snapshot(
         [
             ToolDefinition(
-                name='final_output_Foo',
+                name='final_result_Foo',
                 description='Foo: The final response which ends this conversation',
                 parameters_json_schema={
                     'properties': {
@@ -506,7 +506,7 @@ class Bar(BaseModel):
                 },
             ),
             ToolDefinition(
-                name='final_output_Bar',
+                name='final_result_Bar',
                 description='This is a bar model.',
                 parameters_json_schema={
                     'properties': {'b': {'type': 'string'}},
@@ -520,7 +520,7 @@ class Bar(BaseModel):
 
     result = agent.run_sync('Hello', model=TestModel(seed=1))
     assert result.output == mod.Bar(b='b')
-    assert got_tool_call_name == snapshot('final_output_Bar')
+    assert got_tool_call_name == snapshot('final_result_Bar')
 
 
 def test_run_with_history_new():
@@ -686,7 +686,7 @@ def test_run_with_history_new_structured():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         args={'a': 0},
                         tool_call_id=IsStr(),
                     )
@@ -697,7 +697,7 @@ def test_run_with_history_new_structured():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
@@ -729,14 +729,14 @@ def test_run_with_history_new_structured():
                 ],
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_output', args={'a': 0}, tool_call_id=IsStr())],
+                parts=[ToolCallPart(tool_name='final_result', args={'a': 0}, tool_call_id=IsStr())],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
@@ -750,14 +750,14 @@ def test_run_with_history_new_structured():
                 ],
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_output', args={'a': 0}, tool_call_id=IsStr())],
+                parts=[ToolCallPart(tool_name='final_result', args={'a': 0}, tool_call_id=IsStr())],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
@@ -768,7 +768,7 @@ def test_run_with_history_new_structured():
     )
     assert result2.output == snapshot(Response(a=0))
     assert result2._new_message_index == snapshot(5)  # pyright: ignore[reportPrivateUsage]
-    assert result2._output_tool_name == snapshot('final_output')  # pyright: ignore[reportPrivateUsage]
+    assert result2._output_tool_name == snapshot('final_result')  # pyright: ignore[reportPrivateUsage]
     assert result2.usage() == snapshot(
         Usage(requests=1, request_tokens=59, response_tokens=13, total_tokens=72, details=None)
     )
@@ -988,7 +988,7 @@ class TestMultipleToolCalls:
 
         value: str
 
-    def test_early_strategy_stops_after_first_final_output(self):
+    def test_early_strategy_stops_after_first_final_result(self):
         """Test that 'early' strategy stops processing regular tools after first final result."""
         tool_called = []
 
@@ -996,7 +996,7 @@ class TestMultipleToolCalls:
             assert info.output_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart('final_output', {'value': 'final'}),
+                    ToolCallPart('final_result', {'value': 'final'}),
                     ToolCallPart('regular_tool', {'x': 1}),
                     ToolCallPart('another_tool', {'y': 2}),
                 ]
@@ -1026,7 +1026,7 @@ class TestMultipleToolCalls:
         assert messages[-1].parts == snapshot(
             [
                 ToolReturnPart(
-                    tool_name='final_output',
+                    tool_name='final_result',
                     content='Final result processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
@@ -1046,15 +1046,15 @@ class TestMultipleToolCalls:
             ]
         )
 
-    def test_early_strategy_uses_first_final_output(self):
+    def test_early_strategy_uses_first_final_result(self):
         """Test that 'early' strategy uses the first final result and ignores subsequent ones."""
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert info.output_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart('final_output', {'value': 'first'}),
-                    ToolCallPart('final_output', {'value': 'second'}),
+                    ToolCallPart('final_result', {'value': 'first'}),
+                    ToolCallPart('final_result', {'value': 'second'}),
                 ]
             )
 
@@ -1068,13 +1068,13 @@ class TestMultipleToolCalls:
         assert result.new_messages()[-1].parts == snapshot(
             [
                 ToolReturnPart(
-                    tool_name='final_output',
+                    tool_name='final_result',
                     content='Final result processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturnPart(
-                    tool_name='final_output',
+                    tool_name='final_result',
                     content='Output tool not used - a final result was already processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
@@ -1091,9 +1091,9 @@ class TestMultipleToolCalls:
             return ModelResponse(
                 parts=[
                     ToolCallPart('regular_tool', {'x': 42}),
-                    ToolCallPart('final_output', {'value': 'first'}),
+                    ToolCallPart('final_result', {'value': 'first'}),
                     ToolCallPart('another_tool', {'y': 2}),
-                    ToolCallPart('final_output', {'value': 'second'}),
+                    ToolCallPart('final_result', {'value': 'second'}),
                     ToolCallPart('unknown_tool', {'value': '???'}),
                 ]
             )
@@ -1129,9 +1129,9 @@ class TestMultipleToolCalls:
                 ModelResponse(
                     parts=[
                         ToolCallPart(tool_name='regular_tool', args={'x': 42}, tool_call_id=IsStr()),
-                        ToolCallPart(tool_name='final_output', args={'value': 'first'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args={'value': 'first'}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
-                        ToolCallPart(tool_name='final_output', args={'value': 'second'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args={'value': 'second'}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
                     ],
                     model_name='function:return_model:',
@@ -1140,20 +1140,20 @@ class TestMultipleToolCalls:
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='final_output',
+                            tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
-                            tool_name='final_output',
+                            tool_name='final_result',
                             content='Output tool not used - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
                             tool_name='unknown_tool',
-                            content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_output",
+                            content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
                         ),
@@ -1171,7 +1171,7 @@ class TestMultipleToolCalls:
             ]
         )
 
-    def test_early_strategy_with_final_output_in_middle(self):
+    def test_early_strategy_with_final_result_in_middle(self):
         """Test that 'early' strategy stops at first final result, regardless of position."""
         tool_called = []
 
@@ -1180,7 +1180,7 @@ class TestMultipleToolCalls:
             return ModelResponse(
                 parts=[
                     ToolCallPart('regular_tool', {'x': 1}),
-                    ToolCallPart('final_output', {'value': 'final'}),
+                    ToolCallPart('final_result', {'value': 'final'}),
                     ToolCallPart('another_tool', {'y': 2}),
                     ToolCallPart('unknown_tool', {'value': '???'}),
                 ]
@@ -1218,7 +1218,7 @@ class TestMultipleToolCalls:
                 ModelResponse(
                     parts=[
                         ToolCallPart(tool_name='regular_tool', args={'x': 1}, tool_call_id=IsStr()),
-                        ToolCallPart(tool_name='final_output', args={'value': 'final'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args={'value': 'final'}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
                     ],
@@ -1234,7 +1234,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
-                            tool_name='final_output',
+                            tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
@@ -1247,7 +1247,7 @@ class TestMultipleToolCalls:
                         ),
                         RetryPromptPart(
                             tool_name='unknown_tool',
-                            content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_output",
+                            content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
                         ),
@@ -1273,15 +1273,15 @@ class TestMultipleToolCalls:
         tool_returns = [m for m in result.all_messages() if isinstance(m, ToolReturnPart)]
         assert tool_returns == snapshot([])
 
-    def test_multiple_final_output_are_validated_correctly(self):
+    def test_multiple_final_result_are_validated_correctly(self):
         """Tests that if multiple final results are returned, but one fails validation, the other is used."""
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert info.output_tools is not None
             return ModelResponse(
                 parts=[
-                    ToolCallPart('final_output', {'bad_value': 'first'}, tool_call_id='first'),
-                    ToolCallPart('final_output', {'value': 'second'}, tool_call_id='second'),
+                    ToolCallPart('final_result', {'bad_value': 'first'}, tool_call_id='first'),
+                    ToolCallPart('final_result', {'value': 'second'}, tool_call_id='second'),
                 ]
             )
 
@@ -1295,13 +1295,13 @@ class TestMultipleToolCalls:
         assert result.new_messages()[-1].parts == snapshot(
             [
                 ToolReturnPart(
-                    tool_name='final_output',
+                    tool_name='final_result',
                     tool_call_id='first',
                     content='Output tool not used - result failed validation.',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturnPart(
-                    tool_name='final_output',
+                    tool_name='final_result',
                     content='Final result processed.',
                     timestamp=IsNow(tz=timezone.utc),
                     tool_call_id='second',

@@ -327,7 +327,7 @@ async def test_call_tool():
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='final_output',
+                            tool_name='final_result',
                             args='{"response": ["hello world", 2]}',
                             tool_call_id=IsStr(),
                         )
@@ -338,7 +338,7 @@ async def test_call_tool():
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='final_output',
+                            tool_name='final_result',
                             content='Final result processed.',
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
@@ -397,13 +397,13 @@ class ResultType(BaseModel):
     value: str
 
 
-async def test_early_strategy_stops_after_first_final_output():
+async def test_early_strategy_stops_after_first_final_result():
     """Test that 'early' strategy stops processing regular tools after first final result."""
     tool_called: list[str] = []
 
     async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         assert info.output_tools is not None
-        yield {1: DeltaToolCall('final_output', '{"value": "final"}')}
+        yield {1: DeltaToolCall('final_result', '{"value": "final"}')}
         yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
         yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
 
@@ -435,7 +435,7 @@ async def test_early_strategy_stops_after_first_final_output():
             ModelRequest(parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='final_output', args='{"value": "final"}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='final_result', args='{"value": "final"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='regular_tool', args='{"x": 1}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='another_tool', args='{"y": 2}', tool_call_id=IsStr()),
                 ],
@@ -445,7 +445,7 @@ async def test_early_strategy_stops_after_first_final_output():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
@@ -468,13 +468,13 @@ async def test_early_strategy_stops_after_first_final_output():
     )
 
 
-async def test_early_strategy_uses_first_final_output():
+async def test_early_strategy_uses_first_final_result():
     """Test that 'early' strategy uses the first final result and ignores subsequent ones."""
 
     async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         assert info.output_tools is not None
-        yield {1: DeltaToolCall('final_output', '{"value": "first"}')}
-        yield {2: DeltaToolCall('final_output', '{"value": "second"}')}
+        yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
+        yield {2: DeltaToolCall('final_result', '{"value": "second"}')}
 
     agent = Agent(FunctionModel(stream_function=sf), output_type=ResultType, end_strategy='early')
 
@@ -491,8 +491,8 @@ async def test_early_strategy_uses_first_final_output():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='final_output', args='{"value": "first"}', tool_call_id=IsStr()),
-                    ToolCallPart(tool_name='final_output', args='{"value": "second"}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
                 ],
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
@@ -500,13 +500,13 @@ async def test_early_strategy_uses_first_final_output():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     ),
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Output tool not used - a final result was already processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
@@ -523,10 +523,10 @@ async def test_exhaustive_strategy_executes_all_tools():
 
     async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         assert info.output_tools is not None
-        yield {1: DeltaToolCall('final_output', '{"value": "first"}')}
+        yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
         yield {2: DeltaToolCall('regular_tool', '{"x": 42}')}
         yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
-        yield {4: DeltaToolCall('final_output', '{"value": "second"}')}
+        yield {4: DeltaToolCall('final_result', '{"value": "second"}')}
         yield {5: DeltaToolCall('unknown_tool', '{"value": "???"}')}
 
     agent = Agent(FunctionModel(stream_function=sf), output_type=ResultType, end_strategy='exhaustive')
@@ -554,10 +554,10 @@ async def test_exhaustive_strategy_executes_all_tools():
             ModelRequest(parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='final_output', args='{"value": "first"}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='regular_tool', args='{"x": 42}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='another_tool', args='{"y": 2}', tool_call_id=IsStr()),
-                    ToolCallPart(tool_name='final_output', args='{"value": "second"}', tool_call_id=IsStr()),
+                    ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='unknown_tool', args='{"value": "???"}', tool_call_id=IsStr()),
                 ],
                 model_name='function::sf',
@@ -566,20 +566,20 @@ async def test_exhaustive_strategy_executes_all_tools():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     ),
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Output tool not used - a final result was already processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     ),
                     RetryPromptPart(
                         tool_name='unknown_tool',
-                        content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_output",
+                        content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     ),
@@ -595,14 +595,14 @@ async def test_exhaustive_strategy_executes_all_tools():
     )
 
 
-async def test_early_strategy_with_final_output_in_middle():
+async def test_early_strategy_with_final_result_in_middle():
     """Test that 'early' strategy stops at first final result, regardless of position."""
     tool_called: list[str] = []
 
     async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         assert info.output_tools is not None
         yield {1: DeltaToolCall('regular_tool', '{"x": 1}')}
-        yield {2: DeltaToolCall('final_output', '{"value": "final"}')}
+        yield {2: DeltaToolCall('final_result', '{"value": "final"}')}
         yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
         yield {4: DeltaToolCall('unknown_tool', '{"value": "???"}')}
 
@@ -650,7 +650,7 @@ async def test_early_strategy_with_final_output_in_middle():
                         part_kind='tool-call',
                     ),
                     ToolCallPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         args='{"value": "final"}',
                         tool_call_id=IsStr(),
                         part_kind='tool-call',
@@ -682,7 +682,7 @@ async def test_early_strategy_with_final_output_in_middle():
                         part_kind='tool-return',
                     ),
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=datetime.timezone.utc),
@@ -699,7 +699,7 @@ async def test_early_strategy_with_final_output_in_middle():
                         content='Unknown tool name: '
                         "'unknown_tool'. Available tools: "
                         'regular_tool, another_tool, '
-                        'final_output',
+                        'final_result',
                         tool_name='unknown_tool',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=datetime.timezone.utc),
@@ -752,14 +752,14 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_output', args={'value': 'a'}, tool_call_id=IsStr())],
+                parts=[ToolCallPart(tool_name='final_result', args={'value': 'a'}, tool_call_id=IsStr())],
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),

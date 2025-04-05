@@ -465,7 +465,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
 
 async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     response = gemini_response(
-        _content_model_response(ModelResponse(parts=[ToolCallPart('final_output', {'response': [1, 2, 123]})]))
+        _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]})]))
     )
     gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
@@ -477,14 +477,14 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_output', args={'response': [1, 2, 123]}, tool_call_id=IsStr())],
+                parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2, 123]}, tool_call_id=IsStr())],
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
@@ -679,7 +679,7 @@ async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
 async def test_stream_structured(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(
-            _content_model_response(ModelResponse(parts=[ToolCallPart('final_output', {'response': [1, 2]})])),
+            _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2]})])),
         ),
     ]
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
@@ -708,7 +708,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
 
     second_responses = [
         gemini_response(
-            _content_model_response(ModelResponse(parts=[ToolCallPart('final_output', {'response': [1, 2]})])),
+            _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2]})])),
         ),
     ]
     d2 = _gemini_streamed_response_ta.dump_json(second_responses, by_alias=True)
@@ -755,14 +755,14 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_output', args={'response': [1, 2]}, tool_call_id=IsStr())],
+                parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2]}, tool_call_id=IsStr())],
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
@@ -805,27 +805,27 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
 
 async def test_empty_text_ignored():
     content = _content_model_response(
-        ModelResponse(parts=[ToolCallPart('final_output', {'response': [1, 2, 123]}), TextPart(content='xxx')])
+        ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]}), TextPart(content='xxx')])
     )
     # text included
     assert content == snapshot(
         {
             'role': 'model',
             'parts': [
-                {'function_call': {'name': 'final_output', 'args': {'response': [1, 2, 123]}}},
+                {'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}},
                 {'text': 'xxx'},
             ],
         }
     )
 
     content = _content_model_response(
-        ModelResponse(parts=[ToolCallPart('final_output', {'response': [1, 2, 123]}), TextPart(content='')])
+        ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]}), TextPart(content='')])
     )
     # text skipped
     assert content == snapshot(
         {
             'role': 'model',
-            'parts': [{'function_call': {'name': 'final_output', 'args': {'response': [1, 2, 123]}}}],
+            'parts': [{'function_call': {'name': 'final_result', 'args': {'response': [1, 2, 123]}}}],
         }
     )
 

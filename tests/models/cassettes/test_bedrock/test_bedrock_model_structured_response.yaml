@@ -5,7 +5,7 @@ interactions:
       "temperature", "description": "Get the temperature in a city on a specific date.", "inputSchema": {"json": {"properties":
       {"city": {"description": "The city name.", "title": "City", "type": "string"}, "date": {"description": "The date.",
       "format": "date", "title": "Date", "type": "string"}}, "required": ["city", "date"], "type": "object", "additionalProperties":
-      false}}}}, {"toolSpec": {"name": "final_output", "description": "The final response which ends this conversation", "inputSchema":
+      false}}}}, {"toolSpec": {"name": "final_result", "description": "The final response which ends this conversation", "inputSchema":
       {"json": {"properties": {"temperature": {"title": "Temperature", "type": "string"}, "date": {"format": "date", "title":
       "Date", "type": "string"}, "city": {"title": "City", "type": "string"}}, "required": ["temperature", "date", "city"],
       "title": "Response", "type": "object"}}}}]}}'
@@ -65,7 +65,7 @@ interactions:
       {}, "toolConfig": {"tools": [{"toolSpec": {"name": "temperature", "description": "Get the temperature in a city on a
       specific date.", "inputSchema": {"json": {"properties": {"city": {"description": "The city name.", "title": "City",
       "type": "string"}, "date": {"description": "The date.", "format": "date", "title": "Date", "type": "string"}}, "required":
-      ["city", "date"], "type": "object", "additionalProperties": false}}}}, {"toolSpec": {"name": "final_output", "description":
+      ["city", "date"], "type": "object", "additionalProperties": false}}}}, {"toolSpec": {"name": "final_result", "description":
       "The final response which ends this conversation", "inputSchema": {"json": {"properties": {"temperature": {"title":
       "Temperature", "type": "string"}, "date": {"format": "date", "title": "Date", "type": "string"}, "city": {"title": "City",
       "type": "string"}}, "required": ["temperature", "date", "city"], "title": "Response", "type": "object"}}}}]}}'
@@ -98,13 +98,13 @@ interactions:
         message:
           content:
           - text: '<thinking> I have received the result from the "temperature" tool. The temperature in London on 1st January
-              2022 was 30°C. Now, I will use the "final_output" tool to provide this information to the user.</thinking> '
+              2022 was 30°C. Now, I will use the "final_result" tool to provide this information to the user.</thinking> '
           - toolUse:
               input:
                 city: London
                 date: '2022-01-01'
                 temperature: 30°C
-              name: final_output
+              name: final_result
               toolUseId: tooluse_9AjloJSaQDKmpPFff-2Clg
           role: assistant
       stopReason: tool_use

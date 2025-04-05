@@ -162,10 +162,10 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='<thinking> I have received the result from the "temperature" tool. The temperature in London on 1st January 2022 was 30°C. Now, I will use the "final_output" tool to provide this information to the user.</thinking> '
+                        content='<thinking> I have received the result from the "temperature" tool. The temperature in London on 1st January 2022 was 30°C. Now, I will use the "final_result" tool to provide this information to the user.</thinking> '
                     ),
                     ToolCallPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         args={'date': '2022-01-01', 'city': 'London', 'temperature': '30°C'},
                         tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                     ),
@@ -176,7 +176,7 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                         timestamp=IsDatetime(),

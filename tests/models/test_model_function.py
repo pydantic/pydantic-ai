@@ -410,7 +410,7 @@ def test_retry_result_type():
         nonlocal call_count
         call_count += 1
 
-        return ModelResponse(parts=[ToolCallPart('final_output', {'x': call_count})])
+        return ModelResponse(parts=[ToolCallPart('final_result', {'x': call_count})])
 
     class Foo(BaseModel):
         x: int

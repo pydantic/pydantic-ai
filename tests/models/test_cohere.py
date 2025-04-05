@@ -163,7 +163,7 @@ async def test_request_structured_response(allow_model_requests: None):
             tool_calls=[
                 ToolCallV2(
                     id='123',
-                    function=ToolCallV2Function(arguments='{"response": [1, 2, 123]}', name='final_output'),
+                    function=ToolCallV2Function(arguments='{"response": [1, 2, 123]}', name='final_result'),
                     type='function',
                 )
             ],
@@ -181,7 +181,7 @@ async def test_request_structured_response(allow_model_requests: None):
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         args='{"response": [1, 2, 123]}',
                         tool_call_id='123',
                     )
@@ -192,7 +192,7 @@ async def test_request_structured_response(allow_model_requests: None):
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_output',
+                        tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
