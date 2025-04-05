@@ -92,16 +92,18 @@ class OutputSchema(Generic[OutputDataT]):
         output_type: type[T] | OutputTool[T],
         name: str | None = None,
         description: str | None = None,
+        strict: bool | None = None,
     ) -> OutputSchema[T] | None:
         """Build an OutputSchema dataclass from a response type."""
         if output_type is str:
             return None
 
         if isinstance(output_type, OutputTool):
-            # do we need to error on conflicts here?
+            # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
             name = output_type.name
             description = output_type.description
             output_type_ = output_type.output_type
+            strict = output_type.strict
         else:
             output_type_ = output_type
 
@@ -117,10 +119,20 @@ class OutputSchema(Generic[OutputDataT]):
                 tool_name = raw_tool_name = union_tool_name(name, arg)
                 while tool_name in tools:
                     tool_name = f'{raw_tool_name}_{i}'
-                tools[tool_name] = cast(OutputSchemaTool[T], OutputSchemaTool(arg, tool_name, description, True))
+                tools[tool_name] = cast(
+                    OutputSchemaTool[T],
+                    OutputSchemaTool(
+                        output_type=arg, name=tool_name, description=description, multiple=True, strict=strict
+                    ),
+                )
         else:
             name = name or DEFAULT_OUTPUT_TOOL_NAME
-            tools[name] = cast(OutputSchemaTool[T], OutputSchemaTool(output_type_, name, description, False))
+            tools[name] = cast(
+                OutputSchemaTool[T],
+                OutputSchemaTool(
+                    output_type=output_type_, name=name, description=description, multiple=False, strict=strict
+                ),
+            )
 
         return cls(tools=tools, allow_text_output=allow_text_output)
 
@@ -160,7 +172,9 @@ class OutputSchemaTool(Generic[OutputDataT]):
     tool_def: ToolDefinition
     type_adapter: TypeAdapter[Any]
 
-    def __init__(self, output_type: type[OutputDataT], name: str, description: str | None, multiple: bool):
+    def __init__(
+        self, *, output_type: type[OutputDataT], name: str, description: str | None, multiple: bool, strict: bool | None
+    ):
         """Build a OutputTool dataclass from a response type."""
         assert output_type is not str, 'OutputTool does not support str as a response type'
 
@@ -200,6 +214,7 @@ class OutputSchemaTool(Generic[OutputDataT]):
             description=tool_description,
             parameters_json_schema=parameters_json_schema,
             outer_typed_dict_key=outer_typed_dict_key,
+            strict=strict,
         )
 
     def validate(

@@ -65,6 +65,7 @@ class OutputTool(Generic[OutputDataT]):
     name: str
     description: str | None
     max_retries: int | None
+    strict: bool | None
 
     def __init__(
         self,
@@ -74,11 +75,13 @@ class OutputTool(Generic[OutputDataT]):
         name: str = 'final_result',
         description: str | None = None,
         max_retries: int | None = None,
+        strict: bool | None = None,
     ):
         self.output_type = type_
         self.name = name
         self.description = description
         self.max_retries = max_retries
+        self.strict = strict
 
         # TODO: add support for call and make type_ optional, with the following logic:
         # if type_ is None and call is None:
