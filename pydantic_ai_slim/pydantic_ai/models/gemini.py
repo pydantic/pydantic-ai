@@ -5,7 +5,7 @@ import re
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Annotated, Any, Literal, Protocol, Union, cast
 from uuid import uuid4
@@ -151,6 +151,16 @@ class GeminiModel(Model):
             messages, True, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
         ) as http_response:
             yield await self._process_streamed_response(http_response)
+
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        def _customize_tool_def(t: ToolDefinition):
+            return replace(t, parameters_json_schema=_GeminiJsonSchema(t.parameters_json_schema).simplify())
+
+        return ModelRequestParameters(
+            function_tools=[_customize_tool_def(tool) for tool in model_request_parameters.function_tools],
+            allow_text_result=model_request_parameters.allow_text_result,
+            result_tools=[_customize_tool_def(tool) for tool in model_request_parameters.result_tools],
+        )
 
     @property
     def model_name(self) -> GeminiModelName:
@@ -640,7 +650,7 @@ class _GeminiFunction(TypedDict):
 
 
 def _function_from_abstract_tool(tool: ToolDefinition) -> _GeminiFunction:
-    json_schema = _GeminiJsonSchema(tool.parameters_json_schema).simplify()
+    json_schema = tool.parameters_json_schema
     f = _GeminiFunction(name=tool.name, description=tool.description)
     if json_schema.get('properties'):
         f['parameters'] = json_schema

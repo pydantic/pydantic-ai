@@ -1,12 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from httpx import Timeout
 from typing_extensions import TypedDict
-
-if TYPE_CHECKING:
-    pass
 
 
 class ModelSettings(TypedDict, total=False):

@@ -940,6 +940,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -953,6 +954,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -995,6 +997,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
+            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
         if func is None:
 
@@ -1011,6 +1015,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                     docstring_format,
                     require_parameter_descriptions,
                     schema_generator,
+                    strict,
                 )
                 return func_
 
@@ -1018,7 +1023,15 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         else:
             # noinspection PyTypeChecker
             self._register_function(
-                func, True, name, retries, prepare, docstring_format, require_parameter_descriptions, schema_generator
+                func,
+                True,
+                name,
+                retries,
+                prepare,
+                docstring_format,
+                require_parameter_descriptions,
+                schema_generator,
+                strict,
             )
             return func
 
@@ -1036,6 +1049,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1049,6 +1063,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1091,6 +1106,8 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
+            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
         if func is None:
 
@@ -1105,13 +1122,22 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                     docstring_format,
                     require_parameter_descriptions,
                     schema_generator,
+                    strict,
                 )
                 return func_
 
             return tool_decorator
         else:
             self._register_function(
-                func, False, name, retries, prepare, docstring_format, require_parameter_descriptions, schema_generator
+                func,
+                False,
+                name,
+                retries,
+                prepare,
+                docstring_format,
+                require_parameter_descriptions,
+                schema_generator,
+                strict,
             )
             return func
 
@@ -1125,6 +1151,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         docstring_format: DocstringFormat,
         require_parameter_descriptions: bool,
         schema_generator: type[GenerateJsonSchema],
+        strict: bool | None,
     ) -> None:
         """Private utility to register a function as a tool."""
         retries_ = retries if retries is not None else self._default_retries
@@ -1137,6 +1164,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
             docstring_format=docstring_format,
             require_parameter_descriptions=require_parameter_descriptions,
             schema_generator=schema_generator,
+            strict=strict,
         )
         self._register_tool(tool)
 

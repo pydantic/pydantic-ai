@@ -219,6 +219,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
                                     'type': 'object',
                                 },
                                 'outer_typed_dict_key': None,
+                                'strict': None,
                             }
                         ],
                         'allow_text_result': True,

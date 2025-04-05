@@ -50,7 +50,11 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
     if schema.get('type') == 'object':
         return schema
     elif schema.get('$ref') is not None:
-        return schema.get('$defs', {}).get(schema['$ref'][8:])  # This removes the initial "#/$defs/".
+        maybe_result = schema.get('$defs', {}).get(schema['$ref'][8:])  # This removes the initial "#/$defs/".
+
+        if "'$ref': '#/$defs/" in str(maybe_result):
+            return schema  # We can't remove the $defs because the schema contains other references
+        return maybe_result
     else:
         raise UserError('Schema must be an object')
 

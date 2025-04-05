@@ -311,6 +311,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return self._result
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
+        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
         model_response, request_usage = await ctx.deps.model.request(
             ctx.state.message_history, model_settings, model_request_parameters
         )

@@ -173,12 +173,18 @@ class Tool(Generic[AgentDepsT]):
     prepare: ToolPrepareFunc[AgentDepsT] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
+    strict: bool | None
     _is_async: bool = field(init=False)
     _single_arg_name: str | None = field(init=False)
     _positional_fields: list[str] = field(init=False)
     _var_positional_field: str | None = field(init=False)
     _validator: SchemaValidator = field(init=False, repr=False)
-    _parameters_json_schema: ObjectJsonSchema = field(init=False)
+    _base_parameters_json_schema: ObjectJsonSchema = field(init=False)
+    """
+    The base JSON schema for the tool's parameters.
+
+    This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
+    """
 
     # TODO: Move this state off the Tool class, which is otherwise stateless.
     #   This should be tracked inside a specific agent run, not the tool.
@@ -196,6 +202,7 @@ class Tool(Generic[AgentDepsT]):
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
     ):
         """Create a new tool instance.
 
@@ -246,6 +253,8 @@ class Tool(Generic[AgentDepsT]):
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
+            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
         if takes_ctx is None:
             takes_ctx = _pydantic.takes_ctx(function)
@@ -261,12 +270,13 @@ class Tool(Generic[AgentDepsT]):
         self.prepare = prepare
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
+        self.strict = strict
         self._is_async = inspect.iscoroutinefunction(self.function)
         self._single_arg_name = f['single_arg_name']
         self._positional_fields = f['positional_fields']
         self._var_positional_field = f['var_positional_field']
         self._validator = f['validator']
-        self._parameters_json_schema = f['json_schema']
+        self._base_parameters_json_schema = f['json_schema']
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
@@ -280,7 +290,8 @@ class Tool(Generic[AgentDepsT]):
         tool_def = ToolDefinition(
             name=self.name,
             description=self.description,
-            parameters_json_schema=self._parameters_json_schema,
+            parameters_json_schema=self._base_parameters_json_schema,
+            strict=self.strict,
         )
         if self.prepare is not None:
             return await self.prepare(ctx, tool_def)
@@ -400,7 +411,7 @@ With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `ext
 class ToolDefinition:
     """Definition of a tool passed to a model.
 
-    This is used for both function tools result tools.
+    This is used for both function tools and result tools.
     """
 
     name: str
@@ -416,4 +427,16 @@ class ToolDefinition:
     """The key in the outer [TypedDict] that wraps a result tool.
 
     This will only be set for result tools which don't have an `object` JSON schema.
+    """
+
+    strict: bool | None = None
+    """Whether to enforce (vendor-specific) strict JSON schema validation for tool calls.
+
+    Setting this to `True` while using a supported model generally imposes some restrictions on the tool's JSON schema
+    in exchange for guaranteeing the API responses strictly match that schema.
+
+    When `False`, the model may be free to generate other properties or types (depending on the vendor).
+    When `None` (the default), the value will be inferred based on the compatibility of the parameters_json_schema.
+
+    Note: this is currently only supported by OpenAI models.
     """
