@@ -529,7 +529,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 _messages.ModelRequest(
                     parts=[
                         _messages.RetryPromptPart(
-                            content='Plain text responses are not permitted, please call one of the functions instead.',
+                            content='Plain text responses are not permitted, please include your response in a tool call.',
                         )
                     ]
                 )

@@ -141,8 +141,8 @@ structured_params = [p for p in params if p.id != 'ollama']
 @pytest.mark.parametrize('get_model', structured_params)
 async def test_structured(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
     agent = Agent(get_model(http_client, tmp_path), output_type=MyModel, model_settings={'temperature': 0.0}, retries=2)
-    e: UnexpectedModelBehavior | None = None
-    async with agent.iter('What is the capital of France?') as run:
+
+    async with agent.iter('What is the capital of the UK?') as run:
         try:
             async for _ in run:
                 pass

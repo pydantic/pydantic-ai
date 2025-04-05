@@ -149,7 +149,7 @@ class TestModel(Model):
         elif model_request_parameters.output_tools:
             return _OutputToolOutput(None)
         else:
-            return _TextOutput(None)
+            return _TextOutput(None)  # pragma: no cover
 
     def _request(
         self,

@@ -656,7 +656,7 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None
         output = content
 
     # Note: Check len to handle potential mismatch between function calls and responses from the API. (`msg: not the same number of function class and responses`)
-    if output and len(output) == 0:
+    if output and len(output) == 0:  # pragma: no cover
         output = None
 
     return output
