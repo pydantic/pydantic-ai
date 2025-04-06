@@ -73,6 +73,10 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .anthropic import AnthropicProvider
 
         return AnthropicProvider()
+    elif provider == 'anthropic-vertex':
+        from .anthropic_vertex import AnthropicVertexProvider
+
+        return AnthropicVertexProvider()
     elif provider == 'mistral':
         from .mistral import MistralProvider
 
