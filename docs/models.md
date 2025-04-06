@@ -428,7 +428,7 @@ agent = Agent(model)
 
 Whichever way you authenticate, you can specify which region requests will be sent to via the [`region` argument][pydantic_ai.providers.google_vertex.GoogleVertexProvider].
 
-Using a region close to your application can improve latency and might be important from a regulatory perspective. Make sure you use a region based on [model availablity](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations). You can also use `'global'` as the region to use the global endpoint.
+Using a region close to your application can improve latency and might be important from a regulatory perspective. Make sure you use a region based on [model availability](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations). You can also use `'global'` as the region to use the global endpoint.
 
 ```python {title="vertexai_region.py"}
 from pydantic_ai import Agent
