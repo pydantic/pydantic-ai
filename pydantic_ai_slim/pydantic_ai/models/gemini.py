@@ -309,7 +309,8 @@ class GeminiModel(Model):
                 contents.append(_content_model_response(m))
             else:
                 assert_never(m)
-
+        if instructions := getattr(messages[-1], 'instructions'):
+            sys_prompt_parts.insert(0, _GeminiTextPart(text=instructions))
         return sys_prompt_parts, contents
 
     @staticmethod

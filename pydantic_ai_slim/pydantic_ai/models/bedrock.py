@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Generic, Literal, Union, cast, overload
 
 import anyio
 import anyio.to_thread
+from mypy_boto3_bedrock_runtime.type_defs import SystemContentBlockTypeDef
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import _utils, result
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
     from mypy_boto3_bedrock_runtime.type_defs import (
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
+        ConverseRequestTypeDef,
         ConverseResponseTypeDef,
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
@@ -261,17 +263,14 @@ class BedrockConverseModel(Model):
         system_prompt, bedrock_messages = await self._map_message(messages)
         inference_config = self._map_inference_config(model_settings)
 
-        params = {
+        params: ConverseRequestTypeDef = {
             'modelId': self.model_name,
             'messages': bedrock_messages,
-            'system': [{'text': system_prompt}],
+            'system': system_prompt,
             'inferenceConfig': inference_config,
-            **(
-                {'toolConfig': {'tools': tools, **({'toolChoice': tool_choice} if tool_choice else {})}}
-                if tools
-                else {}
-            ),
         }
+        if tools:
+            params['toolConfig'] = {'tools': tools, 'toolChoice': tool_choice}
 
         if stream:
             model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
@@ -299,15 +298,17 @@ class BedrockConverseModel(Model):
 
         return inference_config
 
-    async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[MessageUnionTypeDef]]:
+    async def _map_message(
+        self, messages: list[ModelMessage]
+    ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
         """Just maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`."""
-        system_prompt: str = ''
+        system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         for m in messages:
             if isinstance(m, ModelRequest):
                 for part in m.parts:
                     if isinstance(part, SystemPromptPart):
-                        system_prompt += part.content
+                        system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
                         bedrock_messages.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
@@ -357,6 +358,8 @@ class BedrockConverseModel(Model):
                 bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
                 assert_never(m)
+        if instructions := getattr(messages[-1], 'instructions'):
+            system_prompt.insert(0, {'text': instructions})
         return system_prompt, bedrock_messages
 
     @staticmethod

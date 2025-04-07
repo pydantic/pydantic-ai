@@ -5,7 +5,6 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from itertools import chain
 from typing import Literal, Union, cast, overload
 
 from typing_extensions import assert_never
@@ -198,7 +197,7 @@ class GroqModel(Model):
         else:
             tool_choice = 'auto'
 
-        groq_messages = list(chain(*(self._map_message(m) for m in messages)))
+        groq_messages = self._map_messages(messages)
 
         try:
             return await self.client.chat.completions.create(
@@ -254,30 +253,35 @@ class GroqModel(Model):
             tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
         return tools
 
-    def _map_message(self, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
+    def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
-        if isinstance(message, ModelRequest):
-            yield from self._map_user_message(message)
-        elif isinstance(message, ModelResponse):
-            texts: list[str] = []
-            tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
-            for item in message.parts:
-                if isinstance(item, TextPart):
-                    texts.append(item.content)
-                elif isinstance(item, ToolCallPart):
-                    tool_calls.append(self._map_tool_call(item))
-                else:
-                    assert_never(item)
-            message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
-            if texts:
-                # Note: model responses from this model should only have one text item, so the following
-                # shouldn't merge multiple texts into one unless you switch models between runs:
-                message_param['content'] = '\n\n'.join(texts)
-            if tool_calls:
-                message_param['tool_calls'] = tool_calls
-            yield message_param
-        else:
-            assert_never(message)
+        groq_messages: list[chat.ChatCompletionMessageParam] = []
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                groq_messages.extend(self._map_user_message(message))
+            elif isinstance(message, ModelResponse):
+                texts: list[str] = []
+                tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
+                for item in message.parts:
+                    if isinstance(item, TextPart):
+                        texts.append(item.content)
+                    elif isinstance(item, ToolCallPart):
+                        tool_calls.append(self._map_tool_call(item))
+                    else:
+                        assert_never(item)
+                message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
+                if texts:
+                    # Note: model responses from this model should only have one text item, so the following
+                    # shouldn't merge multiple texts into one unless you switch models between runs:
+                    message_param['content'] = '\n\n'.join(texts)
+                if tool_calls:
+                    message_param['tool_calls'] = tool_calls
+                groq_messages.append(message_param)
+            else:
+                assert_never(message)
+        if instructions := getattr(messages[-1], 'instructions'):
+            groq_messages.insert(0, chat.ChatCompletionSystemMessageParam(role='system', content=instructions))
+        return groq_messages
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
