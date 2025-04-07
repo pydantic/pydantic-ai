@@ -5,16 +5,12 @@ from __future__ import annotations as _annotations
 import datetime
 import os
 
-# --- MODIFIED IMPORT: Ensure 'cast' and other types are present ---
-# ----------------------------------
+# Make sure all necessary types are imported
 import pytest
+from pytest_mock import MockerFixture  # Import MockerFixture
 
-# -------------------------------------
-# --- ADDED MockerFixture import ---
-from pytest_mock import MockerFixture
-
-# from dirty_equals import IsInstance # Keep if used by other tests, else remove
-# from inline_snapshot import snapshot # Keep if used by other tests, else remove
+# from dirty_equals import IsInstance # Keep if used by other tests
+# from inline_snapshot import snapshot # Keep if used by other tests
 from typing_extensions import TypedDict
 
 # Standard library mocking can also be used if preferred
@@ -31,17 +27,14 @@ from pydantic_ai.messages import (
 # Assuming conftest might be in ../ relative to tests/models/
 # Adjust relative path if needed
 try:
-    # --- MODIFIED IMPORT: Removed unused IsDatetime ---
-    from ..conftest import try_import
-except ImportError:  # Fallback if running from a different structure
-    # --- MODIFIED IMPORT: Removed unused IsDatetime ---
-    from conftest import try_import
+    from ..conftest import try_import  # Removed IsDatetime
+except ImportError:  # pragma: no cover <-- Add pragma to ignore fallback import
+    # Fallback if running from a different structure
+    from conftest import try_import  # Removed IsDatetime
 
 
 with try_import() as imports_successful:
     import boto3
-
-    # Import the specific client type for hinting
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
 
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -50,7 +43,7 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
     pytest.mark.anyio,
-    pytest.mark.vcr,  # Keep for existing tests if they rely on it
+    pytest.mark.vcr,
 ]
 
 
@@ -70,7 +63,7 @@ def bedrock_provider():
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
     )
-    yield BedrockProvider(bedrock_client=bedrock_client)
+    yield BedrockProvider(bedrock_client=bedrock_client)  # Removed cast
     try:
         bedrock_client.close()
     except Exception:
@@ -80,8 +73,6 @@ def bedrock_provider():
 # --- Existing tests (modified slightly for robustness) ---
 
 # NOTE: Assuming the snapshots in the original file are correct.
-# If tests fail due to snapshot mismatches after fixing imports/logic,
-# they might need to be updated using `pytest --snapshot-update`.
 
 
 async def test_bedrock_model(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -128,6 +119,7 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
 # ... (Keep other existing tests, assuming they are correct) ...
 # ... [Existing tests omitted for brevity - MAKE SURE TO KEEP THEM IN YOUR ACTUAL FILE] ...
 
+
 # ---- START: New Tests for System Prompt Fix ----
 
 
@@ -151,7 +143,7 @@ async def test_bedrock_converse_no_system_prompt(
 
     try:
         result = await agent.run('Test prompt without system')
-    except Exception as e:
+    except Exception as e:  # pragma: no cover <-- Add pragma to ignore failure path
         pytest.fail(f'Agent run failed unexpectedly when no system prompt was provided: {e}')
 
     mock_converse.assert_called_once()
@@ -186,7 +178,7 @@ async def test_bedrock_converse_with_system_prompt(
 
     try:
         result = await agent.run('Test prompt with system')
-    except Exception as e:
+    except Exception as e:  # pragma: no cover <-- Add pragma to ignore failure path
         pytest.fail(f'Agent run failed unexpectedly when system prompt was provided: {e}')
 
     mock_converse.assert_called_once()
