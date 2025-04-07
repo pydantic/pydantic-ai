@@ -216,7 +216,7 @@ class CohereModel(Model):
                 cohere_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := getattr(messages[-1], 'instructions'):
+        if instructions := self._get_instructions(messages):
             cohere_messages.insert(0, SystemChatMessageV2(role='system', content=instructions))
         return cohere_messages
 

@@ -50,7 +50,7 @@ from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import ClientWithHandler, IsNow, IsStr, TestEnv
+from ..conftest import ClientWithHandler, IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -1006,3 +1006,24 @@ async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_
 
     result = await agent.run('I want to know my chinese zodiac. I am 17 years old.')
     assert result.data == snapshot('I am sorry, I cannot fulfill this request. The age needs to be greater than 18.\n')
+
+
+@pytest.mark.vcr()
+async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.')
+
+    result = await agent.run('What is the capital of France?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The capital of France is Paris.\n')],
+                model_name='gemini-1.5-flash',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )

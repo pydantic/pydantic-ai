@@ -468,3 +468,32 @@ The document you're referring to appears to be a test document, which means its 
 
 Since this is a test document, it probably doesn't contain any meaningful or specific information beyond what is necessary to serve its testing purpose. If you have specific questions about the format, structure, or any particular element within the document, feel free to ask!\
 """)
+
+
+@pytest.mark.vcr()
+async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    def instructions() -> str:
+        return 'You are a helpful assistant.'
+
+    agent = Agent(m, instructions=instructions)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The capital of France is Paris. Paris is not only the political and economic hub of the country but also a major center for culture, fashion, art, and tourism. It is renowned for its rich history, iconic landmarks such as the Eiffel Tower, Notre-Dame Cathedral, and the Louvre Museum, as well as its influence on global culture and cuisine.'
+                    )
+                ],
+                model_name='us.amazon.nova-pro-v1:0',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )

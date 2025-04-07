@@ -260,7 +260,7 @@ class BedrockConverseModel(Model):
         else:
             tool_choice = {'auto': {}}
 
-        system_prompt, bedrock_messages = await self._map_message(messages)
+        system_prompt, bedrock_messages = await self._map_messages(messages)
         inference_config = self._map_inference_config(model_settings)
 
         params: ConverseRequestTypeDef = {
@@ -300,7 +300,7 @@ class BedrockConverseModel(Model):
 
         return inference_config
 
-    async def _map_message(
+    async def _map_messages(
         self, messages: list[ModelMessage]
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
         """Just maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`."""
@@ -360,8 +360,10 @@ class BedrockConverseModel(Model):
                 bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
                 assert_never(m)
-        if instructions := getattr(messages[-1], 'instructions'):
+
+        if instructions := self._get_instructions(messages):
             system_prompt.insert(0, {'text': instructions})
+
         return system_prompt, bedrock_messages
 
     @staticmethod
