@@ -264,7 +264,7 @@ class BedrockConverseModel(Model):
         params = {
             'modelId': self.model_name,
             'messages': bedrock_messages,
-            'system': [{'text': system_prompt}],
+            # 'system': [{'text': system_prompt}],
             'inferenceConfig': inference_config,
             **(
                 {'toolConfig': {'tools': tools, **({'toolChoice': tool_choice} if tool_choice else {})}}
@@ -272,6 +272,10 @@ class BedrockConverseModel(Model):
                 else {}
             ),
         }
+
+        # Only add the 'system' parameter if the extracted system_prompt string is non-empty.
+        if system_prompt:
+            params['system'] = [{'text': system_prompt}]  # type: ignore[reportArgumentType]
 
         if stream:
             model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
