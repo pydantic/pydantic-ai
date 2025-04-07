@@ -21,9 +21,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import Usage
 
-from ..conftest import IsNow, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsNow, raise_if_exception, try_import
 
 with try_import() as imports_successful:
     import cohere
@@ -361,3 +362,32 @@ async def test_request_simple_success_with_vcr(allow_model_requests: None, co_ap
     agent = Agent(m)
     result = await agent.run('hello')
     assert result.data == snapshot('Hello! How can I assist you today?')
+
+
+@pytest.mark.vcr()
+async def test_cohere_model_instructions(allow_model_requests: None, co_api_key: str):
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+
+    def simple_instructions(ctx: RunContext):
+        return 'You are a helpful assistant.'
+
+    agent = Agent(m, instructions=simple_instructions)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="The capital of France is Paris. It is the country's largest city and serves as the economic, cultural, and political center of France. Paris is known for its rich history, iconic landmarks such as the Eiffel Tower and the Louvre Museum, and its significant influence on fashion, cuisine, and the arts."
+                    )
+                ],
+                model_name='command-r7b-12-2024',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )

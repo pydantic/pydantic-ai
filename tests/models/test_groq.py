@@ -29,7 +29,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import Usage
 
-from ..conftest import IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -586,3 +586,24 @@ async def test_init_with_provider_string():
         model = GroqModel('llama3-8b-8192', provider='groq')
         assert model.model_name == 'llama3-8b-8192'
         assert model.client is not None
+
+
+@pytest.mark.vcr()
+async def test_groq_model_instructions(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.')
+
+    result = await agent.run('What is the capital of France?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The capital of France is Paris.')],
+                model_name='llama-3.3-70b-versatile',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
