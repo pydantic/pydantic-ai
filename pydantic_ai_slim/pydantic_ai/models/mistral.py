@@ -5,7 +5,6 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from itertools import chain
 from typing import Any, Literal, Union, cast
 
 import pydantic_core
@@ -189,7 +188,7 @@ class MistralModel(Model):
         try:
             response = await self.client.chat.complete_async(
                 model=str(self._model_name),
-                messages=list(chain(*(self._map_message(m) for m in messages))),
+                messages=self._map_messages(messages),
                 n=1,
                 tools=self._map_function_and_result_tools_definition(model_request_parameters) or UNSET,
                 tool_choice=self._get_tool_choice(model_request_parameters),
@@ -456,7 +455,7 @@ class MistralModel(Model):
                 assert_never(part)
 
     @classmethod
-    def _map_message(cls, messages: list[ModelMessage]) -> list[MistralMessages]:
+    def _map_messages(cls, messages: list[ModelMessage]) -> list[MistralMessages]:
         """Just maps a `pydantic_ai.Message` to a `MistralMessage`."""
         mistral_messages: list[MistralMessages] = []
         for message in messages:

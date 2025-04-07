@@ -394,6 +394,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                                 part_kind='user-prompt',
                             )
                         ],
+                        instructions=None,
                         kind='request',
                     )
                 ),
@@ -1447,6 +1448,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                             part_kind='user-prompt',
                         )
                     ],
+                    instructions=None,
                     kind='request',
                 )
             ),
@@ -1558,6 +1560,8 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                 [
                     UserPromptNode(
                         user_prompt='What is the capital of France?',
+                        instructions=None,
+                        instructions_functions=[],
                         system_prompts=(),
                         system_prompt_functions=[],
                         system_prompt_dynamic_functions={},
@@ -1571,6 +1575,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
                                     part_kind='user-prompt',
                                 )
                             ],
+                            instructions=None,
                             kind='request',
                         )
                     ),

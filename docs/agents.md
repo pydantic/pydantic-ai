@@ -130,6 +130,7 @@ async def main():
                         part_kind='user-prompt',
                     )
                 ],
+                instructions=None,
                 kind='request',
             )
         ),
@@ -178,6 +179,8 @@ async def main():
         [
             UserPromptNode(
                 user_prompt='What is the capital of France?',
+                instructions=None,
+                instructions_functions=[],
                 system_prompts=(),
                 system_prompt_functions=[],
                 system_prompt_dynamic_functions={},
@@ -191,6 +194,7 @@ async def main():
                             part_kind='user-prompt',
                         )
                     ],
+                    instructions=None,
                     kind='request',
                 )
             ),
@@ -741,6 +745,7 @@ with capture_run_messages() as messages:  # (2)!
                         part_kind='user-prompt',
                     )
                 ],
+                instructions=None,
                 kind='request',
             ),
             ModelResponse(
@@ -766,6 +771,7 @@ with capture_run_messages() as messages:  # (2)!
                         part_kind='retry-prompt',
                     )
                 ],
+                instructions=None,
                 kind='request',
             ),
             ModelResponse(

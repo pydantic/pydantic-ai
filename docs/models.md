@@ -1087,6 +1087,7 @@ print(response.all_messages())
                 part_kind='user-prompt',
             )
         ],
+        instructions=None,
         kind='request',
     ),
     ModelResponse(

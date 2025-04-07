@@ -1686,6 +1686,7 @@ def test_binary_content_all_messages_json():
                         'part_kind': 'user-prompt',
                     }
                 ],
+                'instructions': None,
                 'kind': 'request',
             },
             {

@@ -31,6 +31,7 @@ async def model_function(
                     part_kind='user-prompt',
                 )
             ],
+            instructions=None,
             kind='request',
         )
     ]

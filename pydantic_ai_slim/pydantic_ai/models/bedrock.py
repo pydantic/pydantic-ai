@@ -270,7 +270,9 @@ class BedrockConverseModel(Model):
             'inferenceConfig': inference_config,
         }
         if tools:
-            params['toolConfig'] = {'tools': tools, 'toolChoice': tool_choice}
+            params['toolConfig'] = {'tools': tools}
+            if tool_choice:
+                params['toolConfig']['toolChoice'] = tool_choice
 
         if stream:
             model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
