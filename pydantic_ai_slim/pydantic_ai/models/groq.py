@@ -29,7 +29,7 @@ from ..messages import (
     UserPromptPart,
 )
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ForcedFunctionToolChoice, ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests
 
@@ -37,6 +37,7 @@ try:
     from groq import NOT_GIVEN, APIStatusError, AsyncGroq, AsyncStream
     from groq.types import chat
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
+    from groq.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
 except ImportError as _import_error:
     raise ImportError(
         'Please install `groq` to use the Groq model, '
@@ -182,6 +183,26 @@ class GroqModel(Model):
     ) -> chat.ChatCompletion:
         pass
 
+    @staticmethod
+    def _map_tool_choice(
+        model_settings: GroqModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        tools: list[chat.ChatCompletionToolParam],
+    ) -> ChatCompletionToolChoiceOptionParam | None:
+        """Determine the `tool_choice` setting for the model."""
+        tool_choice = model_settings.get('tool_choice', 'auto')
+
+        if tool_choice == 'auto' and tools and not model_request_parameters.allow_text_result:
+            return 'required'
+        if tool_choice == 'auto':
+            return None
+        elif isinstance(tool_choice, ForcedFunctionToolChoice):
+            return {'type': 'function', 'function': {'name': tool_choice.name}}
+        elif tool_choice in ('none', 'required'):
+            return tool_choice
+        else:
+            assert_never(tool_choice)
+
     async def _completions_create(
         self,
         messages: list[ModelMessage],
@@ -190,14 +211,7 @@ class GroqModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
-        # standalone function to make it easier to override
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_result:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
-
+        tool_choice = self._map_tool_choice(model_settings, model_request_parameters, tools)
         groq_messages = list(chain(*(self._map_message(m) for m in messages)))
 
         try:
