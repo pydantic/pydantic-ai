@@ -274,6 +274,15 @@ class Model(ABC):
         # noinspection PyUnreachableCode
         yield  # pragma: no cover
 
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        """Customize the request parameters for the model.
+
+        This method can be overridden by subclasses to modify the request parameters before sending them to the model.
+        In particular, this method can be used to make modifications to the generated tool JSON schemas if necessary
+        for vendor/model-specific reasons.
+        """
+        return model_request_parameters
+
     @property
     @abstractmethod
     def model_name(self) -> str:

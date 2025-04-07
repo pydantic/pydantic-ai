@@ -61,9 +61,10 @@ async def test_model_simple(allow_model_requests: None):
     assert m.model_name == 'gemini-1.5-flash'
     assert 'x-goog-api-key' in m.client.headers
 
-    arc = ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[])
-    tools = m._get_tools(arc)
-    tool_config = m._get_tool_config(arc, tools)
+    mrp = ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[])
+    mrp = m.customize_request_parameters(mrp)
+    tools = m._get_tools(mrp)
+    tool_config = m._get_tool_config(mrp, tools)
     assert tools is None
     assert tool_config is None
 
@@ -93,9 +94,10 @@ async def test_model_tools(allow_model_requests: None):
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}, 'required': ['spam']},
     )
 
-    arc = ModelRequestParameters(function_tools=tools, allow_text_result=True, result_tools=[result_tool])
-    tools = m._get_tools(arc)
-    tool_config = m._get_tool_config(arc, tools)
+    mrp = ModelRequestParameters(function_tools=tools, allow_text_result=True, result_tools=[result_tool])
+    mrp = m.customize_request_parameters(mrp)
+    tools = m._get_tools(mrp)
+    tool_config = m._get_tool_config(mrp, tools)
     assert tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -134,9 +136,10 @@ async def test_require_response_tool(allow_model_requests: None):
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
     )
-    arc = ModelRequestParameters(function_tools=[], allow_text_result=False, result_tools=[result_tool])
-    tools = m._get_tools(arc)
-    tool_config = m._get_tool_config(arc, tools)
+    mrp = ModelRequestParameters(function_tools=[], allow_text_result=False, result_tools=[result_tool])
+    mrp = m.customize_request_parameters(mrp)
+    tools = m._get_tools(mrp)
+    tool_config = m._get_tool_config(mrp, tools)
     assert tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -193,9 +196,9 @@ async def test_json_def_replaced(allow_model_requests: None):
         'This is the tool for the final Result',
         json_schema,
     )
-    assert m._get_tools(
-        ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool])
-    ) == snapshot(
+    mrp = ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool])
+    mrp = m.customize_request_parameters(mrp)
+    assert m._get_tools(mrp) == snapshot(
         _GeminiTools(
             function_declarations=[
                 _GeminiFunction(
@@ -240,9 +243,9 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
         'This is the tool for the final Result',
         json_schema,
     )
-    assert m._get_tools(
-        ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool])
-    ) == snapshot(
+    mrp = ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool])
+    mrp = m.customize_request_parameters(mrp)
+    assert m._get_tools(mrp) == snapshot(
         _GeminiTools(
             function_declarations=[
                 _GeminiFunction(
@@ -304,7 +307,9 @@ async def test_json_def_recursive(allow_model_requests: None):
         json_schema,
     )
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
-        m._get_tools(ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool]))
+        mrp = ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool])
+        mrp = m.customize_request_parameters(mrp)
+        m._get_tools(mrp)
 
 
 async def test_json_def_date(allow_model_requests: None):
@@ -335,9 +340,9 @@ async def test_json_def_date(allow_model_requests: None):
         'This is the tool for the final Result',
         json_schema,
     )
-    assert m._get_tools(
-        ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool])
-    ) == snapshot(
+    mrp = ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool])
+    mrp = m.customize_request_parameters(mrp)
+    assert m._get_tools(mrp) == snapshot(
         _GeminiTools(
             function_declarations=[
                 _GeminiFunction(
