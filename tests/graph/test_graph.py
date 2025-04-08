@@ -312,7 +312,9 @@ async def test_iter():
         assert graph_iter.result
         assert graph_iter.result.output == 8
 
-    assert node_reprs == snapshot(["String2Length(input_data='3.14')", 'Double(input_data=4)', 'End(data=8)'])
+    assert node_reprs == snapshot(
+        ['Float2String(input_data=3.14)', "String2Length(input_data='3.14')", 'Double(input_data=4)', 'End(data=8)']
+    )
 
 
 async def test_iter_next(mock_snapshot_id: object):
