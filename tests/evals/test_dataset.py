@@ -5,7 +5,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 from dirty_equals import HasRepr
@@ -16,17 +16,13 @@ from ..conftest import try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
+    import logfire
+    from logfire.testing import CaptureLogfire
+
     from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, LLMJudge, Python
     from pydantic_evals.evaluators.context import EvaluatorContext
-    from pydantic_evals.reporting import ReportCase
-
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
-
-if TYPE_CHECKING or imports_successful():
-    import logfire
-    from logfire.testing import CaptureLogfire
 
     @dataclass
     class MockEvaluator(Evaluator[object, object, object]):
@@ -36,6 +32,10 @@ if TYPE_CHECKING or imports_successful():
 
         def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
             return self.output
+
+    from pydantic_evals.reporting import ReportCase
+
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
 
 if sys.version_info < (3, 11):
