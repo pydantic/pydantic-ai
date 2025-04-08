@@ -829,7 +829,7 @@ def test_call_tool_without_unrequired_parameters(set_event_loop: None):
                     ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4}),
                     ToolCallPart(tool_name='my_tool_plain', args={'b': 17}),
                     ToolCallPart(tool_name='my_tool_plain', args={'a': 4, 'b': 17}),
-                    ToolCallPart(tool_name='no_args_tool', args=""),
+                    ToolCallPart(tool_name='no_args_tool', args=''),
                 ]
             )
         else:
@@ -863,7 +863,7 @@ def test_call_tool_without_unrequired_parameters(set_event_loop: None):
             {'a': 13, 'b': 4},
             {'b': 17},
             {'a': 4, 'b': 17},
-            "",
+            '',
         ]
     )
     assert tool_returns == snapshot([15, 17, 51, 68, None])
