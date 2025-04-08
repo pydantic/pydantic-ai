@@ -8,9 +8,11 @@ from copy import deepcopy
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
 
+from logfire_api import LogfireSpan
+from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import TypeGuard, TypeVar, deprecated
+from typing_extensions import Literal, TypeGuard, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
@@ -1390,6 +1392,16 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
         _agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[ResultDataT]
     ]
 
+    @overload
+    def span(self, *, required: Literal[False]) -> ReadableSpan | None: ...
+    @overload
+    def span(self) -> ReadableSpan: ...
+    def span(self, *, required: bool = True) -> ReadableSpan | None:
+        span = self._graph_run.span(required=False)
+        if span is None and required:
+            raise AttributeError('Span is not available for this agent run')
+        return span
+
     @property
     def ctx(self) -> GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]]:
         """The current context of the agent run."""
@@ -1427,6 +1439,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
             graph_run_result.output.tool_name,
             graph_run_result.state,
             self._graph_run.deps.new_message_index,
+            self._graph_run.span(required=False),
         )
 
     def __aiter__(
@@ -1540,6 +1553,16 @@ class AgentRunResult(Generic[ResultDataT]):
     _result_tool_name: str | None = dataclasses.field(repr=False)
     _state: _agent_graph.GraphAgentState = dataclasses.field(repr=False)
     _new_message_index: int = dataclasses.field(repr=False)
+    _span: ReadableSpan | LogfireSpan | None = dataclasses.field(repr=False)
+
+    @overload
+    def span(self, *, required: Literal[False]) -> ReadableSpan | None: ...
+    @overload
+    def span(self) -> ReadableSpan: ...
+    def span(self, *, required: bool = True) -> ReadableSpan | None:
+        if self._span is None and required:
+            raise AttributeError('Span is not available for this agent run')
+        return self._span
 
     def _set_result_tool_return(self, return_content: str) -> list[_messages.ModelMessage]:
         """Set return content for the result tool.
