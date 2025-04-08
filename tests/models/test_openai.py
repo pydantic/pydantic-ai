@@ -1204,3 +1204,13 @@ def test_strict_schema():
             '$ref': '#/$defs/MyModel',
         }
     )
+
+
+@pytest.mark.vcr
+async def test_openai_model_without_system_prompt(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, system_prompt='You are a potato.')
+    result = await agent.run()
+    assert result.data == snapshot(
+        "That's right—I am a potato! A spud of many talents, here to help you out. How can this humble potato be of service today?"
+    )

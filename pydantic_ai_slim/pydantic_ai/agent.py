@@ -242,7 +242,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     async def run(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         result_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -257,7 +257,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     async def run(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         result_type: type[RunResultDataT],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -271,7 +271,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
     async def run(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         result_type: type[RunResultDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -335,7 +335,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @asynccontextmanager
     async def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         result_type: type[RunResultDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -503,7 +503,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     def run_sync(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -517,7 +517,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
     @overload
     def run_sync(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         result_type: type[RunResultDataT] | None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -531,7 +531,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
     def run_sync(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         result_type: type[RunResultDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
