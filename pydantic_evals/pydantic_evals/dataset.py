@@ -39,7 +39,7 @@ from .evaluators._spec import EvaluatorSpec
 from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
 from .otel import SpanTree
-from .otel._context_in_memory_span_exporter import context_subtree
+from .otel._context_subtree import context_subtree
 from .reporting import EvaluationReport, ReportCase
 
 if sys.version_info < (3, 11):  # pragma: no cover
