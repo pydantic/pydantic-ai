@@ -633,7 +633,7 @@ async def test_image_url_input(allow_model_requests: None):
                     }
                 ],
                 'n': 1,
-                'extra_headers': {'User-Agent': 'pydantic-ai/0.0.54.dev6+1a60d8f'},
+                'extra_headers': {'User-Agent': IsStr(regex=r'pydantic-ai\/.*')},
             }
         ]
     )
