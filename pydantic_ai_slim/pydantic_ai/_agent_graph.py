@@ -175,7 +175,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             parts.extend(await self._sys_parts(run_context))
 
-        if user_prompt:
+        if user_prompt is not None:
             parts.append(_messages.UserPromptPart(user_prompt))
         return messages, _messages.ModelRequest(parts)
 
