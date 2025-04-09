@@ -22,7 +22,8 @@ from vcr import VCR
 
 import pydantic_ai.models
 from pydantic_ai.messages import BinaryContent
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import Model, cached_async_http_client
+from pydantic_ai.providers.bedrock import BedrockProvider
 
 __all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'TestEnv', 'ClientWithHandler', 'try_import'
 
@@ -265,6 +266,74 @@ def co_api_key() -> str:
 @pytest.fixture(scope='session')
 def mistral_api_key() -> str:
     return os.getenv('MISTRAL_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def bedrock_provider():
+    import boto3
+
+    from pydantic_ai.providers.bedrock import BedrockProvider
+
+    bedrock_client = boto3.client(
+        'bedrock-runtime',
+        region_name=os.getenv('AWS_REGION', 'us-east-1'),
+        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
+        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
+    )
+    yield BedrockProvider(bedrock_client=bedrock_client)
+    bedrock_client.close()
+
+
+@pytest.fixture()
+def model(
+    request: pytest.FixtureRequest,
+    openai_api_key: str,
+    anthropic_api_key: str,
+    mistral_api_key: str,
+    groq_api_key: str,
+    co_api_key: str,
+    gemini_api_key: str,
+    bedrock_provider: BedrockProvider,
+) -> Model:
+    try:
+        if request.param == 'openai':
+            from pydantic_ai.models.openai import OpenAIModel
+            from pydantic_ai.providers.openai import OpenAIProvider
+
+            return OpenAIModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+        elif request.param == 'anthropic':
+            from pydantic_ai.models.anthropic import AnthropicModel
+            from pydantic_ai.providers.anthropic import AnthropicProvider
+
+            return AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+        elif request.param == 'mistral':
+            from pydantic_ai.models.mistral import MistralModel
+            from pydantic_ai.providers.mistral import MistralProvider
+
+            return MistralModel('ministral-8b-latest', provider=MistralProvider(api_key=mistral_api_key))
+        elif request.param == 'groq':
+            from pydantic_ai.models.groq import GroqModel
+            from pydantic_ai.providers.groq import GroqProvider
+
+            return GroqModel('llama3-8b-8192', provider=GroqProvider(api_key=groq_api_key))
+        elif request.param == 'cohere':
+            from pydantic_ai.models.cohere import CohereModel
+            from pydantic_ai.providers.cohere import CohereProvider
+
+            return CohereModel('command-r-plus', provider=CohereProvider(api_key=co_api_key))
+        elif request.param == 'gemini':
+            from pydantic_ai.models.gemini import GeminiModel
+            from pydantic_ai.providers.google_gla import GoogleGLAProvider
+
+            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+        elif request.param == 'bedrock':
+            from pydantic_ai.models.bedrock import BedrockConverseModel
+
+            return BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+        else:  # pragma: no cover
+            raise ValueError(f'Unknown model: {request.param}')
+    except ImportError:  # pragma: no cover
+        pytest.skip(f'{request.param} is not installed')
 
 
 @pytest.fixture

@@ -139,7 +139,6 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * Groq
     * Cohere
-    * Gemini
     """
 
 
