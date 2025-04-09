@@ -199,6 +199,7 @@ class MistralModel(Model):
                 top_p=model_settings.get('top_p', 1),
                 timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
                 random_seed=model_settings.get('seed', UNSET),
+                stop=model_settings.get('stop_sequences', None),
             )
         except SDKError as e:
             if (status_code := e.status_code) >= 400:
@@ -236,6 +237,7 @@ class MistralModel(Model):
                 timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
                 presence_penalty=model_settings.get('presence_penalty'),
                 frequency_penalty=model_settings.get('frequency_penalty'),
+                stop=model_settings.get('stop_sequences', None),
             )
 
         elif model_request_parameters.result_tools:
