@@ -87,9 +87,9 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     'Must provide one of the `azure_endpoint` argument or the `AZURE_OPENAI_ENDPOINT` environment variable'
                 )
 
-            if not api_key and 'OPENAI_API_KEY' not in os.environ:  # pragma: no cover
+            if not api_key and 'AZURE_OPENAI_API_KEY' not in os.environ:  # pragma: no cover
                 raise UserError(
-                    'Must provide one of the `api_key` argument or the `OPENAI_API_KEY` environment variable'
+                    'Must provide one of the `api_key` argument or the `AZURE_OPENAI_API_KEY` environment variable'
                 )
 
             if not api_version and 'OPENAI_API_VERSION' not in os.environ:  # pragma: no cover
