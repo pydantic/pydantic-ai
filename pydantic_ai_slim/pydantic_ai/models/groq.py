@@ -208,6 +208,7 @@ class GroqModel(Model):
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
+                stop=model_settings.get('stop_sequences', NOT_GIVEN),
                 stream=stream,
                 max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 temperature=model_settings.get('temperature', NOT_GIVEN),

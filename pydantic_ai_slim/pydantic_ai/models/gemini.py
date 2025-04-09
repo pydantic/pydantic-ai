@@ -216,6 +216,8 @@ class GeminiModel(Model):
                 generation_config['temperature'] = temperature
             if (top_p := model_settings.get('top_p')) is not None:
                 generation_config['top_p'] = top_p
+            if (stop_sequences := model_settings.get('stop_sequences')) is not None:
+                generation_config['stop_sequences'] = stop_sequences
             if (presence_penalty := model_settings.get('presence_penalty')) is not None:
                 generation_config['presence_penalty'] = presence_penalty
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
@@ -506,6 +508,7 @@ class _GeminiGenerationConfig(TypedDict, total=False):
     top_p: float
     presence_penalty: float
     frequency_penalty: float
+    stop_sequences: list[str]
 
 
 class _GeminiContent(TypedDict):

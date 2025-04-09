@@ -226,6 +226,7 @@ class AnthropicModel(Model):
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
                 stream=stream,
+                stop_sequences=model_settings.get('stop_sequences', NOT_GIVEN),
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
