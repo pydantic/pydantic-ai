@@ -81,6 +81,9 @@ class MCPServer(ABC):
         return await self._client.call_tool(tool_name, arguments)
 
     async def __aenter__(self) -> Self:
+        if self.is_running:
+            return self
+
         self._exit_stack = AsyncExitStack()
 
         self._read_stream, self._write_stream = await self._exit_stack.enter_async_context(self.client_streams())

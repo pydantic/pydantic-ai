@@ -136,7 +136,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         repr=False
     )
     _function_tools: dict[str, Tool[AgentDepsT]] = dataclasses.field(repr=False)
-    _mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
+    _mcp_servers: list[MCPServer] = dataclasses.field(repr=False)
     _default_retries: int = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _override_deps: _utils.Option[AgentDepsT] = dataclasses.field(default=None, repr=False)
@@ -227,7 +227,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         self._default_retries = retries
         self._max_result_retries = result_retries if result_retries is not None else retries
-        self._mcp_servers = mcp_servers
+        self._mcp_servers = list(mcp_servers)
         for tool in tools:
             if isinstance(tool, Tool):
                 self._register_tool(tool)
