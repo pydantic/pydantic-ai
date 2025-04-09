@@ -18,6 +18,7 @@ from ..messages import (
     AudioUrl,
     BinaryContent,
     DocumentUrl,
+    FileUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -448,6 +449,8 @@ class OpenAIModel(Model):
                     # file_data = f'data:{media_type};base64,{base64_encoded}'
                     # file = File(file={'file_data': file_data, 'file_name': item.url, 'file_id': item.url}, type='file')
                     # content.append(file)
+                elif isinstance(item, FileUrl):  # pragma: no cover
+                    raise RuntimeError('Direct file Url is not supported.')
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
@@ -765,6 +768,8 @@ class OpenAIResponsesModel(Model):
                             filename=f'filename.{item.format}',
                         )
                     )
+                elif isinstance(item, FileUrl):
+                    raise RuntimeError('Direct file Url is not supported.')
                 else:
                     assert_never(item)
         return responses.EasyInputMessageParam(role='user', content=content)

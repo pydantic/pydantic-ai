@@ -43,6 +43,27 @@ class SystemPromptPart:
 
 
 @dataclass
+class FileUrl:
+    """A URL to a file. Supported only by Gemini models.
+
+    See the [Vertex AI Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata)
+    and the [GLA Gemini API docs](https://ai.google.dev/api/caching#FileData) for use cases and limitations.
+    """
+
+    url: str
+    """The URL of the file."""
+
+    media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str | None = None
+    """[IANA MIME type](https://www.iana.org/assignments/media-types/media-types.xml) of the data.
+
+    Required for the VertexAI provider, optional for the GLA provider.
+    """
+
+    kind: Literal['file-url'] = 'file-url'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+
+@dataclass
 class AudioUrl:
     """A URL to an audio file."""
 
@@ -192,7 +213,7 @@ class BinaryContent:
         raise ValueError(f'Unknown media type: {self.media_type}')
 
 
-UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | BinaryContent'
+UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | BinaryContent | FileUrl'
 
 
 def _document_format(media_type: str) -> DocumentFormat:
