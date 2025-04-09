@@ -146,6 +146,9 @@ class InstrumentedModel(WrapperModel):
                 if response_stream:
                     finish(response_stream.get(), response_stream.usage())
 
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        return self.wrapped.customize_request_parameters(model_request_parameters)
+
     @contextmanager
     def _instrument(
         self,
