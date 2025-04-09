@@ -44,7 +44,7 @@ class Deps:
 # This agent is responsible for controlling the flow of the conversation.
 search_agent = Agent[Deps, FlightDetails | NoFlightFound](
     'openai:gpt-4o',
-    result_type=FlightDetails | NoFlightFound,  # type: ignore
+    output_type=FlightDetails | NoFlightFound,  # type: ignore
     retries=4,
     system_prompt=(
         'Your job is to find the cheapest flight for the user on the given date. '
@@ -56,7 +56,7 @@ search_agent = Agent[Deps, FlightDetails | NoFlightFound](
 # This agent is responsible for extracting flight details from web page text.
 extraction_agent = Agent(
     'openai:gpt-4o',
-    result_type=list[FlightDetails],
+    output_type=list[FlightDetails],
     system_prompt='Extract all the flight details from the given text.',
 )
 
@@ -66,34 +66,34 @@ async def extract_flights(ctx: RunContext[Deps]) -> list[FlightDetails]:
     """Get details of all flights."""
     # we pass the usage to the search agent so requests within this agent are counted
     result = await extraction_agent.run(ctx.deps.web_page_text, usage=ctx.usage)
-    logfire.info('found {flight_count} flights', flight_count=len(result.data))
-    return result.data
+    logfire.info('found {flight_count} flights', flight_count=len(result.output))
+    return result.output
 
 
-@search_agent.result_validator
-async def validate_result(
-    ctx: RunContext[Deps], result: FlightDetails | NoFlightFound
+@search_agent.output_validator
+async def validate_output(
+    ctx: RunContext[Deps], output: FlightDetails | NoFlightFound
 ) -> FlightDetails | NoFlightFound:
     """Procedural validation that the flight meets the constraints."""
-    if isinstance(result, NoFlightFound):
-        return result
+    if isinstance(output, NoFlightFound):
+        return output
 
     errors: list[str] = []
-    if result.origin != ctx.deps.req_origin:
+    if output.origin != ctx.deps.req_origin:
         errors.append(
-            f'Flight should have origin {ctx.deps.req_origin}, not {result.origin}'
+            f'Flight should have origin {ctx.deps.req_origin}, not {output.origin}'
         )
-    if result.destination != ctx.deps.req_destination:
+    if output.destination != ctx.deps.req_destination:
         errors.append(
-            f'Flight should have destination {ctx.deps.req_destination}, not {result.destination}'
+            f'Flight should have destination {ctx.deps.req_destination}, not {output.destination}'
         )
-    if result.date != ctx.deps.req_date:
-        errors.append(f'Flight should be on {ctx.deps.req_date}, not {result.date}')
+    if output.date != ctx.deps.req_date:
+        errors.append(f'Flight should be on {ctx.deps.req_date}, not {output.date}')
 
     if errors:
         raise ModelRetry('\n'.join(errors))
     else:
-        return result
+        return output
 
 
 class SeatPreference(BaseModel):
@@ -108,7 +108,7 @@ class Failed(BaseModel):
 # This agent is responsible for extracting the user's seat selection
 seat_preference_agent = Agent[None, SeatPreference | Failed](
     'openai:gpt-4o',
-    result_type=SeatPreference | Failed,  # type: ignore
+    output_type=SeatPreference | Failed,  # type: ignore
     system_prompt=(
         "Extract the user's seat preference. "
         'Seats A and F are window seats. '
@@ -192,11 +192,11 @@ async def main():
             message_history=message_history,
             usage_limits=usage_limits,
         )
-        if isinstance(result.data, NoFlightFound):
+        if isinstance(result.output, NoFlightFound):
             print('No flight found')
             break
         else:
-            flight = result.data
+            flight = result.output
             print(f'Flight found: {flight}')
             answer = Prompt.ask(
                 'Do you want to buy this flight, or keep searching? (buy/*search)',
@@ -209,7 +209,7 @@ async def main():
                 break
             else:
                 message_history = result.all_messages(
-                    result_tool_return_content='Please suggest another flight'
+                    output_tool_return_content='Please suggest another flight'
                 )
 
 
@@ -224,8 +224,8 @@ async def find_seat(usage: Usage) -> SeatPreference:
             usage=usage,
             usage_limits=usage_limits,
         )
-        if isinstance(result.data, SeatPreference):
-            return result.data
+        if isinstance(result.output, SeatPreference):
+            return result.output
         else:
             print('Could not understand seat preference. Please try again.')
             message_history = result.all_messages()

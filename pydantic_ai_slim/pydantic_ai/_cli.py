@@ -208,14 +208,13 @@ async def ask_agent(
     if not stream:
         with status:
             result = await agent.run(prompt, message_history=messages)
-        content = result.data
+        content = result.output
         console.print(Markdown(content, code_theme=code_theme))
         return result.all_messages()
 
     with status, ExitStack() as stack:
         async with agent.iter(prompt, message_history=messages) as agent_run:
             live = Live('', refresh_per_second=15, console=console, vertical_overflow='visible')
-            content: str = ''
             async for node in agent_run:
                 if Agent.is_model_request_node(node):
                     async with node.stream(agent_run.ctx) as handle_stream:

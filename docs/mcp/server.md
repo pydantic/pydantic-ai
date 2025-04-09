@@ -19,7 +19,7 @@ server_agent = Agent(
 async def poet(theme: str) -> str:
     """Poem generator"""
     r = await server_agent.run(f'write a poem about {theme}')
-    return r.data
+    return r.output
 
 
 if __name__ == '__main__':

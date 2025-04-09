@@ -33,7 +33,7 @@ agent = Agent(
 result = agent.run_sync(
     'Can you list the top five highest-grossing animated films of 2025?'
 )
-print(result.data)
+print(result.output)
 """
 I looked into several sources on animated box‐office performance in 2025, and while detailed
 rankings can shift as more money is tallied, multiple independent reports have already
@@ -112,7 +112,6 @@ from pydantic_ai.common_tools.tavily import tavily_search_tool
 api_key = os.getenv('TAVILY_API_KEY')
 assert api_key is not None
 
-
 agent = Agent(
     'openai:o3-mini',
     tools=[tavily_search_tool(api_key)],
@@ -120,7 +119,7 @@ agent = Agent(
 )
 
 result = agent.run_sync('Tell me the top news in the GenAI world, give me links.')
-print(result.data)
+print(result.output)
 """
 Here are some of the top recent news articles related to GenAI:
 

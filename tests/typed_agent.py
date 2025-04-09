@@ -18,7 +18,7 @@ class MyDeps:
     bar: int
 
 
-typed_agent = Agent(deps_type=MyDeps, result_type=str)
+typed_agent = Agent(deps_type=MyDeps, output_type=str)
 assert_type(typed_agent, Agent[MyDeps, str])
 
 
@@ -115,32 +115,32 @@ with expect_error(ValueError):
         return x
 
 
-@typed_agent.result_validator
+@typed_agent.output_validator
 def ok_validator_simple(data: str) -> str:
     return data
 
 
-@typed_agent.result_validator
+@typed_agent.output_validator
 async def ok_validator_ctx(ctx: RunContext[MyDeps], data: str) -> str:
     if ctx.deps.foo == 1:
         raise ModelRetry('foo is 1')
     return data
 
 
-# we have overloads for every possible signature of result_validator, so the type of decorated functions is correct
+# we have overloads for every possible signature of output_validator, so the type of decorated functions is correct
 assert_type(ok_validator_simple, Callable[[str], str])
 assert_type(ok_validator_ctx, Callable[[RunContext[MyDeps], str], Awaitable[str]])
 
 
-@typed_agent.result_validator  # type: ignore[arg-type]
-async def result_validator_wrong(ctx: RunContext[int], result: str) -> str:
+@typed_agent.output_validator  # type: ignore[arg-type]
+async def output_validator_wrong(ctx: RunContext[int], result: str) -> str:
     return result
 
 
 def run_sync() -> None:
     result = typed_agent.run_sync('testing', deps=MyDeps(foo=1, bar=2))
     assert_type(result, AgentRunResult[str])
-    assert_type(result.data, str)
+    assert_type(result.output, str)
 
 
 async def run_stream() -> None:
@@ -168,22 +168,18 @@ class Bar:
     b: str
 
 
-union_agent: Agent[None, Union[Foo, Bar]] = Agent(
-    result_type=Union[Foo, Bar],  # type: ignore[arg-type]
-)
+union_agent: Agent[None, Union[Foo, Bar]] = Agent(output_type=Union[Foo, Bar])  # type: ignore[call-overload]
 assert_type(union_agent, Agent[None, Union[Foo, Bar]])
 
 
 def run_sync3() -> None:
     result = union_agent.run_sync('testing')
     assert_type(result, AgentRunResult[Union[Foo, Bar]])
-    assert_type(result.data, Union[Foo, Bar])
+    assert_type(result.output, Union[Foo, Bar])
 
 
 MyUnion: TypeAlias = 'Foo | Bar'
-union_agent2: Agent[None, MyUnion] = Agent(
-    result_type=MyUnion,  # type: ignore[arg-type]
-)
+union_agent2: Agent[None, MyUnion] = Agent(output_type=MyUnion)  # type: ignore[call-overload]
 assert_type(union_agent2, Agent[None, MyUnion])
 
 
@@ -212,12 +208,12 @@ Agent('test', tools=[Tool(foobar_ctx)], deps_type=int)
 Agent('test', tools=[Tool(foobar_ctx), foobar_ctx, foobar_plain], deps_type=int)
 Agent('test', tools=[Tool(foobar_ctx), foobar_ctx, Tool(foobar_plain)], deps_type=int)
 
-Agent('test', tools=[foobar_ctx], deps_type=str)  # pyright: ignore[reportArgumentType]
-Agent('test', tools=[Tool(foobar_ctx), Tool(foobar_plain)], deps_type=str)  # pyright: ignore[reportArgumentType]
-Agent('test', tools=[foobar_ctx])  # pyright: ignore[reportArgumentType]
-Agent('test', tools=[Tool(foobar_ctx)])  # pyright: ignore[reportArgumentType]
+Agent('test', tools=[foobar_ctx], deps_type=str)  # pyright: ignore[reportArgumentType,reportCallIssue]
+Agent('test', tools=[Tool(foobar_ctx), Tool(foobar_plain)], deps_type=str)  # pyright: ignore[reportArgumentType,reportCallIssue]
+Agent('test', tools=[foobar_ctx])  # pyright: ignore[reportArgumentType,reportCallIssue]
+Agent('test', tools=[Tool(foobar_ctx)])  # pyright: ignore[reportArgumentType,reportCallIssue]
 # since deps are not set, they default to `None`, so can't be `int`
-Agent('test', tools=[Tool(foobar_plain)], deps_type=int)  # pyright: ignore[reportArgumentType]
+Agent('test', tools=[Tool(foobar_plain)], deps_type=int)  # pyright: ignore[reportArgumentType,reportCallIssue]
 
 # prepare example from docs:
 
@@ -237,7 +233,7 @@ assert_type(greet_tool, Tool[str])
 greet_agent = Agent[str, str]('test', tools=[greet_tool], deps_type=str)
 
 result = greet_agent.run_sync('testing...', deps='human')
-assert result.data == '{"greet":"hello a"}'
+assert result.output == '{"greet":"hello a"}'
 
 MYPY = False
 if not MYPY:
