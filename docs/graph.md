@@ -509,6 +509,7 @@ async def main():
             #> Node: CountDown()
             #> Node: CountDown()
             #> Node: CountDown()
+            #> Node: CountDown()
             #> Node: End(data=0)
     print('Final output:', run.result.output)  # (3)!
     #> Final output: 0

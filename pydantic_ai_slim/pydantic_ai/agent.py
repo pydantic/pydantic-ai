@@ -498,6 +498,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             print(nodes)
             '''
             [
+                UserPromptNode(
+                    user_prompt='What is the capital of France?',
+                    system_prompts=(),
+                    system_prompt_functions=[],
+                    system_prompt_dynamic_functions={},
+                ),
                 ModelRequestNode(
                     request=ModelRequest(
                         parts=[
@@ -1536,6 +1542,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         print(nodes)
         '''
         [
+            UserPromptNode(
+                user_prompt='What is the capital of France?',
+                system_prompts=(),
+                system_prompt_functions=[],
+                system_prompt_dynamic_functions={},
+            ),
             ModelRequestNode(
                 request=ModelRequest(
                     parts=[
