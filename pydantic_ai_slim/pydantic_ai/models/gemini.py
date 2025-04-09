@@ -506,6 +506,7 @@ class _GeminiGenerationConfig(TypedDict, total=False):
     top_p: float
     presence_penalty: float
     frequency_penalty: float
+    stop_sequences: list[str]
 
 
 class _GeminiContent(TypedDict):

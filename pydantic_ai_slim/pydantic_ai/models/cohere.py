@@ -118,7 +118,7 @@ class CohereModel(Model):
                 'cohere' or an instance of `Provider[AsyncClientV2]`. If not provided, a new provider will be
                 created using the other parameters.
         """
-        self._model_name: CohereModelName = model_name
+        self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
@@ -163,6 +163,7 @@ class CohereModel(Model):
                 messages=cohere_messages,
                 tools=tools or OMIT,
                 max_tokens=model_settings.get('max_tokens', OMIT),
+                stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
                 p=model_settings.get('top_p', OMIT),
                 seed=model_settings.get('seed', OMIT),

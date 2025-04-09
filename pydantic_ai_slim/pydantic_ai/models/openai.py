@@ -271,6 +271,7 @@ class OpenAIModel(Model):
                 tool_choice=tool_choice or NOT_GIVEN,
                 stream=stream,
                 stream_options={'include_usage': True} if stream else NOT_GIVEN,
+                stop=model_settings.get('stop_sequences', NOT_GIVEN),
                 max_completion_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
@@ -611,7 +612,7 @@ class OpenAIResponsesModel(Model):
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 reasoning=reasoning,
-                user=model_settings.get('user', NOT_GIVEN),
+                user=model_settings.get('openai_user', NOT_GIVEN),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
