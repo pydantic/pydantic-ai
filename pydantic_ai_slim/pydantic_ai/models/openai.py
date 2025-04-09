@@ -30,6 +30,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -445,6 +446,8 @@ class OpenAIModel(Model):
                     # file_data = f'data:{media_type};base64,{base64_encoded}'
                     # file = File(file={'file_data': file_data, 'file_name': item.url, 'file_id': item.url}, type='file')
                     # content.append(file)
+                elif isinstance(item, VideoUrl):  # pragma: no cover
+                    raise NotImplementedError('VideoUrl is not supported for OpenAI')
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
@@ -761,6 +764,8 @@ class OpenAIResponsesModel(Model):
                             filename=f'filename.{item.format}',
                         )
                     )
+                elif isinstance(item, VideoUrl):  # pragma: no cover
+                    raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                 else:
                     assert_never(item)
         return responses.EasyInputMessageParam(role='user', content=content)
