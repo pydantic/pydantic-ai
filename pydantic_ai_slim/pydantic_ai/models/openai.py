@@ -39,6 +39,7 @@ from . import (
     StreamedResponse,
     cached_async_http_client,
     check_allow_model_requests,
+    get_user_agent,
 )
 
 try:
@@ -282,6 +283,7 @@ class OpenAIModel(Model):
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
+                extra_headers={'User-Agent': get_user_agent()},
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
@@ -613,6 +615,7 @@ class OpenAIResponsesModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
+                extra_headers={'User-Agent': get_user_agent()},
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:

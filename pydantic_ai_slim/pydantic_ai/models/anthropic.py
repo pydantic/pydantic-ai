@@ -31,7 +31,14 @@ from ..messages import (
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client, check_allow_model_requests
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    cached_async_http_client,
+    check_allow_model_requests,
+    get_user_agent,
+)
 
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
@@ -231,6 +238,7 @@ class AnthropicModel(Model):
                 top_p=model_settings.get('top_p', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
+                extra_headers={'User-Agent': get_user_agent()},
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:

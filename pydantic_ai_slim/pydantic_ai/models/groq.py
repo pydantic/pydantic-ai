@@ -31,7 +31,7 @@ from ..messages import (
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, get_user_agent
 
 try:
     from groq import NOT_GIVEN, APIStatusError, AsyncGroq, AsyncStream
@@ -218,6 +218,7 @@ class GroqModel(Model):
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+                extra_headers={'User-Agent': get_user_agent()},
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
