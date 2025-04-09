@@ -53,13 +53,13 @@ def infer_provider(provider: str) -> Provider[Any]:
 
         return DeepSeekProvider()
     elif provider == 'google-vertex':
-        from .google_vertex import GoogleVertexProvider
+        from .google import GoogleProvider
 
-        return GoogleVertexProvider()
+        return GoogleProvider(vertexai=True)
     elif provider == 'google-gla':
-        from .google_gla import GoogleGLAProvider
+        from .google import GoogleProvider
 
-        return GoogleGLAProvider()
+        return GoogleProvider(vertexai=False)
     # NOTE: We don't test because there are many ways the `boto3.client` can retrieve the credentials.
     elif provider == 'bedrock':  # pragma: no cover
         from .bedrock import BedrockProvider
