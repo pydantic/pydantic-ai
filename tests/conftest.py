@@ -269,19 +269,22 @@ def mistral_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
-def bedrock_provider():
-    import boto3
+def bedrock_provider():  # pragma: no cover
+    try:
+        import boto3
 
-    from pydantic_ai.providers.bedrock import BedrockProvider
+        from pydantic_ai.providers.bedrock import BedrockProvider
 
-    bedrock_client = boto3.client(
-        'bedrock-runtime',
-        region_name=os.getenv('AWS_REGION', 'us-east-1'),
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
-    )
-    yield BedrockProvider(bedrock_client=bedrock_client)
-    bedrock_client.close()
+        bedrock_client = boto3.client(
+            'bedrock-runtime',
+            region_name=os.getenv('AWS_REGION', 'us-east-1'),
+            aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
+            aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
+        )
+        yield BedrockProvider(bedrock_client=bedrock_client)
+        bedrock_client.close()
+    except ImportError:
+        pytest.skip('boto3 is not installed')
 
 
 @pytest.fixture()
@@ -294,7 +297,7 @@ def model(
     co_api_key: str,
     gemini_api_key: str,
     bedrock_provider: BedrockProvider,
-) -> Model:
+) -> Model:  # pragma: no cover
     try:
         if request.param == 'openai':
             from pydantic_ai.models.openai import OpenAIModel
@@ -330,9 +333,9 @@ def model(
             from pydantic_ai.models.bedrock import BedrockConverseModel
 
             return BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-        else:  # pragma: no cover
+        else:
             raise ValueError(f'Unknown model: {request.param}')
-    except ImportError:  # pragma: no cover
+    except ImportError:
         pytest.skip(f'{request.param} is not installed')
 
 
