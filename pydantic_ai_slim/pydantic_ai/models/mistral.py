@@ -39,6 +39,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     check_allow_model_requests,
+    get_user_agent,
 )
 
 try:
@@ -200,6 +201,7 @@ class MistralModel(Model):
                 timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
                 random_seed=model_settings.get('seed', UNSET),
                 stop=model_settings.get('stop_sequences', None),
+                http_headers={'User-Agent': get_user_agent()},
             )
         except SDKError as e:
             if (status_code := e.status_code) >= 400:
@@ -238,6 +240,7 @@ class MistralModel(Model):
                 presence_penalty=model_settings.get('presence_penalty'),
                 frequency_penalty=model_settings.get('frequency_penalty'),
                 stop=model_settings.get('stop_sequences', None),
+                http_headers={'User-Agent': get_user_agent()},
             )
 
         elif model_request_parameters.result_tools:
@@ -251,6 +254,7 @@ class MistralModel(Model):
                 messages=mistral_messages,
                 response_format={'type': 'json_object'},
                 stream=True,
+                http_headers={'User-Agent': get_user_agent()},
             )
 
         else:
@@ -259,6 +263,7 @@ class MistralModel(Model):
                 model=str(self._model_name),
                 messages=mistral_messages,
                 stream=True,
+                http_headers={'User-Agent': get_user_agent()},
             )
         assert response, 'A unexpected empty response from Mistral.'
         return response
