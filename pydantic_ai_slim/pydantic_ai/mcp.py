@@ -64,6 +64,7 @@ class MCPServer(ABC):
                 name=tool.name,
                 description=tool.description or '',
                 parameters_json_schema=tool.inputSchema,
+                strict=self.strict,
             )
             for tool in tools.tools
         ]
@@ -150,6 +151,12 @@ class MCPServerStdio(MCPServer):
     If you want to inherit the environment variables from the parent process, use `env=os.environ`.
     """
 
+    strict: bool | None = None
+    """Whether to enforce (vendor-specific) strict JSON schema validation for tool calls.
+
+    See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+    """
+
     @asynccontextmanager
     async def client_streams(
         self,
@@ -218,6 +225,12 @@ class MCPServerHTTP(MCPServer):
     This timeout applies to the long-lived SSE connection after it's established.
     If no new messages are received within this time, the connection will be considered stale
     and may be closed. Defaults to 5 minutes (300 seconds).
+    """
+
+    strict: bool | None = None
+    """Whether to enforce (vendor-specific) strict JSON schema validation for tool calls.
+
+    See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
     """
 
     @asynccontextmanager
