@@ -2979,7 +2979,7 @@ requires-dist = [
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.15.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.11.0" },
-    { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.5.0" },
+    { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.6.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.2.5" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.74.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },

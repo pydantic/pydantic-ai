@@ -31,7 +31,7 @@ async def test_stdio_server():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == 1
+        assert len(tools) == 2
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
@@ -114,3 +114,23 @@ async def test_agent_with_server_not_running(openai_api_key: str):
     agent = Agent(model, mcp_servers=[server])
     with pytest.raises(UserError, match='MCP server is not running'):
         await agent.run('What is 0 degrees Celsius in Fahrenheit?')
+
+
+async def test_log_level_unset():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    assert server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
+    async with server:
+        tools = await server.list_tools()
+        assert len(tools) == 2
+        assert tools[1].name == 'get_log_level'
+
+        result = await server.call_tool('get_log_level', {})
+        assert result.content == snapshot([TextContent(type='text', text='unset')])
+
+
+async def test_log_level_set():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
+    assert server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
+    async with server:
+        result = await server.call_tool('get_log_level', {})
+        assert result.content == snapshot([TextContent(type='text', text='info')])
