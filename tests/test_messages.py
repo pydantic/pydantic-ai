@@ -1,12 +1,22 @@
 import pytest
 
-from pydantic_ai.messages import BinaryContent, DocumentUrl, ImageUrl
+from pydantic_ai.messages import BinaryContent, DocumentUrl, ImageUrl, VideoUrl
 
 
 def test_image_url():
     image_url = ImageUrl(url='https://example.com/image.jpg')
     assert image_url.media_type == 'image/jpeg'
     assert image_url.format == 'jpeg'
+
+
+def test_video_url():
+    with pytest.raises(RuntimeError, match='Unknown video file extension: https://example.com/video.potato'):
+        video_url = VideoUrl(url='https://example.com/video.potato')
+        video_url.media_type
+
+    video_url = VideoUrl(url='https://example.com/video.mp4')
+    assert video_url.media_type == 'video/mp4'
+    assert video_url.format == 'mp4'
 
 
 def test_document_url():
