@@ -50,6 +50,25 @@ def test_binary_content_image(media_type: str, format: str):
 @pytest.mark.parametrize(
     'media_type, format',
     [
+        ('video/x-matroska', 'mkc'),
+        ('video/quicktime', 'mov'),
+        ('video/mp4', 'mp4'),
+        ('video/webm', 'webm'),
+        ('video/x-flv', 'flv'),
+        ('video/mpeg', 'mpeg'),
+        ('video/x-ms-wmv', 'wmv'),
+        ('video/3gppl', 'three_gp'),
+    ],
+)
+def test_binary_content_video(media_type: str, format: str):
+    binary_content = BinaryContent(data=b'Hello, world!', media_type=media_type)
+    assert binary_content.is_document
+    assert binary_content.format == format
+
+
+@pytest.mark.parametrize(
+    'media_type, format',
+    [
         ('application/pdf', 'pdf'),
         ('text/plain', 'txt'),
         ('text/csv', 'csv'),
