@@ -34,6 +34,7 @@ class MCPServer(ABC):
     """
 
     is_running: bool = False
+    strict: bool | None = None
 
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[JSONRPCMessage | Exception]
