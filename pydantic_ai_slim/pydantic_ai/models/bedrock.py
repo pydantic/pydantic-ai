@@ -296,9 +296,8 @@ class BedrockConverseModel(Model):
             inference_config['temperature'] = temperature
         if top_p := model_settings.get('top_p'):
             inference_config['topP'] = top_p
-        # TODO(Marcelo): This is not included in model_settings yet.
-        # if stop_sequences := model_settings.get('stop_sequences'):
-        #     inference_config['stopSequences'] = stop_sequences
+        if stop_sequences := model_settings.get('stop_sequences'):
+            inference_config['stopSequences'] = stop_sequences
 
         return inference_config
 

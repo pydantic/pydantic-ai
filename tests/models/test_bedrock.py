@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import datetime
-import os
 from typing import Any
 
 import pytest
@@ -36,8 +35,6 @@ from pydantic_ai.usage import Usage
 from ..conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
-    import boto3
-
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.providers.bedrock import BedrockProvider
 
@@ -46,18 +43,6 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
-
-
-@pytest.fixture
-def bedrock_provider():
-    bedrock_client = boto3.client(  # type: ignore[reportUnknownMemberType]
-        'bedrock-runtime',
-        region_name=os.getenv('AWS_REGION', 'us-east-1'),
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
-    )
-    yield BedrockProvider(bedrock_client=bedrock_client)
-    bedrock_client.close()
 
 
 async def test_bedrock_model(allow_model_requests: None, bedrock_provider: BedrockProvider):
