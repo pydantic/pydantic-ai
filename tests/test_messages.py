@@ -62,7 +62,7 @@ def test_binary_content_image(media_type: str, format: str):
 )
 def test_binary_content_video(media_type: str, format: str):
     binary_content = BinaryContent(data=b'Hello, world!', media_type=media_type)
-    assert binary_content.is_document
+    assert binary_content.is_video
     assert binary_content.format == format
 
 
