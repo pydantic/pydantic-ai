@@ -10,7 +10,7 @@ def test_image_url():
 
 
 def test_video_url():
-    with pytest.raises(RuntimeError, match='Unknown video file extension: https://example.com/video.potato'):
+    with pytest.raises(ValueError, match='Unknown video file extension: https://example.com/video.potato'):
         video_url = VideoUrl(url='https://example.com/video.potato')
         video_url.media_type
 
