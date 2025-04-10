@@ -50,14 +50,14 @@ def test_binary_content_image(media_type: str, format: str):
 @pytest.mark.parametrize(
     'media_type, format',
     [
-        ('video/x-matroska', 'mkc'),
+        ('video/x-matroska', 'mkv'),
         ('video/quicktime', 'mov'),
         ('video/mp4', 'mp4'),
         ('video/webm', 'webm'),
         ('video/x-flv', 'flv'),
         ('video/mpeg', 'mpeg'),
         ('video/x-ms-wmv', 'wmv'),
-        ('video/3gppl', 'three_gp'),
+        ('video/3gpp', 'three_gp'),
     ],
 )
 def test_binary_content_video(media_type: str, format: str):
