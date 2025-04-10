@@ -44,61 +44,6 @@ DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', '
 VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
 
 
-def _document_format(media_type: str) -> DocumentFormat:
-    if media_type == 'application/pdf':
-        return 'pdf'
-    elif media_type == 'text/plain':
-        return 'txt'
-    elif media_type == 'text/csv':
-        return 'csv'
-    elif media_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-        return 'docx'
-    elif media_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
-        return 'xlsx'
-    elif media_type == 'text/html':
-        return 'html'
-    elif media_type == 'text/markdown':
-        return 'md'
-    elif media_type == 'application/vnd.ms-excel':
-        return 'xls'
-    else:
-        raise ValueError(f'Unknown document media type: {media_type}')
-
-
-def _image_format(media_type: str) -> ImageFormat:
-    if media_type == 'image/jpeg':
-        return 'jpeg'
-    elif media_type == 'image/png':
-        return 'png'
-    elif media_type == 'image/gif':
-        return 'gif'
-    elif media_type == 'image/webp':
-        return 'webp'
-    else:
-        raise ValueError(f'Unknown image media type: {media_type}')
-
-
-def _video_format(media_type: str) -> VideoFormat:
-    if media_type == 'video/x-matroska':
-        return 'mkv'
-    elif media_type == 'video/quicktime':
-        return 'mov'
-    elif media_type == 'video/mp4':
-        return 'mp4'
-    elif media_type == 'video/webm':
-        return 'webm'
-    elif media_type == 'video/x-flv':
-        return 'flv'
-    elif media_type == 'video/mpeg':
-        return 'mpeg'
-    elif media_type == 'video/x-ms-wmv':
-        return 'wmv'
-    elif media_type == 'video/3gpp':
-        return 'three_gp'
-    else:
-        raise ValueError(f'Unknown video media type: {media_type}')
-
-
 @dataclass
 class SystemPromptPart:
     """A system prompt, generally written by the application developer.
@@ -307,6 +252,61 @@ class BinaryContent:
 
 
 UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
+
+
+def _document_format(media_type: str) -> DocumentFormat:
+    if media_type == 'application/pdf':
+        return 'pdf'
+    elif media_type == 'text/plain':
+        return 'txt'
+    elif media_type == 'text/csv':
+        return 'csv'
+    elif media_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+        return 'docx'
+    elif media_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+        return 'xlsx'
+    elif media_type == 'text/html':
+        return 'html'
+    elif media_type == 'text/markdown':
+        return 'md'
+    elif media_type == 'application/vnd.ms-excel':
+        return 'xls'
+    else:
+        raise ValueError(f'Unknown document media type: {media_type}')
+
+
+def _image_format(media_type: str) -> ImageFormat:
+    if media_type == 'image/jpeg':
+        return 'jpeg'
+    elif media_type == 'image/png':
+        return 'png'
+    elif media_type == 'image/gif':
+        return 'gif'
+    elif media_type == 'image/webp':
+        return 'webp'
+    else:
+        raise ValueError(f'Unknown image media type: {media_type}')
+
+
+def _video_format(media_type: str) -> VideoFormat:
+    if media_type == 'video/x-matroska':
+        return 'mkv'
+    elif media_type == 'video/quicktime':
+        return 'mov'
+    elif media_type == 'video/mp4':
+        return 'mp4'
+    elif media_type == 'video/webm':
+        return 'webm'
+    elif media_type == 'video/x-flv':
+        return 'flv'
+    elif media_type == 'video/mpeg':
+        return 'mpeg'
+    elif media_type == 'video/x-ms-wmv':
+        return 'wmv'
+    elif media_type == 'video/3gpp':
+        return 'three_gp'
+    else:
+        raise ValueError(f'Unknown video media type: {media_type}')
 
 
 @dataclass
