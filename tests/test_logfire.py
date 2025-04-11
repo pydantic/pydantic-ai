@@ -312,8 +312,8 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                 'end_time': 4000000000,
                 'attributes': {
                     'model_name': 'test',
-                    'agent_name': 'my_agent',
-                    'logfire.msg': 'my_agent run',
+                    'agent_name': 'agent',
+                    'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 4,
