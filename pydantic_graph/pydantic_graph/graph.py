@@ -137,8 +137,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             persistence: State persistence interface, defaults to
                 [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
             infer_name: Whether to infer the graph name from the calling frame.
-            span: The span to use for the graph run. If not provided, a span will be created depending on the value of
-                the `auto_instrument` field.
 
         Returns:
             A `GraphRunResult` containing information about the run, including its final result.
