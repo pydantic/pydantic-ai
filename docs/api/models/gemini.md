@@ -15,6 +15,6 @@ Despite these shortcomings, the Gemini model is actually quite powerful and very
 
 ## Setup
 
-For details on how to set up authentication with this model, see [model configuration for Gemini](../../models.md#gemini).
+For details on how to set up authentication with this model, see [model configuration for Gemini](../../models/google.md#gemini).
 
 ::: pydantic_ai.models.gemini
