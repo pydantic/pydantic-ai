@@ -453,15 +453,15 @@ class _GeminiRequest(TypedDict):
 
     contents: list[_GeminiContent]
     tools: NotRequired[_GeminiTools]
-    tool_config: NotRequired[_GeminiToolConfig]
-    safety_settings: NotRequired[list[GeminiSafetySettings]]
+    tool_config: NotRequired[Annotated[_GeminiToolConfig, pydantic.Field(alias='toolConfig')]]
+    safety_settings: NotRequired[Annotated[list[GeminiSafetySettings], pydantic.Field(alias='safetySettings')]]
     # we don't implement `generationConfig`, instead we use a named tool for the response
-    system_instruction: NotRequired[_GeminiTextContent]
+    system_instruction: NotRequired[Annotated[_GeminiTextContent, pydantic.Field(alias='systemInstruction')]]
     """
     Developer generated system instructions, see
     <https://ai.google.dev/gemini-api/docs/system-instructions?lang=rest>
     """
-    generation_config: NotRequired[_GeminiGenerationConfig]
+    generation_config: NotRequired[Annotated[_GeminiGenerationConfig, pydantic.Field(alias='generationConfig')]]
 
 
 class GeminiSafetySettings(TypedDict):
