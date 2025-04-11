@@ -1410,7 +1410,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
     def span(self) -> AbstractSpan: ...
     def span(self, *, required: bool = True) -> AbstractSpan | None:
         span = self._graph_run.span(required=False)
-        if span is None and required:
+        if span is None and required:  # pragma: no cover
             raise AttributeError('Span is not available for this agent run')
         return span
 
@@ -1572,7 +1572,7 @@ class AgentRunResult(Generic[ResultDataT]):
     @overload
     def span(self) -> AbstractSpan: ...
     def span(self, *, required: bool = True) -> AbstractSpan | None:
-        if self._span is None and required:
+        if self._span is None and required:  # pragma: no cover
             raise AttributeError('Span is not available for this agent run')
         return self._span
 

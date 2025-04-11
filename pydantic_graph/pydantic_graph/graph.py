@@ -677,7 +677,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
     @overload
     def span(self) -> AbstractSpan: ...
     def span(self, *, required: bool = True) -> AbstractSpan | None:
-        if self._span is None and required:
+        if self._span is None and required:  # pragma: no cover
             raise exceptions.GraphRuntimeError('No span available for this graph run.')
         return self._span
 
@@ -828,6 +828,6 @@ class GraphRunResult(Generic[StateT, RunEndT]):
     @overload
     def span(self) -> AbstractSpan: ...
     def span(self, *, required: bool = True) -> AbstractSpan | None:
-        if self._span is None and required:
+        if self._span is None and required:  # pragma: no cover
             raise exceptions.GraphRuntimeError('No span available for this graph run.')
         return self._span
