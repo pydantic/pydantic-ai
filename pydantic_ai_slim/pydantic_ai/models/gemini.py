@@ -818,10 +818,6 @@ class _GeminiJsonSchema:
                 schema['description'] = f'Format: {fmt}'
 
     def _object(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
-        ad_props = schema.pop('additionalProperties', None)
-        if ad_props:
-            raise UserError('Additional properties in JSON Schema are not supported by Gemini')
-
         if properties := schema.get('properties'):  # pragma: no branch
             for value in properties.values():
                 self._simplify(value, refs_stack)
