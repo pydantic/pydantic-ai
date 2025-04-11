@@ -21,9 +21,9 @@ nav:
           - models/index.md
           - models/openai.md
           - models/anthropic.md
+          - models/gemini.md
           - models/bedrock.md
           - models/cohere.md
-          - models/google.md
           - models/groq.md
           - models/mistral.md
       - dependencies.md

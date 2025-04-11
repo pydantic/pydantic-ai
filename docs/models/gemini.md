@@ -5,7 +5,7 @@ PydanticAI supports Google's Gemini models through two different APIs:
 - Generative Language API (`generativelanguage.googleapis.com`)
 - Vertex AI API (`*-aiplatform.googleapis.com`)
 
-## Gemini
+## Gemini via Generative Language API
 
 ### Install
 
