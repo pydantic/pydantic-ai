@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.usage import Usage
 
@@ -392,6 +393,19 @@ async def test_image_as_binary_content_input(
 
 
 @pytest.mark.vcr()
+async def test_video_as_binary_content_input(
+    allow_model_requests: None, video_content: BinaryContent, bedrock_provider: BedrockProvider
+):
+    m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+
+    result = await agent.run(['Explain me this video', video_content])
+    assert result.data == snapshot(
+        'The video shows a camera set up on a tripod, pointed at a scenic view of a rocky landscape under a clear sky. The camera remains stationary throughout the video, capturing the same view without any changes.'
+    )
+
+
+@pytest.mark.vcr()
 async def test_image_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     agent = Agent(m, system_prompt='You are a helpful chatbot.')
@@ -404,6 +418,22 @@ async def test_image_url_input(allow_model_requests: None, bedrock_provider: Bed
     )
     assert result.data == snapshot(
         'The image shows a potato. It is oval in shape and has a yellow skin with numerous dark brown patches. These patches are known as lenticels, which are pores that allow the potato to breathe. The potato is a root vegetable that is widely cultivated and consumed around the world. It is a versatile ingredient that can be used in a variety of dishes, including mashed potatoes, fries, and potato salad.'
+    )
+
+
+@pytest.mark.vcr()
+async def test_video_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+
+    result = await agent.run(
+        [
+            'Explain me this video',
+            VideoUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/small_video.mp4'),
+        ]
+    )
+    assert result.data == snapshot(
+        'The video shows a camera set up on a tripod, pointed at a scenic view of a rocky landscape under a clear sky. The camera remains stationary throughout the video, capturing the same view without any changes.'
     )
 
 
