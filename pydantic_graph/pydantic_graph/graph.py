@@ -808,8 +808,8 @@ class GraphRunResult(Generic[StateT, RunEndT]):
         self,
         output: RunEndT,
         state: StateT,
-        persistence: BaseStatePersistence[StateT, RunEndT] = field(repr=False),
-        span: ReadableSpan | LogfireSpan | None = field(repr=False),
+        persistence: BaseStatePersistence[StateT, RunEndT],
+        span: ReadableSpan | LogfireSpan | None = None,
     ):
         self.output = output
         self.state = state
