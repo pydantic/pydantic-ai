@@ -9,17 +9,22 @@ git clone git@github.com:<your username>/pydantic-ai.git
 cd pydantic-ai
 ```
 
-Install `uv` (version 0.4.30 or later) and `pre-commit`
+Install `uv` (version 0.4.30 or later),  `pre-commit` and 'deno'
 
-We use pipx here, for other options see:
+We use pipx and a shell script here, for other options see:
 
 * [`uv` install docs](https://docs.astral.sh/uv/getting-started/installation/)
 * [`pre-commit` install docs](https://pre-commit.com/#install)
+* [`deno`install docs](https://docs.deno.com/runtime/getting_started/installation/)
 
 To get `pipx` itself, see [these docs](https://pypa.github.io/pipx/)
 
 ```bash
 pipx install uv pre-commit
+```
+
+``` shell
+curl -fsSL https://deno.land/install.sh | sh
 ```
 
 Install `pydantic-ai`, all dependencies and pre-commit hooks
