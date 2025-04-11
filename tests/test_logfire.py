@@ -265,6 +265,7 @@ def test_instrument_all():
     assert get_model() is model
 
 
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
 async def test_feedback(capfire: CaptureLogfire) -> None:
     try:
