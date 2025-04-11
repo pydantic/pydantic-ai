@@ -41,7 +41,7 @@ from . import (
 )
 
 try:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
+    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncAnthropicVertex, AsyncStream
     from anthropic.types import (
         Base64PDFSourceParam,
         ContentBlock,
@@ -115,7 +115,7 @@ class AnthropicModel(Model):
         We anticipate adding support for streaming responses in a near-term future release.
     """
 
-    client: AsyncAnthropic = field(repr=False)
+    client: AsyncAnthropic | AsyncAnthropicVertex = field(repr=False)
 
     _model_name: AnthropicModelName = field(repr=False)
     _system: str = field(default='anthropic', repr=False)
@@ -124,15 +124,21 @@ class AnthropicModel(Model):
         self,
         model_name: AnthropicModelName,
         *,
-        provider: Literal['anthropic'] | Provider[AsyncAnthropic] = 'anthropic',
+        # breaking this in multiple lines breaks pycharm type recognition. However, I was unable to stop ruff from
+        # doing it - # fmt: skip etc didn't work  :(
+        provider: Literal['anthropic', 'anthropic-vertex']
+        | Provider[AsyncAnthropicVertex]
+        | Provider[AsyncAnthropic] =  # fmt: skip
+        'anthropic',
     ):
         """Initialize an Anthropic model.
 
         Args:
             model_name: The name of the Anthropic model to use. List of model names available
                 [here](https://docs.anthropic.com/en/docs/about-claude/models).
-            provider: The provider to use for the Anthropic API. Can be either the string 'anthropic' or an
-                instance of `Provider[AsyncAnthropic]`. If not provided, the other parameters will be used.
+            provider: The provider to use for the Anthropic API. Can be either the string 'anthropic',
+                'anthropic-vertex', or an instance of Provider[AsyncAnthropic] or Provider[AsyncAnthropicVertex].
+                Defaults to 'anthropic'.
         """
         self._model_name = model_name
 

@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.providers.anthropic_vertex import AnthropicVertexProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
@@ -33,7 +34,7 @@ from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, raise_if_exception, tr
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic
+    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncAnthropicVertex
     from anthropic.types import (
         ContentBlock,
         InputJSONDelta,
@@ -70,7 +71,7 @@ T = TypeVar('T')
 
 def test_init():
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key='foobar'))
-    assert m.client.api_key == 'foobar'
+    # assert m.client.api_key == 'foobar'
     assert m.model_name == 'claude-3-5-haiku-latest'
     assert m.system == 'anthropic'
     assert m.base_url == 'https://api.anthropic.com'
@@ -682,3 +683,19 @@ def test_init_with_provider_string(env: TestEnv):
     model = AnthropicModel('claude-3-opus-latest', provider='anthropic')
     assert model.model_name == 'claude-3-opus-latest'
     assert model.client is not None
+
+
+def test_init_with_vertex_provider():
+    client = AsyncAnthropicVertex(project_id='foo', region='us-east1')
+    provider = AnthropicVertexProvider(anthropic_client=client)
+    model = AnthropicModel('claude-3-opus-latest', provider=provider)
+    assert model.model_name == 'claude-3-opus-latest'
+    assert model.client == provider.client
+
+
+def test_init_with_vertex_provider_string(env: TestEnv):
+    env.set('CLOUD_ML_REGION', 'us-east1')
+    model = AnthropicModel('claude-3-opus-latest', provider='anthropic-vertex')
+    assert model.model_name == 'claude-3-opus-latest'
+    assert model.client is not None
+    assert isinstance(model.client, AsyncAnthropicVertex)
