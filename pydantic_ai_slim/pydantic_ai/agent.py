@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final,
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import TypeGuard, TypeVar, deprecated
+from typing_extensions import Literal, TypeGuard, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
@@ -26,6 +26,7 @@ from . import (
     result,
     usage as _usage,
 )
+from ._utils import AbstractSpan
 from .models.instrumented import InstrumentationSettings, InstrumentedModel
 from .result import FinalResult, ResultDataT, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
@@ -51,6 +52,7 @@ UserPromptNode = _agent_graph.UserPromptNode
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPServer
+
 
 __all__ = (
     'Agent',
@@ -1402,6 +1404,16 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
         _agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[ResultDataT]
     ]
 
+    @overload
+    def _span(self, *, required: Literal[False]) -> AbstractSpan | None: ...
+    @overload
+    def _span(self) -> AbstractSpan: ...
+    def _span(self, *, required: bool = True) -> AbstractSpan | None:
+        span = self._graph_run._span(required=False)  # type: ignore[reportPrivateUsage]
+        if span is None and required:  # pragma: no cover
+            raise AttributeError('Span is not available for this agent run')
+        return span
+
     @property
     def ctx(self) -> GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]]:
         """The current context of the agent run."""
@@ -1439,6 +1451,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
             graph_run_result.output.tool_name,
             graph_run_result.state,
             self._graph_run.deps.new_message_index,
+            self._graph_run._span(required=False),  # type: ignore[reportPrivateUsage]
         )
 
     def __aiter__(
@@ -1552,6 +1565,16 @@ class AgentRunResult(Generic[ResultDataT]):
     _result_tool_name: str | None = dataclasses.field(repr=False)
     _state: _agent_graph.GraphAgentState = dataclasses.field(repr=False)
     _new_message_index: int = dataclasses.field(repr=False)
+    _span_value: AbstractSpan | None = dataclasses.field(repr=False)
+
+    @overload
+    def _span(self, *, required: Literal[False]) -> AbstractSpan | None: ...
+    @overload
+    def _span(self) -> AbstractSpan: ...
+    def _span(self, *, required: bool = True) -> AbstractSpan | None:
+        if self._span_value is None and required:  # pragma: no cover
+            raise AttributeError('Span is not available for this agent run')
+        return self._span_value
 
     def _set_result_tool_return(self, return_content: str) -> list[_messages.ModelMessage]:
         """Set return content for the result tool.
