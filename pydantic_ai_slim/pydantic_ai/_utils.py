@@ -295,7 +295,7 @@ def get_traceparent(x: AgentRun | AgentRunResult | GraphRun | GraphRunResult) ->
     import logfire_api
     from logfire.experimental.annotations import get_traceparent
 
-    span: AbstractSpan | None = x.span(required=False)
+    span: AbstractSpan | None = x._span(required=False)  # type: ignore[reportPrivateUsage]
     if not span:
         return ''
     if isinstance(span, logfire_api.LogfireSpan):

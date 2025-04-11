@@ -668,18 +668,18 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         self.state = state
         self.deps = deps
 
-        self._span = span
+        self.__span = span
         self._next_node: BaseNode[StateT, DepsT, RunEndT] | End[RunEndT] = start_node
         self._is_started: bool = False
 
     @overload
-    def span(self, *, required: typing_extensions.Literal[False]) -> AbstractSpan | None: ...
+    def _span(self, *, required: typing_extensions.Literal[False]) -> AbstractSpan | None: ...
     @overload
-    def span(self) -> AbstractSpan: ...
-    def span(self, *, required: bool = True) -> AbstractSpan | None:
-        if self._span is None and required:  # pragma: no cover
+    def _span(self) -> AbstractSpan: ...
+    def _span(self, *, required: bool = True) -> AbstractSpan | None:
+        if self.__span is None and required:  # pragma: no cover
             raise exceptions.GraphRuntimeError('No span available for this graph run.')
-        return self._span
+        return self.__span
 
     @property
     def next_node(self) -> BaseNode[StateT, DepsT, RunEndT] | End[RunEndT]:
@@ -695,7 +695,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         if not isinstance(self._next_node, End):
             return None  # The GraphRun has not finished running
         return GraphRunResult[StateT, RunEndT](
-            self._next_node.data, state=self.state, persistence=self.persistence, span=self.span(required=False)
+            self._next_node.data, state=self.state, persistence=self.persistence, span=self._span(required=False)
         )
 
     async def next(
@@ -821,13 +821,13 @@ class GraphRunResult(Generic[StateT, RunEndT]):
         self.output = output
         self.state = state
         self.persistence = persistence
-        self._span = span
+        self.__span = span
 
     @overload
-    def span(self, *, required: typing_extensions.Literal[False]) -> AbstractSpan | None: ...
+    def _span(self, *, required: typing_extensions.Literal[False]) -> AbstractSpan | None: ...
     @overload
-    def span(self) -> AbstractSpan: ...
-    def span(self, *, required: bool = True) -> AbstractSpan | None:
-        if self._span is None and required:  # pragma: no cover
+    def _span(self) -> AbstractSpan: ...
+    def _span(self, *, required: bool = True) -> AbstractSpan | None:
+        if self.__span is None and required:  # pragma: no cover
             raise exceptions.GraphRuntimeError('No span available for this graph run.')
-        return self._span
+        return self.__span

@@ -1405,11 +1405,11 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
     ]
 
     @overload
-    def span(self, *, required: Literal[False]) -> AbstractSpan | None: ...
+    def _span(self, *, required: Literal[False]) -> AbstractSpan | None: ...
     @overload
-    def span(self) -> AbstractSpan: ...
-    def span(self, *, required: bool = True) -> AbstractSpan | None:
-        span = self._graph_run.span(required=False)
+    def _span(self) -> AbstractSpan: ...
+    def _span(self, *, required: bool = True) -> AbstractSpan | None:
+        span = self._graph_run._span(required=False)  # type: ignore[reportPrivateUsage]
         if span is None and required:  # pragma: no cover
             raise AttributeError('Span is not available for this agent run')
         return span
@@ -1451,7 +1451,7 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
             graph_run_result.output.tool_name,
             graph_run_result.state,
             self._graph_run.deps.new_message_index,
-            self._graph_run.span(required=False),
+            self._graph_run._span(required=False),  # type: ignore[reportPrivateUsage]
         )
 
     def __aiter__(
@@ -1565,16 +1565,16 @@ class AgentRunResult(Generic[ResultDataT]):
     _result_tool_name: str | None = dataclasses.field(repr=False)
     _state: _agent_graph.GraphAgentState = dataclasses.field(repr=False)
     _new_message_index: int = dataclasses.field(repr=False)
-    _span: AbstractSpan | None = dataclasses.field(repr=False)
+    _span_value: AbstractSpan | None = dataclasses.field(repr=False)
 
     @overload
-    def span(self, *, required: Literal[False]) -> AbstractSpan | None: ...
+    def _span(self, *, required: Literal[False]) -> AbstractSpan | None: ...
     @overload
-    def span(self) -> AbstractSpan: ...
-    def span(self, *, required: bool = True) -> AbstractSpan | None:
-        if self._span is None and required:  # pragma: no cover
+    def _span(self) -> AbstractSpan: ...
+    def _span(self, *, required: bool = True) -> AbstractSpan | None:
+        if self._span_value is None and required:  # pragma: no cover
             raise AttributeError('Span is not available for this agent run')
-        return self._span
+        return self._span_value
 
     def _set_result_tool_return(self, return_content: str) -> list[_messages.ModelMessage]:
         """Set return content for the result tool.
