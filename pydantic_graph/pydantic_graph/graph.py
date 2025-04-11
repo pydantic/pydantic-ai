@@ -610,6 +610,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             '''
             [
                 (Increment(), MyState(number=1)),
+                (Increment(), MyState(number=1)),
                 (Check42(), MyState(number=2)),
                 (End(data=2), MyState(number=2)),
             ]
@@ -623,6 +624,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             print(node_states)
             '''
             [
+                (Increment(), MyState(number=41)),
                 (Increment(), MyState(number=41)),
                 (Check42(), MyState(number=42)),
                 (Increment(), MyState(number=42)),
@@ -670,6 +672,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
 
         self._span = span
         self._next_node: BaseNode[StateT, DepsT, RunEndT] | End[RunEndT] = start_node
+        self._is_started: bool = False
 
     @overload
     def span(self, *, required: typing_extensions.Literal[False]) -> AbstractSpan | None: ...
@@ -789,8 +792,13 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
 
     async def __anext__(self) -> BaseNode[StateT, DepsT, RunEndT] | End[RunEndT]:
         """Use the last returned node as the input to `Graph.next`."""
+        if not self._is_started:
+            self._is_started = True
+            return self._next_node
+
         if isinstance(self._next_node, End):
             raise StopAsyncIteration
+
         return await self.next(self._next_node)
 
     def __repr__(self) -> str:
