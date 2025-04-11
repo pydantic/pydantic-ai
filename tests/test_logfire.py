@@ -265,10 +265,12 @@ def test_instrument_all():
     assert get_model() is model
 
 
-@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
 async def test_feedback(capfire: CaptureLogfire) -> None:
-    from logfire.experimental.annotations import record_feedback
+    try:
+        from logfire.experimental.annotations import record_feedback
+    except ImportError:
+        pytest.skip('Requires recent version of logfire')
 
     my_agent = Agent(model=TestModel(), instrument=True)
 
