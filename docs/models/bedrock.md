@@ -67,14 +67,6 @@ bedrock_model_settings = BedrockModelSettings(
 model = BedrockConverseModel(model_name='us.amazon.nova-pro-v1:0')
 
 agent = Agent(model=model, model_settings=bedrock_model_settings)
-
-result_sync = agent.run_sync(
-    [
-        'do stuff',
-    ]
-)
-print(result_sync.data)
-
 ```
 
 ## `provider` argument
