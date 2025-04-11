@@ -644,7 +644,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         persistence: BaseStatePersistence[StateT, RunEndT],
         state: StateT,
         deps: DepsT,
-        span: logfire_api.LogfireSpan | Span | None,
+        span: AbstractSpan | None,
         snapshot_id: str | None = None,
     ):
         """Create a new run for a given graph, starting at the specified node.
@@ -659,7 +659,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
                 to all nodes via `ctx.state`.
             deps: Optional dependencies that each node can access via `ctx.deps`, e.g. database connections,
                 configuration, or logging clients.
-            span: The span to use for the graph run. If not provided, a new span will be created.
+            span: The span used for the graph run.
             snapshot_id: The ID of the snapshot the node came from.
         """
         self.graph = graph
