@@ -2,6 +2,6 @@
 
 ## Setup
 
-For details on how to set up authentication with this model, see [model configuration for Mistral](../../models.md#mistral).
+For details on how to set up authentication with this model, see [model configuration for Mistral](../../models/mistral.md).
 
 ::: pydantic_ai.models.mistral
