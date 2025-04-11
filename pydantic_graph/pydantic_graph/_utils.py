@@ -3,11 +3,11 @@ from __future__ import annotations as _annotations
 import asyncio
 import types
 from functools import partial
-from typing import Any, Callable, TypeAlias, TypeVar
+from typing import Any, Callable, TypeVar
 
 from logfire_api import LogfireSpan
 from opentelemetry.trace import Span
-from typing_extensions import ParamSpec, TypeIs, get_args, get_origin
+from typing_extensions import ParamSpec, TypeAlias, TypeIs, get_args, get_origin
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
