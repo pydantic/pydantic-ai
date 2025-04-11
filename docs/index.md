@@ -195,6 +195,24 @@ That's enough to get the following view of your agent in action:
 
 See [Monitoring and Performance](logfire.md) to learn more.
 
+## llms.txt
+
+The PydanticAI documentation is available in the [llms.txt](https://llmstxt.org/) format.
+This format is defined in Markdown and suited for large language models.
+
+Two formats are available:
+
+- [llms.txt](https://ai.pydantic.dev/llms.txt): a file containing a brief description
+  of the project, along with links to the different sections of the documentation. The structure
+  of this file is described in details [here](https://llmstxt.org/#format).
+- [llms-full.txt](https://ai.pydantic.dev/llms-full.txt): Similar to the `llms.txt` file,
+  but every link content is included. Note that this file may be too large for some LLMs.
+
+As of today, these files *cannot* be natively leveraged by LLM frameworks or IDEs. Alternatively,
+an [MCP server](https://modelcontextprotocol.io/) can be implemented to properly parse the `llms.txt`
+file.
+
+
 ## Next Steps
 
 To try PydanticAI yourself, follow the instructions [in the examples](examples/index.md).
