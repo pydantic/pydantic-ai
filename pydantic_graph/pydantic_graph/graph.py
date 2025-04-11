@@ -126,7 +126,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         deps: DepsT = None,
         persistence: BaseStatePersistence[StateT, RunEndT] | None = None,
         infer_name: bool = True,
-        span: LogfireSpan | None = None,
     ) -> GraphRunResult[StateT, RunEndT]:
         """Run the graph from a starting node until it ends.
 
@@ -165,7 +164,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             self._infer_name(inspect.currentframe())
 
         async with self.iter(
-            start_node, state=state, deps=deps, persistence=persistence, span=span, infer_name=False
+            start_node, state=state, deps=deps, persistence=persistence, infer_name=False
         ) as graph_run:
             async for _node in graph_run:
                 pass
