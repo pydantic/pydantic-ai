@@ -10,12 +10,12 @@ from typing import Any, Generic, cast, overload
 
 import logfire_api
 import typing_extensions
-from logfire_api import LogfireSpan
-from opentelemetry.sdk.trace import ReadableSpan
+from opentelemetry.trace import Span
 from typing_extensions import deprecated
 from typing_inspection import typing_objects
 
 from . import _utils, exceptions, mermaid
+from ._utils import AbstractSpan
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT, StateT
 from .persistence import BaseStatePersistence
 from .persistence.in_mem import SimpleStatePersistence
@@ -126,7 +126,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         deps: DepsT = None,
         persistence: BaseStatePersistence[StateT, RunEndT] | None = None,
         infer_name: bool = True,
-        span: LogfireSpan | None = None,
     ) -> GraphRunResult[StateT, RunEndT]:
         """Run the graph from a starting node until it ends.
 
@@ -138,8 +137,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             persistence: State persistence interface, defaults to
                 [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
             infer_name: Whether to infer the graph name from the calling frame.
-            span: The span to use for the graph run. If not provided, a span will be created depending on the value of
-                the `auto_instrument` field.
 
         Returns:
             A `GraphRunResult` containing information about the run, including its final result.
@@ -165,7 +162,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             self._infer_name(inspect.currentframe())
 
         async with self.iter(
-            start_node, state=state, deps=deps, persistence=persistence, span=span, infer_name=False
+            start_node, state=state, deps=deps, persistence=persistence, infer_name=False
         ) as graph_run:
             async for _node in graph_run:
                 pass
@@ -215,7 +212,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         state: StateT = None,
         deps: DepsT = None,
         persistence: BaseStatePersistence[StateT, RunEndT] | None = None,
-        span: AbstractContextManager[LogfireSpan | ReadableSpan] | None = None,
+        span: AbstractContextManager[Span] | None = None,
         infer_name: bool = True,
     ) -> AsyncIterator[GraphRun[StateT, DepsT, RunEndT]]:
         """A contextmanager which can be used to iterate over the graph's nodes as they are executed.
@@ -253,11 +250,13 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             persistence = SimpleStatePersistence()
         persistence.set_graph_types(self)
 
-        if self.auto_instrument and span is None:
-            span = logfire_api.span('run graph {graph.name}', graph=self)
-
         with ExitStack() as stack:
-            entered_span = None if span is None else stack.enter_context(span)
+            entered_span: AbstractSpan | None = None
+            if span is None:
+                if self.auto_instrument:
+                    entered_span = stack.enter_context(logfire_api.span('run graph {graph.name}', graph=self))
+            else:
+                entered_span = stack.enter_context(span)
             yield GraphRun[StateT, DepsT, RunEndT](
                 graph=self, start_node=start_node, persistence=persistence, state=state, deps=deps, span=entered_span
             )
@@ -268,7 +267,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         persistence: BaseStatePersistence[StateT, RunEndT],
         *,
         deps: DepsT = None,
-        span: AbstractContextManager[ReadableSpan | LogfireSpan] | None = None,
+        span: AbstractContextManager[AbstractSpan] | None = None,
         infer_name: bool = True,
     ) -> AsyncIterator[GraphRun[StateT, DepsT, RunEndT]]:
         """A contextmanager to iterate over the graph's nodes as they are executed, created from a persistence object.
@@ -645,7 +644,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         persistence: BaseStatePersistence[StateT, RunEndT],
         state: StateT,
         deps: DepsT,
-        span: ReadableSpan | LogfireSpan | None,
+        span: logfire_api.LogfireSpan | Span | None,
         snapshot_id: str | None = None,
     ):
         """Create a new run for a given graph, starting at the specified node.
@@ -674,10 +673,10 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         self._is_started: bool = False
 
     @overload
-    def span(self, *, required: typing_extensions.Literal[False]) -> ReadableSpan | None: ...
+    def span(self, *, required: typing_extensions.Literal[False]) -> AbstractSpan | None: ...
     @overload
-    def span(self) -> ReadableSpan: ...
-    def span(self, *, required: bool = True) -> ReadableSpan | None:
+    def span(self) -> AbstractSpan: ...
+    def span(self, *, required: bool = True) -> AbstractSpan | None:
         if self._span is None and required:
             raise exceptions.GraphRuntimeError('No span available for this graph run.')
         return self._span
@@ -817,7 +816,7 @@ class GraphRunResult(Generic[StateT, RunEndT]):
         output: RunEndT,
         state: StateT,
         persistence: BaseStatePersistence[StateT, RunEndT],
-        span: ReadableSpan | LogfireSpan | None = None,
+        span: AbstractSpan | None = None,
     ):
         self.output = output
         self.state = state
@@ -825,10 +824,10 @@ class GraphRunResult(Generic[StateT, RunEndT]):
         self._span = span
 
     @overload
-    def span(self, *, required: typing_extensions.Literal[False]) -> ReadableSpan | None: ...
+    def span(self, *, required: typing_extensions.Literal[False]) -> AbstractSpan | None: ...
     @overload
-    def span(self) -> ReadableSpan: ...
-    def span(self, *, required: bool = True) -> ReadableSpan | None:
+    def span(self) -> AbstractSpan: ...
+    def span(self, *, required: bool = True) -> AbstractSpan | None:
         if self._span is None and required:
             raise exceptions.GraphRuntimeError('No span available for this graph run.')
         return self._span
