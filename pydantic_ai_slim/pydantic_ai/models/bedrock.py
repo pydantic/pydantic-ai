@@ -327,12 +327,6 @@ class BedrockConverseModel(Model):
         return model_response
 
     @staticmethod
-    def _map_additional_model_settings(
-        model_settings: BedrockModelSettings,
-    ) -> GuardrailConfigurationTypeDef:
-        return model_settings.get('bedrock_guardrail_config')
-
-    @staticmethod
     def _map_inference_config(
         model_settings: ModelSettings | None,
     ) -> InferenceConfigurationTypeDef:
