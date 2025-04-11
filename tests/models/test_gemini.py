@@ -446,7 +446,9 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ),
         ]
     )
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
+    assert result.usage() == snapshot(
+        Usage(requests=1, request_tokens=1, response_tokens=2, cached_tokens=0, total_tokens=3)
+    )
 
     result = await agent.run('Hello', message_history=result.new_messages())
     assert result.data == 'Hello world'
@@ -588,7 +590,9 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ),
         ]
     )
-    assert result.usage() == snapshot(Usage(requests=3, request_tokens=3, response_tokens=6, total_tokens=9))
+    assert result.usage() == snapshot(
+        Usage(requests=3, request_tokens=3, response_tokens=6, cached_tokens=0, total_tokens=9)
+    )
 
 
 async def test_unexpected_response(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None):
@@ -629,12 +633,16 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
                 'Hello world',
             ]
         )
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
+    assert result.usage() == snapshot(
+        Usage(requests=1, request_tokens=2, response_tokens=4, cached_tokens=0, total_tokens=6)
+    )
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)]
         assert chunks == snapshot(['Hello ', 'world'])
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
+    assert result.usage() == snapshot(
+        Usage(requests=1, request_tokens=2, response_tokens=4, cached_tokens=0, total_tokens=6)
+    )
 
 
 async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
@@ -666,7 +674,9 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
         assert chunks == snapshot(['abc', 'abc€def', 'abc€def'])
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
+    assert result.usage() == snapshot(
+        Usage(requests=1, request_tokens=2, response_tokens=4, cached_tokens=0, total_tokens=6)
+    )
 
 
 async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
@@ -696,7 +706,9 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
         assert chunks == snapshot([(1, 2), (1, 2)])
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
+    assert result.usage() == snapshot(
+        Usage(requests=1, request_tokens=1, response_tokens=2, cached_tokens=0, total_tokens=3)
+    )
 
 
 async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
@@ -737,7 +749,9 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         response = await result.get_data()
         assert response == snapshot((1, 2))
-    assert result.usage() == snapshot(Usage(requests=2, request_tokens=3, response_tokens=6, total_tokens=9))
+    assert result.usage() == snapshot(
+        Usage(requests=2, request_tokens=3, response_tokens=6, cached_tokens=0, total_tokens=9)
+    )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
