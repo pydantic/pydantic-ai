@@ -30,8 +30,8 @@ interactions:
       output:
         message:
           content:
-          - text: The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, 
-              political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, 
+          - text: The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural,
+              political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum,
               and the Notre-Dame Cathedral, among many other historical and architectural treasures.
 
           role: assistant
