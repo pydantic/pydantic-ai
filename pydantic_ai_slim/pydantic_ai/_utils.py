@@ -15,6 +15,10 @@ from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import ParamSpec, TypeAlias, TypeGuard, is_typeddict
 
+from pydantic_graph._utils import AbstractSpan
+
+AbstractSpan = AbstractSpan
+
 if TYPE_CHECKING:
     from . import messages as _messages
     from .tools import ObjectJsonSchema

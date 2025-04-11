@@ -8,8 +8,6 @@ from copy import deepcopy
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
 
-from logfire_api import LogfireSpan
-from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, TypeGuard, TypeVar, deprecated
@@ -28,6 +26,7 @@ from . import (
     result,
     usage as _usage,
 )
+from ._utils import AbstractSpan
 from .models.instrumented import InstrumentationSettings, InstrumentedModel
 from .result import FinalResult, ResultDataT, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
@@ -53,6 +52,7 @@ UserPromptNode = _agent_graph.UserPromptNode
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPServer
+
 
 __all__ = (
     'Agent',
@@ -1393,10 +1393,10 @@ class AgentRun(Generic[AgentDepsT, ResultDataT]):
     ]
 
     @overload
-    def span(self, *, required: Literal[False]) -> ReadableSpan | None: ...
+    def span(self, *, required: Literal[False]) -> AbstractSpan | None: ...
     @overload
-    def span(self) -> ReadableSpan: ...
-    def span(self, *, required: bool = True) -> ReadableSpan | None:
+    def span(self) -> AbstractSpan: ...
+    def span(self, *, required: bool = True) -> AbstractSpan | None:
         span = self._graph_run.span(required=False)
         if span is None and required:
             raise AttributeError('Span is not available for this agent run')
@@ -1553,13 +1553,13 @@ class AgentRunResult(Generic[ResultDataT]):
     _result_tool_name: str | None = dataclasses.field(repr=False)
     _state: _agent_graph.GraphAgentState = dataclasses.field(repr=False)
     _new_message_index: int = dataclasses.field(repr=False)
-    _span: ReadableSpan | LogfireSpan | None = dataclasses.field(repr=False)
+    _span: AbstractSpan | None = dataclasses.field(repr=False)
 
     @overload
-    def span(self, *, required: Literal[False]) -> ReadableSpan | None: ...
+    def span(self, *, required: Literal[False]) -> AbstractSpan | None: ...
     @overload
-    def span(self) -> ReadableSpan: ...
-    def span(self, *, required: bool = True) -> ReadableSpan | None:
+    def span(self) -> AbstractSpan: ...
+    def span(self, *, required: bool = True) -> AbstractSpan | None:
         if self._span is None and required:
             raise AttributeError('Span is not available for this agent run')
         return self._span
