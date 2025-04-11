@@ -57,7 +57,7 @@ You can provide audio input using either [`AudioUrl`][pydantic_ai.AudioUrl] or [
 !!! info
     Some models do not support video input. Please check the model's documentation to confirm whether it supports audio input.
 
-You can provide audio input using either [`VideoUrl`][pydantic_ai.VideoUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is analogous to the examples above.
+You can provide video input using either [`VideoUrl`][pydantic_ai.VideoUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is analogous to the examples above.
 
 ## Document Input
 
