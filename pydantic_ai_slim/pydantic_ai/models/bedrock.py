@@ -408,11 +408,8 @@ class BedrockConverseModel(Model):
                         assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp'), (
                             f'Unsupported video format: {format}'
                         )
-                        video: VideoBlockTypeDef = {
-                            'format': format,
-                            'source': {'bytes': response.content},
-                        }
-                        content.append({'image': video})  # type: ignore - Verify
+                        video: VideoBlockTypeDef = {'format': format, 'source': {'bytes': response.content}}
+                        content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 else:
