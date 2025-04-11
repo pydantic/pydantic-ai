@@ -827,7 +827,7 @@ class GraphRunResult(Generic[StateT, RunEndT]):
     def _span(self, *, required: typing_extensions.Literal[False]) -> AbstractSpan | None: ...
     @overload
     def _span(self) -> AbstractSpan: ...
-    def _span(self, *, required: bool = True) -> AbstractSpan | None:
-        if self.__span is None and required:  # pragma: no cover
+    def _span(self, *, required: bool = True) -> AbstractSpan | None:  # pragma: no cover
+        if self.__span is None and required:
             raise exceptions.GraphRuntimeError('No span available for this graph run.')
         return self.__span
