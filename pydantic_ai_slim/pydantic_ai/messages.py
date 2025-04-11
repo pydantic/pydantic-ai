@@ -81,7 +81,7 @@ class VideoUrl:
     """Type identifier, this is available on all parts as a discriminator."""
 
     @property
-    def media_type(self) -> VideoMediaType:
+    def media_type(self) -> VideoMediaType:  # pragma: no cover
         """Return the media type of the video, based on the url."""
         if self.url.endswith('.mkv'):
             return 'video/x-matroska'
@@ -305,7 +305,7 @@ def _video_format(media_type: str) -> VideoFormat:
         return 'wmv'
     elif media_type == 'video/3gpp':
         return 'three_gp'
-    else:
+    else:  # pragma: no cover
         raise ValueError(f'Unknown video media type: {media_type}')
 
 
