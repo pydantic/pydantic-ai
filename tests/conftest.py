@@ -211,6 +211,7 @@ async def close_cached_httpx_client() -> AsyncIterator[None]:
         'mistral',
         'cohere',
         'deepseek',
+        None,
     ]:
         await cached_async_http_client(provider=provider).aclose()
 

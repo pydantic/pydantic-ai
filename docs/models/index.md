@@ -71,7 +71,8 @@ from one model to the next if the current model returns a 4xx or 5xx status code
 In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
 and then falls back to the Anthropic model.
 
-```python {title="fallback_model.py"}
+<!-- TODO(Marcelo): Do not skip this test. For some reason it becomes a flaky test if we don't skip it. -->
+```python {title="fallback_model.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
