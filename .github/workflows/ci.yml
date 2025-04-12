@@ -250,14 +250,15 @@ jobs:
 
       # check warmup works
       - name: warmup
-        run: |
-          deno run \
-            -N \
-            -R=node_modules \
-            -W=node_modules \
-            --node-modules-dir=auto \
-            src/main.ts \
-            warmup
+        run: >
+          deno run
+          -N
+          -R=node_modules
+          -R=src
+          -W=node_modules
+          --node-modules-dir=auto
+          src/main.ts
+          warmup
         working-directory: mcp-run-python
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks

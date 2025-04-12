@@ -1,6 +1,6 @@
 /* eslint @typescript-eslint/no-explicit-any: off */
 import { loadPyodide } from 'pyodide'
-import { preparePythonCode } from './prepareEnvCode.ts'
+import * as path from 'jsr:@std/path'
 import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js'
 
 export interface CodeFile {
@@ -52,6 +52,7 @@ export async function runCode(
   pathlib.Path(dirPath).mkdir()
   const moduleName = '_prepare_env'
 
+  const preparePythonCode = await loadPrepareCode()
   pathlib.Path(`${dirPath}/${moduleName}.py`).write_text(preparePythonCode)
 
   const preparePyEnv: PreparePyEnv = pyodide.pyimport(moduleName)
@@ -168,4 +169,18 @@ interface PreparePyEnv {
   prepare_env: (files: CodeFile[]) => Promise<PrepareSuccess | PrepareError>
   // deno-lint-ignore no-explicit-any
   dump_json: (value: any) => string | null
+}
+
+let cachedPreparePythonCode: string | null = null
+
+async function loadPrepareCode(): Promise<string> {
+  if (cachedPreparePythonCode) {
+    return cachedPreparePythonCode
+  }
+  if (!import.meta.dirname) {
+    throw new Error('import.meta.dirname is not defined, unable to load prepare_code.py')
+  }
+  const filePath = path.join(import.meta.dirname, 'prepare.py')
+  cachedPreparePythonCode = await Deno.readTextFile(filePath)
+  return cachedPreparePythonCode
 }
