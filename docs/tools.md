@@ -48,7 +48,7 @@ def get_player_name(ctx: RunContext[str]) -> str:
 
 
 dice_result = agent.run_sync('My guess is 4', deps='Anne')  # (5)!
-print(dice_result.data)
+print(dice_result.output)
 #> Congratulations Anne, you guessed correctly! You're a winner!
 ```
 
@@ -230,9 +230,9 @@ agent_b = Agent(
 dice_result = {}
 dice_result['a'] = agent_a.run_sync('My guess is 6', deps='Yashar')
 dice_result['b'] = agent_b.run_sync('My guess is 4', deps='Anne')
-print(dice_result['a'].data)
+print(dice_result['a'].output)
 #> Tough luck, Yashar, you rolled a 4. Better luck next time.
-print(dice_result['b'].data)
+print(dice_result['b'].output)
 #> Congratulations Anne, you guessed correctly! You're a winner!
 ```
 
@@ -241,9 +241,9 @@ print(dice_result['b'].data)
 
 _(This example is complete, it can be run "as is")_
 
-## Function Tools vs. Structured Results
+## Function Tools vs. Structured Outputs
 
-As the name suggests, function tools use the model's "tools" or "functions" API to let the model know what is available to call. Tools or functions are also used to define the schema(s) for structured responses, thus a model might have access to many tools, some of which call function tools while others end the run and return a result.
+As the name suggests, function tools use the model's "tools" or "functions" API to let the model know what is available to call. Tools or functions are also used to define the schema(s) for structured responses, thus a model might have access to many tools, some of which call function tools while others end the run and produce a final output.
 
 ## Function tools and schema
 
@@ -334,7 +334,7 @@ def foobar(f: Foobar) -> str:
 
 test_model = TestModel()
 result = agent.run_sync('hello', model=test_model)
-print(result.data)
+print(result.output)
 #> {"foobar":"x=0 y='a' z=3.14"}
 print(test_model.last_model_request_parameters.function_tools)
 """
@@ -400,10 +400,10 @@ def hitchhiker(ctx: RunContext[int], answer: str) -> str:
 
 
 result = agent.run_sync('testing...', deps=41)
-print(result.data)
+print(result.output)
 #> success (no tool calls)
 result = agent.run_sync('testing...', deps=42)
-print(result.data)
+print(result.output)
 #> {"hitchhiker":"42 a"}
 ```
 
@@ -440,7 +440,7 @@ test_model = TestModel()
 agent = Agent(test_model, tools=[greet_tool], deps_type=Literal['human', 'machine'])
 
 result = agent.run_sync('testing...', deps='human')
-print(result.data)
+print(result.output)
 #> {"greet":"hello a"}
 print(test_model.last_model_request_parameters.function_tools)
 """

@@ -12,7 +12,7 @@ import anyio
 import anyio.to_thread
 from typing_extensions import ParamSpec, assert_never
 
-from pydantic_ai import _utils, result
+from pydantic_ai import _utils, usage
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -166,8 +166,8 @@ class BedrockConverseModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
     @staticmethod
@@ -189,7 +189,7 @@ class BedrockConverseModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, result.Usage]:
+    ) -> tuple[ModelResponse, usage.Usage]:
         response = await self._messages_create(messages, False, model_settings, model_request_parameters)
         return await self._process_response(response)
 
@@ -203,7 +203,7 @@ class BedrockConverseModel(Model):
         response = await self._messages_create(messages, True, model_settings, model_request_parameters)
         yield BedrockStreamedResponse(_model_name=self.model_name, _event_stream=response)
 
-    async def _process_response(self, response: ConverseResponseTypeDef) -> tuple[ModelResponse, result.Usage]:
+    async def _process_response(self, response: ConverseResponseTypeDef) -> tuple[ModelResponse, usage.Usage]:
         items: list[ModelResponsePart] = []
         if message := response['output'].get('message'):
             for item in message['content']:
@@ -219,12 +219,12 @@ class BedrockConverseModel(Model):
                             tool_call_id=tool_use['toolUseId'],
                         ),
                     )
-        usage = result.Usage(
+        u = usage.Usage(
             request_tokens=response['usage']['inputTokens'],
             response_tokens=response['usage']['outputTokens'],
             total_tokens=response['usage']['totalTokens'],
         )
-        return ModelResponse(items, model_name=self.model_name), usage
+        return ModelResponse(items, model_name=self.model_name), u
 
     @overload
     async def _messages_create(
@@ -257,7 +257,7 @@ class BedrockConverseModel(Model):
         support_tools_choice = self.model_name.startswith(('anthropic', 'us.anthropic'))
         if not tools or not support_tools_choice:
             tool_choice: ToolChoiceTypeDef = {}
-        elif not model_request_parameters.allow_text_result:
+        elif not model_request_parameters.allow_text_output:
             tool_choice = {'any': {}}
         else:
             tool_choice = {'auto': {}}
@@ -489,8 +489,8 @@ class BedrockStreamedResponse(StreamedResponse):
         """Get the model name of the response."""
         return self._model_name
 
-    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> result.Usage:
-        return result.Usage(
+    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.Usage:
+        return usage.Usage(
             request_tokens=metadata['usage']['inputTokens'],
             response_tokens=metadata['usage']['outputTokens'],
             total_tokens=metadata['usage']['totalTokens'],

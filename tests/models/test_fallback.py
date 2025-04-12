@@ -49,7 +49,7 @@ def test_first_successful() -> None:
     fallback_model = FallbackModel(success_model, failure_model)
     agent = Agent(model=fallback_model)
     result = agent.run_sync('hello')
-    assert result.data == snapshot('success')
+    assert result.output == snapshot('success')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -70,7 +70,7 @@ def test_first_failed() -> None:
     fallback_model = FallbackModel(failure_model, success_model)
     agent = Agent(model=fallback_model)
     result = agent.run_sync('hello')
-    assert result.data == snapshot('success')
+    assert result.output == snapshot('success')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -95,7 +95,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, success_model)
     agent = Agent(model=fallback_model, instrument=True)
     result = agent.run_sync('hello')
-    assert result.data == snapshot('success')
+    assert result.output == snapshot('success')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -123,7 +123,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
-                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:success_response:',
                     'gen_ai.system': 'function',
@@ -193,7 +193,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                 'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
-                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
                     'gen_ai.system': 'function',
@@ -341,4 +341,4 @@ async def test_fallback_condition_tuple() -> None:
     agent = Agent(model=fallback_model)
 
     response = await agent.run('hello')
-    assert response.data == 'success'
+    assert response.output == 'success'

@@ -65,7 +65,7 @@ For details on when we'll accept contributions adding new models to PydanticAI, 
 ## Fallback Model
 
 You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models
-in sequence until one returns a successful result. Under the hood, PydanticAI automatically switches
+in sequence until one successfully returns a result. Under the hood, PydanticAI automatically switches
 from one model to the next if the current model returns a 4xx or 5xx status code.
 
 In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
@@ -110,7 +110,7 @@ print(response.all_messages())
 """
 ```
 
-The `ModelResponse` message above indicates in the `model_name` field that the result was returned by the Anthropic model, which is the second model specified in the `FallbackModel`.
+The `ModelResponse` message above indicates in the `model_name` field that the output was returned by the Anthropic model, which is the second model specified in the `FallbackModel`.
 
 !!! note
     Each model's options should be configured individually. For example, `base_url`, `api_key`, and custom clients should be set on each model itself, not on the `FallbackModel`.

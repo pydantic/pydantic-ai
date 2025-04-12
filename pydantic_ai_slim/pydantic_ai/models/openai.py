@@ -253,7 +253,7 @@ class OpenAIModel(Model):
         # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_result:
+        elif not model_request_parameters.allow_text_output:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -318,8 +318,8 @@ class OpenAIModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
     async def _map_message(self, message: ModelMessage) -> AsyncIterable[chat.ChatCompletionMessageParam]:
@@ -598,7 +598,7 @@ class OpenAIResponsesModel(Model):
         # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_result:
+        elif not model_request_parameters.allow_text_output:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -639,8 +639,8 @@ class OpenAIResponsesModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
     @staticmethod
@@ -1066,6 +1066,6 @@ def _customize_request_parameters(model_request_parameters: ModelRequestParamete
 
     return ModelRequestParameters(
         function_tools=[_customize_tool_def(tool) for tool in model_request_parameters.function_tools],
-        allow_text_result=model_request_parameters.allow_text_result,
-        result_tools=[_customize_tool_def(tool) for tool in model_request_parameters.result_tools],
+        allow_text_output=model_request_parameters.allow_text_output,
+        output_tools=[_customize_tool_def(tool) for tool in model_request_parameters.output_tools],
     )
