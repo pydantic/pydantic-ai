@@ -211,6 +211,7 @@ async def close_cached_httpx_client() -> AsyncIterator[None]:
         'mistral',
         'cohere',
         'deepseek',
+        None,
     ]:
         await cached_async_http_client(provider=provider).aclose()
 
@@ -230,6 +231,12 @@ def audio_content(assets_path: Path) -> BinaryContent:
 def image_content(assets_path: Path) -> BinaryContent:
     image_bytes = assets_path.joinpath('kiwi.png').read_bytes()
     return BinaryContent(data=image_bytes, media_type='image/png')
+
+
+@pytest.fixture(scope='session')
+def video_content(assets_path: Path) -> BinaryContent:
+    video_bytes = assets_path.joinpath('small_video.mp4').read_bytes()
+    return BinaryContent(data=video_bytes, media_type='video/mp4')
 
 
 @pytest.fixture(scope='session')

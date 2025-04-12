@@ -29,6 +29,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from ..providers import Provider, infer_provider
 from ..result import Usage
@@ -503,6 +504,8 @@ class MistralModel(Model):
                         raise RuntimeError('Only image binary content is supported for Mistral.')
                 elif isinstance(item, DocumentUrl):
                     raise RuntimeError('DocumentUrl is not supported in Mistral.')
+                elif isinstance(item, VideoUrl):
+                    raise RuntimeError('VideoUrl is not supported in Mistral.')
                 else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
         return MistralUserMessage(content=content)

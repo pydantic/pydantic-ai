@@ -15,7 +15,14 @@ from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import ParamSpec, TypeAlias, TypeGuard, is_typeddict
 
+from pydantic_graph._utils import AbstractSpan
+
+AbstractSpan = AbstractSpan
+
 if TYPE_CHECKING:
+    from pydantic_ai.agent import AgentRun, AgentRunResult
+    from pydantic_graph import GraphRun, GraphRunResult
+
     from . import messages as _messages
     from .tools import ObjectJsonSchema
 
@@ -281,3 +288,16 @@ class PeekableAsyncStream(Generic[T]):
         except StopAsyncIteration:
             self._exhausted = True
             raise
+
+
+def get_traceparent(x: AgentRun | AgentRunResult | GraphRun | GraphRunResult) -> str:
+    import logfire
+    import logfire_api
+    from logfire.experimental.annotations import get_traceparent
+
+    span: AbstractSpan | None = x._span(required=False)  # type: ignore[reportPrivateUsage]
+    if not span:  # pragma: no cover
+        return ''
+    if isinstance(span, logfire_api.LogfireSpan):  # pragma: no cover
+        assert isinstance(span, logfire.LogfireSpan)
+    return get_traceparent(span)

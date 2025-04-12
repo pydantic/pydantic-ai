@@ -20,7 +20,7 @@ If you clone the repo, you should instead use `uv sync --extra examples` to inst
 
 ### Setting model environment variables
 
-These examples will need you to set up authentication with one or more of the LLMs, see the [model configuration](../models.md) docs for details on how to do this.
+These examples will need you to set up authentication with one or more of the LLMs, see the [model configuration](../models/index.md) docs for details on how to do this.
 
 TL;DR: in most cases you'll need to set one of the following environment variables:
 
