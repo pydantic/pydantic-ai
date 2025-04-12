@@ -51,6 +51,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import (
         OpenAIModel,
         OpenAIModelSettings,
+        OpenAIResponsesModel,
         OpenAISystemPromptRole,
         _StrictSchemaHelper,  # pyright: ignore[reportPrivateUsage]
     )
@@ -1222,3 +1223,80 @@ async def test_openai_model_without_system_prompt(allow_model_requests: None, op
     assert result.output == snapshot(
         "That's right—I am a potato! A spud of many talents, here to help you out. How can this humble potato be of service today?"
     )
+
+
+class TestBinaryContentCSV:
+    """Test that CSV files are correctly handled in binary content."""
+
+    async def test_openai_model_csv_support(self, csv_content: BinaryContent):
+        """Test that OpenAIModel correctly handles CSV files in BinaryContent."""
+        # Create a model instance and test its _map_user_prompt directly, which doesn't require a model request
+        model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+        # Create a request with CSV binary content
+        user_prompt = UserPromptPart(["Here's some CSV data:", csv_content])
+
+        # Test the _map_user_prompt method directly
+        mapped_result = await model._map_user_prompt(user_prompt)  # pyright: ignore[reportPrivateUsage]
+
+        # Verify the mapped result contains the CSV data as text
+        assert isinstance(mapped_result['content'], list)
+        content_parts = mapped_result['content']
+
+        # There should be 2 parts: the text and the decoded CSV
+        assert len(content_parts) == 2
+
+        # First part should be the text prompt
+        assert content_parts[0]['type'] == 'text'
+        assert content_parts[0]['text'] == "Here's some CSV data:"
+
+        # The second part should be the decoded CSV as text
+        assert content_parts[1]['type'] == 'text'
+        assert 'John,30,New York' in content_parts[1]['text']
+        assert 'Alice,25,San Francisco' in content_parts[1]['text']
+        assert 'Bob,35,Chicago' in content_parts[1]['text']
+
+    async def test_openai_responses_model_csv_support(self, csv_content: BinaryContent):
+        """Test that OpenAIResponsesModel correctly handles CSV files in BinaryContent."""
+        # Create a model instance
+        model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+        # Create a request with CSV binary content
+        user_prompt = UserPromptPart(["Here's some CSV data:", csv_content])
+
+        # Test the _map_user_prompt method directly
+        mapped_result = await model._map_user_prompt(user_prompt)  # pyright: ignore[reportPrivateUsage]
+
+        # Verify the mapped result contains the CSV data as text
+        assert isinstance(mapped_result['content'], list)
+        content_parts = mapped_result['content']
+
+        # There should be 2 parts: the text and the decoded CSV
+        assert len(content_parts) == 2
+
+        # First part should be the text prompt
+        assert content_parts[0]['type'] == 'input_text'
+        assert content_parts[0]['text'] == "Here's some CSV data:"
+
+        # The second part should be the CSV as a file
+        assert content_parts[1]['type'] == 'input_file'
+        # For CSV files in OpenAIResponsesModel, the content is in file_data, not text
+        assert 'file_data' in content_parts[1]
+        # The file_data should contain the CSV content as base64 encoded data
+        assert 'data:text/csv;base64,' in content_parts[1]['file_data']
+
+    async def test_unsupported_binary_content_type(self):
+        """Test that unsupported binary content types still raise errors."""
+        # Create unsupported binary content
+        unsupported_content = BinaryContent(data=b'some binary data', media_type='application/octet-stream')
+
+        # Create a model instance
+        model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+        # Create a request with unsupported binary content
+        user_prompt = UserPromptPart(["Here's some binary data:", unsupported_content])
+
+        # Verify that it raises the expected error
+        with pytest.raises(RuntimeError, match='Unsupported binary content type: application/octet-stream'):
+            # Access protected method for testing purposes, ignoring pyright's warning
+            await model._map_user_prompt(user_prompt)  # pyright: ignore[reportPrivateUsage]
