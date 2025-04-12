@@ -418,7 +418,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import UsageLimits
 
 
-class NeverResultType(TypedDict):
+class NeverOutputType(TypedDict):
     """
     Never ever coerce data to this type.
     """
@@ -429,7 +429,7 @@ class NeverResultType(TypedDict):
 agent = Agent(
     'anthropic:claude-3-5-sonnet-latest',
     retries=3,
-    output_type=NeverResultType,
+    output_type=NeverOutputType,
     system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
 )
 
