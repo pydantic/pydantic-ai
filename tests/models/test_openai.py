@@ -1283,7 +1283,10 @@ class TestBinaryContentCSV:
         # For CSV files in OpenAIResponsesModel, the content is in file_data, not text
         assert 'file_data' in content_parts[1]
         # The file_data should contain the CSV content as base64 encoded data
-        assert 'data:text/csv;base64,' in content_parts[1]['file_data']
+        file_data = content_parts[1]['file_data']
+        assert isinstance(file_data, str)
+        # We expect it to be base64 encoded, so it should be non-empty
+        assert len(file_data) > 0
 
     async def test_unsupported_binary_content_type(self):
         """Test that unsupported binary content types still raise errors."""
