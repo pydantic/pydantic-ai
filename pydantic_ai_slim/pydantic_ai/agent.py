@@ -259,7 +259,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning)
             output_type = _deprecated_kwargs['result_type']
 
-        self.output_type = ToolOutput.unwrap_type(output_type)
+        self.output_type = output_type
 
         self.instrument = instrument
 
@@ -563,7 +563,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         new_message_index = len(message_history) if message_history else 0
         output_schema = self._prepare_output_schema(output_type)
 
-        output_type_ = ToolOutput.unwrap_type(output_type or self.output_type)
+        output_type_ = output_type or self.output_type
 
         # Build the graph
         graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (

@@ -93,13 +93,6 @@ class ToolOutput(Generic[OutputDataT]):
         #             raise ValueError('Unable to determine type_ from call signature; please provide it explicitly')
         # self.output_call = call
 
-    @staticmethod
-    def unwrap_type(output_type: type[T] | ToolOutput[T]) -> type[T]:
-        if isinstance(output_type, ToolOutput):
-            return output_type.output_type
-        else:
-            return output_type
-
 
 @dataclass
 class AgentStream(Generic[AgentDepsT, OutputDataT]):

@@ -25,7 +25,7 @@ from . import (
     usage as _usage,
 )
 from .models.instrumented import InstrumentedModel
-from .result import OutputDataT
+from .result import OutputDataT, ToolOutput
 from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, Tool, ToolDefinition
 
@@ -53,7 +53,7 @@ EndStrategy = Literal['early', 'exhaustive']
 - `'exhaustive'`: Process all tool calls even after finding a final result
 """
 DepsT = TypeVar('DepsT')
-ResultT = TypeVar('ResultT')
+OutputT = TypeVar('OutputT')
 
 
 @dataclasses.dataclass
@@ -784,19 +784,19 @@ def get_captured_run_messages() -> _RunMessages:
 
 
 def build_agent_graph(
-    name: str | None, deps_type: type[DepsT], output_type: type[ResultT]
-) -> Graph[GraphAgentState, GraphAgentDeps[DepsT, result.FinalResult[ResultT]], result.FinalResult[ResultT]]:
+    name: str | None, deps_type: type[DepsT], output_type: type[OutputT] | ToolOutput[OutputT]
+) -> Graph[GraphAgentState, GraphAgentDeps[DepsT, result.FinalResult[OutputT]], result.FinalResult[OutputT]]:
     """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
     nodes = (
         UserPromptNode[DepsT],
         ModelRequestNode[DepsT],
         CallToolsNode[DepsT],
     )
-    graph = Graph[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[ResultT]](
+    graph = Graph[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[OutputT]](
         nodes=nodes,
         name=name or 'Agent',
         state_type=GraphAgentState,
-        run_end_type=result.FinalResult[output_type],
+        run_end_type=result.FinalResult[OutputT],
         auto_instrument=False,
     )
     return graph
