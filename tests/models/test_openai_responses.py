@@ -43,7 +43,7 @@ async def test_openai_responses_model_simple_response(allow_model_requests: None
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
     result = await agent.run('What is the capital of France?')
-    assert result.data == snapshot('The capital of France is Paris.')
+    assert result.output == snapshot('The capital of France is Paris.')
 
 
 async def test_openai_responses_model_simple_response_with_tool_call(allow_model_requests: None, openai_api_key: str):
@@ -56,19 +56,19 @@ async def test_openai_responses_model_simple_response_with_tool_call(allow_model
         return 'Potato City'
 
     result = await agent.run('What is the capital of PotatoLand?')
-    assert result.data == snapshot('The capital of PotatoLand is Potato City.')
+    assert result.output == snapshot('The capital of PotatoLand is Potato City.')
 
 
-async def test_openai_responses_result_type(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_output_type(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
-    class MyResult(TypedDict):
+    class MyOutput(TypedDict):
         name: str
         age: int
 
-    agent = Agent(model=model, result_type=MyResult)
+    agent = Agent(model=model, output_type=MyOutput)
     result = await agent.run('Give me the name and age of Brazil, Argentina, and Chile.')
-    assert result.data == snapshot({'name': 'Brazil', 'age': 2023})  # pragma: no cover
+    assert result.output == snapshot({'name': 'Brazil', 'age': 2023})  # pragma: no cover
 
 
 async def test_openai_responses_reasoning_effort(allow_model_requests: None, openai_api_key: str):
@@ -77,7 +77,7 @@ async def test_openai_responses_reasoning_effort(allow_model_requests: None, ope
     result = await agent.run(
         'Explain me how to cook uruguayan alfajor. Do not send whitespaces at the end of the lines.'
     )
-    assert [line.strip() for line in result.data.splitlines()] == snapshot(
+    assert [line.strip() for line in result.output.splitlines()] == snapshot(
         [
             'Ingredients for the dough:',
             '• 300 g cornstarch',
@@ -128,7 +128,7 @@ async def test_openai_responses_reasoning_generate_summary(allow_model_requests:
         ),
     )
     result = await agent.run('What should I do to cross the street?')
-    assert result.data == snapshot("""\
+    assert result.output == snapshot("""\
 To cross the street safely, follow these steps:
 
 1. **Use a Crosswalk**: Always use a designated crosswalk or pedestrian crossing whenever available.
@@ -146,7 +146,7 @@ async def test_openai_responses_system_prompt(allow_model_requests: None, openai
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
     result = await agent.run('What is the capital of France?')
-    assert result.data == snapshot('The capital of France is Paris.')
+    assert result.output == snapshot('The capital of France is Paris.')
 
 
 async def test_openai_responses_model_retry(allow_model_requests: None, openai_api_key: str):
@@ -228,7 +228,7 @@ async def test_image_as_binary_content_input(
     agent = Agent(m)
 
     result = await agent.run(['What fruit is in the image?', image_content])
-    assert result.data == snapshot('The fruit in the image is a kiwi.')
+    assert result.output == snapshot('The fruit in the image is a kiwi.')
 
 
 async def test_openai_responses_audio_as_binary_content_input(
@@ -248,7 +248,7 @@ async def test_openai_responses_document_as_binary_content_input(
     agent = Agent(m)
 
     result = await agent.run(['What is in the document?', document_content])
-    assert result.data == snapshot('The document contains the text "Dummy PDF file."')
+    assert result.output == snapshot('The document contains the text "Dummy PDF file."')
 
 
 async def test_openai_responses_document_url_input(allow_model_requests: None, openai_api_key: str):
@@ -258,7 +258,9 @@ async def test_openai_responses_document_url_input(allow_model_requests: None, o
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.data == snapshot('The main content of this document is a simple text placeholder: "Dummy PDF file."')
+    assert result.output == snapshot(
+        'The main content of this document is a simple text placeholder: "Dummy PDF file."'
+    )
 
 
 async def test_openai_responses_text_document_url_input(allow_model_requests: None, openai_api_key: str):
@@ -268,7 +270,7 @@ async def test_openai_responses_text_document_url_input(allow_model_requests: No
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
-    assert result.data == snapshot(
+    assert result.output == snapshot(
         'The main content of this document is an example of a TXT file type, with an explanation of the use of placeholder names like "John Doe" and "Jane Doe" in legal, medical, and other contexts. It discusses the practice in the U.S. and Canada, mentions equivalent practices in other English-speaking countries, and touches on cultural references. The document also notes that it\'s an example file created by an online conversion tool, with content sourced from Wikipedia under a Creative Commons license.'
     )
 
@@ -283,7 +285,7 @@ async def test_openai_responses_image_url_input(allow_model_requests: None, open
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.data == snapshot("Hello! I see you've shared an image of a potato. How can I assist you today?")
+    assert result.output == snapshot("Hello! I see you've shared an image of a potato. How can I assist you today?")
 
 
 async def test_openai_responses_stream(allow_model_requests: None, openai_api_key: str):

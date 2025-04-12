@@ -12,7 +12,7 @@ from typing_inspection.introspection import is_union_origin
 
 from . import _utils, messages as _messages
 from .exceptions import ModelRetry
-from .result import ResultDataT, ResultDataT_inv, ResultValidatorFunc
+from .result import DEFAULT_OUTPUT_TOOL_NAME, OutputDataT, OutputDataT_inv, OutputValidatorFunc, ToolOutput
 from .tools import AgentDepsT, GenerateToolJsonSchema, RunContext, ToolDefinition
 
 T = TypeVar('T')
@@ -20,8 +20,8 @@ T = TypeVar('T')
 
 
 @dataclass
-class ResultValidator(Generic[AgentDepsT, ResultDataT_inv]):
-    function: ResultValidatorFunc[AgentDepsT, ResultDataT_inv]
+class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
+    function: OutputValidatorFunc[AgentDepsT, OutputDataT_inv]
     _takes_ctx: bool = field(init=False)
     _is_async: bool = field(init=False)
 
@@ -77,47 +77,68 @@ class ToolRetryError(Exception):
 
 
 @dataclass
-class ResultSchema(Generic[ResultDataT]):
+class OutputSchema(Generic[OutputDataT]):
     """Model the final response from an agent run.
 
-    Similar to `Tool` but for the final result of running an agent.
+    Similar to `Tool` but for the final output of running an agent.
     """
 
-    tools: dict[str, ResultTool[ResultDataT]]
-    allow_text_result: bool
+    tools: dict[str, OutputSchemaTool[OutputDataT]]
+    allow_text_output: bool
 
     @classmethod
     def build(
-        cls: type[ResultSchema[T]], response_type: type[T], name: str, description: str | None
-    ) -> ResultSchema[T] | None:
-        """Build a ResultSchema dataclass from a response type."""
-        if response_type is str:
+        cls: type[OutputSchema[T]],
+        output_type: type[T] | ToolOutput[T],
+        name: str | None = None,
+        description: str | None = None,
+        strict: bool | None = None,
+    ) -> OutputSchema[T] | None:
+        """Build an OutputSchema dataclass from a response type."""
+        if output_type is str:
             return None
 
-        if response_type_option := extract_str_from_union(response_type):
-            response_type = response_type_option.value
-            allow_text_result = True
+        if isinstance(output_type, ToolOutput):
+            # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
+            name = output_type.name
+            description = output_type.description
+            output_type_ = output_type.output_type
+            strict = output_type.strict
         else:
-            allow_text_result = False
+            output_type_ = output_type
 
-        def _build_tool(a: Any, tool_name_: str, multiple: bool) -> ResultTool[T]:
-            return cast(ResultTool[T], ResultTool(a, tool_name_, description, multiple))
+        if output_type_option := extract_str_from_union(output_type):
+            output_type_ = output_type_option.value
+            allow_text_output = True
+        else:
+            allow_text_output = False
 
-        tools: dict[str, ResultTool[T]] = {}
-        if args := get_union_args(response_type):
+        tools: dict[str, OutputSchemaTool[T]] = {}
+        if args := get_union_args(output_type_):
             for i, arg in enumerate(args, start=1):
-                tool_name = union_tool_name(name, arg)
+                tool_name = raw_tool_name = union_tool_name(name, arg)
                 while tool_name in tools:
-                    tool_name = f'{tool_name}_{i}'
-                tools[tool_name] = _build_tool(arg, tool_name, True)
+                    tool_name = f'{raw_tool_name}_{i}'
+                tools[tool_name] = cast(
+                    OutputSchemaTool[T],
+                    OutputSchemaTool(
+                        output_type=arg, name=tool_name, description=description, multiple=True, strict=strict
+                    ),
+                )
         else:
-            tools[name] = _build_tool(response_type, name, False)
+            name = name or DEFAULT_OUTPUT_TOOL_NAME
+            tools[name] = cast(
+                OutputSchemaTool[T],
+                OutputSchemaTool(
+                    output_type=output_type_, name=name, description=description, multiple=False, strict=strict
+                ),
+            )
 
-        return cls(tools=tools, allow_text_result=allow_text_result)
+        return cls(tools=tools, allow_text_output=allow_text_output)
 
     def find_named_tool(
         self, parts: Iterable[_messages.ModelResponsePart], tool_name: str
-    ) -> tuple[_messages.ToolCallPart, ResultTool[ResultDataT]] | None:
+    ) -> tuple[_messages.ToolCallPart, OutputSchemaTool[OutputDataT]] | None:
         """Find a tool that matches one of the calls, with a specific name."""
         for part in parts:
             if isinstance(part, _messages.ToolCallPart):
@@ -127,7 +148,7 @@ class ResultSchema(Generic[ResultDataT]):
     def find_tool(
         self,
         parts: Iterable[_messages.ModelResponsePart],
-    ) -> Iterator[tuple[_messages.ToolCallPart, ResultTool[ResultDataT]]]:
+    ) -> Iterator[tuple[_messages.ToolCallPart, OutputSchemaTool[OutputDataT]]]:
         """Find a tool that matches one of the calls."""
         for part in parts:
             if isinstance(part, _messages.ToolCallPart):
@@ -147,16 +168,16 @@ DEFAULT_DESCRIPTION = 'The final response which ends this conversation'
 
 
 @dataclass(init=False)
-class ResultTool(Generic[ResultDataT]):
+class OutputSchemaTool(Generic[OutputDataT]):
     tool_def: ToolDefinition
     type_adapter: TypeAdapter[Any]
 
-    def __init__(self, response_type: type[ResultDataT], name: str, description: str | None, multiple: bool):
-        """Build a ResultTool dataclass from a response type."""
-        assert response_type is not str, 'ResultTool does not support str as a response type'
-
-        if _utils.is_model_like(response_type):
-            self.type_adapter = TypeAdapter(response_type)
+    def __init__(
+        self, *, output_type: type[OutputDataT], name: str, description: str | None, multiple: bool, strict: bool | None
+    ):
+        """Build a OutputSchemaTool from a response type."""
+        if _utils.is_model_like(output_type):
+            self.type_adapter = TypeAdapter(output_type)
             outer_typed_dict_key: str | None = None
             # noinspection PyArgumentList
             parameters_json_schema = _utils.check_object_json_schema(
@@ -165,7 +186,7 @@ class ResultTool(Generic[ResultDataT]):
         else:
             response_data_typed_dict = TypedDict(  # noqa: UP013
                 'response_data_typed_dict',
-                {'response': response_type},  # pyright: ignore[reportInvalidTypeForm]
+                {'response': output_type},  # pyright: ignore[reportInvalidTypeForm]
             )
             self.type_adapter = TypeAdapter(response_data_typed_dict)
             outer_typed_dict_key = 'response'
@@ -184,19 +205,20 @@ class ResultTool(Generic[ResultDataT]):
         else:
             tool_description = description or DEFAULT_DESCRIPTION
             if multiple:
-                tool_description = f'{union_arg_name(response_type)}: {tool_description}'
+                tool_description = f'{union_arg_name(output_type)}: {tool_description}'
 
         self.tool_def = ToolDefinition(
             name=name,
             description=tool_description,
             parameters_json_schema=parameters_json_schema,
             outer_typed_dict_key=outer_typed_dict_key,
+            strict=strict,
         )
 
     def validate(
         self, tool_call: _messages.ToolCallPart, allow_partial: bool = False, wrap_validation_errors: bool = True
-    ) -> ResultDataT:
-        """Validate a result message.
+    ) -> OutputDataT:
+        """Validate an output message.
 
         Args:
             tool_call: The tool call from the LLM to validate.
@@ -204,14 +226,14 @@ class ResultTool(Generic[ResultDataT]):
             wrap_validation_errors: If true, wrap the validation errors in a retry message.
 
         Returns:
-            Either the validated result data (left) or a retry message (right).
+            Either the validated output data (left) or a retry message (right).
         """
         try:
             pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
             if isinstance(tool_call.args, str):
-                result = self.type_adapter.validate_json(tool_call.args, experimental_allow_partial=pyd_allow_partial)
+                output = self.type_adapter.validate_json(tool_call.args, experimental_allow_partial=pyd_allow_partial)
             else:
-                result = self.type_adapter.validate_python(tool_call.args, experimental_allow_partial=pyd_allow_partial)
+                output = self.type_adapter.validate_python(tool_call.args, experimental_allow_partial=pyd_allow_partial)
         except ValidationError as e:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -224,21 +246,21 @@ class ResultTool(Generic[ResultDataT]):
                 raise
         else:
             if k := self.tool_def.outer_typed_dict_key:
-                result = result[k]
-            return result
+                output = output[k]
+            return output
 
 
-def union_tool_name(base_name: str, union_arg: Any) -> str:
-    return f'{base_name}_{union_arg_name(union_arg)}'
+def union_tool_name(base_name: str | None, union_arg: Any) -> str:
+    return f'{base_name or DEFAULT_OUTPUT_TOOL_NAME}_{union_arg_name(union_arg)}'
 
 
 def union_arg_name(union_arg: Any) -> str:
     return union_arg.__name__
 
 
-def extract_str_from_union(response_type: Any) -> _utils.Option[Any]:
+def extract_str_from_union(output_type: Any) -> _utils.Option[Any]:
     """Extract the string type from a Union, return the remaining union or remaining type."""
-    union_args = get_union_args(response_type)
+    union_args = get_union_args(output_type)
     if any(t is str for t in union_args):
         remain_args: list[Any] = []
         includes_str = False
@@ -255,7 +277,7 @@ def extract_str_from_union(response_type: Any) -> _utils.Option[Any]:
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
-    """Extract the arguments of a Union type if `response_type` is a union, otherwise return an empty tuple."""
+    """Extract the arguments of a Union type if `output_type` is a union, otherwise return an empty tuple."""
     if typing_objects.is_typealiastype(tp):
         tp = tp.__value__
 

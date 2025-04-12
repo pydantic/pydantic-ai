@@ -37,6 +37,6 @@ async def test_stop_settings(allow_model_requests: None, model: Model) -> None:
 
     # NOTE: Bedrock has a slightly different behavior. It will include the stop sequence in the response.
     if model.system == 'bedrock':
-        assert result.data.endswith('Paris')
+        assert result.output.endswith('Paris')
     else:
-        assert 'Paris' not in result.data
+        assert 'Paris' not in result.output

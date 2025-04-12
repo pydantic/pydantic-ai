@@ -24,7 +24,7 @@ roulette_agent = Agent(
     'groq:llama-3.3-70b-versatile',
     deps_type=Deps,
     retries=3,
-    result_type=bool,
+    output_type=bool,
     system_prompt=(
         'Use the `roulette_wheel` function to determine if the customer has won based on the number they bet on.'
     ),
@@ -54,13 +54,13 @@ async def main():
     async with roulette_agent.run_stream(
         'Put my money on square eighteen', deps=deps
     ) as response:
-        result = await response.get_data()
+        result = await response.get_output()
         print('Bet on 18:', result)
 
     async with roulette_agent.run_stream(
         'I bet five is the winner', deps=deps
     ) as response:
-        result = await response.get_data()
+        result = await response.get_output()
         print('Bet on 5:', result)
 
 

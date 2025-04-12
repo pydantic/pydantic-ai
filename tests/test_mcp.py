@@ -62,7 +62,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, openai_api_ke
     agent = Agent(model, mcp_servers=[server])
     async with agent.run_mcp_servers():
         result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
-        assert result.data == snapshot('0 degrees Celsius is 32.0 degrees Fahrenheit.')
+        assert result.output == snapshot('0 degrees Celsius is 32.0 degrees Fahrenheit.')
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
