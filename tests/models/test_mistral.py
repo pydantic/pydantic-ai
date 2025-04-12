@@ -467,7 +467,7 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
     )
 
 
-async def test_request_result_type_with_arguments_str_response(allow_model_requests: None):
+async def test_request_output_type_with_arguments_str_response(allow_model_requests: None):
     completion = completion_message(
         MistralAssistantMessage(
             content=None,

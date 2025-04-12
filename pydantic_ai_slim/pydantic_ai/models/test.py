@@ -34,14 +34,14 @@ from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignor
 
 
 @dataclass
-class _TextOutput:
+class _WrappedTextOutput:
     """A private wrapper class to tag an output that came from the custom_output_text field."""
 
     value: str | None
 
 
 @dataclass
-class _OutputToolOutput:
+class _WrappedToolOutput:
     """A wrapper class to tag an output that came from the custom_output_args field."""
 
     value: Any | None
@@ -127,13 +127,13 @@ class TestModel(Model):
             tools_to_call = (function_tools_lookup[name] for name in self.call_tools)
             return [(r.name, r) for r in tools_to_call]
 
-    def _get_output(self, model_request_parameters: ModelRequestParameters) -> _TextOutput | _OutputToolOutput:
+    def _get_output(self, model_request_parameters: ModelRequestParameters) -> _WrappedTextOutput | _WrappedToolOutput:
         if self.custom_output_text is not None:
             assert model_request_parameters.allow_text_output, (
                 'Plain response not allowed, but `custom_output_text` is set.'
             )
             assert self.custom_output_args is None, 'Cannot set both `custom_output_text` and `custom_output_args`.'
-            return _TextOutput(self.custom_output_text)
+            return _WrappedTextOutput(self.custom_output_text)
         elif self.custom_output_args is not None:
             assert model_request_parameters.output_tools is not None, (
                 'No output tools provided, but `custom_output_args` is set.'
@@ -141,15 +141,15 @@ class TestModel(Model):
             output_tool = model_request_parameters.output_tools[0]
 
             if k := output_tool.outer_typed_dict_key:
-                return _OutputToolOutput({k: self.custom_output_args})
+                return _WrappedToolOutput({k: self.custom_output_args})
             else:
-                return _OutputToolOutput(self.custom_output_args)
+                return _WrappedToolOutput(self.custom_output_args)
         elif model_request_parameters.allow_text_output:
-            return _TextOutput(None)
+            return _WrappedTextOutput(None)
         elif model_request_parameters.output_tools:
-            return _OutputToolOutput(None)
+            return _WrappedToolOutput(None)
         else:
-            return _TextOutput(None)  # pragma: no cover
+            return _WrappedTextOutput(None)  # pragma: no cover
 
     def _request(
         self,
@@ -187,7 +187,7 @@ class TestModel(Model):
                             ToolCallPart(
                                 tool.name,
                                 output_wrapper.value
-                                if isinstance(output_wrapper, _OutputToolOutput) and output_wrapper.value is not None
+                                if isinstance(output_wrapper, _WrappedToolOutput) and output_wrapper.value is not None
                                 else self.gen_tool_args(tool),
                             )
                             for tool in output_tools
@@ -196,7 +196,7 @@ class TestModel(Model):
                     )
                 return ModelResponse(parts=retry_parts, model_name=self._model_name)
 
-        if isinstance(output_wrapper, _TextOutput):
+        if isinstance(output_wrapper, _WrappedTextOutput):
             if (response_text := output_wrapper.value) is None:
                 # build up details of tool responses
                 output: dict[str, Any] = {}

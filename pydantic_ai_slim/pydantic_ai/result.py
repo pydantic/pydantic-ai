@@ -17,7 +17,7 @@ from .usage import Usage, UsageLimits
 if TYPE_CHECKING:
     from . import _output
 
-__all__ = 'OutputDataT', 'OutputDataT_inv', 'OutputTool', 'OutputValidatorFunc'
+__all__ = 'OutputDataT', 'OutputDataT_inv', 'ToolOutput', 'OutputValidatorFunc'
 
 
 T = TypeVar('T')
@@ -56,7 +56,7 @@ DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 
 
 @dataclass(init=False)
-class OutputTool(Generic[OutputDataT]):
+class ToolOutput(Generic[OutputDataT]):
     """Marker class to use tools for structured outputs, and customize the tool."""
 
     output_type: type[OutputDataT]
@@ -94,8 +94,8 @@ class OutputTool(Generic[OutputDataT]):
         # self.output_call = call
 
     @staticmethod
-    def unwrap_type(output_type: type[T] | OutputTool[T]) -> type[T]:
-        if isinstance(output_type, OutputTool):
+    def unwrap_type(output_type: type[T] | ToolOutput[T]) -> type[T]:
+        if isinstance(output_type, ToolOutput):
             return output_type.output_type
         else:
             return output_type

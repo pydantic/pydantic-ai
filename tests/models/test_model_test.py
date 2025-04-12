@@ -75,7 +75,7 @@ def test_custom_output_args_model():
     assert result.output == Foo(foo='a', bar=1)
 
 
-def test_result_type():
+def test_output_type():
     agent = Agent(output_type=tuple[str, str])
     result = agent.run_sync('x', model=TestModel())
     assert result.output == ('a', 'a')

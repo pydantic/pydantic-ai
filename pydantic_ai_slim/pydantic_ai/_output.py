@@ -12,7 +12,7 @@ from typing_inspection.introspection import is_union_origin
 
 from . import _utils, messages as _messages
 from .exceptions import ModelRetry
-from .result import DEFAULT_OUTPUT_TOOL_NAME, OutputDataT, OutputDataT_inv, OutputTool, OutputValidatorFunc
+from .result import DEFAULT_OUTPUT_TOOL_NAME, OutputDataT, OutputDataT_inv, OutputValidatorFunc, ToolOutput
 from .tools import AgentDepsT, GenerateToolJsonSchema, RunContext, ToolDefinition
 
 T = TypeVar('T')
@@ -89,7 +89,7 @@ class OutputSchema(Generic[OutputDataT]):
     @classmethod
     def build(
         cls: type[OutputSchema[T]],
-        output_type: type[T] | OutputTool[T],
+        output_type: type[T] | ToolOutput[T],
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
@@ -98,7 +98,7 @@ class OutputSchema(Generic[OutputDataT]):
         if output_type is str:
             return None
 
-        if isinstance(output_type, OutputTool):
+        if isinstance(output_type, ToolOutput):
             # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
             name = output_type.name
             description = output_type.description
@@ -175,9 +175,7 @@ class OutputSchemaTool(Generic[OutputDataT]):
     def __init__(
         self, *, output_type: type[OutputDataT], name: str, description: str | None, multiple: bool, strict: bool | None
     ):
-        """Build a OutputTool dataclass from a response type."""
-        assert output_type is not str, 'OutputTool does not support str as a response type'
-
+        """Build a OutputSchemaTool from a response type."""
         if _utils.is_model_like(output_type):
             self.type_adapter = TypeAdapter(output_type)
             outer_typed_dict_key: str | None = None

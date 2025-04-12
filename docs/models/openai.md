@@ -219,7 +219,7 @@ class CityLocation(BaseModel):
 ollama_model = OpenAIModel(
     model_name='llama3.2', provider=OpenAIProvider(base_url='http://localhost:11434/v1')
 )
-agent = Agent(ollama_model, result_type=CityLocation)
+agent = Agent(ollama_model, output_type=CityLocation)
 
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
@@ -250,7 +250,7 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent(model=ollama_model, result_type=CityLocation)
+agent = Agent(model=ollama_model, output_type=CityLocation)
 
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
