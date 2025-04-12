@@ -421,6 +421,10 @@ class OpenAIModel(Model):
                         assert item.format in ('wav', 'mp3')
                         audio = InputAudio(data=base64_encoded, format=item.format)
                         content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
+                    elif item.media_type == 'text/csv':
+                        # Handle CSV files as text content
+                        csv_text = item.data.decode('utf-8')
+                        content.append(ChatCompletionContentPartTextParam(text=csv_text, type='text'))
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):  # pragma: no cover
@@ -739,6 +743,10 @@ class OpenAIResponsesModel(Model):
                         )
                     elif item.is_audio:
                         raise NotImplementedError('Audio as binary content is not supported for OpenAI Responses API.')
+                    elif item.media_type == 'text/csv':
+                        # Handle CSV files as text content
+                        csv_text = item.data.decode('utf-8')
+                        content.append(responses.ResponseInputTextParam(text=csv_text, type='input_text'))
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, ImageUrl):

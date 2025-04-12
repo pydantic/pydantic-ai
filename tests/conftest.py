@@ -356,3 +356,9 @@ def mock_snapshot_id(mocker: MockerFixture):
         return f'{node_id}:{i}'
 
     return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)
+
+
+@pytest.fixture
+def csv_content() -> BinaryContent:
+    csv_data = b'name,age,city\nJohn,30,New York\nAlice,25,San Francisco\nBob,35,Chicago'
+    return BinaryContent(data=csv_data, media_type='text/csv')
