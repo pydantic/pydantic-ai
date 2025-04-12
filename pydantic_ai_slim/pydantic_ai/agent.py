@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final,
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import Never, TypeGuard, TypeVar, deprecated
+from typing_extensions import Literal, Never, TypeGuard, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
@@ -27,6 +27,7 @@ from . import (
     result,
     usage as _usage,
 )
+from ._utils import AbstractSpan
 from .models.instrumented import InstrumentationSettings, InstrumentedModel
 from .result import FinalResult, OutputDataT, OutputTool, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
@@ -52,6 +53,7 @@ UserPromptNode = _agent_graph.UserPromptNode
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPServer
+
 
 __all__ = (
     'Agent',
@@ -311,7 +313,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     async def run(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -326,7 +328,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     async def run(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -342,7 +344,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @deprecated('`result_type` is deprecated, use `output_type` instead.')
     async def run(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         result_type: type[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -356,7 +358,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     async def run(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -428,7 +430,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None,
         *,
         output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -445,7 +447,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @deprecated('`result_type` is deprecated, use `output_type` instead.')
     def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None,
         *,
         result_type: type[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -460,7 +462,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @asynccontextmanager
     async def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -638,7 +640,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     def run_sync(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
@@ -652,7 +654,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     def run_sync(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT] | None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -668,7 +670,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @deprecated('`result_type` is deprecated, use `output_type` instead.')
     def run_sync(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         result_type: type[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -682,7 +684,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     def run_sync(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -751,7 +753,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     def run_stream(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
@@ -781,7 +783,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @deprecated('`result_type` is deprecated, use `output_type` instead.')
     def run_stream(
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         result_type: type[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -796,7 +798,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @asynccontextmanager
     async def run_stream(  # noqa C901
         self,
-        user_prompt: str | Sequence[_messages.UserContent],
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: type[RunOutputDataT] | OutputTool[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -1583,6 +1585,16 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         _agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[OutputDataT]
     ]
 
+    @overload
+    def _span(self, *, required: Literal[False]) -> AbstractSpan | None: ...
+    @overload
+    def _span(self) -> AbstractSpan: ...
+    def _span(self, *, required: bool = True) -> AbstractSpan | None:
+        span = self._graph_run._span(required=False)  # type: ignore[reportPrivateUsage]
+        if span is None and required:  # pragma: no cover
+            raise AttributeError('Span is not available for this agent run')
+        return span
+
     @property
     def ctx(self) -> GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]]:
         """The current context of the agent run."""
@@ -1620,6 +1632,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             graph_run_result.output.tool_name,
             graph_run_result.state,
             self._graph_run.deps.new_message_index,
+            self._graph_run._span(required=False),  # type: ignore[reportPrivateUsage]
         )
 
     def __aiter__(
@@ -1734,6 +1747,16 @@ class AgentRunResult(Generic[OutputDataT]):
     _output_tool_name: str | None = dataclasses.field(repr=False)
     _state: _agent_graph.GraphAgentState = dataclasses.field(repr=False)
     _new_message_index: int = dataclasses.field(repr=False)
+    _span_value: AbstractSpan | None = dataclasses.field(repr=False)
+
+    @overload
+    def _span(self, *, required: Literal[False]) -> AbstractSpan | None: ...
+    @overload
+    def _span(self) -> AbstractSpan: ...
+    def _span(self, *, required: bool = True) -> AbstractSpan | None:
+        if self._span_value is None and required:  # pragma: no cover
+            raise AttributeError('Span is not available for this agent run')
+        return self._span_value
 
     @property
     @deprecated('`result.data` is deprecated, use `result.output` instead.')

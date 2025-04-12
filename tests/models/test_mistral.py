@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 
 from ..conftest import IsNow, raise_if_exception, try_import
@@ -1815,6 +1816,16 @@ async def test_audio_as_binary_content_input(allow_model_requests: None):
 
     with pytest.raises(RuntimeError, match='Only image binary content is supported for Mistral.'):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type='audio/wav')])
+
+
+async def test_video_url_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(RuntimeError, match='VideoUrl is not supported in Mistral.'):
+        await agent.run(['hello', VideoUrl(url='https://www.google.com')])
 
 
 def test_model_status_error(allow_model_requests: None) -> None:

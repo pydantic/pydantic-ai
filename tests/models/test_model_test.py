@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import Usage
@@ -293,10 +294,11 @@ def test_max_items():
     [
         AudioUrl(url='https://example.com'),
         ImageUrl(url='https://example.com'),
+        VideoUrl(url='https://example.com'),
         BinaryContent(data=b'', media_type='image/png'),
     ],
 )
-def test_different_content_input(content: AudioUrl | ImageUrl | BinaryContent):
+def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | BinaryContent):
     agent = Agent()
     result = agent.run_sync('x', model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')

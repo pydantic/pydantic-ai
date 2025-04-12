@@ -116,6 +116,9 @@ def test_docs_examples(  # noqa: C901
     env.set('CO_API_KEY', 'testing')
     env.set('MISTRAL_API_KEY', 'testing')
     env.set('ANTHROPIC_API_KEY', 'testing')
+    env.set('AWS_ACCESS_KEY_ID', 'testing')
+    env.set('AWS_SECRET_ACCESS_KEY', 'testing')
+    env.set('AWS_DEFAULT_REGION', 'us-east-1')
 
     sys.path.append('tests/example_modules')
 

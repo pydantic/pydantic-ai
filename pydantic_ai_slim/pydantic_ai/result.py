@@ -26,12 +26,12 @@ OutputDataT_inv = TypeVar('OutputDataT_inv', default=str)
 """
 An invariant type variable for the result data of a model.
 
-We need to use an invariant typevar for `ResultValidator` and `ResultValidatorFunc` because the result data type is used
-in both the input and output of a `ResultValidatorFunc`. This can theoretically lead to some issues assuming that types
-possessing ResultValidator's are covariant in the result data type, but in practice this is rarely an issue, and
+We need to use an invariant typevar for `OutputValidator` and `OutputValidatorFunc` because the output data type is used
+in both the input and output of a `OutputValidatorFunc`. This can theoretically lead to some issues assuming that types
+possessing OutputValidator's are covariant in the result data type, but in practice this is rarely an issue, and
 changing it would have negative consequences for the ergonomics of the library.
 
-At some point, it may make sense to change the input to ResultValidatorFunc to be `Any` or `object` as doing that would
+At some point, it may make sense to change the input to OutputValidatorFunc to be `Any` or `object` as doing that would
 resolve these potential variance issues.
 """
 OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
@@ -49,7 +49,7 @@ A function that always takes and returns the same type of data (which is the res
 * may or may not take [`RunContext`][pydantic_ai.tools.RunContext] as a first argument
 * may or may not be async
 
-Usage `ResultValidatorFunc[AgentDepsT, T]`.
+Usage `OutputValidatorFunc[AgentDepsT, T]`.
 """
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'

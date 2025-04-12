@@ -17,7 +17,15 @@ nav:
   - troubleshooting.md
   - Documentation:
       - agents.md
-      - models.md
+      - Models:
+          - models/index.md
+          - models/openai.md
+          - models/anthropic.md
+          - models/gemini.md
+          - models/bedrock.md
+          - models/cohere.md
+          - models/groq.md
+          - models/mistral.md
       - dependencies.md
       - tools.md
       - common-tools.md
@@ -30,10 +38,10 @@ nav:
       - evals.md
       - input.md
       - MCP:
-        - mcp/index.md
-        - mcp/client.md
-        - mcp/server.md
-        - mcp/run-python.md
+          - mcp/index.md
+          - mcp/client.md
+          - mcp/server.md
+          - mcp/run-python.md
       - cli.md
   - Examples:
       - examples/index.md
@@ -120,12 +128,10 @@ theme:
     - content.code.copy
     - content.code.select
     - navigation.path
-    #    - navigation.expand
     - navigation.indexes
     - navigation.sections
     - navigation.tracking
     - toc.follow
-  #    - navigation.tabs  # don't use navbar tabs
   logo: "img/logo-white.svg"
   favicon: "favicon.ico"
 

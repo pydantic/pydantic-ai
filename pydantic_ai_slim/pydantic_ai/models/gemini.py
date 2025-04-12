@@ -34,6 +34,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -335,6 +336,8 @@ class GeminiModel(Model):
                         inline_data={'data': base64.b64encode(response.content).decode('utf-8'), 'mime_type': mime_type}
                     )
                     content.append(inline_data)
+                elif isinstance(item, VideoUrl):  # pragma: no cover
+                    raise NotImplementedError('VideoUrl is not supported for Gemini.')
                 else:
                     assert_never(item)
         return content
@@ -506,6 +509,7 @@ class _GeminiGenerationConfig(TypedDict, total=False):
     top_p: float
     presence_penalty: float
     frequency_penalty: float
+    stop_sequences: list[str]
 
 
 class _GeminiContent(TypedDict):

@@ -427,7 +427,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
-    elif provider in ('deepseek', 'openai'):
+    elif provider in ('deepseek', 'openai', 'azure'):
         from .openai import OpenAIModel
 
         return OpenAIModel(model_name, provider=provider)
