@@ -158,7 +158,7 @@ class MCPServerStdio(MCPServer):
     If you want to inherit the environment variables from the parent process, use `env=os.environ`.
     """
     log_level: LoggingLevel | None = None
-    """The log level to enable set when connecting to the server, if any.
+    """The log level to set when connecting to the server, if any.
 
     See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
 
@@ -241,7 +241,7 @@ class MCPServerHTTP(MCPServer):
     and may be closed. Defaults to 5 minutes (300 seconds).
     """
     log_level: LoggingLevel | None = None
-    """The log level to enable set when connecting to the server, if any.
+    """The log level to set when connecting to the server, if any.
 
     See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
 
