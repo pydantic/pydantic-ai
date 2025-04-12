@@ -1303,3 +1303,64 @@ class TestBinaryContentCSV:
         with pytest.raises(RuntimeError, match='Unsupported binary content type: application/octet-stream'):
             # Access protected method for testing purposes, ignoring pyright's warning
             await model._map_user_prompt(user_prompt)  # pyright: ignore[reportPrivateUsage]
+
+    async def test_map_user_prompt_with_csv(self):
+        """Test that _map_user_prompt correctly handles CSV binary content."""
+        model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+        # Create a mock CSV binary content
+        csv_content = BinaryContent(data=b'col1,col2\nval1,val2', media_type='text/csv')
+        user_prompt = UserPromptPart(["Here's some CSV data:", csv_content])
+
+        # Test the _map_user_prompt method directly
+        mapped_result = await model._map_user_prompt(user_prompt)  # pyright: ignore[reportPrivateUsage]
+
+        # Verify the mapped result contains the CSV data as text
+        assert isinstance(mapped_result['content'], list)
+        content_parts = mapped_result['content']
+
+        # There should be 2 parts: the text and the decoded CSV
+        assert len(content_parts) == 2
+
+        # First part should be the text prompt
+        assert content_parts[0]['type'] == 'text'
+        assert content_parts[0]['text'] == "Here's some CSV data:"
+
+        # The second part should be the decoded CSV as text
+        assert content_parts[1]['type'] == 'text'
+        assert content_parts[1]['text'] == 'col1,col2\nval1,val2'
+
+    async def test_openai_responses_model_csv_not_document(self):
+        """Test that OpenAIResponsesModel correctly handles CSV binary content when is_document is False."""
+        # Create a model instance
+        model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+        # Create a subclass of BinaryContent with is_document always returning False
+        class MockBinaryContent(BinaryContent):
+            @property
+            def is_document(self) -> bool:
+                return False
+
+        # Create a mock CSV binary content with our subclass
+        csv_content = MockBinaryContent(data=b'col1,col2\nval1,val2', media_type='text/csv')
+
+        # Create a request with CSV binary content
+        user_prompt = UserPromptPart(["Here's some CSV data:", csv_content])
+
+        # Test the _map_user_prompt method directly
+        mapped_result = await model._map_user_prompt(user_prompt)  # pyright: ignore[reportPrivateUsage]
+
+        # Verify the mapped result contains the CSV data as text
+        assert isinstance(mapped_result['content'], list)
+        content_parts = mapped_result['content']
+
+        # There should be 2 parts: the text and the decoded CSV
+        assert len(content_parts) == 2
+
+        # First part should be the text prompt
+        assert content_parts[0]['type'] == 'input_text'
+        assert content_parts[0]['text'] == "Here's some CSV data:"
+
+        # The second part should be the CSV as text content, not as a file
+        assert content_parts[1]['type'] == 'input_text'
+        assert content_parts[1]['text'] == 'col1,col2\nval1,val2'
