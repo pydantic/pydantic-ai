@@ -4,7 +4,7 @@ Simple example of using PydanticAI to construct a Pydantic model from a text inp
 
 Demonstrates:
 
-* [structured `result_type`](../results.md#structured-result-validation)
+* [structured `output_type`](../output.md#structured-output)
 
 ## Running the Example
 

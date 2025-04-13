@@ -35,7 +35,7 @@ interactions:
           required:
           - name
           - age
-          title: MyResult
+          title: MyOutput
           type: object
         strict: true
         type: function
@@ -102,7 +102,7 @@ interactions:
           required:
           - name
           - age
-          title: MyResult
+          title: MyOutput
           type: object
         strict: true
         type: function

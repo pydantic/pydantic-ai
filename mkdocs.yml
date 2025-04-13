@@ -29,7 +29,7 @@ nav:
       - dependencies.md
       - tools.md
       - common-tools.md
-      - results.md
+      - output.md
       - message-history.md
       - testing.md
       - logfire.md

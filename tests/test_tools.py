@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 
-from pydantic_ai import Agent, RunContext, Tool, UserError
+from pydantic_ai import Agent, RunContext, Tool, ToolOutput, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -94,7 +94,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
     agent.tool_plain(docstring_format=docstring_format)(google_style_docstring)
 
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
             'name': 'google_style_docstring',
@@ -133,7 +133,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
     agent.tool_plain(docstring_format=docstring_format)(sphinx_style_docstring)
 
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
             'name': 'sphinx_style_docstring',
@@ -169,7 +169,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
     agent.tool_plain(docstring_format=docstring_format)(numpy_style_docstring)
 
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
             'name': 'numpy_style_docstring',
@@ -205,7 +205,7 @@ def test_google_style_with_returns():
 
     agent.tool_plain(my_tool)
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
             'name': 'my_tool',
@@ -242,7 +242,7 @@ def test_sphinx_style_with_returns():
 
     agent.tool_plain(docstring_format='sphinx')(my_tool)
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
             'name': 'my_tool',
@@ -285,7 +285,7 @@ def test_numpy_style_with_returns():
 
     agent.tool_plain(docstring_format='numpy')(my_tool)
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
             'name': 'my_tool',
@@ -322,7 +322,7 @@ def test_only_returns_type():
     agent.tool_plain(only_returns_type)
 
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
             'name': 'only_returns_type',
@@ -349,7 +349,7 @@ def test_docstring_unknown():
     agent.tool_plain(unknown_docstring)
 
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
             'name': 'unknown_docstring',
@@ -381,7 +381,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
     agent.tool_plain(docstring_format=docstring_format)(google_style_docstring_no_body)
 
     result = agent.run_sync('')
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
             'name': 'google_style_docstring_no_body',
@@ -414,7 +414,7 @@ def test_takes_just_model():
         return f'{model.x} {model.y}'
 
     result = agent.run_sync('', model=FunctionModel(get_json_schema))
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
             'name': 'takes_just_model',
@@ -434,7 +434,7 @@ def test_takes_just_model():
     )
 
     result = agent.run_sync('', model=TestModel())
-    assert result.data == snapshot('{"takes_just_model":"0 a"}')
+    assert result.output == snapshot('{"takes_just_model":"0 a"}')
 
 
 def test_takes_model_and_int():
@@ -445,7 +445,7 @@ def test_takes_model_and_int():
         return f'{model.x} {model.y} {z}'
 
     result = agent.run_sync('', model=FunctionModel(get_json_schema))
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
             'name': 'takes_just_model',
@@ -476,7 +476,7 @@ def test_takes_model_and_int():
     )
 
     result = agent.run_sync('', model=TestModel())
-    assert result.data == snapshot('{"takes_just_model":"0 a 0"}')
+    assert result.output == snapshot('{"takes_just_model":"0 a 0"}')
 
 
 # pyright: reportPrivateUsage=false
@@ -489,14 +489,14 @@ def test_init_tool_plain():
 
     agent = Agent('test', tools=[Tool(plain_tool)], retries=7)
     result = agent.run_sync('foobar')
-    assert result.data == snapshot('{"plain_tool":1}')
+    assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
     assert agent._function_tools['plain_tool'].takes_ctx is False
     assert agent._function_tools['plain_tool'].max_retries == 7
 
     agent_infer = Agent('test', tools=[plain_tool], retries=7)
     result = agent_infer.run_sync('foobar')
-    assert result.data == snapshot('{"plain_tool":1}')
+    assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0, 0])
     assert agent_infer._function_tools['plain_tool'].takes_ctx is False
     assert agent_infer._function_tools['plain_tool'].max_retries == 7
@@ -510,13 +510,13 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
 def test_init_tool_ctx():
     agent = Agent('test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries=7)
     result = agent.run_sync('foobar', deps=5)
-    assert result.data == snapshot('{"ctx_tool":5}')
+    assert result.output == snapshot('{"ctx_tool":5}')
     assert agent._function_tools['ctx_tool'].takes_ctx is True
     assert agent._function_tools['ctx_tool'].max_retries == 3
 
     agent_infer = Agent('test', tools=[ctx_tool], deps_type=int)
     result = agent_infer.run_sync('foobar', deps=6)
-    assert result.data == snapshot('{"ctx_tool":6}')
+    assert result.output == snapshot('{"ctx_tool":6}')
     assert agent_infer._function_tools['ctx_tool'].takes_ctx is True
 
 
@@ -529,10 +529,10 @@ def test_tool_return_conflict():
     # this is okay
     Agent('test', tools=[ctx_tool], deps_type=int)
     # this is also okay
-    Agent('test', tools=[ctx_tool], deps_type=int, result_type=int)
+    Agent('test', tools=[ctx_tool], deps_type=int, output_type=int)
     # this raises an error
     with pytest.raises(UserError, match="Tool name conflicts with result schema name: 'ctx_tool'"):
-        Agent('test', tools=[ctx_tool], deps_type=int, result_type=int, result_tool_name='ctx_tool')
+        Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(type_=int, name='ctx_tool'))
 
 
 def test_init_ctx_tool_invalid():
@@ -557,7 +557,7 @@ def test_return_pydantic_model():
         return Foo(x=x, y='a')
 
     result = agent.run_sync('')
-    assert result.data == snapshot('{"return_pydantic_model":{"x":0,"y":"a"}}')
+    assert result.output == snapshot('{"return_pydantic_model":{"x":0,"y":"a"}}')
 
 
 def test_return_bytes():
@@ -568,7 +568,7 @@ def test_return_bytes():
         return '🐈 Hello'.encode()
 
     result = agent.run_sync('')
-    assert result.data == snapshot('{"return_pydantic_model":"🐈 Hello"}')
+    assert result.output == snapshot('{"return_pydantic_model":"🐈 Hello"}')
 
 
 def test_return_bytes_invalid():
@@ -615,10 +615,10 @@ def test_dynamic_cls_tool():
 
     agent = Agent('test', tools=[MyTool(spam=777)], deps_type=int)
     r = agent.run_sync('', deps=1)
-    assert r.data == snapshot('{"tool_function":"777 0 a"}')
+    assert r.output == snapshot('{"tool_function":"777 0 a"}')
 
     r = agent.run_sync('', deps=42)
-    assert r.data == snapshot('success (no tool calls)')
+    assert r.output == snapshot('success (no tool calls)')
 
 
 def test_dynamic_plain_tool_decorator():
@@ -633,10 +633,10 @@ def test_dynamic_plain_tool_decorator():
         return f'{x} {y}'
 
     r = agent.run_sync('', deps=1)
-    assert r.data == snapshot('{"foobar":"0 a"}')
+    assert r.output == snapshot('{"foobar":"0 a"}')
 
     r = agent.run_sync('', deps=42)
-    assert r.data == snapshot('success (no tool calls)')
+    assert r.output == snapshot('success (no tool calls)')
 
 
 def test_dynamic_tool_decorator():
@@ -651,10 +651,10 @@ def test_dynamic_tool_decorator():
         return f'{ctx.deps} {x} {y}'
 
     r = agent.run_sync('', deps=1)
-    assert r.data == snapshot('{"foobar":"1 0 a"}')
+    assert r.output == snapshot('{"foobar":"1 0 a"}')
 
     r = agent.run_sync('', deps=42)
-    assert r.data == snapshot('success (no tool calls)')
+    assert r.output == snapshot('success (no tool calls)')
 
 
 def test_plain_tool_name():
@@ -664,7 +664,7 @@ def test_plain_tool_name():
 
     agent.tool_plain(name='foo_tool')(my_tool)
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema['name'] == 'foo_tool'
 
 
@@ -675,7 +675,7 @@ def test_tool_name():
 
     agent.tool(name='foo_tool')(my_tool)
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema['name'] == 'foo_tool'
 
 
@@ -698,7 +698,7 @@ def test_dynamic_tool_use_messages():
         return f'{ctx.deps} {x} {y}'
 
     r = agent.run_sync('', deps=1)
-    assert r.data == snapshot('done')
+    assert r.output == snapshot('done')
     message_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in r.all_messages()]
     assert message_part_kinds == snapshot(
         [
@@ -724,7 +724,7 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
 agent = Agent('test', tools=[ctx_tool], deps_type=int)
     """)
     result = mod.agent.run_sync('foobar', deps=5)
-    assert result.data == snapshot('{"ctx_tool":5}')
+    assert result.output == snapshot('{"ctx_tool":5}')
 
 
 async def tool_without_return_annotation_in_docstring() -> str:  # pragma: no cover
@@ -740,7 +740,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
     agent.tool_plain(tool_without_return_annotation_in_docstring)
 
     result = agent.run_sync('')
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         {
             'description': "A tool that documents what it returns but doesn't have a return annotation in the docstring.",
@@ -789,7 +789,7 @@ def test_json_schema_required_parameters(set_event_loop: None):
         raise NotImplementedError
 
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         [
             {
@@ -881,7 +881,7 @@ def test_schema_generator():
     agent.tool_plain(name='my_tool_2', schema_generator=MyGenerateJsonSchema)(my_tool)
 
     result = agent.run_sync('Hello')
-    json_schema = json.loads(result.data)
+    json_schema = json.loads(result.output)
     assert json_schema == snapshot(
         [
             {
