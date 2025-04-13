@@ -307,7 +307,7 @@ async def test_bedrock_model_performance_config(allow_model_requests: None, bedr
     model_settings = BedrockModelSettings(bedrock_performance_configuration={'latency': 'optimized'})
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
-    assert result.data == snapshot(
+    assert result.output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
     )
 
@@ -319,7 +319,7 @@ async def test_bedrock_model_guardrail_config(allow_model_requests: None, bedroc
     )
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
-    assert result.data == snapshot(
+    assert result.output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
     )
 
@@ -334,7 +334,7 @@ async def test_bedrock_model_other_parameters(allow_model_requests: None, bedroc
     )
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
-    assert result.data == snapshot(
+    assert result.output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
     )
 

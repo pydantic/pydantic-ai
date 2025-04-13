@@ -210,7 +210,7 @@ class BedrockConverseModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, result.Usage]:
+    ) -> tuple[ModelResponse, usage.Usage]:
         response = await self._messages_create(
             messages, False, cast(BedrockModelSettings, model_settings or {}), model_request_parameters
         )
