@@ -1,5 +1,4 @@
 from mcp.server.fastmcp import Context, FastMCP
-from mcp.server.session import ServerSession
 
 mcp = FastMCP('PydanticAI MCP Server')
 log_level = 'unset'
@@ -19,7 +18,7 @@ async def celsius_to_fahrenheit(celsius: float) -> float:
 
 
 @mcp.tool()
-async def get_log_level(ctx: Context[ServerSession, None]) -> str:
+async def get_log_level(ctx: Context) -> str:  # type: ignore
     """Get the current log level.
 
     Returns:
