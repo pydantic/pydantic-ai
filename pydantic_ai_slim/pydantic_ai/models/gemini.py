@@ -71,13 +71,20 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 """
 
 
-class GeminiModelSettings(ModelSettings):
+class GeminiModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request.
 
     ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
     gemini_safety_settings: list[GeminiSafetySettings]
+    """Safety settings options for Gemini model request."""
+
+    gemini_labels: dict[str, str]
+    """Custom metadata to add to each API request. Only supported by the Vertex AI provider.
+
+    See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
+    """
 
 
 @dataclass(init=False)
@@ -209,22 +216,17 @@ class GeminiModel(Model):
         if tool_config is not None:
             request_data['tool_config'] = tool_config
 
-        generation_config: _GeminiGenerationConfig = {}
-        if model_settings:
-            if (max_tokens := model_settings.get('max_tokens')) is not None:
-                generation_config['max_output_tokens'] = max_tokens
-            if (temperature := model_settings.get('temperature')) is not None:
-                generation_config['temperature'] = temperature
-            if (top_p := model_settings.get('top_p')) is not None:
-                generation_config['top_p'] = top_p
-            if (presence_penalty := model_settings.get('presence_penalty')) is not None:
-                generation_config['presence_penalty'] = presence_penalty
-            if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
-                generation_config['frequency_penalty'] = frequency_penalty
-            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) != []:
-                request_data['safety_settings'] = gemini_safety_settings
+        generation_config = _settings_to_generation_config(model_settings)
         if generation_config:
             request_data['generation_config'] = generation_config
+
+        if gemini_safety_settings := model_settings.get('gemini_safety_settings'):
+            request_data['safety_settings'] = gemini_safety_settings
+
+        if gemini_labels := model_settings.get('gemini_labels'):
+            provider_name = self._provider.name if isinstance(self._provider, Provider) else self._provider
+            if provider_name == 'google-vertex':
+                request_data['labels'] = gemini_labels
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
@@ -341,6 +343,21 @@ class GeminiModel(Model):
                 else:
                     assert_never(item)
         return content
+
+
+def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _GeminiGenerationConfig:
+    config: _GeminiGenerationConfig = {}
+    if (max_tokens := model_settings.get('max_tokens')) is not None:
+        config['max_output_tokens'] = max_tokens
+    if (temperature := model_settings.get('temperature')) is not None:
+        config['temperature'] = temperature
+    if (top_p := model_settings.get('top_p')) is not None:
+        config['top_p'] = top_p
+    if (presence_penalty := model_settings.get('presence_penalty')) is not None:
+        config['presence_penalty'] = presence_penalty
+    if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
+        config['frequency_penalty'] = frequency_penalty
+    return config
 
 
 class AuthProtocol(Protocol):
@@ -462,6 +479,7 @@ class _GeminiRequest(TypedDict):
     <https://ai.google.dev/gemini-api/docs/system-instructions?lang=rest>
     """
     generation_config: NotRequired[_GeminiGenerationConfig]
+    labels: NotRequired[dict[str, str]]
 
 
 class GeminiSafetySettings(TypedDict):
