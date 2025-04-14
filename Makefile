@@ -78,8 +78,8 @@ testcov: test ## Run tests and generate a coverage report
 	@echo "building coverage html"
 	@uv run coverage html
 
-.PHONY: test-mrp
-test-mrp: ## Build and  tests of mcp-run-python
+.PHONY: test-mcp
+test-mcp: ## Build and  tests of mcp-run-python
 	cd mcp-run-python && npm run prepare
 	uv run --package mcp-run-python pytest mcp-run-python -v
 
