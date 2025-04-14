@@ -289,6 +289,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
+        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
         async with ctx.deps.model.request_stream(
             ctx.state.message_history, model_settings, model_request_parameters
         ) as streamed_response:
