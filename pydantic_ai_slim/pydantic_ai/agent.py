@@ -42,6 +42,7 @@ from .tools import (
     ToolFuncPlain,
     ToolParams,
     ToolPrepareFunc,
+    ToolsPrepareFunc,
 )
 
 # Re-exporting like this improves auto-import behavior in PyCharm
@@ -123,6 +124,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`.
     """
 
+    prepare_tools: ToolsPrepareFunc[AgentDepsT] | None
+    """
+    Function invoked on each step, allowing to modify and filter out the tools as needed. It's not required and default to None
+    """
+
     instrument: InstrumentationSettings | bool | None
     """Options to automatically instrument with OpenTelemetry."""
 
@@ -158,6 +164,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         retries: int = 1,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -182,6 +189,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         result_tool_description: str | None = None,
         result_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -201,6 +209,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         retries: int = 1,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -227,6 +236,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
+            prepare_tools: custom method to prepare the tool definition of all tools for each step.
+                This is useful if you want to customize the definition of multiple tools or you want to register
+                a subset of tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
             mcp_servers: MCP servers to register with the agent. You should register a [`MCPServer`][pydantic_ai.mcp.MCPServer]
                 for each server you want the agent to connect to.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
@@ -299,6 +311,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._default_retries = retries
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._mcp_servers = mcp_servers
+        self.prepare_tools = prepare_tools
         for tool in tools:
             if isinstance(tool, Tool):
                 self._register_tool(tool)
@@ -620,6 +633,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             mcp_servers=self._mcp_servers,
             run_span=run_span,
             tracer=tracer,
+            prepare_tools=self.prepare_tools,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,

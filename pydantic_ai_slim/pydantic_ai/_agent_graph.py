@@ -27,7 +27,7 @@ from . import (
 from .models.instrumented import InstrumentedModel
 from .result import OutputDataT, ToolOutput
 from .settings import ModelSettings, merge_model_settings
-from .tools import RunContext, Tool, ToolDefinition
+from .tools import RunContext, Tool, ToolDefinition, ToolsPrepareFunc
 
 if TYPE_CHECKING:
     from .mcp import MCPServer
@@ -96,6 +96,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     run_span: Span
     tracer: Tracer
+
+    prepare_tools: ToolsPrepareFunc[DepsT] | None = None
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -231,6 +233,11 @@ async def _prepare_request_parameters(
         *map(add_tool, ctx.deps.function_tools.values()),
         *map(add_mcp_server_tools, ctx.deps.mcp_servers),
     )
+
+    if ctx.deps.prepare_tools:
+        # Prepare the tools using the provided function
+        # This also acts over tool definitions pulled from MCP servers
+        function_tool_defs = await ctx.deps.prepare_tools(run_context, function_tool_defs)
 
     output_schema = ctx.deps.output_schema
     return models.ModelRequestParameters(
