@@ -437,14 +437,14 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
 @pytest.mark.parametrize(
     'union_code',
     [
-        pytest.param('ResultType = Union[Foo, Bar]'),
-        pytest.param('ResultType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='3.10+')),
+        pytest.param('OutputType = Union[Foo, Bar]'),
+        pytest.param('OutputType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='3.10+')),
         pytest.param(
-            'ResultType: TypeAlias = Foo | Bar',
+            'OutputType: TypeAlias = Foo | Bar',
             marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='Python 3.10+'),
         ),
         pytest.param(
-            'type ResultType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 12), reason='3.12+')
+            'type OutputType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 12), reason='3.12+')
         ),
     ],
 )
@@ -470,7 +470,7 @@ class Bar(BaseModel):
     mod = create_module(module_code)
 
     m = TestModel()
-    agent = Agent(m, output_type=mod.ResultType)
+    agent = Agent(m, output_type=mod.OutputType)
     got_tool_call_name = 'unset'
 
     @agent.output_validator
@@ -983,7 +983,7 @@ class TestMultipleToolCalls:
 
     pytestmark = pytest.mark.usefixtures('set_event_loop')
 
-    class ResultType(BaseModel):
+    class OutputType(BaseModel):
         """Result type used by all tests."""
 
         value: str
@@ -1002,7 +1002,7 @@ class TestMultipleToolCalls:
                 ]
             )
 
-        agent = Agent(FunctionModel(return_model), output_type=self.ResultType, end_strategy='early')
+        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:  # pragma: no cover
@@ -1058,7 +1058,7 @@ class TestMultipleToolCalls:
                 ]
             )
 
-        agent = Agent(FunctionModel(return_model), output_type=self.ResultType, end_strategy='early')
+        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
         result = agent.run_sync('test multiple final results')
 
         # Verify the result came from the first final tool
@@ -1098,7 +1098,7 @@ class TestMultipleToolCalls:
                 ]
             )
 
-        agent = Agent(FunctionModel(return_model), output_type=self.ResultType, end_strategy='exhaustive')
+        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='exhaustive')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:
@@ -1186,7 +1186,7 @@ class TestMultipleToolCalls:
                 ]
             )
 
-        agent = Agent(FunctionModel(return_model), output_type=self.ResultType, end_strategy='early')
+        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:  # pragma: no cover
@@ -1259,7 +1259,7 @@ class TestMultipleToolCalls:
     def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool(self):
         """Test that 'early' strategy does not apply to tool calls without final tool."""
         tool_called = []
-        agent = Agent(TestModel(), output_type=self.ResultType, end_strategy='early')
+        agent = Agent(TestModel(), output_type=self.OutputType, end_strategy='early')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:
@@ -1285,7 +1285,7 @@ class TestMultipleToolCalls:
                 ]
             )
 
-        agent = Agent(FunctionModel(return_model), output_type=self.ResultType, end_strategy='early')
+        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
         result = agent.run_sync('test multiple final results')
 
         # Verify the result came from the second final tool
