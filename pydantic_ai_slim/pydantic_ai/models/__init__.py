@@ -107,6 +107,7 @@ KnownModelName = TypeAliasType(
         'google-gla:gemini-2.0-flash-lite-preview-02-05',
         'google-gla:gemini-2.0-pro-exp-02-05',
         'google-gla:gemini-2.5-pro-exp-03-25',
+        'google-gla:gemini-2.5-pro-preview-03-25',
         'google-vertex:gemini-1.0-pro',
         'google-vertex:gemini-1.5-flash',
         'google-vertex:gemini-1.5-flash-8b',
