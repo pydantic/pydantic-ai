@@ -10,10 +10,9 @@ from typing import TYPE_CHECKING, Generic, Literal, Union, cast, overload
 
 import anyio
 import anyio.to_thread
-from mypy_boto3_bedrock_runtime.type_defs import ConverseRequestTypeDef, SystemContentBlockTypeDef
 from typing_extensions import ParamSpec, assert_never
 
-from pydantic_ai import _utils, result
+from pydantic_ai import _utils, usage
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -30,6 +29,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client
 from pydantic_ai.providers import Provider, infer_provider
@@ -43,14 +43,17 @@ if TYPE_CHECKING:
     from mypy_boto3_bedrock_runtime.type_defs import (
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
+        ConverseRequestTypeDef,
         ConverseResponseTypeDef,
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
         ImageBlockTypeDef,
         InferenceConfigurationTypeDef,
         MessageUnionTypeDef,
+        SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolTypeDef,
+        VideoBlockTypeDef,
     )
 
 
@@ -163,8 +166,8 @@ class BedrockConverseModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
     @staticmethod
@@ -186,7 +189,7 @@ class BedrockConverseModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, result.Usage]:
+    ) -> tuple[ModelResponse, usage.Usage]:
         response = await self._messages_create(messages, False, model_settings, model_request_parameters)
         return await self._process_response(response)
 
@@ -200,7 +203,7 @@ class BedrockConverseModel(Model):
         response = await self._messages_create(messages, True, model_settings, model_request_parameters)
         yield BedrockStreamedResponse(_model_name=self.model_name, _event_stream=response)
 
-    async def _process_response(self, response: ConverseResponseTypeDef) -> tuple[ModelResponse, result.Usage]:
+    async def _process_response(self, response: ConverseResponseTypeDef) -> tuple[ModelResponse, usage.Usage]:
         items: list[ModelResponsePart] = []
         if message := response['output'].get('message'):
             for item in message['content']:
@@ -216,12 +219,12 @@ class BedrockConverseModel(Model):
                             tool_call_id=tool_use['toolUseId'],
                         ),
                     )
-        usage = result.Usage(
+        u = usage.Usage(
             request_tokens=response['usage']['inputTokens'],
             response_tokens=response['usage']['outputTokens'],
             total_tokens=response['usage']['totalTokens'],
         )
-        return ModelResponse(items, model_name=self.model_name), usage
+        return ModelResponse(items, model_name=self.model_name), u
 
     @overload
     async def _messages_create(
@@ -254,7 +257,7 @@ class BedrockConverseModel(Model):
         support_tools_choice = self.model_name.startswith(('anthropic', 'us.anthropic'))
         if not tools or not support_tools_choice:
             tool_choice: ToolChoiceTypeDef = {}
-        elif not model_request_parameters.allow_text_result:
+        elif not model_request_parameters.allow_text_output:
             tool_choice = {'any': {}}
         else:
             tool_choice = {'auto': {}}
@@ -293,9 +296,8 @@ class BedrockConverseModel(Model):
             inference_config['temperature'] = temperature
         if top_p := model_settings.get('top_p'):
             inference_config['topP'] = top_p
-        # TODO(Marcelo): This is not included in model_settings yet.
-        # if stop_sequences := model_settings.get('stop_sequences'):
-        #     inference_config['stopSequences'] = stop_sequences
+        if stop_sequences := model_settings.get('stop_sequences'):
+            inference_config['stopSequences'] = stop_sequences
 
         return inference_config
 
@@ -381,9 +383,12 @@ class BedrockConverseModel(Model):
                     elif item.is_image:
                         assert format in ('jpeg', 'png', 'gif', 'webp')
                         content.append({'image': {'format': format, 'source': {'bytes': item.data}}})
+                    elif item.is_video:
+                        assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
+                        content.append({'video': {'format': format, 'source': {'bytes': item.data}}})
                     else:
                         raise NotImplementedError('Binary content is not supported yet.')
-                elif isinstance(item, (ImageUrl, DocumentUrl)):
+                elif isinstance(item, (ImageUrl, DocumentUrl, VideoUrl)):
                     response = await cached_async_http_client().get(item.url)
                     response.raise_for_status()
                     if item.kind == 'image-url':
@@ -391,11 +396,20 @@ class BedrockConverseModel(Model):
                         assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
                         image: ImageBlockTypeDef = {'format': format, 'source': {'bytes': response.content}}
                         content.append({'image': image})
+
                     elif item.kind == 'document-url':
                         document_count += 1
                         name = f'Document {document_count}'
                         data = response.content
                         content.append({'document': {'name': name, 'format': item.format, 'source': {'bytes': data}}})
+
+                    elif item.kind == 'video-url':
+                        format = item.media_type.split('/')[1]
+                        assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp'), (
+                            f'Unsupported video format: {format}'
+                        )
+                        video: VideoBlockTypeDef = {'format': format, 'source': {'bytes': response.content}}
+                        content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 else:
@@ -475,8 +489,8 @@ class BedrockStreamedResponse(StreamedResponse):
         """Get the model name of the response."""
         return self._model_name
 
-    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> result.Usage:
-        return result.Usage(
+    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.Usage:
+        return usage.Usage(
             request_tokens=metadata['usage']['inputTokens'],
             response_tokens=metadata['usage']['outputTokens'],
             total_tokens=metadata['usage']['totalTokens'],

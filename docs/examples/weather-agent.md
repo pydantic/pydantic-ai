@@ -4,7 +4,7 @@ Demonstrates:
 
 * [tools](../tools.md)
 * [agent dependencies](../dependencies.md)
-* [streaming text responses](../results.md#streaming-text)
+* [streaming text responses](../output.md#streaming-text)
 * Building a [Gradio](https://www.gradio.app/) UI for the agent
 
 In this case the idea is a "weather" agent — the user can ask for the weather in multiple locations,

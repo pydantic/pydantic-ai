@@ -240,11 +240,11 @@ KnownModelName = TypeAliasType(
 
 @dataclass
 class ModelRequestParameters:
-    """Configuration for an agent's request to a model, specifically related to tools and result handling."""
+    """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition]
-    allow_text_result: bool
-    result_tools: list[ToolDefinition]
+    allow_text_output: bool
+    output_tools: list[ToolDefinition]
 
 
 class Model(ABC):
@@ -427,7 +427,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
-    elif provider in ('deepseek', 'openai'):
+    elif provider in ('deepseek', 'openai', 'azure'):
         from .openai import OpenAIModel
 
         return OpenAIModel(model_name, provider=provider)

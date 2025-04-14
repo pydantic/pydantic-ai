@@ -12,13 +12,13 @@ import nest_asyncio
 
 nest_asyncio.apply()
 ```
-Note: This fix also applies to Google Colab.
+Note: This fix also applies to Google Colab and [Marimo](https://github.com/marimo-team/marimo).
 
 ## API Key Configuration
 
 ### `UserError: API key must be provided or set in the [MODEL]_API_KEY environment variable`
 
-If you're running into issues with setting the API key for your model, visit the [Models](models.md) page to learn more about how to set an environment variable and/or pass in an `api_key` argument.
+If you're running into issues with setting the API key for your model, visit the [Models](models/index.md) page to learn more about how to set an environment variable and/or pass in an `api_key` argument.
 
 ## Monitoring HTTPX Requests
 

@@ -57,7 +57,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `duckduckgo` - installs `duckduckgo-search` [PyPI ↗](https://pypi.org/project/duckduckgo-search){:target="_blank"}
 * `tavily` - installs `tavily-python` [PyPI ↗](https://pypi.org/project/tavily-python){:target="_blank"}
 
-See the [models](models.md) documentation for information on which optional dependencies are required for each model.
+See the [models](models/index.md) documentation for information on which optional dependencies are required for each model.
 
 You can also install dependencies for multiple models and use cases, for example:
 
