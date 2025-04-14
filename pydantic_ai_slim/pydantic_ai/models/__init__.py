@@ -119,6 +119,7 @@ KnownModelName = TypeAliasType(
         'google-vertex:gemini-2.0-flash-lite-preview-02-05',
         'google-vertex:gemini-2.0-pro-exp-02-05',
         'google-vertex:gemini-2.5-pro-exp-03-25',
+        'google-vertex:gemini-2.5-pro-preview-03-25',
         'gpt-3.5-turbo',
         'gpt-3.5-turbo-0125',
         'gpt-3.5-turbo-0301',
