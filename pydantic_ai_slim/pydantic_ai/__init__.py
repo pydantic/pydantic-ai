@@ -1,4 +1,4 @@
-from importlib.metadata import version
+from importlib.metadata import version as _metadata_version
 
 from .agent import Agent, CallToolsNode, EndStrategy, ModelRequestNode, UserPromptNode, capture_run_messages
 from .exceptions import (
@@ -10,6 +10,7 @@ from .exceptions import (
     UsageLimitExceeded,
     UserError,
 )
+from .format_prompt import format_as_xml
 from .messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, VideoUrl
 from .result import ToolOutput
 from .tools import RunContext, Tool
@@ -42,5 +43,7 @@ __all__ = (
     'RunContext',
     # result
     'ToolOutput',
+    # format_prompt
+    'format_as_xml',
 )
-__version__ = version('pydantic_ai_slim')
+__version__ = _metadata_version('pydantic_ai_slim')
