@@ -15,6 +15,7 @@ nav:
   - help.md
   - contributing.md
   - troubleshooting.md
+  - changelog.md
   - Documentation:
       - agents.md
       - Models:
