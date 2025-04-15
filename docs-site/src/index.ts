@@ -4,7 +4,7 @@ export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url)
     if (url.pathname === '/changelog.html') {
-      const changelog = await getChangelog()
+      const changelog = await getChangelog(env.KV)
       return new Response(changelog, { headers: {'content-type': 'text/html'} })
     }
     const r = await env.ASSETS.fetch(request)
@@ -32,14 +32,18 @@ function redirect(pathname: string): string | null {
   return redirect_lookup[pathname.replace(/\/+$/, '')] ?? null
 }
 
-async function getChangelog(): Promise<string> {
+async function getChangelog(kv: KVNamespace): Promise<string> {
+  const cached = await kv.get('changelog', {cacheTtl: 60})
+  if (cached) {
+    return cached
+  }
   const headers = {
     'X-GitHub-Api-Version': '2022-11-28',
     'User-Agent': 'pydantic-ai-docs'
   }
-  let url: string = 'https://api.github.com/repos/pydantic/pydantic-ai/releases'
+  let url: string | undefined = 'https://api.github.com/repos/pydantic/pydantic-ai/releases'
   const releases: Release[] = []
-  while (typeof url === 'string') {
+  while (typeof url == 'string') {
     const response = await fetch(url, { headers })
     if (!response.ok) {
       const text = await response.text()
@@ -48,13 +52,15 @@ async function getChangelog(): Promise<string> {
     const newReleases = await response.json() as Release[]
     releases.push(...newReleases)
     const linkHeader = response.headers.get('link')
-    if (!linkHeader) break
-    const nextUrl = linkHeader.match(/<([^>]+)>; rel="next"/)?.[1]
-    if (!nextUrl) break
-    url = nextUrl
+    if (!linkHeader) {
+      break
+    }
+    url = linkHeader.match(/<([^>]+)>; rel="next"/)?.[1]
   }
-  console.log(releases.length)
-  return marked(releases.map(prepRelease).join('\n\n'))
+  marked.use({pedantic: false, gfm: true})
+  const html = marked(releases.map(prepRelease).join('\n\n')) as string
+  await kv.put('changelog', html, {expirationTtl: 300})
+  return html
 }
 
 interface Release {
@@ -64,7 +70,6 @@ interface Release {
 }
 
 function prepRelease(release: Release): string {
-  // console.log(release.body)
   const body = release.body
     .replace(/(#+)/g, (m) => `##${m}`)
     .replace(/https:\/\/github.com\/pydantic\/pydantic-ai\/pull\/(\d+)/g, (url, id) => `[#${id}](${url})`)
