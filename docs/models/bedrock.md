@@ -44,6 +44,34 @@ agent = Agent(model)
 ...
 ```
 
+## Customizing Bedrock Runtime API
+
+You can customize the Bedrock Runtime API calls by adding additional parameters, such as [guardrail
+configurations](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html) and [performance settings](https://docs.aws.amazon.com/bedrock/latest/userguide/latency-optimized-inference.html). For a complete list of configurable parameters, refer to the
+documentation for [`BedrockModelSettings`][pydantic_ai.models.bedrock.BedrockModelSettings].
+
+```python {title="customize_bedrock_model_settings.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+
+# Define Bedrock model settings with guardrail and performance configurations
+bedrock_model_settings = BedrockModelSettings(
+    bedrock_guardrail_config={
+        'guardrailIdentifier': 'v1',
+        'guardrailVersion': 'v1',
+        'trace': 'enabled'
+    },
+    bedrock_performance_configuration={
+        'latency': 'optimized'
+    }
+)
+
+
+model = BedrockConverseModel(model_name='us.amazon.nova-pro-v1:0')
+
+agent = Agent(model=model, model_settings=bedrock_model_settings)
+```
+
 ## `provider` argument
 
 You can provide a custom `BedrockProvider` via the `provider` argument. This is useful when you want to specify credentials directly or use a custom boto3 client:
