@@ -42,7 +42,7 @@ from . import (
     check_allow_model_requests,
     get_user_agent,
 )
-from .json_schema import JsonSchema, WalkJsonSchema
+from ._json_schema import JsonSchema, WalkJsonSchema
 
 try:
     from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream, NotGiven

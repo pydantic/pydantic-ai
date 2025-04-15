@@ -11,7 +11,11 @@ JsonSchema = dict[str, Any]
 
 @dataclass(init=False)
 class WalkJsonSchema(ABC):
-    """Walks a JSON schema, applying transformations to it at each level."""
+    """Walks a JSON schema, applying transformations to it at each level.
+
+    Note: We may eventually want to rework tools to build the JSON schema from the type directly, using a subclass of
+    pydantic.json_schema.GenerateJsonSchema, rather than making use of this machinery.
+    """
 
     def __init__(
         self, schema: JsonSchema, *, prefer_inlined_defs: bool = False, simplify_nullable_unions: bool = False
