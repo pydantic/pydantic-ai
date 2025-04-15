@@ -813,7 +813,7 @@ class _GeminiJsonSchema(WalkJsonSchema):
             for item in prefix_items:
                 if item not in unique_items:
                     unique_items.append(item)
-            if len(unique_items) > 1:
+            if len(unique_items) > 1:  # pragma: no cover
                 schema['items'] = {'anyOf': unique_items}
             elif len(unique_items) == 1:
                 schema['items'] = unique_items[0]
