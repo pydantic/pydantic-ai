@@ -681,7 +681,7 @@ agent = Agent(
 
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
-#> The capital of France is Paris.
+#> Paris
 ```
 
 1. This will be the only instructions for this agent.
