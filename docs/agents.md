@@ -619,12 +619,12 @@ Running `pyright` would identify the same issues.
 System prompts might seem simple at first glance since they're just strings (or sequences of strings that are concatenated), but crafting the right system prompt is key to getting the model to behave as you want.
 
 !!! tip
-    For most use cases, you should use `instructions`.
+    For most use cases, you should use `instructions` instead of "system prompts".
 
-    If you know what you are doing though and want to preserve system prompt messages in the message history,
-    you can achieve that using the system_prompt argument/decorator.
+    If you know what you are doing though and want to preserve system prompt messages in the message history sent to the
+    LLM in subsequent completions requests, you can achieve this using the `system_prompt` argument/decorator.
 
-    Check the section below on [Instructions](#instructions) for more information.
+    See the section below on [Instructions](#instructions) for more information.
 
 Generally, system prompts fall into two categories:
 
@@ -671,12 +671,16 @@ _(This example is complete, it can be run "as is")_
 
 ## Instructions
 
-Instructions are similar to system prompts, but they are not included in the prompt history.
+Instructions are similar to system prompts. The main difference is that when an explicit `message_history` is provided
+in a call to `Agent.run` and similar methods, _instructions_ from any existing messages in the history are not included
+in the request to the model — only the instructions of the _current_ agent are included.
 
 You want to use:
 
-- `instructions` when that information should be per-agent based.
-- `system_prompts` when you want the model to know about previous system prompts.
+- `instructions` when you want your request to the model to only include this information for the _current_ agent
+- `system_prompt` when you want your request to the model to retain the system prompts used in previous requests (possibly made using other agents)
+
+In general, we recommend using `instructions` instead of `system_prompt` unless you have a specific reason to use `system_prompt`.
 
 ```python {title="instructions.py"}
 from pydantic_ai import Agent
