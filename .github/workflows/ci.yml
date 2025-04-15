@@ -92,7 +92,7 @@ jobs:
   test-live:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: "github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'"
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
 
@@ -275,7 +275,7 @@ jobs:
 
   deploy-docs:
     needs: [check]
-    if: "success() && startsWith(github.ref, 'refs/tags/')"
+    if: success() && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     environment:
       name: deploy-docs
@@ -311,14 +311,21 @@ jobs:
         env:
           ALGOLIA_WRITE_API_KEY: ${{ secrets.ALGOLIA_WRITE_API_KEY }}
 
+  # TODO(Marcelo): We need to split this into two jobs: `build` and `release`.
   release:
     needs: [check]
-    if: "success() && startsWith(github.ref, 'refs/tags/')"
+    if: success() && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    environment: release
+
+    environment:
+      name: release
+      url: https://pypi.org/project/pydantic-ai/${{ steps.inspect_package.outputs.version }}
 
     permissions:
       id-token: write
+
+    outputs:
+      package-version: ${{ steps.inspect_package.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -329,7 +336,51 @@ jobs:
 
       - run: uv build --all-packages
 
+      - name: Inspect package version
+        id: inspect_package
+        run: |
+          version=$(uvx hatchling version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+
+  send-tweet:
+    name: Send tweet
+    needs: [release]
+    if: needs.release.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install tweepy==4.14.0
+      - name: Send tweet
+        shell: python
+        run: |
+          import os
+          import tweepy
+
+          client = tweepy.Client(
+              access_token=os.getenv("TWITTER_ACCESS_TOKEN"),
+              access_token_secret=os.getenv("TWITTER_ACCESS_TOKEN_SECRET"),
+              consumer_key=os.getenv("TWITTER_CONSUMER_KEY"),
+              consumer_secret=os.getenv("TWITTER_CONSUMER_SECRET"),
+          )
+          version = os.getenv("VERSION").strip('"')
+          tweet = os.getenv("TWEET").format(version=version)
+          client.create_tweet(text=tweet)
+        env:
+          VERSION: ${{ needs.release.outputs.package-version }}
+          TWEET: |
+            PydanticAI version {version} is out! 🎉
+
+            https://github.com/pydantic/pydantic-ai/releases/tag/v{version}
+          TWITTER_CONSUMER_KEY: ${{ secrets.TWITTER_CONSUMER_KEY }}
+          TWITTER_CONSUMER_SECRET: ${{ secrets.TWITTER_CONSUMER_SECRET }}
+          TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
+          TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}
