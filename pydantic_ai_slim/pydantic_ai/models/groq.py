@@ -281,7 +281,7 @@ class GroqModel(Model):
                 groq_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := getattr(messages[-1], 'instructions'):
+        if instructions := self._get_instructions(messages):
             groq_messages.insert(0, chat.ChatCompletionSystemMessageParam(role='system', content=instructions))
         return groq_messages
 

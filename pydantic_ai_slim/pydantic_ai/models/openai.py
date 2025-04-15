@@ -346,7 +346,7 @@ class OpenAIModel(Model):
                 openai_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := getattr(messages[-1], 'instructions'):
+        if instructions := self._get_instructions(messages):
             openai_messages.insert(0, chat.ChatCompletionSystemMessageParam(content=instructions, role='system'))
         return openai_messages
 
@@ -698,7 +698,7 @@ class OpenAIResponsesModel(Model):
                         assert_never(item)
             else:
                 assert_never(message)
-        instructions = getattr(messages[-1], 'instructions', NOT_GIVEN)
+        instructions = self._get_instructions(messages) or NOT_GIVEN
         return instructions, openai_messages
 
     @staticmethod
