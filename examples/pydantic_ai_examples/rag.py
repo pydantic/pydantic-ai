@@ -92,7 +92,7 @@ async def run_agent(question: str):
     async with database_connect(False) as pool:
         deps = Deps(openai=openai, pool=pool)
         answer = await agent.run(question, deps=deps)
-    print(answer.data)
+    print(answer.output)
 
 
 #######################################################

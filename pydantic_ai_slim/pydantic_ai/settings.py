@@ -128,6 +128,19 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     """
 
+    stop_sequences: list[str]
+    """Sequences that will cause the model to stop generating.
+
+    Supported by:
+
+    * OpenAI
+    * Anthropic
+    * Bedrock
+    * Mistral
+    * Groq
+    * Cohere
+    """
+
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
     """Merge two sets of model settings, preferring the overrides.

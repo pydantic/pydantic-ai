@@ -56,13 +56,13 @@ dependencies = [
 # WARNING if you add optional groups, please update docs/install.md
 logfire = ["logfire>=3.11.0"]
 # Models
-openai = ["openai>=1.67.0"]
+openai = ["openai>=1.74.0"]
 cohere = ["cohere>=5.13.11; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.3"]
 anthropic = ["anthropic>=0.49.0"]
 groq = ["groq>=0.15.0"]
 mistral = ["mistralai>=1.2.5"]
-bedrock = ["boto3>=1.34.116"]
+bedrock = ["boto3>=1.35.74"]
 # Tools
 duckduckgo = ["duckduckgo-search>=7.0.0"]
 tavily = ["tavily-python>=0.5.0"]
