@@ -837,7 +837,7 @@ async def test_empty_text_ignored():
 
 async def test_model_settings(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        generation_config = json.loads(request.content)['generation_config']
+        generation_config = json.loads(request.content)['generationConfig']
         assert generation_config == {
             'max_output_tokens': 1,
             'temperature': 0.1,
@@ -886,7 +886,7 @@ async def test_safety_settings_unsafe(
     try:
 
         def handler(request: httpx.Request) -> httpx.Response:
-            safety_settings = json.loads(request.content)['safety_settings']
+            safety_settings = json.loads(request.content)['safetySettings']
             assert safety_settings == [
                 {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
                 {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
@@ -928,7 +928,7 @@ async def test_safety_settings_safe(
     client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
 ) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        safety_settings = json.loads(request.content)['safety_settings']
+        safety_settings = json.loads(request.content)['safetySettings']
         assert safety_settings == [
             {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
             {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},

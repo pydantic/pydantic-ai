@@ -203,11 +203,11 @@ class GeminiModel(Model):
 
         request_data = _GeminiRequest(contents=contents)
         if sys_prompt_parts:
-            request_data['system_instruction'] = _GeminiTextContent(role='user', parts=sys_prompt_parts)
+            request_data['systemInstruction'] = _GeminiTextContent(role='user', parts=sys_prompt_parts)
         if tools is not None:
             request_data['tools'] = tools
         if tool_config is not None:
-            request_data['tool_config'] = tool_config
+            request_data['toolConfig'] = tool_config
 
         generation_config: _GeminiGenerationConfig = {}
         if model_settings:
@@ -222,9 +222,9 @@ class GeminiModel(Model):
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
                 generation_config['frequency_penalty'] = frequency_penalty
             if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) != []:
-                request_data['safety_settings'] = gemini_safety_settings
+                request_data['safetySettings'] = gemini_safety_settings
         if generation_config:
-            request_data['generation_config'] = generation_config
+            request_data['generationConfig'] = generation_config
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
@@ -450,17 +450,19 @@ class _GeminiRequest(TypedDict):
     See <https://ai.google.dev/api/generate-content#request-body> for API docs.
     """
 
+    # Note: Even though Google supposedly supports camelCase and snake_case, we've had user report misbehavior
+    # when using snake_case, which is why this typeddict now uses camelCase. And anyway, the plan is to replace this
+    # with an official google SDK in the near future anyway.
     contents: list[_GeminiContent]
     tools: NotRequired[_GeminiTools]
-    tool_config: NotRequired[_GeminiToolConfig]
-    safety_settings: NotRequired[list[GeminiSafetySettings]]
-    # we don't implement `generationConfig`, instead we use a named tool for the response
-    system_instruction: NotRequired[_GeminiTextContent]
+    toolConfig: NotRequired[_GeminiToolConfig]
+    safetySettings: NotRequired[list[GeminiSafetySettings]]
+    systemInstruction: NotRequired[_GeminiTextContent]
     """
     Developer generated system instructions, see
     <https://ai.google.dev/gemini-api/docs/system-instructions?lang=rest>
     """
-    generation_config: NotRequired[_GeminiGenerationConfig]
+    generationConfig: NotRequired[_GeminiGenerationConfig]
 
 
 class GeminiSafetySettings(TypedDict):
