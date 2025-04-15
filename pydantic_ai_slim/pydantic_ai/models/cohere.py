@@ -7,6 +7,8 @@ from typing import Literal, Union, cast
 
 from typing_extensions import assert_never
 
+from pydantic_ai.exceptions import UserError
+
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
@@ -22,13 +24,9 @@ from ..messages import (
     UserPromptPart,
 )
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ForcedFunctionToolChoice, ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    check_allow_model_requests,
-)
+from . import Model, ModelRequestParameters, check_allow_model_requests
 
 try:
     from cohere import (
@@ -44,6 +42,7 @@ try:
         ToolV2,
         ToolV2Function,
         UserChatMessageV2,
+        V2ChatRequestToolChoice,
     )
     from cohere.core.api_error import ApiError
     from cohere.v2.client import OMIT
@@ -156,12 +155,14 @@ class CohereModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ChatResponse:
         tools = self._get_tools(model_request_parameters)
+        tool_choice = self._map_tool_choice(model_settings, model_request_parameters, tools)
         cohere_messages = list(chain(*(self._map_message(m) for m in messages)))
         try:
             return await self.client.chat(
                 model=self._model_name,
                 messages=cohere_messages,
                 tools=tools or OMIT,
+                tool_choice=tool_choice or OMIT,
                 max_tokens=model_settings.get('max_tokens', OMIT),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
@@ -222,6 +223,31 @@ class CohereModel(Model):
         if model_request_parameters.output_tools:
             tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
+
+    @staticmethod
+    def _map_tool_choice(
+        model_settings: CohereModelSettings, model_request_parameters: ModelRequestParameters, tools: list[ToolV2]
+    ) -> V2ChatRequestToolChoice | None:
+        """Determine the `tool_choice` setting for the model.
+
+        Cohere only supports `'REQUIRED'` and `'NONE'` for tool choice.
+        See [Cohere's docs](https://docs.cohere.com/v2/docs/tool-use-usage-patterns#forcing-tool-usage) for more details.
+        """
+        tool_choice = model_settings.get('tool_choice', 'auto')
+
+        if tool_choice == 'auto' and tools and not model_request_parameters.allow_text_output:
+            return 'REQUIRED'
+        elif tool_choice == 'auto':
+            return None
+        elif isinstance(tool_choice, ForcedFunctionToolChoice):
+            raise UserError(
+                'Cohere does not support forcing a specific tool. '
+                'Please choose a different value for the `tool_choice` parameter in the model settings.'
+            )
+        elif tool_choice in ('none', 'required'):
+            return tool_choice.upper()
+        else:
+            assert_never(tool_choice)
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ToolCallV2:

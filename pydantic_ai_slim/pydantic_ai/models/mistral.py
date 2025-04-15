@@ -12,6 +12,8 @@ import pydantic_core
 from httpx import Timeout
 from typing_extensions import assert_never
 
+from pydantic_ai.exceptions import UserError
+
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from ..messages import (
@@ -32,16 +34,10 @@ from ..messages import (
     VideoUrl,
 )
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ForcedFunctionToolChoice, ModelSettings
 from ..tools import ToolDefinition
 from ..usage import Usage
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    check_allow_model_requests,
-    get_user_agent,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, get_user_agent
 
 try:
     from mistralai import (
@@ -194,7 +190,7 @@ class MistralModel(Model):
                 messages=list(chain(*(self._map_message(m) for m in messages))),
                 n=1,
                 tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
-                tool_choice=self._get_tool_choice(model_request_parameters),
+                tool_choice=self._map_tool_choice(model_settings, model_request_parameters),
                 stream=False,
                 max_tokens=model_settings.get('max_tokens', UNSET),
                 temperature=model_settings.get('temperature', UNSET),
@@ -233,7 +229,7 @@ class MistralModel(Model):
                 messages=mistral_messages,
                 n=1,
                 tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
-                tool_choice=self._get_tool_choice(model_request_parameters),
+                tool_choice=self._map_tool_choice(model_settings, model_request_parameters),
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
                 max_tokens=model_settings.get('max_tokens', UNSET),
@@ -269,7 +265,10 @@ class MistralModel(Model):
         assert response, 'A unexpected empty response from Mistral.'
         return response
 
-    def _get_tool_choice(self, model_request_parameters: ModelRequestParameters) -> MistralToolChoiceEnum | None:
+    @staticmethod
+    def _map_tool_choice(
+        model_settings: MistralModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> MistralToolChoiceEnum | None:
         """Get tool choice for the model.
 
         - "auto": Default mode. Model decides if it uses the tool or not.
@@ -277,12 +276,21 @@ class MistralModel(Model):
         - "none": Prevents tool use.
         - "required": Forces tool use.
         """
+        tool_choice = model_settings.get('tool_choice', 'auto')
+
         if not model_request_parameters.function_tools and not model_request_parameters.output_tools:
             return None
-        elif not model_request_parameters.allow_text_output:
+        elif tool_choice == 'auto' and not model_request_parameters.allow_text_output:
             return 'required'
+        elif isinstance(tool_choice, ForcedFunctionToolChoice):
+            raise UserError(
+                'Mistral does not support forcing a specific tool. '
+                'Please choose a different value for the `tool_choice` parameter in the model settings.'
+            )
+        elif tool_choice in ('auto', 'none', 'required'):
+            return tool_choice
         else:
-            return 'auto'
+            assert_never(tool_choice)
 
     def _map_function_and_output_tools_definition(
         self, model_request_parameters: ModelRequestParameters

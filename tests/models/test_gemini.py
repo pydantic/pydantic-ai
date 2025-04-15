@@ -64,7 +64,7 @@ async def test_model_simple(allow_model_requests: None):
     mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[])
     mrp = m.customize_request_parameters(mrp)
     tools = m._get_tools(mrp)
-    tool_config = m._get_tool_config(mrp, tools)
+    tool_config = m._get_tool_config(GeminiModelSettings(gemini_safety_settings=[]), mrp, tools)
     assert tools is None
     assert tool_config is None
 
@@ -97,7 +97,7 @@ async def test_model_tools(allow_model_requests: None):
     mrp = ModelRequestParameters(function_tools=tools, allow_text_output=True, output_tools=[output_tool])
     mrp = m.customize_request_parameters(mrp)
     tools = m._get_tools(mrp)
-    tool_config = m._get_tool_config(mrp, tools)
+    tool_config = m._get_tool_config(GeminiModelSettings(), mrp, tools)
     assert tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -139,7 +139,7 @@ async def test_require_response_tool(allow_model_requests: None):
     mrp = ModelRequestParameters(function_tools=[], allow_text_output=False, output_tools=[output_tool])
     mrp = m.customize_request_parameters(mrp)
     tools = m._get_tools(mrp)
-    tool_config = m._get_tool_config(mrp, tools)
+    tool_config = m._get_tool_config(GeminiModelSettings(), mrp, tools)
     assert tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -154,11 +154,7 @@ async def test_require_response_tool(allow_model_requests: None):
             ]
         )
     )
-    assert tool_config == snapshot(
-        _GeminiToolConfig(
-            function_calling_config=_GeminiFunctionCallingConfig(mode='ANY', allowed_function_names=['result'])
-        )
-    )
+    assert tool_config == snapshot(_GeminiToolConfig(function_calling_config=_GeminiFunctionCallingConfig(mode='ANY')))
 
 
 async def test_json_def_replaced(allow_model_requests: None):

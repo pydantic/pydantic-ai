@@ -33,7 +33,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ForcedFunctionToolChoice, ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
         PerformanceConfigurationTypeDef,
         PromptVariableValuesTypeDef,
         SystemContentBlockTypeDef,
-        ToolChoiceTypeDef,
+        ToolConfigurationTypeDef,
         ToolTypeDef,
         VideoBlockTypeDef,
     )
@@ -275,36 +275,28 @@ class BedrockConverseModel(Model):
         self,
         messages: list[ModelMessage],
         stream: Literal[True],
-        model_settings: BedrockModelSettings | None,
+        model_settings: BedrockModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> EventStream[ConverseStreamOutputTypeDef]:
-        pass
+    ) -> EventStream[ConverseStreamOutputTypeDef]: ...
 
     @overload
     async def _messages_create(
         self,
         messages: list[ModelMessage],
         stream: Literal[False],
-        model_settings: BedrockModelSettings | None,
+        model_settings: BedrockModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> ConverseResponseTypeDef:
-        pass
+    ) -> ConverseResponseTypeDef: ...
 
     async def _messages_create(
         self,
         messages: list[ModelMessage],
         stream: bool,
-        model_settings: BedrockModelSettings | None,
+        model_settings: BedrockModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> ConverseResponseTypeDef | EventStream[ConverseStreamOutputTypeDef]:
         tools = self._get_tools(model_request_parameters)
-        support_tools_choice = self.model_name.startswith(('anthropic', 'us.anthropic'))
-        if not tools or not support_tools_choice:
-            tool_choice: ToolChoiceTypeDef = {}
-        elif not model_request_parameters.allow_text_output:
-            tool_choice = {'any': {}}
-        else:
-            tool_choice = {'auto': {}}
+        tool_config = self._get_tool_config(model_settings, model_request_parameters, tools)
 
         system_prompt, bedrock_messages = await self._map_messages(messages)
         inference_config = self._map_inference_config(model_settings)
@@ -315,6 +307,8 @@ class BedrockConverseModel(Model):
             'system': system_prompt,
             'inferenceConfig': inference_config,
         }
+        if tool_config:
+            params['toolConfig'] = tool_config
 
         # Bedrock supports a set of specific extra parameters
         if model_settings:
@@ -333,17 +327,36 @@ class BedrockConverseModel(Model):
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
 
-        if tools:
-            params['toolConfig'] = {'tools': tools}
-            if tool_choice:
-                params['toolConfig']['toolChoice'] = tool_choice
-
         if stream:
             model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
             model_response = model_response['stream']
         else:
             model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
         return model_response
+
+    def _get_tool_config(
+        self,
+        model_settings: BedrockModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        tools: list[ToolTypeDef],
+    ) -> ToolConfigurationTypeDef | None:
+        support_tools_choice = self.model_name.startswith(('anthropic', 'us.anthropic'))
+        tool_choice = model_settings.get('tool_choice', 'auto')
+
+        if not tools or not support_tools_choice:
+            return None
+        elif tool_choice == 'auto' and not model_request_parameters.allow_text_output:
+            return {'tools': tools, 'toolChoice': {'any': {}}}
+        elif tool_choice == 'auto':
+            return {'tools': tools, 'toolChoice': {'auto': {}}}
+        elif tool_choice == 'none':
+            return None
+        elif tool_choice == 'required':
+            return {'tools': tools, 'toolChoice': {'any': {}}}
+        elif isinstance(tool_choice, ForcedFunctionToolChoice):
+            return {'tools': tools, 'toolChoice': {'tool': {'name': tool_choice.name}}}
+        else:
+            assert_never(tool_choice)
 
     @staticmethod
     def _map_inference_config(
