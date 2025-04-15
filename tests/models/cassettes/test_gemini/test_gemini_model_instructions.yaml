@@ -33,7 +33,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=428
+      - gfet4t7; dur=415
       transfer-encoding:
       - chunked
       vary:
@@ -42,7 +42,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.0008013391634449363
+      - avgLogprobs: -0.0008098740363493562
         content:
           parts:
           - text: |

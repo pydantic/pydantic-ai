@@ -169,19 +169,14 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx_messages.used = True
 
         parts: list[_messages.ModelRequestPart] = []
-        if self.instructions or self.instructions_functions:
-            instructions = await self._instructions(run_context)
-            if message_history:
-                messages.extend(message_history)
+        instructions = await self._instructions(run_context)
+        if message_history:
+            # Shallow copy messages
+            messages.extend(message_history)
+            # Reevaluate any dynamic system prompt parts
+            await self._reevaluate_dynamic_prompts(messages, run_context)
         else:
-            instructions = None
-            if message_history:
-                # Shallow copy messages
-                messages.extend(message_history)
-                # Reevaluate any dynamic system prompt parts
-                await self._reevaluate_dynamic_prompts(messages, run_context)
-            else:
-                parts.extend(await self._sys_parts(run_context))
+            parts.extend(await self._sys_parts(run_context))
 
         if user_prompt is not None:
             parts.append(_messages.UserPromptPart(user_prompt))
@@ -215,7 +210,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 messages.append(_messages.SystemPromptPart(prompt))
         return messages
 
-    async def _instructions(self, run_context: RunContext[DepsT]) -> str:
+    async def _instructions(self, run_context: RunContext[DepsT]) -> str | None:
+        if self.instructions is None and not self.instructions_functions:
+            return None
+
         instructions = self.instructions or ''
         for instructions_runner in self.instructions_functions:
             instructions += await instructions_runner.run(run_context)

@@ -618,6 +618,14 @@ Running `pyright` would identify the same issues.
 
 System prompts might seem simple at first glance since they're just strings (or sequences of strings that are concatenated), but crafting the right system prompt is key to getting the model to behave as you want.
 
+!!! tip
+    For most use cases, you should use `instructions`.
+
+    If you know what you are doing though and want to preserve system prompt messages in the message history,
+    you can achieve that using the system_prompt argument/decorator.
+
+    Check the section below on [Instructions](#instructions) for more information.
+
 Generally, system prompts fall into two categories:
 
 1. **Static system prompts**: These are known when writing the code and can be defined via the `system_prompt` parameter of the [`Agent` constructor][pydantic_ai.Agent.__init__].
@@ -666,10 +674,9 @@ _(This example is complete, it can be run "as is")_
 Instructions are similar to system prompts, but they are not included in the prompt history.
 
 You want to use:
+
 - `instructions` when that information should be per-agent based.
 - `system_prompts` when you want the model to know about previous system prompts.
-
-They are mutually exclusive, you cannot use both in the same agent.
 
 ```python {title="instructions.py"}
 from pydantic_ai import Agent

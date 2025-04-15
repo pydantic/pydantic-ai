@@ -1700,26 +1700,55 @@ def test_binary_content_all_messages_json():
 
 
 def test_instructions_raise_error_when_system_prompt_is_set():
-    agent = Agent('test', instructions='You are a helpful assistant.')
+    agent = Agent('test', instructions='An instructions!')
 
-    with pytest.raises(UserError, match='Cannot set `system_prompt` after `instructions` has been set.'):
+    @agent.system_prompt
+    def system_prompt() -> str:
+        return 'A system prompt!'
 
-        @agent.system_prompt
-        def system_prompt() -> str: ...
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            instructions='An instructions!',
+        )
+    )
 
 
 def test_instructions_raise_error_when_instructions_is_set():
-    agent = Agent('test', system_prompt='You are a helpful assistant.')
+    agent = Agent('test', system_prompt='A system prompt!')
 
-    with pytest.raises(UserError, match='Cannot set `instructions` after `system_prompt` has been set.'):
+    @agent.instructions
+    def instructions() -> str:
+        return 'An instructions!'
 
-        @agent.instructions
-        def instructions() -> str: ...
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            instructions='An instructions!',
+        )
+    )
 
 
 def test_instructions_both_instructions_and_system_prompt_are_set():
-    with pytest.raises(UserError, match='Cannot provide both `instructions` and `system_prompt`.'):
-        Agent('test', instructions='You are a helpful assistant.', system_prompt='You are a helpful assistant.')
+    agent = Agent('test', instructions='An instructions!', system_prompt='A system prompt!')
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            instructions='An instructions!',
+        )
+    )
 
 
 def test_instructions_decorator_without_parenthesis():
