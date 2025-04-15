@@ -332,6 +332,8 @@ class AnthropicModel(Model):
                 anthropic_messages.append(MessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
+        if instructions := self._get_instructions(messages):
+            system_prompt = f'{instructions}\n\n{system_prompt}'
         return system_prompt, anthropic_messages
 
     @staticmethod

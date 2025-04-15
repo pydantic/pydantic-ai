@@ -82,6 +82,7 @@ print(dice_result.all_messages())
                 part_kind='user-prompt',
             ),
         ],
+        instructions=None,
         kind='request',
     ),
     ModelResponse(
@@ -107,6 +108,7 @@ print(dice_result.all_messages())
                 part_kind='tool-return',
             )
         ],
+        instructions=None,
         kind='request',
     ),
     ModelResponse(
@@ -132,6 +134,7 @@ print(dice_result.all_messages())
                 part_kind='tool-return',
             )
         ],
+        instructions=None,
         kind='request',
     ),
     ModelResponse(

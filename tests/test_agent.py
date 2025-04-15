@@ -1686,6 +1686,7 @@ def test_binary_content_all_messages_json():
                         'part_kind': 'user-prompt',
                     }
                 ],
+                'instructions': None,
                 'kind': 'request',
             },
             {
@@ -1694,5 +1695,113 @@ def test_binary_content_all_messages_json():
                 'timestamp': IsStr(),
                 'kind': 'response',
             },
+        ]
+    )
+
+
+def test_instructions_raise_error_when_system_prompt_is_set():
+    agent = Agent('test', instructions='An instructions!')
+
+    @agent.system_prompt
+    def system_prompt() -> str:
+        return 'A system prompt!'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            instructions='An instructions!',
+        )
+    )
+
+
+def test_instructions_raise_error_when_instructions_is_set():
+    agent = Agent('test', system_prompt='A system prompt!')
+
+    @agent.instructions
+    def instructions() -> str:
+        return 'An instructions!'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            instructions='An instructions!',
+        )
+    )
+
+
+def test_instructions_both_instructions_and_system_prompt_are_set():
+    agent = Agent('test', instructions='An instructions!', system_prompt='A system prompt!')
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            instructions='An instructions!',
+        )
+    )
+
+
+def test_instructions_decorator_without_parenthesis():
+    agent = Agent('test')
+
+    @agent.instructions
+    def instructions() -> str:
+        return 'You are a helpful assistant.'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+            instructions='You are a helpful assistant.',
+        )
+    )
+
+
+def test_instructions_decorator_with_parenthesis():
+    agent = Agent('test')
+
+    @agent.instructions()
+    def instructions_2() -> str:
+        return 'You are a helpful assistant.'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+            instructions='You are a helpful assistant.',
+        )
+    )
+
+
+def test_instructions_with_message_history():
+    agent = Agent('test', instructions='You are a helpful assistant.')
+    result = agent.run_sync(
+        'Hello',
+        message_history=[ModelRequest(parts=[SystemPromptPart(content='You are a helpful assistant')])],
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='You are a helpful assistant', timestamp=IsNow(tz=timezone.utc))]
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )

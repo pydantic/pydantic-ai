@@ -25,8 +25,7 @@ from devtools import debug
 from pydantic import BaseModel, Field
 from typing_extensions import TypeAlias
 
-from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.format_as_xml import format_as_xml
+from pydantic_ai import Agent, ModelRetry, RunContext, format_as_xml
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')

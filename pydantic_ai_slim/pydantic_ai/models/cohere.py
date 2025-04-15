@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from itertools import chain
 from typing import Literal, Union, cast
 
 from typing_extensions import assert_never
@@ -156,7 +155,7 @@ class CohereModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ChatResponse:
         tools = self._get_tools(model_request_parameters)
-        cohere_messages = list(chain(*(self._map_message(m) for m in messages)))
+        cohere_messages = self._map_messages(messages)
         try:
             return await self.client.chat(
                 model=self._model_name,
@@ -194,28 +193,33 @@ class CohereModel(Model):
                 )
         return ModelResponse(parts=parts, model_name=self._model_name)
 
-    def _map_message(self, message: ModelMessage) -> Iterable[ChatMessageV2]:
+    def _map_messages(self, messages: list[ModelMessage]) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
-        if isinstance(message, ModelRequest):
-            yield from self._map_user_message(message)
-        elif isinstance(message, ModelResponse):
-            texts: list[str] = []
-            tool_calls: list[ToolCallV2] = []
-            for item in message.parts:
-                if isinstance(item, TextPart):
-                    texts.append(item.content)
-                elif isinstance(item, ToolCallPart):
-                    tool_calls.append(self._map_tool_call(item))
-                else:
-                    assert_never(item)
-            message_param = AssistantChatMessageV2(role='assistant')
-            if texts:
-                message_param.content = [TextAssistantMessageContentItem(text='\n\n'.join(texts))]
-            if tool_calls:
-                message_param.tool_calls = tool_calls
-            yield message_param
-        else:
-            assert_never(message)
+        cohere_messages: list[ChatMessageV2] = []
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                cohere_messages.extend(self._map_user_message(message))
+            elif isinstance(message, ModelResponse):
+                texts: list[str] = []
+                tool_calls: list[ToolCallV2] = []
+                for item in message.parts:
+                    if isinstance(item, TextPart):
+                        texts.append(item.content)
+                    elif isinstance(item, ToolCallPart):
+                        tool_calls.append(self._map_tool_call(item))
+                    else:
+                        assert_never(item)
+                message_param = AssistantChatMessageV2(role='assistant')
+                if texts:
+                    message_param.content = [TextAssistantMessageContentItem(text='\n\n'.join(texts))]
+                if tool_calls:
+                    message_param.tool_calls = tool_calls
+                cohere_messages.append(message_param)
+            else:
+                assert_never(message)
+        if instructions := self._get_instructions(messages):
+            cohere_messages.insert(0, SystemChatMessageV2(role='system', content=instructions))
+        return cohere_messages
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolV2]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
