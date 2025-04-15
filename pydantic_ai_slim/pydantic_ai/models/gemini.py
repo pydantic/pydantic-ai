@@ -804,12 +804,22 @@ class _GeminiJsonSchema(WalkJsonSchema):
 
         if '$ref' in schema:
             raise UserError(f'Recursive `$ref`s in JSON Schema are not supported by Gemini: {schema["$ref"]}')
-        if schema.get('additionalProperties'):
-            # It's okay if additionalProperties is False, but for any other value we want to raise an error
-            raise UserError('Additional properties in JSON Schema are not supported by Gemini')
-        # TODO: prefixItems is not currently supported by Gemini, maybe we should raise an error?
-        # if 'prefixItems' in schema:
-        #     raise UserError("Prefix items are not supported by Gemini")
+
+        if 'prefixItems' in schema:
+            # prefixItems is not currently supported in Gemini, so we convert it to items for best compatibility
+            prefix_items = schema.pop('prefixItems')
+            items = schema.get('items')
+            unique_items = [items] if items is not None else []
+            for item in prefix_items:
+                if item not in unique_items:
+                    unique_items.append(item)
+            if len(unique_items) > 1:
+                schema['items'] = {'anyOf': unique_items}
+            elif len(unique_items) == 1:
+                schema['items'] = unique_items[0]
+            schema.setdefault('minItems', len(prefix_items))
+            if items is None:
+                schema.setdefault('maxItems', len(prefix_items))
 
         return schema
 
