@@ -661,6 +661,31 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
+## Instructions
+
+Instructions are similar to system prompts, but they are not included in the prompt history.
+
+You want to use:
+- `instructions` when that information should be per-agent based.
+- `system_prompts` when you want the model to know about previous system prompts.
+
+```python {title="instructions.py"}
+from pydantic_ai import Agent
+
+agent = Agent(
+    'openai:gpt-4o',
+    instructions='You are a helpful assistant that can answer questions and help with tasks.',  # (1)!
+)
+
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+1. This will be the only instructions for this agent.
+
+_(This example is complete, it can be run "as is")_
+
 ## Reflection and self-correction
 
 Validation errors from both function tool parameter validation and [structured output validation](output.md#structured-output) can be passed back to the model with a request to retry.
