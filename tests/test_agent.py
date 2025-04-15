@@ -1705,8 +1705,7 @@ def test_instructions_raise_error_when_system_prompt_is_set():
     with pytest.raises(UserError, match='Cannot set `system_prompt` after `instructions` has been set.'):
 
         @agent.system_prompt
-        def system_prompt() -> str:
-            return 'You are a helpful assistant.'
+        def system_prompt() -> str: ...
 
 
 def test_instructions_raise_error_when_instructions_is_set():
@@ -1715,8 +1714,7 @@ def test_instructions_raise_error_when_instructions_is_set():
     with pytest.raises(UserError, match='Cannot set `instructions` after `system_prompt` has been set.'):
 
         @agent.instructions
-        def instructions() -> str:
-            return 'You are a helpful assistant.'
+        def instructions() -> str: ...
 
 
 def test_instructions_both_instructions_and_system_prompt_are_set():
