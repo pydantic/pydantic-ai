@@ -131,37 +131,37 @@ class BedrockModelSettings(ModelSettings, total=False):
     bedrock_guardrail_config: GuardrailConfigurationTypeDef
     """Content moderation and safety settings for Bedrock API requests.
 
-    See more about it on https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_GuardrailConfiguration.html.
+    See more about it on <https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_GuardrailConfiguration.html>.
     """
 
     bedrock_performance_configuration: PerformanceConfigurationTypeDef
     """Performance optimization settings for model inference.
 
-    See more about it on https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_PerformanceConfiguration.html
+    See more about it on <https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_PerformanceConfiguration.html>.
     """
 
     bedrock_request_metadata: dict[str, str]
     """Additional metadata to attach to Bedrock API requests.
 
-    See more about it on https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html#API_runtime_Converse_RequestSyntax
+    See more about it on <https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html#API_runtime_Converse_RequestSyntax>.
     """
 
     bedrock_additional_model_response_fields_paths: list[str]
     """JSON paths to extract additional fields from model responses.
 
-    See more about it on https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters.html
+    See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters.html>.
     """
 
     bedrock_prompt_variables: Mapping[str, PromptVariableValuesTypeDef]
     """Variables for substitution into prompt templates.
 
-    See more about it on https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_PromptVariableValues.html
+    See more about it on <https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_PromptVariableValues.html>.
     """
 
     bedrock_additional_model_requests_fields: Mapping[str, Any]
     """Additional model-specific parameters to include in requests.
 
-    See more about it on https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters.html
+    See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters.html>.
     """
 
 
