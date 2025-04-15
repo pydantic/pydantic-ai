@@ -4,7 +4,7 @@ export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url)
     if (url.pathname === '/changelog.html') {
-      const changelog = await getChangelog(env.KV)
+      const changelog = await getChangelog(env.KV, env.GIT_COMMIT_SHA)
       return new Response(changelog, { headers: {'content-type': 'text/html'} })
     }
     const r = await env.ASSETS.fetch(request)
@@ -32,8 +32,9 @@ function redirect(pathname: string): string | null {
   return redirect_lookup[pathname.replace(/\/+$/, '')] ?? null
 }
 
-async function getChangelog(kv: KVNamespace): Promise<string> {
-  const cached = await kv.get('changelog', {cacheTtl: 60})
+async function getChangelog(kv: KVNamespace, commitSha: string): Promise<string> {
+  const cache_key = `changelog:${commitSha}`
+  const cached = await kv.get(cache_key, {cacheTtl: 60})
   if (cached) {
     return cached
   }
@@ -59,7 +60,7 @@ async function getChangelog(kv: KVNamespace): Promise<string> {
   }
   marked.use({pedantic: false, gfm: true})
   const html = marked(releases.map(prepRelease).join('\n\n')) as string
-  await kv.put('changelog', html, {expirationTtl: 300})
+  await kv.put(cache_key, html, {expirationTtl: 300})
   return html
 }
 
