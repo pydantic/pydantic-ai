@@ -57,7 +57,6 @@ class SystemPromptPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp of the prompt."""
 
-    # TODO(Marcelo): I'm trying to remove this field in this PR.
     dynamic_ref: str | None = None
     """The ref of the dynamic system prompt function that generated this part.
 
