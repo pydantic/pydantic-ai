@@ -8,7 +8,6 @@ from functools import cached_property
 from typing import Any, Union, cast
 
 import pytest
-from dirty_equals import IsDatetime
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -29,7 +28,7 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 
-from ..conftest import IsNow, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsNow, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -1762,14 +1761,14 @@ async def test_image_url_input(allow_model_requests: None):
                                 url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
                             ),
                         ],
-                        timestamp=IsDatetime(),  # type: ignore
+                        timestamp=IsDatetime(),
                     )
                 ]
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='mistral-large-123',
-                timestamp=IsDatetime(),  # type: ignore
+                timestamp=IsDatetime(),
             ),
         ]
     )
@@ -1793,14 +1792,14 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
                 parts=[
                     UserPromptPart(
                         content=['hello', BinaryContent(data=base64_content, media_type='image/jpeg')],
-                        timestamp=IsDatetime(),  # type: ignore
+                        timestamp=IsDatetime(),
                     )
                 ]
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='mistral-large-123',
-                timestamp=IsDatetime(),  # type: ignore
+                timestamp=IsDatetime(),
             ),
         ]
     )
@@ -1841,3 +1840,25 @@ def test_model_status_error(allow_model_requests: None) -> None:
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')
+
+
+async def test_mistral_model_instructions(allow_model_requests: None, mistral_api_key: str):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m, instructions='You are a helpful assistant.')
+
+    result = await agent.run('hello')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='mistral-large-123',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )

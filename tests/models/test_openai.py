@@ -31,7 +31,7 @@ from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -1214,7 +1214,28 @@ def test_strict_schema():
     )
 
 
-@pytest.mark.vcr
+@pytest.mark.vcr()
+async def test_openai_instructions(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.')
+
+    result = await agent.run('What is the capital of France?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The capital of France is Paris.')],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
 async def test_openai_model_without_system_prompt(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, system_prompt='You are a potato.')

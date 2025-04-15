@@ -423,6 +423,10 @@ class BedrockConverseModel(Model):
                 bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
                 assert_never(m)
+
+        if instructions := self._get_instructions(messages):
+            system_prompt.insert(0, {'text': instructions})
+
         return system_prompt, bedrock_messages
 
     @staticmethod
