@@ -12,7 +12,7 @@ PydanticAI is still pre-version 1, so breaking changes will occur, however:
 !!! note
     Here's a filtered list of the breaking changes for each version to help you upgrade PydanticAI.
 
-### v0.1.0 2025-04-15
+### v0.1.0 (2025-04-15)
 
 See [#1248](https://github.com/pydantic/pydantic-ai/pull/1248) — the attribute/parameter name `result` was renamed to `output` in many places. Hopefully all changes keep a deprecated attribute or parameter with the old name, so you should get many deprecation warnings.
 
