@@ -56,7 +56,7 @@ Offers an optional [dependency injection](https://ai.pydantic.dev/dependencies/)
 This is useful for testing and eval-driven iterative development.
 
 * __Streamed Responses__
-Provides the ability to [stream](https://ai.pydantic.dev/output/#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate outputs.
+Provides the ability to [stream](https://ai.pydantic.dev/results/#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate outputs.
 
 * __Graph Support__
 [Pydantic Graph](https://ai.pydantic.dev/graph) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.
