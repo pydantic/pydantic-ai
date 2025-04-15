@@ -323,7 +323,6 @@ class Model(ABC):
         for message in reversed(messages):
             if isinstance(message, ModelRequest):
                 return message.instructions
-        return None
 
 
 @dataclass

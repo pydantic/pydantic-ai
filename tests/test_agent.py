@@ -1754,3 +1754,27 @@ def test_instructions_decorator_with_parenthesis():
             instructions='You are a helpful assistant.',
         )
     )
+
+
+def test_instructions_with_message_history():
+    agent = Agent('test', instructions='You are a helpful assistant.')
+    result = agent.run_sync(
+        'Hello',
+        message_history=[ModelRequest(parts=[SystemPromptPart(content='You are a helpful assistant')])],
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='You are a helpful assistant', timestamp=IsNow(tz=timezone.utc))]
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
