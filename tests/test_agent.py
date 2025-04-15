@@ -1697,3 +1697,60 @@ def test_binary_content_all_messages_json():
             },
         ]
     )
+
+
+def test_instructions_raise_error_when_system_prompt_is_set():
+    agent = Agent('test', instructions='You are a helpful assistant.')
+
+    with pytest.raises(UserError, match='Cannot set `system_prompt` after `instructions` has been set.'):
+
+        @agent.system_prompt
+        def system_prompt() -> str:
+            return 'You are a helpful assistant.'
+
+
+def test_instructions_raise_error_when_instructions_is_set():
+    agent = Agent('test', system_prompt='You are a helpful assistant.')
+
+    with pytest.raises(UserError, match='Cannot set `instructions` after `system_prompt` has been set.'):
+
+        @agent.instructions
+        def instructions() -> str:
+            return 'You are a helpful assistant.'
+
+
+def test_instructions_both_instructions_and_system_prompt_are_set():
+    with pytest.raises(UserError, match='Cannot provide both `instructions` and `system_prompt`.'):
+        Agent('test', instructions='You are a helpful assistant.', system_prompt='You are a helpful assistant.')
+
+
+def test_instructions_decorator_without_parenthesis():
+    agent = Agent('test')
+
+    @agent.instructions
+    def instructions() -> str:
+        return 'You are a helpful assistant.'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+            instructions='You are a helpful assistant.',
+        )
+    )
+
+
+def test_instructions_decorator_with_parenthesis():
+    agent = Agent('test')
+
+    @agent.instructions()
+    def instructions_2() -> str:
+        return 'You are a helpful assistant.'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+            instructions='You are a helpful assistant.',
+        )
+    )

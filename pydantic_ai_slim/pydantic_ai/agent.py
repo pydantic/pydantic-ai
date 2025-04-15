@@ -295,7 +295,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._output_schema = _output.OutputSchema[OutputDataT].build(
             output_type, self._deprecated_result_tool_name, self._deprecated_result_tool_description
         )
-        self._output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = []
+        self._output_validators = []
 
         if instructions is not None and len(system_prompt) > 0:
             raise exceptions.UserError('Cannot provide both `instructions` and `system_prompt`.')
@@ -1015,6 +1015,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     def instructions(self, func: Callable[[], Awaitable[str]], /) -> Callable[[], Awaitable[str]]: ...
 
+    @overload
+    def instructions(
+        self, /
+    ) -> Callable[[_system_prompt.SystemPromptFunc[AgentDepsT]], _system_prompt.SystemPromptFunc[AgentDepsT]]: ...
+
     def instructions(
         self,
         func: _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
@@ -1049,7 +1054,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         ```
         """
         if self._system_prompts or self._system_prompt_functions or self._system_prompt_dynamic_functions:
-            raise exceptions.UserError('Cannot set `instructions` after `system_prompt` have been set.')
+            raise exceptions.UserError('Cannot set `instructions` after `system_prompt` has been set.')
 
         if func is None:
 
@@ -1127,7 +1132,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         ```
         """
         if self._instructions or self._instructions_functions:
-            raise exceptions.UserError('Cannot set `system_prompt` after `instructions` have been set.')
+            raise exceptions.UserError('Cannot set `system_prompt` after `instructions` has been set.')
 
         if func is None:
 
