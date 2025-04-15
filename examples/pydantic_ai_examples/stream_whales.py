@@ -38,7 +38,7 @@ class Whale(TypedDict):
     description: NotRequired[Annotated[str, Field(description='Short Description')]]
 
 
-agent = Agent('openai:gpt-4', result_type=list[Whale], instrument=True)
+agent = Agent('openai:gpt-4', output_type=list[Whale], instrument=True)
 
 
 async def main():
@@ -52,7 +52,7 @@ async def main():
 
             async for message, last in result.stream_structured(debounce_by=0.01):
                 try:
-                    whales = await result.validate_structured_result(
+                    whales = await result.validate_structured_output(
                         message, allow_partial=not last
                     )
                 except ValidationError as exc:

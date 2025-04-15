@@ -214,7 +214,7 @@ class AnthropicModel(Model):
         if not tools:
             tool_choice = None
         else:
-            if not model_request_parameters.allow_text_result:
+            if not model_request_parameters.allow_text_output:
                 tool_choice = {'type': 'any'}
             else:
                 tool_choice = {'type': 'auto'}
@@ -277,8 +277,8 @@ class AnthropicModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
@@ -332,6 +332,8 @@ class AnthropicModel(Model):
                 anthropic_messages.append(MessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
+        if instructions := self._get_instructions(messages):
+            system_prompt = f'{instructions}\n\n{system_prompt}'
         return system_prompt, anthropic_messages
 
     @staticmethod

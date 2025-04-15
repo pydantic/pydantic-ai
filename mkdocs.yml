@@ -15,6 +15,7 @@ nav:
   - help.md
   - contributing.md
   - troubleshooting.md
+  - changelog.md
   - Documentation:
       - agents.md
       - Models:
@@ -29,7 +30,7 @@ nav:
       - dependencies.md
       - tools.md
       - common-tools.md
-      - results.md
+      - output.md
       - message-history.md
       - testing.md
       - logfire.md
@@ -214,8 +215,36 @@ plugins:
             - url: https://typing-extensions.readthedocs.io/en/latest/objects.inv
             - url: https://rich.readthedocs.io/en/stable/objects.inv
             # waiting for https://github.com/encode/httpx/discussions/3091#discussioncomment-11205594
+  - llmstxt:
+      enabled: !ENV [CI, false]
+      full_output: llms-full.txt
+      markdown_description: |-
+        PydanticAI is a Python agent framework designed to make it less painful to build production grade
+        applications with Generative AI.
+      sections:
+        Concepts documentation:
+          - agents.md
+          - dependencies.md
+          - tools.md
+          - common-tools.md
+          - results.md
+          - message-history.md
+          - multi-agent-applications.md
+        Models:
+          - models/*.md
+        Graphs:
+          - graph.md
+        Evals:
+          - evals.md
+        MCP:
+          - mcp/*.md
+        Optional:
+          - testing.md
+          - cli.md
+          - logfire.md
+          - examples/*.md
+
 
 hooks:
   - "docs/.hooks/main.py"
-  - "docs/.hooks/build_llms_txt.py"
   - "docs/.hooks/algolia.py"

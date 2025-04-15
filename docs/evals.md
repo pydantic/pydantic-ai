@@ -163,8 +163,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
-from pydantic_ai.format_as_xml import format_as_xml
+from pydantic_ai import Agent, format_as_xml
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import IsInstance, LLMJudge
 
@@ -181,7 +180,7 @@ class Recipe(BaseModel):
 
 recipe_agent = Agent(
     'groq:llama-3.3-70b-versatile',
-    result_type=Recipe,
+    output_type=Recipe,
     system_prompt=(
         'Generate a recipe to cook the dish that meets the dietary restrictions.'
     ),
@@ -190,7 +189,7 @@ recipe_agent = Agent(
 
 async def transform_recipe(customer_order: CustomerOrder) -> Recipe:  # (2)!
     r = await recipe_agent.run(format_as_xml(customer_order))
-    return r.data
+    return r.output
 
 
 recipe_dataset = Dataset[CustomerOrder, Recipe, Any](  # (3)!
