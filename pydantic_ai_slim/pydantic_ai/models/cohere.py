@@ -6,7 +6,7 @@ from typing import Literal, Union, cast
 
 from typing_extensions import assert_never
 
-from .. import ModelHTTPError, result
+from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ModelMessage,
@@ -117,7 +117,7 @@ class CohereModel(Model):
                 'cohere' or an instance of `Provider[AsyncClientV2]`. If not provided, a new provider will be
                 created using the other parameters.
         """
-        self._model_name: CohereModelName = model_name
+        self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
@@ -133,7 +133,7 @@ class CohereModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, result.Usage]:
+    ) -> tuple[ModelResponse, usage.Usage]:
         check_allow_model_requests()
         response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_parameters)
         return self._process_response(response), _map_usage(response)
@@ -162,6 +162,7 @@ class CohereModel(Model):
                 messages=cohere_messages,
                 tools=tools or OMIT,
                 max_tokens=model_settings.get('max_tokens', OMIT),
+                stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
                 p=model_settings.get('top_p', OMIT),
                 seed=model_settings.get('seed', OMIT),
@@ -222,8 +223,8 @@ class CohereModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolV2]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
     @staticmethod
@@ -277,25 +278,25 @@ class CohereModel(Model):
                 assert_never(part)
 
 
-def _map_usage(response: ChatResponse) -> result.Usage:
-    usage = response.usage
-    if usage is None:
-        return result.Usage()
+def _map_usage(response: ChatResponse) -> usage.Usage:
+    u = response.usage
+    if u is None:
+        return usage.Usage()
     else:
         details: dict[str, int] = {}
-        if usage.billed_units is not None:
-            if usage.billed_units.input_tokens:
-                details['input_tokens'] = int(usage.billed_units.input_tokens)
-            if usage.billed_units.output_tokens:
-                details['output_tokens'] = int(usage.billed_units.output_tokens)
-            if usage.billed_units.search_units:
-                details['search_units'] = int(usage.billed_units.search_units)
-            if usage.billed_units.classifications:
-                details['classifications'] = int(usage.billed_units.classifications)
+        if u.billed_units is not None:
+            if u.billed_units.input_tokens:
+                details['input_tokens'] = int(u.billed_units.input_tokens)
+            if u.billed_units.output_tokens:
+                details['output_tokens'] = int(u.billed_units.output_tokens)
+            if u.billed_units.search_units:  # pragma: no cover
+                details['search_units'] = int(u.billed_units.search_units)
+            if u.billed_units.classifications:  # pragma: no cover
+                details['classifications'] = int(u.billed_units.classifications)
 
-        request_tokens = int(usage.tokens.input_tokens) if usage.tokens and usage.tokens.input_tokens else None
-        response_tokens = int(usage.tokens.output_tokens) if usage.tokens and usage.tokens.output_tokens else None
-        return result.Usage(
+        request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else None
+        response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else None
+        return usage.Usage(
             request_tokens=request_tokens,
             response_tokens=response_tokens,
             total_tokens=(request_tokens or 0) + (response_tokens or 0),

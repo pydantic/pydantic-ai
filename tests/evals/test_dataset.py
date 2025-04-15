@@ -5,7 +5,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 from dirty_equals import HasRepr
@@ -16,17 +16,13 @@ from ..conftest import try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
+    import logfire
+    from logfire.testing import CaptureLogfire
+
     from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, LLMJudge, Python
     from pydantic_evals.evaluators.context import EvaluatorContext
-    from pydantic_evals.reporting import ReportCase
-
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
-
-if TYPE_CHECKING or imports_successful():
-    import logfire
-    from logfire.testing import CaptureLogfire
 
     @dataclass
     class MockEvaluator(Evaluator[object, object, object]):
@@ -36,6 +32,10 @@ if TYPE_CHECKING or imports_successful():
 
         def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
             return self.output
+
+    from pydantic_evals.reporting import ReportCase
+
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
 
 if sys.version_info < (3, 11):
@@ -688,8 +688,8 @@ async def test_duplicate_evaluator_failure(example_dataset: Dataset[TaskInput, T
     assert str(exc_info.value) == snapshot("Duplicate evaluator class name: 'FirstEvaluator'")
 
 
-async def test_invalid_evaluator_result_type(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
-    """Test that an invalid evaluator result type raises an error."""
+async def test_invalid_evaluator_output_type(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that an invalid evaluator output type raises an error."""
     invalid_evaluator = Python(expression='...')
     example_dataset.add_evaluator(invalid_evaluator)
 
@@ -996,31 +996,31 @@ def test_import_generate_dataset():
 def test_evaluate_non_serializable_inputs():
     @dataclass
     class MyInputs:
-        result_type: type[str] | type[int]
+        output_type: type[str] | type[int]
 
     my_dataset = Dataset[MyInputs, Any, Any](
         cases=[
             Case(
                 name='str',
-                inputs=MyInputs(result_type=str),
+                inputs=MyInputs(output_type=str),
                 expected_output='abc',
             ),
             Case(
                 name='int',
-                inputs=MyInputs(result_type=int),
+                inputs=MyInputs(output_type=int),
                 expected_output=123,
             ),
         ],
     )
 
     async def my_task(my_inputs: MyInputs) -> int | str:
-        if issubclass(my_inputs.result_type, str):
-            return my_inputs.result_type('abc')
+        if issubclass(my_inputs.output_type, str):
+            return my_inputs.output_type('abc')
         else:
-            return my_inputs.result_type(123)
+            return my_inputs.output_type(123)
 
     report = my_dataset.evaluate_sync(task=my_task)
-    assert [c.inputs for c in report.cases] == snapshot([MyInputs(result_type=str), MyInputs(result_type=int)])
+    assert [c.inputs for c in report.cases] == snapshot([MyInputs(output_type=str), MyInputs(output_type=int)])
 
     table = report.console_table(include_input=True)
     assert render_table(table) == snapshot("""\
@@ -1028,9 +1028,9 @@ def test_evaluate_non_serializable_inputs():
 ┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID  ┃ Inputs                                                                             ┃ Duration ┃
 ┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ str      │ test_evaluate_non_serializable_inputs.<locals>.MyInputs(result_type=<class 'str'>) │     1.0s │
+│ str      │ test_evaluate_non_serializable_inputs.<locals>.MyInputs(output_type=<class 'str'>) │     1.0s │
 ├──────────┼────────────────────────────────────────────────────────────────────────────────────┼──────────┤
-│ int      │ test_evaluate_non_serializable_inputs.<locals>.MyInputs(result_type=<class 'int'>) │     1.0s │
+│ int      │ test_evaluate_non_serializable_inputs.<locals>.MyInputs(output_type=<class 'int'>) │     1.0s │
 ├──────────┼────────────────────────────────────────────────────────────────────────────────────┼──────────┤
 │ Averages │                                                                                    │     1.0s │
 └──────────┴────────────────────────────────────────────────────────────────────────────────────┴──────────┘

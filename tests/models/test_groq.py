@@ -128,14 +128,14 @@ async def test_request_simple_success(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('hello')
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(Usage(requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(Usage(requests=1))
     assert result.all_messages() == snapshot(
         [
@@ -165,7 +165,7 @@ async def test_request_simple_usage(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('Hello')
-    assert result.data == 'world'
+    assert result.output == 'world'
 
 
 async def test_request_structured_response(allow_model_requests: None):
@@ -184,10 +184,10 @@ async def test_request_structured_response(allow_model_requests: None):
     )
     mock_client = MockGroq.create_mock(c)
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m, result_type=list[int])
+    agent = Agent(m, output_type=list[int])
 
     result = await agent.run('Hello')
-    assert result.data == [1, 2, 123]
+    assert result.output == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -268,7 +268,7 @@ async def test_request_tool_call(allow_model_requests: None):
             raise ModelRetry('Wrong location, please try again')
 
     result = await agent.run('Hello')
-    assert result.data == 'final response'
+    assert result.output == 'final response'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -412,7 +412,7 @@ async def test_stream_structured(allow_model_requests: None):
     )
     mock_client = MockGroq.create_mock_stream(stream)
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m, result_type=MyTypedDict)
+    agent = Agent(m, output_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
@@ -465,7 +465,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
     )
     mock_client = MockGroq.create_mock_stream(stream)
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m, result_type=MyTypedDict)
+    agent = Agent(m, output_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
@@ -485,7 +485,7 @@ async def test_no_content(allow_model_requests: None):
     stream = chunk([ChoiceDelta()]), chunk([ChoiceDelta()])
     mock_client = MockGroq.create_mock_stream(stream)
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m, result_type=MyTypedDict)
+    agent = Agent(m, output_type=MyTypedDict)
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream(''):
@@ -515,7 +515,7 @@ async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.data == snapshot("""\
+    assert result.output == snapshot("""\
 The image you provided appears to be a potato. It is a root vegetable that belongs to the nightshade family. Potatoes are a popular and versatile crop, widely cultivated and consumed around the world.
 
 **Characteristics and Uses:**
@@ -552,7 +552,7 @@ async def test_image_as_binary_content_input(
     agent = Agent(m)
 
     result = await agent.run(['What is the name of this fruit?', image_content])
-    assert result.data == snapshot(
+    assert result.output == snapshot(
         "This is a kiwi, also known as a Chinese gooseberry. It's a small, green fruit with a hairy, brown skin and a bright green, juicy flesh inside. Kiwis are native to China and are often eaten raw, either on their own or added to salads, smoothies, and desserts. They're also a good source of vitamin C, vitamin K, and other nutrients."
     )
 

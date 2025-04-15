@@ -137,6 +137,12 @@ KnownModelName = TypeAliasType(
         'gpt-4-turbo-2024-04-09',
         'gpt-4-turbo-preview',
         'gpt-4-vision-preview',
+        'gpt-4.1',
+        'gpt-4.1-2025-04-14',
+        'gpt-4.1-mini',
+        'gpt-4.1-mini-2025-04-14',
+        'gpt-4.1-nano',
+        'gpt-4.1-nano-2025-04-14',
         'gpt-4o',
         'gpt-4o-2024-05-13',
         'gpt-4o-2024-08-06',
@@ -206,6 +212,12 @@ KnownModelName = TypeAliasType(
         'openai:gpt-4-turbo-2024-04-09',
         'openai:gpt-4-turbo-preview',
         'openai:gpt-4-vision-preview',
+        'openai:gpt-4.1',
+        'openai:gpt-4.1-2025-04-14',
+        'openai:gpt-4.1-mini',
+        'openai:gpt-4.1-mini-2025-04-14',
+        'openai:gpt-4.1-nano',
+        'openai:gpt-4.1-nano-2025-04-14',
         'openai:gpt-4o',
         'openai:gpt-4o-2024-05-13',
         'openai:gpt-4o-2024-08-06',
@@ -240,11 +252,11 @@ KnownModelName = TypeAliasType(
 
 @dataclass
 class ModelRequestParameters:
-    """Configuration for an agent's request to a model, specifically related to tools and result handling."""
+    """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition]
-    allow_text_result: bool
-    result_tools: list[ToolDefinition]
+    allow_text_output: bool
+    output_tools: list[ToolDefinition]
 
 
 class Model(ABC):
@@ -434,7 +446,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
-    elif provider in ('deepseek', 'openai'):
+    elif provider in ('deepseek', 'openai', 'azure'):
         from .openai import OpenAIModel
 
         return OpenAIModel(model_name, provider=provider)

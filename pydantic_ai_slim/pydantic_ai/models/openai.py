@@ -30,6 +30,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -39,6 +40,7 @@ from . import (
     StreamedResponse,
     cached_async_http_client,
     check_allow_model_requests,
+    get_user_agent,
 )
 
 try:
@@ -251,7 +253,7 @@ class OpenAIModel(Model):
         # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_result:
+        elif not model_request_parameters.allow_text_output:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -268,6 +270,7 @@ class OpenAIModel(Model):
                 tool_choice=tool_choice or NOT_GIVEN,
                 stream=stream,
                 stream_options={'include_usage': True} if stream else NOT_GIVEN,
+                stop=model_settings.get('stop_sequences', NOT_GIVEN),
                 max_completion_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
@@ -278,6 +281,7 @@ class OpenAIModel(Model):
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
+                extra_headers={'User-Agent': get_user_agent()},
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
@@ -311,8 +315,8 @@ class OpenAIModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
     async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
@@ -447,6 +451,8 @@ class OpenAIModel(Model):
                     # file_data = f'data:{media_type};base64,{base64_encoded}'
                     # file = File(file={'file_data': file_data, 'file_name': item.url, 'file_id': item.url}, type='file')
                     # content.append(file)
+                elif isinstance(item, VideoUrl):  # pragma: no cover
+                    raise NotImplementedError('VideoUrl is not supported for OpenAI')
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
@@ -590,7 +596,7 @@ class OpenAIResponsesModel(Model):
         # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_result:
+        elif not model_request_parameters.allow_text_output:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -613,7 +619,8 @@ class OpenAIResponsesModel(Model):
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 reasoning=reasoning,
-                user=model_settings.get('user', NOT_GIVEN),
+                user=model_settings.get('openai_user', NOT_GIVEN),
+                extra_headers={'User-Agent': get_user_agent()},
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
@@ -630,8 +637,8 @@ class OpenAIResponsesModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
     @staticmethod
@@ -765,6 +772,8 @@ class OpenAIResponsesModel(Model):
                             filename=f'filename.{item.format}',
                         )
                     )
+                elif isinstance(item, VideoUrl):  # pragma: no cover
+                    raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                 else:
                     assert_never(item)
         return responses.EasyInputMessageParam(role='user', content=content)
@@ -1053,6 +1062,6 @@ def _customize_request_parameters(model_request_parameters: ModelRequestParamete
 
     return ModelRequestParameters(
         function_tools=[_customize_tool_def(tool) for tool in model_request_parameters.function_tools],
-        allow_text_result=model_request_parameters.allow_text_result,
-        result_tools=[_customize_tool_def(tool) for tool in model_request_parameters.result_tools],
+        allow_text_output=model_request_parameters.allow_text_output,
+        output_tools=[_customize_tool_def(tool) for tool in model_request_parameters.output_tools],
     )

@@ -102,14 +102,14 @@ async def test_request_simple_success(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('hello')
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(Usage(requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(Usage(requests=1))
     assert result.all_messages() == snapshot(
         [
@@ -141,7 +141,7 @@ async def test_request_simple_usage(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('Hello')
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(
         Usage(
             requests=1,
@@ -172,10 +172,10 @@ async def test_request_structured_response(allow_model_requests: None):
     )
     mock_client = MockAsyncClientV2.create_mock(c)
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
-    agent = Agent(m, result_type=list[int])
+    agent = Agent(m, output_type=list[int])
 
     result = await agent.run('Hello')
-    assert result.data == [1, 2, 123]
+    assert result.output == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -256,7 +256,7 @@ async def test_request_tool_call(allow_model_requests: None):
             raise ModelRetry('Wrong location, please try again')
 
     result = await agent.run('Hello')
-    assert result.data == 'final response'
+    assert result.output == 'final response'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -361,7 +361,7 @@ async def test_request_simple_success_with_vcr(allow_model_requests: None, co_ap
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
     agent = Agent(m)
     result = await agent.run('hello')
-    assert result.data == snapshot('Hello! How can I assist you today?')
+    assert result.output == snapshot('Hello! How can I assist you today?')
 
 
 @pytest.mark.vcr()

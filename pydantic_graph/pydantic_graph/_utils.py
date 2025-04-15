@@ -5,9 +5,13 @@ import types
 from functools import partial
 from typing import Any, Callable, TypeVar
 
-from typing_extensions import ParamSpec, TypeIs, get_args, get_origin
+from logfire_api import LogfireSpan
+from opentelemetry.trace import Span
+from typing_extensions import ParamSpec, TypeAlias, TypeIs, get_args, get_origin
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
+
+AbstractSpan: TypeAlias = 'LogfireSpan | Span'
 
 
 def get_event_loop():
