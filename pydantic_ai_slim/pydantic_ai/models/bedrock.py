@@ -536,7 +536,7 @@ class BedrockStreamedResponse(StreamedResponse):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=index,
                         tool_name=tool_use.get('name'),
-                        args=tool_use.get('input'),
+                        args=tool_use.get('input') or None,  # args might be `''`, will cause json decode error
                         tool_call_id=tool_id,
                     )
                     if maybe_event:
