@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast, overload
 
 import anyio
 import anyio.to_thread
-from mypy_boto3_bedrock_runtime.type_defs import SystemContentBlockTypeDef
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import _utils, usage
