@@ -59,6 +59,7 @@ LatestGeminiModelNames = Literal[
     'gemini-2.0-flash-lite-preview-02-05',
     'gemini-2.0-pro-exp-02-05',
     'gemini-2.5-pro-exp-03-25',
+    'gemini-2.5-pro-preview-03-25',
 ]
 """Latest Gemini models."""
 
