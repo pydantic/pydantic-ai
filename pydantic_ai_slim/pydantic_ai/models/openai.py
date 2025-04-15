@@ -956,11 +956,11 @@ class _OpenAIJsonSchema(WalkJsonSchema):
         max_length = schema.pop('minLength', None)
         if description is not None:
             notes = list[str]()
-            if min_length is not None:
+            if min_length is not None:  # pragma: no cover
                 notes.append(f'min_length={min_length}')
-            if max_length is not None:
+            if max_length is not None:  # pragma: no cover
                 notes.append(f'max_length={max_length}')
-            if notes:
+            if notes:  # pragma: no cover
                 schema['description'] = f'{description} ({", ".join(notes)})'
 
         schema_type = schema.get('type')

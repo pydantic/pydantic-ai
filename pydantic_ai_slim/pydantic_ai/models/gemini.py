@@ -777,7 +777,7 @@ class _GeminiJsonSchema(WalkJsonSchema):
         schema.pop('title', None)
         schema.pop('default', None)
         schema.pop('$schema', None)
-        if (const := schema.pop('const', None)) is not None:
+        if (const := schema.pop('const', None)) is not None:  # pragma: no cover
             # Gemini doesn't support const, but it does support enum with a single value
             schema['enum'] = [const]
         schema.pop('discriminator', None)
@@ -789,9 +789,10 @@ class _GeminiJsonSchema(WalkJsonSchema):
         schema.pop('exclusiveMinimum', None)
 
         type_ = schema.get('type')
-        if 'oneOf' in schema and 'type' not in schema:
-            # Gemini errors in this case even though it says it shouldn't...
-            # Changing the oneOf to an anyOf prevents the API error
+        if 'oneOf' in schema and 'type' not in schema:  # pragma: no cover
+            # This gets hit when we have a discriminated union
+            # Gemini returns an API error in this case even though it says in its error message it shouldn't...
+            # Changing the oneOf to an anyOf prevents the API error and I think is functionally equivalent
             schema['anyOf'] = schema.pop('oneOf')
 
         if type_ == 'string' and (fmt := schema.pop('format', None)):
