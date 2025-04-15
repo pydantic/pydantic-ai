@@ -211,9 +211,8 @@ class BedrockConverseModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, usage.Usage]:
-        response = await self._messages_create(
-            messages, False, cast(BedrockModelSettings, model_settings or {}), model_request_parameters
-        )
+        settings = cast(BedrockModelSettings, model_settings or {})
+        response = await self._messages_create(messages, False, settings, model_request_parameters)
         return await self._process_response(response)
 
     @asynccontextmanager
@@ -223,9 +222,8 @@ class BedrockConverseModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
-        response = await self._messages_create(
-            messages, True, cast(BedrockModelSettings, model_settings or {}), model_request_parameters
-        )
+        settings = cast(BedrockModelSettings, model_settings or {})
+        response = await self._messages_create(messages, True, settings, model_request_parameters)
         yield BedrockStreamedResponse(_model_name=self.model_name, _event_stream=response)
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> tuple[ModelResponse, usage.Usage]:

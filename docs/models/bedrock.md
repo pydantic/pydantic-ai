@@ -46,8 +46,11 @@ agent = Agent(model)
 
 ## Customizing Bedrock Runtime API
 
-You can customize the Bedrock Runtime API calls by adding additional parameters, such as guardrail configurations and performance settings. For a complete list of configurable parameters, refer to the documentation for [`BedrockModelSettings`][pydantic_ai.models.bedrock.BedrockModelSettings]
-```python
+You can customize the Bedrock Runtime API calls by adding additional parameters, such as guardrail
+configurations and performance settings. For a complete list of configurable parameters, refer to the
+documentation for [`BedrockModelSettings`][pydantic_ai.models.bedrock.BedrockModelSettings].
+
+```python {title="customize_bedrock_model_settings.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
 
