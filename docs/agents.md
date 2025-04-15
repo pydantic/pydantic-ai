@@ -669,6 +669,8 @@ You want to use:
 - `instructions` when that information should be per-agent based.
 - `system_prompts` when you want the model to know about previous system prompts.
 
+They are mutually exclusive, you cannot use both in the same agent.
+
 ```python {title="instructions.py"}
 from pydantic_ai import Agent
 
