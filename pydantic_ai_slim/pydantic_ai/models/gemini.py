@@ -44,7 +44,7 @@ from . import (
     check_allow_model_requests,
     get_user_agent,
 )
-from .json_schema import JsonSchema, WalkJsonSchema
+from ._json_schema import JsonSchema, WalkJsonSchema
 
 LatestGeminiModelNames = Literal[
     'gemini-1.5-flash',
