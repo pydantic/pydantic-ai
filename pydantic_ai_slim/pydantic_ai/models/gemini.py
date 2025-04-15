@@ -1,10 +1,8 @@
 from __future__ import annotations as _annotations
 
 import base64
-import re
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Annotated, Any, Literal, Protocol, Union, cast
@@ -46,6 +44,7 @@ from . import (
     check_allow_model_requests,
     get_user_agent,
 )
+from .json_schema import JsonSchema, WalkJsonSchema
 
 LatestGeminiModelNames = Literal[
     'gemini-1.5-flash',
@@ -156,7 +155,7 @@ class GeminiModel(Model):
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         def _customize_tool_def(t: ToolDefinition):
-            return replace(t, parameters_json_schema=_GeminiJsonSchema(t.parameters_json_schema).simplify())
+            return replace(t, parameters_json_schema=_GeminiJsonSchema(t.parameters_json_schema).walk())
 
         return ModelRequestParameters(
             function_tools=[_customize_tool_def(tool) for tool in model_request_parameters.function_tools],
@@ -760,7 +759,7 @@ _gemini_response_ta = pydantic.TypeAdapter(_GeminiResponse)
 _gemini_streamed_response_ta = pydantic.TypeAdapter(list[_GeminiResponse], config=pydantic.ConfigDict(defer_build=True))
 
 
-class _GeminiJsonSchema:
+class _GeminiJsonSchema(WalkJsonSchema):
     """Transforms the JSON Schema from Pydantic to be suitable for Gemini.
 
     Gemini which [supports](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations)
@@ -771,72 +770,58 @@ class _GeminiJsonSchema:
     * gemini doesn't allow `$defs` — we need to inline the definitions where possible
     """
 
-    def __init__(self, schema: _utils.ObjectJsonSchema):
-        self.schema = deepcopy(schema)
-        self.defs = self.schema.pop('$defs', {})
+    def __init__(self, schema: JsonSchema):
+        super().__init__(schema, prefer_inlined_defs=True, simplify_nullable_unions=True)
 
-    def simplify(self) -> dict[str, Any]:
-        self._simplify(self.schema, refs_stack=())
-        return self.schema
-
-    def _simplify(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
+    def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)
         schema.pop('default', None)
         schema.pop('$schema', None)
+        if (const := schema.pop('const', None)) is not None:  # pragma: no cover
+            # Gemini doesn't support const, but it does support enum with a single value
+            schema['enum'] = [const]
+        schema.pop('discriminator', None)
+        schema.pop('examples', None)
+
+        # TODO: Should we use the trick from pydantic_ai.models.openai._OpenAIJsonSchema
+        #   where we add notes about these properties to the field description?
         schema.pop('exclusiveMaximum', None)
         schema.pop('exclusiveMinimum', None)
-        if ref := schema.pop('$ref', None):
-            # noinspection PyTypeChecker
-            key = re.sub(r'^#/\$defs/', '', ref)
-            if key in refs_stack:
-                raise UserError('Recursive `$ref`s in JSON Schema are not supported by Gemini')
-            refs_stack += (key,)
-            schema_def = self.defs[key]
-            self._simplify(schema_def, refs_stack)
-            schema.update(schema_def)
-            return
-
-        if any_of := schema.get('anyOf'):
-            for item_schema in any_of:
-                self._simplify(item_schema, refs_stack)
-            if len(any_of) == 2 and {'type': 'null'} in any_of:
-                for item_schema in any_of:
-                    if item_schema != {'type': 'null'}:
-                        schema.clear()
-                        schema.update(item_schema)
-                        schema['nullable'] = True
-                        return
 
         type_ = schema.get('type')
+        if 'oneOf' in schema and 'type' not in schema:  # pragma: no cover
+            # This gets hit when we have a discriminated union
+            # Gemini returns an API error in this case even though it says in its error message it shouldn't...
+            # Changing the oneOf to an anyOf prevents the API error and I think is functionally equivalent
+            schema['anyOf'] = schema.pop('oneOf')
 
-        if type_ == 'object':
-            self._object(schema, refs_stack)
-        elif type_ == 'array':
-            return self._array(schema, refs_stack)
-        elif type_ == 'string' and (fmt := schema.pop('format', None)):
+        if type_ == 'string' and (fmt := schema.pop('format', None)):
             description = schema.get('description')
             if description:
                 schema['description'] = f'{description} (format: {fmt})'
             else:
                 schema['description'] = f'Format: {fmt}'
 
-    def _object(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
-        ad_props = schema.pop('additionalProperties', None)
-        if ad_props:
-            raise UserError('Additional properties in JSON Schema are not supported by Gemini')
+        if '$ref' in schema:
+            raise UserError(f'Recursive `$ref`s in JSON Schema are not supported by Gemini: {schema["$ref"]}')
 
-        if properties := schema.get('properties'):  # pragma: no branch
-            for value in properties.values():
-                self._simplify(value, refs_stack)
+        if 'prefixItems' in schema:
+            # prefixItems is not currently supported in Gemini, so we convert it to items for best compatibility
+            prefix_items = schema.pop('prefixItems')
+            items = schema.get('items')
+            unique_items = [items] if items is not None else []
+            for item in prefix_items:
+                if item not in unique_items:
+                    unique_items.append(item)
+            if len(unique_items) > 1:  # pragma: no cover
+                schema['items'] = {'anyOf': unique_items}
+            elif len(unique_items) == 1:
+                schema['items'] = unique_items[0]
+            schema.setdefault('minItems', len(prefix_items))
+            if items is None:
+                schema.setdefault('maxItems', len(prefix_items))
 
-    def _array(self, schema: dict[str, Any], refs_stack: tuple[str, ...]) -> None:
-        if prefix_items := schema.get('prefixItems'):
-            # TODO I think this not is supported by Gemini, maybe we should raise an error?
-            for prefix_item in prefix_items:
-                self._simplify(prefix_item, refs_stack)
-
-        if items_schema := schema.get('items'):  # pragma: no branch
-            self._simplify(items_schema, refs_stack)
+        return schema
 
 
 def _ensure_decodeable(content: bytearray) -> bytearray:
