@@ -770,14 +770,30 @@ class _GeminiJsonSchema(WalkJsonSchema):
     * gemini doesn't allow `$defs` — we need to inline the definitions where possible
     """
 
+    def __init__(self, schema: JsonSchema):
+        super().__init__(schema, prefer_inlined_defs=True, simplify_nullable_unions=True)
+
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)
         schema.pop('default', None)
         schema.pop('$schema', None)
+        if (const := schema.pop('const', None)) is not None:
+            # Gemini doesn't support const, but it does support enum with a single value
+            schema['enum'] = [const]
+        schema.pop('discriminator', None)
+        schema.pop('examples', None)
+
+        # TODO: Should we use the trick from pydantic_ai.models.openai._OpenAIJsonSchema
+        #   where we add notes about these properties to the field description?
         schema.pop('exclusiveMaximum', None)
         schema.pop('exclusiveMinimum', None)
 
         type_ = schema.get('type')
+        if 'oneOf' in schema and 'type' not in schema:
+            # Gemini errors in this case even though it says it shouldn't...
+            # Changing the oneOf to an anyOf prevents the API error
+            schema['anyOf'] = schema.pop('oneOf')
+
         if type_ == 'string' and (fmt := schema.pop('format', None)):
             description = schema.get('description')
             if description:

@@ -13,15 +13,16 @@ JsonSchema = dict[str, Any]
 class WalkJsonSchema(ABC):
     """Walks a JSON schema, applying transformations to it at each level."""
 
-    def __init__(self, schema: JsonSchema):
-        self.schema = schema
-        self.defs = schema.pop('$defs', {})
+    def __init__(
+        self, schema: JsonSchema, *, prefer_inlined_defs: bool = False, simplify_nullable_unions: bool = False
+    ):
+        self.schema = deepcopy(schema)
+        self.prefer_inlined_defs = prefer_inlined_defs
+        self.simplify_nullable_unions = simplify_nullable_unions
+
+        self.defs: dict[str, JsonSchema] = self.schema.pop('$defs', {})
         self.refs_stack = tuple[str, ...]()
         self.recursive_refs = set[str]()
-
-        # TODO: Consider adding config/classvars/some other controls for the following:
-        #   * Whether to inline refs as much as possible
-        #   * Whether to simplify nullable unions by making them nullable. (Maybe this should become subclass-specific?)
 
     @abstractmethod
     def transform(self, schema: JsonSchema) -> JsonSchema:
@@ -31,12 +32,16 @@ class WalkJsonSchema(ABC):
     def walk(self) -> JsonSchema:
         handled = self._handle(deepcopy(self.schema))
 
-        if self.recursive_refs:
-            # If there are recursive refs, we _have_ to use a $defs+$ref structure
+        if not self.prefer_inlined_defs and self.defs:
+            handled['$defs'] = {k: self._handle(v) for k, v in self.defs.items()}
+
+        elif self.recursive_refs:
+            # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
             # We try to use whatever the original root key was, but if it is already in use,
             # we modify it to avoid collisions.
             defs = {key: self.defs[key] for key in self.recursive_refs}
-            root_key = self.schema.get('$ref')
+            root_ref = self.schema.get('$ref')
+            root_key = None if root_ref is None else re.sub(r'^#/\$defs/', '', root_ref)
             if root_key is None:
                 root_key = self.schema.get('title', 'root')
                 while root_key in defs:
@@ -44,25 +49,22 @@ class WalkJsonSchema(ABC):
                     root_key = f'{root_key}_root'
 
             defs[root_key] = handled
-            return {'$defs': defs, '$ref': '#/$defs/root'}
+            return {'$defs': defs, '$ref': f'#/$defs/{root_key}'}
 
         return handled
 
     def _handle(self, schema: JsonSchema) -> JsonSchema:
-        # Attempt to unpack refs as much as possible
-        # TODO: Probably want a way to opt out of this, e.g. for models with heavily repeated definitions..
-        #   Note in that case, we would still need to detect the presence of recursive references, and we also
-        #   would need to make sure we applied the transform to the definition schemas and included them.
-        while ref := schema.get('$ref'):
-            key = re.sub(r'^#/\$defs/', '', ref)
-            if key in self.refs_stack:
-                self.recursive_refs.add(key)
-                break  # recursive ref can't be unpacked
-            self.refs_stack += (key,)
-            def_schema = self.defs.get(key)
-            if def_schema is None:
-                raise UserError(f'Could not find $ref definition for {key}')
-            schema = def_schema
+        if self.prefer_inlined_defs:
+            while ref := schema.get('$ref'):
+                key = re.sub(r'^#/\$defs/', '', ref)
+                if key in self.refs_stack:
+                    self.recursive_refs.add(key)
+                    break  # recursive ref can't be unpacked
+                self.refs_stack += (key,)
+                def_schema = self.defs.get(key)
+                if def_schema is None:
+                    raise UserError(f'Could not find $ref definition for {key}')
+                schema = def_schema
 
         # Handle the schema based on its type / structure
         type_ = schema.get('type')
@@ -118,18 +120,21 @@ class WalkJsonSchema(ABC):
         handled = [self._handle(member) for member in members]
 
         # convert nullable unions to nullable types
-        handled = self._simplify_nullable_union(handled)
+        if self.simplify_nullable_unions:
+            handled = self._simplify_nullable_union(handled)
 
         if len(handled) == 1:
             # In this case, no need to retain the union
             return handled[0]
 
-        return {union_kind: handled}
+        # If we have keys besides the union kind (such as title or discriminator), keep them without modifications
+        schema = schema.copy()
+        schema[union_kind] = handled
+        return schema
 
     @staticmethod
     def _simplify_nullable_union(cases: list[JsonSchema]) -> list[JsonSchema]:
         # TODO: Should we move this to relevant subclasses? Or is it worth keeping here to make reuse easier?
-        # convert nullable unions to nullable types
         if len(cases) == 2 and {'type': 'null'} in cases:
             # Find the non-null schema
             non_null_schema = next(
