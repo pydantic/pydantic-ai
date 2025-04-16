@@ -1,5 +1,3 @@
-import os
-import sys
 from io import StringIO
 from typing import Any
 
@@ -29,40 +27,6 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli ex
 def test_cli_version(capfd: CaptureFixture[str]):
     assert cli(['--version']) == 0
     assert capfd.readouterr().out.startswith('pai - PydanticAI CLI')
-
-
-@pytest.mark.skipif(not os.getenv('CI', False), reason="Marcelo can't make this test pass locally")
-@pytest.mark.skipif(sys.version_info >= (3, 13), reason='slightly different output with 3.13')
-def test_cli_help(capfd: CaptureFixture[str]):
-    with pytest.raises(SystemExit) as exc:
-        cli(['--help'])
-    assert exc.value.code == 0
-
-    assert capfd.readouterr().out.splitlines() == snapshot(
-        [
-            'usage: pai [-h] [-m [MODEL]] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]',
-            '',
-            IsStr(),
-            '',
-            'Special prompt:',
-            '* `/exit` - exit the interactive mode',
-            '* `/markdown` - show the last markdown output of the last question',
-            '* `/multiline` - toggle multiline mode',
-            '',
-            'positional arguments:',
-            '  prompt                AI Prompt, if omitted fall into interactive mode',
-            '',
-            IsStr(),
-            '  -h, --help            show this help message and exit',
-            '  -m [MODEL], --model [MODEL]',
-            '                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o". Defaults to "openai:gpt-4o".',
-            '  -l, --list-models     List all available models and exit',
-            '  -t [CODE_THEME], --code-theme [CODE_THEME]',
-            '                        Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "monokai".',
-            '  --no-stream           Whether to stream responses from the model',
-            '  --version             Show version and exit',
-        ]
-    )
 
 
 def test_invalid_model(capfd: CaptureFixture[str]):
@@ -169,7 +133,7 @@ def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli([])
     mock_run_chat.assert_awaited_once_with(
-        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai'
+        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai'
     )
 
 
@@ -178,7 +142,7 @@ def test_code_theme_light(mocker: MockerFixture, env: TestEnv):
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=light'])
     mock_run_chat.assert_awaited_once_with(
-        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'default'
+        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'default', 'pai'
     )
 
 
@@ -187,5 +151,5 @@ def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=dark'])
     mock_run_chat.assert_awaited_once_with(
-        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai'
+        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai'
     )

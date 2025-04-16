@@ -1,3 +1,4 @@
+import os
 import re
 import sys
 from pathlib import Path
@@ -10,6 +11,7 @@ from pydantic_ai._cli import cli
 @pytest.mark.skipif(sys.version_info >= (3, 13), reason='slightly different output with 3.13')
 def test_cli_help(capfd: pytest.CaptureFixture[str]):
     """Check README.md help output matches `clai --help`."""
+    os.environ['COLUMNS'] = '150'
     with pytest.raises(SystemExit):
         cli(['--help'], prog_name='clai')
 
