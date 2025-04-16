@@ -1,6 +1,11 @@
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
+import asyncio
+from collections.abc import AsyncIterator
+
+import mcp.types as types
 import pytest
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from dirty_equals import IsInstance
 from inline_snapshot import snapshot
 
@@ -11,12 +16,11 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCall
 from .conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
-    from mcp.types import CallToolResult, TextContent
+    from mcp.types import CallToolResult, JSONRPCMessage, TextContent
 
-    from pydantic_ai.mcp import MCPServerHTTP, MCPServerStdio
+    from pydantic_ai.mcp import MCPServer, MCPServerHTTP, MCPServerStdio
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.openai import OpenAIProvider
-
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mcp and openai not installed'),
@@ -96,6 +100,47 @@ async def test_agent_with_stdio_server(allow_model_requests: None, openai_api_ke
                 ),
             ]
         )
+
+
+async def test_server_with_duplicate_tool_names(allow_model_requests: None, openai_api_key: str):
+    class MockClient:
+        async def list_tools(self) -> types.ListToolsResult:
+            # Await the sleep coroutine to simulate an asynchronous operation
+            await asyncio.sleep(0)
+            return types.ListToolsResult(
+                tools=[
+                    types.Tool(name='x', description='', inputSchema={}),
+                    types.Tool(name='x', description='', inputSchema={}),
+                ]
+            )
+
+    class MockMCPServer(MCPServer):
+        async def client_streams(
+            self,
+        ) -> AsyncIterator[
+            tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
+        ]:
+            pass
+
+        is_running = True
+
+        async def __aenter__(self) -> 'MockMCPServer':
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            pass
+
+        _client = MockClient()
+
+    server = MockMCPServer()
+    model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, mcp_servers=[server])
+    async with agent.run_mcp_servers():
+        try:
+            await agent.run('What is 0 degrees Celsius in Fahrenheit?')
+            assert False
+        except UserError as e:
+            assert e.message == f'Tool names must be unique: Tool x is provided multiple times. (MCP server: {server})'
 
 
 async def test_agent_with_server_not_running(openai_api_key: str):
