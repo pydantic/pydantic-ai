@@ -54,7 +54,7 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '464'
+      - '490'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -75,10 +75,10 @@ interactions:
           - function:
               arguments: '{"city":"Tokyo"}'
               name: get_temperature
-            id: call_rtFKwAIteZdMYlGvskQUU6Ao
+            id: call_bhZkmIKKItNGJ41whHUHB7p9
             type: function
-      created: 1744810315
-      id: chatcmpl-BMx9nkXb2JUxhgkuwoeVr3EJCNqa5
+      created: 1744810634
+      id: chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq
       model: gpt-4.1-mini-2025-04-14
       object: chat.completion
       service_tier: default
@@ -111,8 +111,8 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=q4DgykoIR5GUvLHflbziekLgNQykkyBpn02XLO0Kh7g-1744810315-1.0.1.1-vMraPT5za8LfbLbLadsDPaI_JkbB3_LJkl41M12uGVwfJkj9OVt6QlxOVM7iqilST8VlOkbSnS_EnZgqo.eW9B6mA9vMy50Foa6358UDdOg;
-        _cfuvid=7dFVMucI_xvqjVue8436maTR3WpFiu3fTAp7986CGPo-1744810315657-0.0.1.1-604800000
+      - __cf_bm=x.H2GlMeh.t_Q.gVlCXrh3.ggn9lKjhmUeG_ToNThLs-1744810635-1.0.1.1-tiHwqGvBw3eEy_y9_q5nx7B.7YCbLb9cXdDj6DklLmtFllOFe708mKwYvGd8fY2y5bO2NOagULipA7MxfwW9P0hlnRSiJZbZBO9tjrUweFc;
+        _cfuvid=VlHcJdsIsxGEt2lddKu_5Am_lfyYndl9JB2Ezy.aygo-1744810635187-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -127,11 +127,11 @@ interactions:
         - function:
             arguments: '{"city":"Tokyo"}'
             name: get_temperature
-          id: call_rtFKwAIteZdMYlGvskQUU6Ao
+          id: call_bhZkmIKKItNGJ41whHUHB7p9
           type: function
       - content: '20.0'
         role: tool
-        tool_call_id: call_rtFKwAIteZdMYlGvskQUU6Ao
+        tool_call_id: call_bhZkmIKKItNGJ41whHUHB7p9
       model: gpt-4.1-mini
       n: 1
       stream: false
@@ -166,7 +166,7 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '541'
+      - '949'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -183,8 +183,8 @@ interactions:
           content: The temperature in Tokyo is currently 20.0 degrees Celsius.
           refusal: null
           role: assistant
-      created: 1744810315
-      id: chatcmpl-BMx9nyHSMM0XFhtX5obMzfWrfKONq
+      created: 1744810635
+      id: chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP
       model: gpt-4.1-mini-2025-04-14
       object: chat.completion
       service_tier: default
