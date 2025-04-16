@@ -996,7 +996,7 @@ class _OpenAIJsonSchema(WalkJsonSchema):
         schema.pop('default', None)
         schema.pop('$schema', None)
         schema.pop('discriminator', None)
-        if schema.get('$ref') == self.root_ref:
+        if self.root_ref and schema.get('$ref') == self.root_ref:
             schema['$ref'] = '#'
 
         # Track strict-incompatible keys
