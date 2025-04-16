@@ -18,12 +18,13 @@ clai
 ## Help
 
 ```
-usage: clai [-h] [-m [MODEL]] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]
+usage: clai [-h] [-m [MODEL]] [-l] [-t [CODE_THEME]] [--no-stream] [--version]
+            [prompt]
 
-PydanticAI CLI v0.1.1.dev5+4d261d50
+PydanticAI CLI v...
 
-Special prompt:
-* `/exit` - exit the interactive mode
+Special prompts:
+* `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
 * `/markdown` - show the last markdown output of the last question
 * `/multiline` - toggle multiline mode
 
@@ -37,6 +38,6 @@ options:
   -l, --list-models     List all available models and exit
   -t [CODE_THEME], --code-theme [CODE_THEME]
                         Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
-  --no-stream           Whether to stream responses from the model
+  --no-stream           Disable streaming from the model
   --version             Show version and exit
 ```

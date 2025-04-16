@@ -88,7 +88,7 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(args_list: Sequence[str] | None = None, prog_name: str = 'pai') -> int:
+def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai') -> int:
     """Run the CLI and return the exit code for the process."""
     parser = argparse.ArgumentParser(
         prog=prog_name,
