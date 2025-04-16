@@ -54,6 +54,7 @@ print(result.all_messages())
                 part_kind='user-prompt',
             ),
         ],
+        instructions=None,
         kind='request',
     ),
     ModelResponse(
@@ -100,6 +101,7 @@ async def main():
                         part_kind='user-prompt',
                     ),
                 ],
+                instructions=None,
                 kind='request',
             )
         ]
@@ -130,6 +132,7 @@ async def main():
                         part_kind='user-prompt',
                     ),
                 ],
+                instructions=None,
                 kind='request',
             ),
             ModelResponse(
@@ -188,6 +191,7 @@ print(result2.all_messages())
                 part_kind='user-prompt',
             ),
         ],
+        instructions=None,
         kind='request',
     ),
     ModelResponse(
@@ -209,6 +213,7 @@ print(result2.all_messages())
                 part_kind='user-prompt',
             )
         ],
+        instructions=None,
         kind='request',
     ),
     ModelResponse(
@@ -314,6 +319,7 @@ print(result2.all_messages())
                 part_kind='user-prompt',
             ),
         ],
+        instructions=None,
         kind='request',
     ),
     ModelResponse(
@@ -335,6 +341,7 @@ print(result2.all_messages())
                 part_kind='user-prompt',
             )
         ],
+        instructions=None,
         kind='request',
     ),
     ModelResponse(

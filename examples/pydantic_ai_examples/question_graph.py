@@ -20,8 +20,7 @@ from pydantic_graph import (
 )
 from pydantic_graph.persistence.file import FileStatePersistence
 
-from pydantic_ai import Agent
-from pydantic_ai.format_as_xml import format_as_xml
+from pydantic_ai import Agent, format_as_xml
 from pydantic_ai.messages import ModelMessage
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured

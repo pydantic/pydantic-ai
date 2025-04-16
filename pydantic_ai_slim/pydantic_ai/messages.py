@@ -457,6 +457,9 @@ class ModelRequest:
     parts: list[ModelRequestPart]
     """The parts of the user message."""
 
+    instructions: str | None = None
+    """The instructions for the model."""
+
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
 

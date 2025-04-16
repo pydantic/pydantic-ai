@@ -42,6 +42,7 @@ from . import (
     check_allow_model_requests,
     get_user_agent,
 )
+from ._json_schema import JsonSchema, WalkJsonSchema
 
 try:
     from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream, NotGiven
@@ -258,10 +259,7 @@ class OpenAIModel(Model):
         else:
             tool_choice = 'auto'
 
-        openai_messages: list[chat.ChatCompletionMessageParam] = []
-        for m in messages:
-            async for msg in self._map_message(m):
-                openai_messages.append(msg)
+        openai_messages = await self._map_messages(messages)
 
         try:
             return await self.client.chat.completions.create(
@@ -322,31 +320,36 @@ class OpenAIModel(Model):
             tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
-    async def _map_message(self, message: ModelMessage) -> AsyncIterable[chat.ChatCompletionMessageParam]:
+    async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
-        if isinstance(message, ModelRequest):
-            async for item in self._map_user_message(message):
-                yield item
-        elif isinstance(message, ModelResponse):
-            texts: list[str] = []
-            tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
-            for item in message.parts:
-                if isinstance(item, TextPart):
-                    texts.append(item.content)
-                elif isinstance(item, ToolCallPart):
-                    tool_calls.append(self._map_tool_call(item))
-                else:
-                    assert_never(item)
-            message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
-            if texts:
-                # Note: model responses from this model should only have one text item, so the following
-                # shouldn't merge multiple texts into one unless you switch models between runs:
-                message_param['content'] = '\n\n'.join(texts)
-            if tool_calls:
-                message_param['tool_calls'] = tool_calls
-            yield message_param
-        else:
-            assert_never(message)
+        openai_messages: list[chat.ChatCompletionMessageParam] = []
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                async for item in self._map_user_message(message):
+                    openai_messages.append(item)
+            elif isinstance(message, ModelResponse):
+                texts: list[str] = []
+                tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
+                for item in message.parts:
+                    if isinstance(item, TextPart):
+                        texts.append(item.content)
+                    elif isinstance(item, ToolCallPart):
+                        tool_calls.append(self._map_tool_call(item))
+                    else:
+                        assert_never(item)
+                message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
+                if texts:
+                    # Note: model responses from this model should only have one text item, so the following
+                    # shouldn't merge multiple texts into one unless you switch models between runs:
+                    message_param['content'] = '\n\n'.join(texts)
+                if tool_calls:
+                    message_param['tool_calls'] = tool_calls
+                openai_messages.append(message_param)
+            else:
+                assert_never(message)
+        if instructions := self._get_instructions(messages):
+            openai_messages.insert(0, chat.ChatCompletionSystemMessageParam(content=instructions, role='system'))
+        return openai_messages
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
@@ -599,14 +602,14 @@ class OpenAIResponsesModel(Model):
         else:
             tool_choice = 'auto'
 
-        system_prompt, openai_messages = await self._map_message(messages)
+        instructions, openai_messages = await self._map_messages(messages)
         reasoning = self._get_reasoning(model_settings)
 
         try:
             return await self.client.responses.create(
                 input=openai_messages,
                 model=self._model_name,
-                instructions=system_prompt,
+                instructions=instructions,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
@@ -650,15 +653,16 @@ class OpenAIResponsesModel(Model):
             'strict': f.strict or False,
         }
 
-    async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[responses.ResponseInputItemParam]]:
+    async def _map_messages(
+        self, messages: list[ModelMessage]
+    ) -> tuple[str | NotGiven, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
-        system_prompt: str = ''
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if isinstance(part, SystemPromptPart):
-                        system_prompt += part.content
+                        openai_messages.append(responses.EasyInputMessageParam(role='system', content=part.content))
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
@@ -695,7 +699,8 @@ class OpenAIResponsesModel(Model):
                         assert_never(item)
             else:
                 assert_never(message)
-        return system_prompt, openai_messages
+        instructions = self._get_instructions(messages) or NOT_GIVEN
+        return instructions, openai_messages
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> responses.ResponseFunctionToolCallParam:
@@ -927,134 +932,76 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
         )
 
 
-class _StrictSchemaHelper:
-    def make_schema_strict(self, schema: dict[str, Any]) -> dict[str, Any]:
-        """Recursively handle the schema to make it compatible with OpenAI strict mode.
+@dataclass
+class _OpenAIJsonSchema(WalkJsonSchema):
+    """Recursively handle the schema to make it compatible with OpenAI strict mode.
 
-        See https://platform.openai.com/docs/guides/function-calling?api-mode=responses#strict-mode for more details,
-        but this basically just requires:
-        * `additionalProperties` must be set to false for each object in the parameters
-        * all fields in properties must be marked as required
-        """
-        assert isinstance(schema, dict), 'Schema must be a dictionary, this is probably a bug'
+    See https://platform.openai.com/docs/guides/function-calling?api-mode=responses#strict-mode for more details,
+    but this basically just requires:
+    * `additionalProperties` must be set to false for each object in the parameters
+    * all fields in properties must be marked as required
+    """
 
-        # Create a copy to avoid modifying the original schema
-        schema = schema.copy()
+    def __init__(self, schema: JsonSchema, strict: bool | None):
+        super().__init__(schema)
+        self.strict = strict
+        self.is_strict_compatible = True
 
-        # Handle $defs
-        if defs := schema.get('$defs'):
-            schema['$defs'] = {k: self.make_schema_strict(v) for k, v in defs.items()}
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        # Remove unnecessary keys
+        schema.pop('title', None)
+        schema.pop('default', None)
+        schema.pop('$schema', None)
+        schema.pop('discriminator', None)
 
-        # Process schema based on its type
+        # Remove incompatible keys, but note their impact in the description provided to the LLM
+        description = schema.get('description')
+        min_length = schema.pop('minLength', None)
+        max_length = schema.pop('minLength', None)
+        if description is not None:
+            notes = list[str]()
+            if min_length is not None:  # pragma: no cover
+                notes.append(f'min_length={min_length}')
+            if max_length is not None:  # pragma: no cover
+                notes.append(f'max_length={max_length}')
+            if notes:  # pragma: no cover
+                schema['description'] = f'{description} ({", ".join(notes)})'
+
         schema_type = schema.get('type')
         if schema_type == 'object':
-            # Handle object type by setting additionalProperties to false
-            # and adding all properties to required list
-            self._make_object_schema_strict(schema)
-        elif schema_type == 'array':
-            # Handle array types by processing their items
-            if 'items' in schema:
-                items: Any = schema['items']
-                schema['items'] = self.make_schema_strict(items)
-            if 'prefixItems' in schema:
-                prefix_items: list[Any] = schema['prefixItems']
-                schema['prefixItems'] = [self.make_schema_strict(item) for item in prefix_items]
+            if self.strict is True:
+                # additional properties are disallowed
+                schema['additionalProperties'] = False
 
-        elif schema_type in {'string', 'number', 'integer', 'boolean', 'null'}:
-            pass  # Primitive types need no special handling
-        elif 'oneOf' in schema:
-            schema['oneOf'] = [self.make_schema_strict(item) for item in schema['oneOf']]
-        elif 'anyOf' in schema:
-            schema['anyOf'] = [self.make_schema_strict(item) for item in schema['anyOf']]
+                # all properties are required
+                if 'properties' not in schema:
+                    schema['properties'] = dict[str, Any]()
+                schema['required'] = list(schema['properties'].keys())
 
+            elif self.strict is None:
+                if (
+                    schema.get('additionalProperties') is not False
+                    or 'properties' not in schema
+                    or 'required' not in schema
+                ):
+                    self.is_strict_compatible = False
+                else:
+                    required = schema['required']
+                    for k in schema['properties'].keys():
+                        if k not in required:
+                            self.is_strict_compatible = False
         return schema
-
-    def _make_object_schema_strict(self, schema: dict[str, Any]) -> None:
-        schema['additionalProperties'] = False
-
-        # Handle patternProperties; note this may not be compatible with strict mode but is included for completeness
-        if 'patternProperties' in schema and isinstance(schema['patternProperties'], dict):
-            pattern_props: dict[str, Any] = schema['patternProperties']
-            schema['patternProperties'] = {str(k): self.make_schema_strict(v) for k, v in pattern_props.items()}
-
-        # Handle properties — update their schemas recursively, and make all properties required
-        if 'properties' in schema and isinstance(schema['properties'], dict):
-            properties: dict[str, Any] = schema['properties']
-            schema['properties'] = {k: self.make_schema_strict(v) for k, v in properties.items()}
-            schema['required'] = list(properties.keys())
-
-    def is_schema_strict(self, schema: dict[str, Any]) -> bool:
-        """Check if the schema is strict-mode-compatible.
-
-        A schema is compatible if:
-        * `additionalProperties` is set to false for each object in the parameters
-        * all fields in properties are marked as required
-
-        See https://platform.openai.com/docs/guides/function-calling?api-mode=responses#strict-mode for more details.
-        """
-        assert isinstance(schema, dict), 'Schema must be a dictionary, this is probably a bug'
-
-        # Note that checking the defs first is usually the fastest way to proceed, but
-        # it makes it hard/impossible to hit coverage below, hence all the pragma no covers.
-        # I still included the handling below because I'm not _confident_ those code paths can't be hit.
-        if defs := schema.get('$defs'):
-            if not all(self.is_schema_strict(v) for v in defs.values()):  # pragma: no branch
-                return False
-
-        schema_type = schema.get('type')
-        if schema_type == 'object':
-            if not self._is_object_schema_strict(schema):
-                return False
-        elif schema_type == 'array':
-            if 'items' in schema:
-                items: Any = schema['items']
-                if not self.is_schema_strict(items):  # pragma: no cover
-                    return False
-            if 'prefixItems' in schema:
-                prefix_items: list[Any] = schema['prefixItems']
-                if not all(self.is_schema_strict(item) for item in prefix_items):  # pragma: no cover
-                    return False
-        elif schema_type in {'string', 'number', 'integer', 'boolean', 'null'}:
-            pass
-        elif 'oneOf' in schema:  # pragma: no cover
-            if not all(self.is_schema_strict(item) for item in schema['oneOf']):
-                return False
-
-        elif 'anyOf' in schema:  # pragma: no cover
-            if not all(self.is_schema_strict(item) for item in schema['anyOf']):
-                return False
-
-        return True
-
-    def _is_object_schema_strict(self, schema: dict[str, Any]) -> bool:
-        """Check if the schema is an object and has additionalProperties set to false."""
-        if schema.get('additionalProperties') is not False:
-            return False
-        if 'properties' not in schema:  # pragma: no cover
-            return False
-        if 'required' not in schema:  # pragma: no cover
-            return False
-
-        for k, v in schema['properties'].items():
-            if k not in schema['required']:
-                return False
-            if not self.is_schema_strict(v):  # pragma: no cover
-                return False
-
-        return True
 
 
 def _customize_request_parameters(model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
     """Customize the request parameters for OpenAI models."""
 
     def _customize_tool_def(t: ToolDefinition):
-        if t.strict is True:
-            parameters_json_schema = _StrictSchemaHelper().make_schema_strict(t.parameters_json_schema)
-            return replace(t, parameters_json_schema=parameters_json_schema)
-        elif t.strict is None:
-            strict = _StrictSchemaHelper().is_schema_strict(t.parameters_json_schema)
-            return replace(t, strict=strict)
-        return t
+        schema_transformer = _OpenAIJsonSchema(t.parameters_json_schema, strict=t.strict)
+        parameters_json_schema = schema_transformer.walk()
+        if t.strict is None:
+            t = replace(t, strict=schema_transformer.is_strict_compatible)
+        return replace(t, parameters_json_schema=parameters_json_schema)
 
     return ModelRequestParameters(
         function_tools=[_customize_tool_def(tool) for tool in model_request_parameters.function_tools],

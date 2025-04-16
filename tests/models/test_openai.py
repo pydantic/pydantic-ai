@@ -31,7 +31,7 @@ from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -52,7 +52,7 @@ with try_import() as imports_successful:
         OpenAIModel,
         OpenAIModelSettings,
         OpenAISystemPromptRole,
-        _StrictSchemaHelper,  # pyright: ignore[reportPrivateUsage]
+        _OpenAIJsonSchema,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -822,18 +822,13 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     '$defs': {
                         'MyDefaultRecursiveDc': {
                             'properties': {
-                                'field': {
-                                    'anyOf': [{'$ref': '#/$defs/MyDefaultRecursiveDc'}, {'type': 'null'}],
-                                    'default': None,
-                                }
+                                'field': {'anyOf': [{'$ref': '#/$defs/MyDefaultRecursiveDc'}, {'type': 'null'}]}
                             },
-                            'title': 'MyDefaultRecursiveDc',
                             'type': 'object',
                         },
                         'MyRecursiveDc': {
                             'properties': {'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]}},
                             'required': ['field'],
-                            'title': 'MyRecursiveDc',
                             'type': 'object',
                         },
                     },
@@ -856,19 +851,14 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     '$defs': {
                         'MyDefaultRecursiveDc': {
                             'properties': {
-                                'field': {
-                                    'anyOf': [{'$ref': '#/$defs/MyDefaultRecursiveDc'}, {'type': 'null'}],
-                                    'default': None,
-                                }
+                                'field': {'anyOf': [{'$ref': '#/$defs/MyDefaultRecursiveDc'}, {'type': 'null'}]}
                             },
-                            'title': 'MyDefaultRecursiveDc',
                             'type': 'object',
                             'additionalProperties': False,
                             'required': ['field'],
                         },
                         'MyRecursiveDc': {
                             'properties': {'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]}},
-                            'title': 'MyRecursiveDc',
                             'type': 'object',
                             'additionalProperties': False,
                             'required': ['field'],
@@ -892,7 +882,6 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': True,
                     'properties': {},
-                    'title': 'MyModel',
                     'type': 'object',
                 }
             ),
@@ -905,7 +894,6 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {},
-                    'title': 'MyModel',
                     'required': [],
                     'type': 'object',
                 }
@@ -944,8 +932,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     '$defs': {
                         'MyDefaultDc': {
-                            'properties': {'x': {'default': 1, 'type': 'integer'}},
-                            'title': 'MyDefaultDc',
+                            'properties': {'x': {'type': 'integer'}},
                             'type': 'object',
                         }
                     },
@@ -964,9 +951,8 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     '$defs': {
                         'MyDefaultDc': {
-                            'properties': {'x': {'default': 1, 'type': 'integer'}},
+                            'properties': {'x': {'type': 'integer'}},
                             'required': ['x'],
-                            'title': 'MyDefaultDc',
                             'type': 'object',
                             'additionalProperties': False,
                         }
@@ -986,8 +972,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     '$defs': {
                         'MyDefaultDc': {
-                            'properties': {'x': {'default': 1, 'type': 'integer'}},
-                            'title': 'MyDefaultDc',
+                            'properties': {'x': {'type': 'integer'}},
                             'type': 'object',
                         }
                     },
@@ -1006,9 +991,8 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     '$defs': {
                         'MyDefaultDc': {
-                            'properties': {'x': {'default': 1, 'type': 'integer'}},
+                            'properties': {'x': {'type': 'integer'}},
                             'required': ['x'],
-                            'title': 'MyDefaultDc',
                             'type': 'object',
                             'additionalProperties': False,
                         }
@@ -1028,8 +1012,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     '$defs': {
                         'MyDefaultDc': {
-                            'properties': {'x': {'default': 1, 'type': 'integer'}},
-                            'title': 'MyDefaultDc',
+                            'properties': {'x': {'type': 'integer'}},
                             'type': 'object',
                         }
                     },
@@ -1051,9 +1034,8 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     '$defs': {
                         'MyDefaultDc': {
-                            'properties': {'x': {'default': 1, 'type': 'integer'}},
+                            'properties': {'x': {'type': 'integer'}},
                             'required': ['x'],
-                            'title': 'MyDefaultDc',
                             'type': 'object',
                             'additionalProperties': False,
                         }
@@ -1160,52 +1142,42 @@ def test_strict_schema():
         my_list: list[float]
         my_discriminated_union: Annotated[Apple | Banana, Discriminator('kind')]
 
-    assert _StrictSchemaHelper().make_schema_strict(MyModel.model_json_schema()) == snapshot(
+    assert _OpenAIJsonSchema(MyModel.model_json_schema(), strict=True).walk() == snapshot(
         {
             '$defs': {
                 'Apple': {
                     'additionalProperties': False,
-                    'properties': {'kind': {'const': 'apple', 'default': 'apple', 'title': 'Kind', 'type': 'string'}},
+                    'properties': {'kind': {'const': 'apple', 'type': 'string'}},
                     'required': ['kind'],
-                    'title': 'Apple',
                     'type': 'object',
                 },
                 'Banana': {
                     'additionalProperties': False,
-                    'properties': {'kind': {'const': 'banana', 'default': 'banana', 'title': 'Kind', 'type': 'string'}},
+                    'properties': {'kind': {'const': 'banana', 'type': 'string'}},
                     'required': ['kind'],
-                    'title': 'Banana',
                     'type': 'object',
                 },
                 'MyModel': {
                     'additionalProperties': False,
                     'properties': {
-                        'my_discriminated_union': {
-                            'discriminator': {
-                                'mapping': {'apple': '#/$defs/Apple', 'banana': '#/$defs/Banana'},
-                                'propertyName': 'kind',
-                            },
-                            'oneOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}],
-                            'title': 'My Discriminated Union',
-                        },
-                        'my_list': {'items': {'type': 'number'}, 'title': 'My List', 'type': 'array'},
+                        'my_discriminated_union': {'oneOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
+                        'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                         'my_patterns': {
                             'additionalProperties': False,
                             'patternProperties': {'^my-pattern$': {'type': 'string'}},
-                            'title': 'My Patterns',
                             'type': 'object',
+                            'properties': {},
+                            'required': [],
                         },
-                        'my_recursive': {'anyOf': [{'$ref': '#/$defs/MyModel'}, {'type': 'null'}], 'default': None},
+                        'my_recursive': {'anyOf': [{'$ref': '#/$defs/MyModel'}, {'type': 'null'}]},
                         'my_tuple': {
                             'maxItems': 1,
                             'minItems': 1,
                             'prefixItems': [{'type': 'integer'}],
-                            'title': 'My Tuple',
                             'type': 'array',
                         },
                     },
                     'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
-                    'title': 'MyModel',
                     'type': 'object',
                 },
             },
@@ -1214,7 +1186,28 @@ def test_strict_schema():
     )
 
 
-@pytest.mark.vcr
+@pytest.mark.vcr()
+async def test_openai_instructions(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.')
+
+    result = await agent.run('What is the capital of France?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The capital of France is Paris.')],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
 async def test_openai_model_without_system_prompt(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, system_prompt='You are a potato.')

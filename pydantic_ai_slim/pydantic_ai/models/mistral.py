@@ -5,7 +5,6 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from itertools import chain
 from typing import Any, Literal, Union, cast
 
 import pydantic_core
@@ -191,7 +190,7 @@ class MistralModel(Model):
         try:
             response = await self.client.chat.complete_async(
                 model=str(self._model_name),
-                messages=list(chain(*(self._map_message(m) for m in messages))),
+                messages=self._map_messages(messages),
                 n=1,
                 tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
                 tool_choice=self._get_tool_choice(model_request_parameters),
@@ -220,7 +219,7 @@ class MistralModel(Model):
     ) -> MistralEventStreamAsync[MistralCompletionEvent]:
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
-        mistral_messages = list(chain(*(self._map_message(m) for m in messages)))
+        mistral_messages = self._map_messages(messages)
 
         if (
             model_request_parameters.output_tools
@@ -440,13 +439,12 @@ class MistralModel(Model):
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
-    @classmethod
-    def _map_user_message(cls, message: ModelRequest) -> Iterable[MistralMessages]:
+    def _map_user_message(self, message: ModelRequest) -> Iterable[MistralMessages]:
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield MistralSystemMessage(content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield cls._map_user_prompt(part)
+                yield self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 yield MistralToolMessage(
                     tool_call_id=part.tool_call_id,
@@ -463,28 +461,31 @@ class MistralModel(Model):
             else:
                 assert_never(part)
 
-    @classmethod
-    def _map_message(cls, message: ModelMessage) -> Iterable[MistralMessages]:
+    def _map_messages(self, messages: list[ModelMessage]) -> list[MistralMessages]:
         """Just maps a `pydantic_ai.Message` to a `MistralMessage`."""
-        if isinstance(message, ModelRequest):
-            yield from cls._map_user_message(message)
-        elif isinstance(message, ModelResponse):
-            content_chunks: list[MistralContentChunk] = []
-            tool_calls: list[MistralToolCall] = []
+        mistral_messages: list[MistralMessages] = []
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                mistral_messages.extend(self._map_user_message(message))
+            elif isinstance(message, ModelResponse):
+                content_chunks: list[MistralContentChunk] = []
+                tool_calls: list[MistralToolCall] = []
 
-            for part in message.parts:
-                if isinstance(part, TextPart):
-                    content_chunks.append(MistralTextChunk(text=part.content))
-                elif isinstance(part, ToolCallPart):
-                    tool_calls.append(cls._map_tool_call(part))
-                else:
-                    assert_never(part)
-            yield MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls)
-        else:
-            assert_never(message)
+                for part in message.parts:
+                    if isinstance(part, TextPart):
+                        content_chunks.append(MistralTextChunk(text=part.content))
+                    elif isinstance(part, ToolCallPart):
+                        tool_calls.append(self._map_tool_call(part))
+                    else:
+                        assert_never(part)
+                mistral_messages.append(MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls))
+            else:
+                assert_never(message)
+        if instructions := self._get_instructions(messages):
+            mistral_messages.insert(0, MistralSystemMessage(content=instructions))
+        return mistral_messages
 
-    @staticmethod
-    def _map_user_prompt(part: UserPromptPart) -> MistralUserMessage:
+    def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:
         content: str | list[MistralContentChunk]
         if isinstance(part.content, str):
             content = part.content

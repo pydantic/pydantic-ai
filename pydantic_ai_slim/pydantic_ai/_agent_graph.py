@@ -125,6 +125,9 @@ def is_agent_node(
 class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     user_prompt: str | Sequence[_messages.UserContent] | None
 
+    instructions: str | None
+    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]]
+
     system_prompts: tuple[str, ...]
     system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]]
     system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]]
@@ -166,6 +169,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx_messages.used = True
 
         parts: list[_messages.ModelRequestPart] = []
+        instructions = await self._instructions(run_context)
         if message_history:
             # Shallow copy messages
             messages.extend(message_history)
@@ -176,7 +180,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         if user_prompt is not None:
             parts.append(_messages.UserPromptPart(user_prompt))
-        return messages, _messages.ModelRequest(parts)
+        return messages, _messages.ModelRequest(parts, instructions=instructions)
 
     async def _reevaluate_dynamic_prompts(
         self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
@@ -205,6 +209,15 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             else:
                 messages.append(_messages.SystemPromptPart(prompt))
         return messages
+
+    async def _instructions(self, run_context: RunContext[DepsT]) -> str | None:
+        if self.instructions is None and not self.instructions_functions:
+            return None
+
+        instructions = self.instructions or ''
+        for instructions_runner in self.instructions_functions:
+            instructions += await instructions_runner.run(run_context)
+        return instructions
 
 
 async def _prepare_request_parameters(
@@ -289,6 +302,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
+        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
         async with ctx.deps.model.request_stream(
             ctx.state.message_history, model_settings, model_request_parameters
         ) as streamed_response:

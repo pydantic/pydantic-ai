@@ -682,3 +682,28 @@ def test_init_with_provider_string(env: TestEnv):
     model = AnthropicModel('claude-3-opus-latest', provider='anthropic')
     assert model.model_name == 'claude-3-opus-latest'
     assert model.client is not None
+
+
+@pytest.mark.vcr()
+async def test_anthropic_model_instructions(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-opus-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m)
+
+    @agent.instructions
+    def simple_instructions():
+        return 'You are a helpful assistant.'
+
+    result = await agent.run('What is the capital of France?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The capital of France is Paris.')],
+                model_name='claude-3-opus-20240229',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
