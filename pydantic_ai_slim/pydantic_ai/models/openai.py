@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import re
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -932,6 +933,29 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
         )
 
 
+_STRICT_INCOMPATIBLE_KEYS = [
+    'minLength',
+    'maxLength',
+    'pattern',
+    'format',
+    'minimum',
+    'maximum',
+    'multipleOf',
+    'patternProperties',
+    'unevaluatedProperties',
+    'propertyNames',
+    'minProperties',
+    'maxProperties',
+    'unevaluatedItems',
+    'contains',
+    'minContains',
+    'maxContains',
+    'minItems',
+    'maxItems',
+    'uniqueItems',
+]
+
+
 @dataclass
 class _OpenAIJsonSchema(WalkJsonSchema):
     """Recursively handle the schema to make it compatible with OpenAI strict mode.
@@ -946,28 +970,57 @@ class _OpenAIJsonSchema(WalkJsonSchema):
         super().__init__(schema)
         self.strict = strict
         self.is_strict_compatible = True
+        self.root_ref = schema.get('$ref')
 
-    def transform(self, schema: JsonSchema) -> JsonSchema:
+    def walk(self) -> JsonSchema:
+        # OpenAI does not support anyOf at the root in strict mode.
+        if 'anyOf' in self.schema:
+            self.is_strict_compatible = False
+
+        result = super().walk()
+
+        # We need to tweak the schema of recursive models to make it compatible with strict mode.
+        # Note: the following change should never change the semantics of the schema.
+        if self.root_ref is not None:
+            result.pop('$ref', None)  # We replace references to the self.root_ref with just '#' in the transform method
+            root_key = re.sub(r'^#/\$defs/', '', self.root_ref)
+            result.update(self.defs.get(root_key) or {})
+
+        return result
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:  # noqa C901
         # Remove unnecessary keys
         schema.pop('title', None)
         schema.pop('default', None)
         schema.pop('$schema', None)
         schema.pop('discriminator', None)
+        if schema.get('$ref') == self.root_ref:
+            schema['$ref'] = '#'
 
-        # Remove incompatible keys, but note their impact in the description provided to the LLM
+        # Track strict-incompatible keys
+        incompatible_values: dict[str, Any] = {}
+        for key in _STRICT_INCOMPATIBLE_KEYS:
+            if key in schema:
+                incompatible_values[key] = schema.pop(key)
         description = schema.get('description')
-        min_length = schema.pop('minLength', None)
-        max_length = schema.pop('maxLength', None)
-        if description is not None:
-            notes = list[str]()
-            if min_length is not None:  # pragma: no cover
-                notes.append(f'min_length={min_length}')
-            if max_length is not None:  # pragma: no cover
-                notes.append(f'max_length={max_length}')
-            if notes:  # pragma: no cover
-                schema['description'] = f'{description} ({", ".join(notes)})'
+        if incompatible_values:
+            if self.strict is True:
+                notes: list[str] = []
+                for key, value in incompatible_values.items():
+                    schema.pop(key)
+                    notes.append(f'{key}={value}')
+                schema['description'] = notes if not description else f'{description} ({notes})'
+            elif self.strict is None:
+                self.is_strict_compatible = False
 
         schema_type = schema.get('type')
+        if 'oneOf' in schema:
+            # OpenAI does not support oneOf in strict mode
+            if self.strict is True:
+                schema['anyOf'] = schema.pop('oneOf')
+            else:
+                self.is_strict_compatible = False
+
         if schema_type == 'object':
             if self.strict is True:
                 # additional properties are disallowed
