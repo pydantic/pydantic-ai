@@ -1031,7 +1031,7 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
     )
 
 
-class Location(BaseModel, extra='forbid'):
+class CurrentLocation(BaseModel, extra='forbid'):
     city: str
     country: str
 
@@ -1042,12 +1042,12 @@ async def test_gemini_additional_properties_is_false(allow_model_requests: None,
     agent = Agent(m)
 
     @agent.tool_plain
-    async def get_temperature(location: Location) -> float:
+    async def get_temperature(location: CurrentLocation) -> float:
         return 20.0
 
     result = await agent.run('What is the temperature in Tokyo?')
     assert result.output == snapshot(
-        'The available tools lack the ability to obtain real-time temperature data. Therefore, I cannot answer your question.\n'
+        'The available tools lack the ability to access real-time information, including current temperature.  Therefore, I cannot answer your question.\n'
     )
 
 
@@ -1059,10 +1059,10 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
     with pytest.warns(UserWarning, match='.*additionalProperties.*'):
 
         @agent.tool_plain
-        async def get_temperature(location: dict[str, Location]) -> float:
+        async def get_temperature(location: dict[str, CurrentLocation]) -> float:
             return 20.0
 
         result = await agent.run('What is the temperature in Tokyo?')
         assert result.output == snapshot(
-            'I need a location dictionary to use the `get_temperature` function.  I cannot provide a temperature without more information.\n'
+            'I need a location dictionary to use the `get_temperature` function.  I cannot provide the temperature in Tokyo without more information.\n'
         )

@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '730'
+      - '741'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=483
+      - gfet4t7; dur=534
       transfer-encoding:
       - chunked
       vary:
@@ -49,24 +49,24 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.17982037250812238
+      - avgLogprobs: -0.15060695580073766
         content:
           parts:
           - text: |
-              I need a location dictionary to use the `get_temperature` function.  I cannot provide a temperature without more information.
+              I need a location dictionary to use the `get_temperature` function.  I cannot provide the temperature in Tokyo without more information.
           role: model
         finishReason: STOP
       modelVersion: gemini-1.5-flash
       usageMetadata:
-        candidatesTokenCount: 26
+        candidatesTokenCount: 28
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 26
+          tokenCount: 28
         promptTokenCount: 12
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 12
-        totalTokenCount: 38
+        totalTokenCount: 40
     status:
       code: 200
       message: OK
