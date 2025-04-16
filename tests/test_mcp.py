@@ -1,5 +1,7 @@
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
+from pathlib import Path
+
 import pytest
 from dirty_equals import IsInstance
 from inline_snapshot import snapshot
@@ -36,6 +38,14 @@ async def test_stdio_server():
         # Test calling the temperature conversion tool
         result = await server.call_tool('celsius_to_fahrenheit', {'celsius': 0})
         assert result.content == snapshot([TextContent(type='text', text='32.0')])
+
+
+async def test_stdio_server_with_cwd():
+    test_dir = Path(__file__).parent
+    server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
+    async with server:
+        tools = await server.list_tools()
+        assert len(tools) == 1
 
 
 def test_sse_server():
