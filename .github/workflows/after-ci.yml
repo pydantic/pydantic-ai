@@ -92,7 +92,7 @@ jobs:
           GITHUB_EVENT_JSON: ${{ toJSON(github.event) }}
 
       - name: Set preview URL
-        run: uv run --with httpx .github/set_docs_pr_preview_url.py
+        run: uv run --no-project --with httpx .github/set_docs_pr_preview_url.py
         env:
           DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
