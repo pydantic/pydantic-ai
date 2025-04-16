@@ -123,6 +123,8 @@ async def main():
     [
         UserPromptNode(
             user_prompt='What is the capital of France?',
+            instructions=None,
+            instructions_functions=[],
             system_prompts=(),
             system_prompt_functions=[],
             system_prompt_dynamic_functions={},
@@ -136,6 +138,7 @@ async def main():
                         part_kind='user-prompt',
                     )
                 ],
+                instructions=None,
                 kind='request',
             )
         ),
@@ -184,6 +187,8 @@ async def main():
         [
             UserPromptNode(
                 user_prompt='What is the capital of France?',
+                instructions=None,
+                instructions_functions=[],
                 system_prompts=(),
                 system_prompt_functions=[],
                 system_prompt_dynamic_functions={},
@@ -197,6 +202,7 @@ async def main():
                             part_kind='user-prompt',
                         )
                     ],
+                    instructions=None,
                     kind='request',
                 )
             ),
@@ -612,6 +618,14 @@ Running `pyright` would identify the same issues.
 
 System prompts might seem simple at first glance since they're just strings (or sequences of strings that are concatenated), but crafting the right system prompt is key to getting the model to behave as you want.
 
+!!! tip
+    For most use cases, you should use `instructions` instead of "system prompts".
+
+    If you know what you are doing though and want to preserve system prompt messages in the message history sent to the
+    LLM in subsequent completions requests, you can achieve this using the `system_prompt` argument/decorator.
+
+    See the section below on [Instructions](#instructions) for more information.
+
 Generally, system prompts fall into two categories:
 
 1. **Static system prompts**: These are known when writing the code and can be defined via the `system_prompt` parameter of the [`Agent` constructor][pydantic_ai.Agent.__init__].
@@ -652,6 +666,36 @@ print(result.output)
 2. Static system prompt defined at agent creation time.
 3. Dynamic system prompt defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext], this is called just after `run_sync`, not when the agent is created, so can benefit from runtime information like the dependencies used on that run.
 4. Another dynamic system prompt, system prompts don't have to have the `RunContext` parameter.
+
+_(This example is complete, it can be run "as is")_
+
+## Instructions
+
+Instructions are similar to system prompts. The main difference is that when an explicit `message_history` is provided
+in a call to `Agent.run` and similar methods, _instructions_ from any existing messages in the history are not included
+in the request to the model — only the instructions of the _current_ agent are included.
+
+You should use:
+
+- `instructions` when you want your request to the model to only include system prompts for the _current_ agent
+- `system_prompt` when you want your request to the model to _retain_ the system prompts used in previous requests (possibly made using other agents)
+
+In general, we recommend using `instructions` instead of `system_prompt` unless you have a specific reason to use `system_prompt`.
+
+```python {title="instructions.py"}
+from pydantic_ai import Agent
+
+agent = Agent(
+    'openai:gpt-4o',
+    instructions='You are a helpful assistant that can answer questions and help with tasks.',  # (1)!
+)
+
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> Paris
+```
+
+1. This will be the only instructions for this agent.
 
 _(This example is complete, it can be run "as is")_
 
@@ -749,6 +793,7 @@ with capture_run_messages() as messages:  # (2)!
                         part_kind='user-prompt',
                     )
                 ],
+                instructions=None,
                 kind='request',
             ),
             ModelResponse(
@@ -774,6 +819,7 @@ with capture_run_messages() as messages:  # (2)!
                         part_kind='retry-prompt',
                     )
                 ],
+                instructions=None,
                 kind='request',
             ),
             ModelResponse(

@@ -19,7 +19,7 @@ from typing_extensions import Literal, TypeAliasType
 
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
-from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
+from ..messages import ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent
 from ..settings import ModelSettings
 from ..usage import Usage
 
@@ -319,6 +319,12 @@ class Model(ABC):
     def base_url(self) -> str | None:
         """The base URL for the provider API, if available."""
         return None
+
+    def _get_instructions(self, messages: list[ModelMessage]) -> str | None:
+        """Get instructions from the first ModelRequest found when iterating messages in reverse."""
+        for message in reversed(messages):
+            if isinstance(message, ModelRequest):
+                return message.instructions
 
 
 @dataclass

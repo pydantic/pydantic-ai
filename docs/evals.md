@@ -163,8 +163,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
-from pydantic_ai.format_as_xml import format_as_xml
+from pydantic_ai import Agent, format_as_xml
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import IsInstance, LLMJudge
 

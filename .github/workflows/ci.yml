@@ -339,6 +339,7 @@ jobs:
       - name: Inspect package version
         id: inspect_package
         run: |
+          uv tool install --with uv-dynamic-versioning hatchling
           version=$(uvx hatchling version)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
