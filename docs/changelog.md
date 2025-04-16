@@ -27,11 +27,11 @@ See [#1484](https://github.com/pydantic/pydantic-ai/pull/1484) — `format_as_xm
 </div>
 
 <script>
-  async function getChangelog() {
-    const r = await fetch('/changelog.html');
+  fetch('/changelog.html').then(r => {
     if (r.ok) {
-      document.getElementById('display-changelog').innerHTML = await r.text();
+      r.text().then(t => {
+        document.getElementById('display-changelog').innerHTML = t;
+      });
     }
-  }
-  getChangelog();
+  });
 </script>

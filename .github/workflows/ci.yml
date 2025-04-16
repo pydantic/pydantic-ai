@@ -311,6 +311,48 @@ jobs:
         env:
           ALGOLIA_WRITE_API_KEY: ${{ secrets.ALGOLIA_WRITE_API_KEY }}
 
+  deploy-docs-preview:
+    needs: [check]
+    if: success() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: deploy-docs-preview
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+      - run: npm install
+        working-directory: docs-site
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: site
+
+      - uses: cloudflare/wrangler-action@v3
+        id: deploy
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          environment: previews
+          workingDirectory: docs-site
+          command: >
+            deploy
+            --var GIT_COMMIT_SHA:${{ github.sha }}
+            --var GIT_BRANCH:main
+
+      - name: Set preview URL
+        run: uv run --with httpx .github/set_docs_main_preview_url.py
+        env:
+          DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          REF: ${{ github.event.workflow_run.head_sha }}
+
   # TODO(Marcelo): We need to split this into two jobs: `build` and `release`.
   release:
     needs: [check]

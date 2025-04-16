@@ -74,6 +74,7 @@ function prepRelease(release: Release): string {
   const body = release.body
     .replace(/(#+)/g, (m) => `##${m}`)
     .replace(/https:\/\/github.com\/pydantic\/pydantic-ai\/pull\/(\d+)/g, (url, id) => `[#${id}](${url})`)
+    .replace(/(\s)@([\w\-]+)/g, (_, s, u) => `${s}[@${u}](https://github.com/${u})`)
     .replace(/\*\*Full Changelog\*\*: (\S+)/, (_, url) => `[Compare diff](${url})`)
   return `
 ### ${release.name}
