@@ -277,8 +277,7 @@ class BedrockConverseModel(Model):
         stream: Literal[True],
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> EventStream[ConverseStreamOutputTypeDef]:
-        pass
+    ) -> EventStream[ConverseStreamOutputTypeDef]: ...
 
     @overload
     async def _messages_create(
@@ -287,8 +286,7 @@ class BedrockConverseModel(Model):
         stream: Literal[False],
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> ConverseResponseTypeDef:
-        pass
+    ) -> ConverseResponseTypeDef: ...
 
     async def _messages_create(
         self,

@@ -1,0 +1,76 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '217'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What color are potatoes?
+        role: user
+      generationConfig: {}
+      safetySettings:
+      - category: HARM_CATEGORY_HATE_SPEECH
+        threshold: BLOCK_LOW_AND_ABOVE
+      tools: []
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1179'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=444
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.17134136738984482
+        content:
+          parts:
+          - text: |
+              Potatoes come in a variety of colors, including brown, red, white, yellow, purple, and blue.
+          role: model
+        finishReason: STOP
+        safetyRatings:
+        - category: HARM_CATEGORY_HATE_SPEECH
+          probability: NEGLIGIBLE
+        - category: HARM_CATEGORY_DANGEROUS_CONTENT
+          probability: NEGLIGIBLE
+        - category: HARM_CATEGORY_HARASSMENT
+          probability: NEGLIGIBLE
+        - category: HARM_CATEGORY_SEXUALLY_EXPLICIT
+          probability: NEGLIGIBLE
+      modelVersion: gemini-1.5-flash
+      usageMetadata:
+        candidatesTokenCount: 23
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 23
+        promptTokenCount: 5
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 5
+        totalTokenCount: 28
+    status:
+      code: 200
+      message: OK
+version: 1

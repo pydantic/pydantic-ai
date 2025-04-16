@@ -1,0 +1,68 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '301'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: I support Martians Soccer Club and I think Jupiterians Football Club sucks! Write a ironic phrase about them.
+        role: user
+      generationConfig: {}
+      safetySettings:
+      - category: HARM_CATEGORY_HARASSMENT
+        threshold: BLOCK_LOW_AND_ABOVE
+      tools: []
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '810'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=454
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content: {}
+        finishReason: SAFETY
+        safetyRatings:
+        - category: HARM_CATEGORY_HATE_SPEECH
+          probability: LOW
+        - category: HARM_CATEGORY_DANGEROUS_CONTENT
+          probability: NEGLIGIBLE
+        - blocked: true
+          category: HARM_CATEGORY_HARASSMENT
+          probability: LOW
+        - category: HARM_CATEGORY_SEXUALLY_EXPLICIT
+          probability: NEGLIGIBLE
+      modelVersion: gemini-1.5-flash
+      usageMetadata:
+        promptTokenCount: 22
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 22
+        totalTokenCount: 22
+    status:
+      code: 200
+      message: OK
+version: 1

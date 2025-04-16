@@ -1,0 +1,68 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '202'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Hello!
+        role: user
+      generationConfig:
+        frequencyPenalty: 0.4
+        maxOutputTokens: 1
+        presencePenalty: 0.3
+        temperature: 0.1
+        topP: 0.2
+      tools: []
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '612'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=348
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -6.0792540352849755e-06
+        content:
+          parts:
+          - text: Hello
+          role: model
+        finishReason: MAX_TOKENS
+      modelVersion: gemini-1.5-flash
+      usageMetadata:
+        candidatesTokenCount: 1
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 1
+        promptTokenCount: 2
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 2
+        totalTokenCount: 3
+    status:
+      code: 200
+      message: OK
+version: 1

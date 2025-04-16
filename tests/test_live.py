@@ -6,10 +6,10 @@ WARNING: running these tests will make use of the relevant API tokens (and cost 
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Callable
 
 import httpx
 import pytest
+from google import genai
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, UnexpectedModelBehavior
@@ -28,24 +28,30 @@ def openai(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     return OpenAIModel('gpt-4o-mini', provider=OpenAIProvider(http_client=http_client))
 
 
-def gemini(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+def gemini(timeout: int, _tmp_path: Path) -> Model:
     from pydantic_ai.models.gemini import GeminiModel
-    from pydantic_ai.providers.google_gla import GoogleGLAProvider
+    from pydantic_ai.providers.google import GoogleProvider
 
-    return GeminiModel('gemini-1.5-pro', provider=GoogleGLAProvider(http_client=http_client))
+    client = genai.Client(http_options={'timeout': timeout})
+    return GeminiModel('gemini-1.5-pro', provider=GoogleProvider(client=client))
 
 
-def vertexai(http_client: httpx.AsyncClient, tmp_path: Path) -> Model:
+def vertexai(timeout: int, _tmp_path: Path) -> Model:
+    from google.oauth2.service_account import Credentials
+
     from pydantic_ai.models.gemini import GeminiModel
-    from pydantic_ai.providers.google_vertex import GoogleVertexProvider
+    from pydantic_ai.providers.google import GoogleProvider
 
     service_account_content = os.environ['GOOGLE_SERVICE_ACCOUNT_CONTENT']
-    service_account_path = tmp_path / 'service_account.json'
+    service_account_path = _tmp_path / 'service_account.json'
     service_account_path.write_text(service_account_content)
-    return GeminiModel(
-        'gemini-1.5-flash',
-        provider=GoogleVertexProvider(service_account_file=service_account_path, http_client=http_client),
+
+    credentials = Credentials.from_service_account_file(  # type: ignore[reportUnknownMemberType]
+        service_account_path,
+        scopes=['https://www.googleapis.com/auth/cloud-platform'],
     )
+    client = genai.Client(credentials=credentials, http_options={'timeout': timeout})
+    return GeminiModel('gemini-1.5-flash', provider=GoogleProvider(client=client))
 
 
 def groq(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
@@ -85,28 +91,44 @@ def cohere(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
     return CohereModel('command-r7b-12-2024', provider=CohereProvider(http_client=http_client))
 
 
-params = [
-    pytest.param(openai, id='openai'),
-    pytest.param(gemini, marks=pytest.mark.skip(reason='API seems very flaky'), id='gemini'),
-    pytest.param(vertexai, id='vertexai'),
-    pytest.param(groq, id='groq'),
-    pytest.param(anthropic, id='anthropic'),
-    pytest.param(ollama, id='ollama'),
-    pytest.param(mistral, id='mistral'),
-    pytest.param(cohere, id='cohere'),
-]
-GetModel = Callable[[httpx.AsyncClient, Path], Model]
+@pytest.fixture(scope='session')
+def timeout() -> int:
+    return 30
 
 
 @pytest.fixture
-async def http_client(allow_model_requests: None) -> AsyncIterator[httpx.AsyncClient]:
-    async with httpx.AsyncClient(timeout=30) as client:
+async def http_client(timeout: int) -> AsyncIterator[httpx.AsyncClient]:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         yield client
 
 
-@pytest.mark.parametrize('get_model', params)
-async def test_text(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
-    agent = Agent(get_model(http_client, tmp_path), model_settings={'temperature': 0.0}, retries=2)
+@pytest.fixture
+def live_model(request: pytest.FixtureRequest, http_client: httpx.AsyncClient, timeout: int, tmp_path: Path) -> Model:
+    if request.param == 'openai':
+        return openai(http_client, tmp_path)
+    elif request.param == 'gemini':
+        return gemini(timeout, tmp_path)
+    elif request.param == 'vertexai':
+        return vertexai(timeout, tmp_path)
+    elif request.param == 'groq':
+        return groq(http_client, tmp_path)
+    elif request.param == 'anthropic':
+        return anthropic(http_client, tmp_path)
+    elif request.param == 'ollama':
+        return ollama(http_client, tmp_path)
+    elif request.param == 'mistral':
+        return mistral(http_client, tmp_path)
+    elif request.param == 'cohere':
+        return cohere(http_client, tmp_path)
+    else:  # pragma: no cover
+        raise ValueError(f'Unknown model: {request.param}')
+
+
+@pytest.mark.parametrize(
+    'model', ['openai', 'gemini', 'vertexai', 'groq', 'anthropic', 'ollama', 'mistral', 'cohere'], indirect=True
+)
+async def test_text(model: Model):
+    agent = Agent(model, model_settings={'temperature': 0.0}, retries=2)
     result = await agent.run('What is the capital of France?')
     print('Text response:', result.output)
     assert 'paris' in result.output.lower()
@@ -115,19 +137,18 @@ async def test_text(http_client: httpx.AsyncClient, tmp_path: Path, get_model: G
     assert usage.total_tokens is not None and usage.total_tokens > 0
 
 
-stream_params = [p for p in params if p.id != 'cohere']
-
-
-@pytest.mark.parametrize('get_model', stream_params)
-async def test_stream(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
-    agent = Agent(get_model(http_client, tmp_path), model_settings={'temperature': 0.0}, retries=2)
+@pytest.mark.parametrize(
+    'model', ['openai', 'gemini', 'vertexai', 'groq', 'anthropic', 'ollama', 'mistral'], indirect=True
+)
+async def test_stream(model: Model):
+    agent = Agent(model, model_settings={'temperature': 0.0}, retries=2)
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
     print('Stream response:', data)
     assert 'paris' in data.lower()
     print('Stream usage:', result.usage())
     usage = result.usage()
-    if get_model.__name__ != 'ollama':
+    if model.__name__ != 'ollama':
         assert usage.total_tokens is not None and usage.total_tokens > 0
 
 
@@ -135,12 +156,11 @@ class MyModel(BaseModel):
     city: str
 
 
-structured_params = [p for p in params if p.id != 'ollama']
-
-
-@pytest.mark.parametrize('get_model', structured_params)
-async def test_structured(http_client: httpx.AsyncClient, tmp_path: Path, get_model: GetModel):
-    agent = Agent(get_model(http_client, tmp_path), output_type=MyModel, model_settings={'temperature': 0.0}, retries=2)
+@pytest.mark.parametrize(
+    'model', ['openai', 'gemini', 'vertexai', 'groq', 'anthropic', 'mistral', 'cohere'], indirect=True
+)
+async def test_structured(model: Model):
+    agent = Agent(model, output_type=MyModel, model_settings={'temperature': 0.0}, retries=2)
 
     async with agent.iter('What is the capital of the UK?') as run:
         try:

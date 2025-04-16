@@ -10,8 +10,18 @@ from typing import Annotated
 
 import httpx
 import pytest
+from google import genai
+from google.genai.types import (
+    CandidateDict,
+    ContentDict,
+    FinishReason,
+    FunctionCallDict,
+    GenerateContentResponseDict,
+    GenerateContentResponseUsageMetadataDict,
+    PartDict,
+)
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 from typing_extensions import Literal, TypeAlias
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
@@ -30,33 +40,31 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.gemini import (
-    GeminiModel,
-    GeminiModelSettings,
-    _content_model_response,
-    _gemini_response_ta,
-    _gemini_streamed_response_ta,
-    _GeminiCandidates,
-    _GeminiContent,
-    _GeminiFunction,
-    _GeminiFunctionCallingConfig,
-    _GeminiResponse,
-    _GeminiSafetyRating,
-    _GeminiToolConfig,
-    _GeminiTools,
-    _GeminiUsageMetaData,
-)
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import ClientWithHandler, IsDatetime, IsNow, IsStr, TestEnv
+from ..conftest import ClientWithHandler, IsDatetime, IsNow, IsStr, TestEnv, try_import
 
-pytestmark = pytest.mark.anyio
+with try_import() as imports_successful:
+    from google.genai.types import GenerateContentResponse, HarmBlockThreshold, HarmCategory
+
+    from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings, _content_model_response
+    from pydantic_ai.providers.google import GoogleProvider
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='gemini not installed'),
+    pytest.mark.anyio,
+    pytest.mark.vcr,
+]
+
+_gemini_response_ta = TypeAdapter(GenerateContentResponseDict)
+_gemini_streamed_response_ta = TypeAdapter(list[GenerateContentResponseDict])
 
 
 async def test_model_simple(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleProvider(api_key='via-arg'))
     assert isinstance(m.client, httpx.AsyncClient)
     assert m.model_name == 'gemini-1.5-flash'
     assert 'x-goog-api-key' in m.client.headers
@@ -70,7 +78,7 @@ async def test_model_simple(allow_model_requests: None):
 
 
 async def test_model_tools(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleProvider(api_key='via-arg'))
     tools = [
         ToolDefinition(
             'foo',
@@ -99,38 +107,48 @@ async def test_model_tools(allow_model_requests: None):
     tools = m._get_tools(mrp)
     tool_config = m._get_tool_config(mrp, tools)
     assert tools == snapshot(
-        _GeminiTools(
-            function_declarations=[
-                _GeminiFunction(
-                    name='foo',
-                    description='This is foo',
-                    parameters={'type': 'object', 'properties': {'bar': {'type': 'number'}}},
-                ),
-                _GeminiFunction(
-                    name='apple',
-                    description='This is apple',
-                    parameters={
-                        'type': 'object',
-                        'properties': {'banana': {'type': 'array', 'items': {'type': 'number'}}},
-                    },
-                ),
-                _GeminiFunction(
-                    name='result',
-                    description='This is the tool for the final Result',
-                    parameters={
-                        'type': 'object',
-                        'properties': {'spam': {'type': 'number'}},
-                        'required': ['spam'],
-                    },
-                ),
-            ]
-        )
+        [
+            {
+                'function_declarations': [
+                    {
+                        'name': 'foo',
+                        'description': 'This is foo',
+                        'parameters': {'type': 'object', 'properties': {'bar': {'type': 'number'}}},
+                    }
+                ]
+            },
+            {
+                'function_declarations': [
+                    {
+                        'name': 'apple',
+                        'description': 'This is apple',
+                        'parameters': {
+                            'type': 'object',
+                            'properties': {'banana': {'type': 'array', 'items': {'type': 'number'}}},
+                        },
+                    }
+                ]
+            },
+            {
+                'function_declarations': [
+                    {
+                        'name': 'result',
+                        'description': 'This is the tool for the final Result',
+                        'parameters': {
+                            'type': 'object',
+                            'properties': {'spam': {'type': 'number'}},
+                            'required': ['spam'],
+                        },
+                    }
+                ]
+            },
+        ]
     )
     assert tool_config is None
 
 
 async def test_require_response_tool(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleProvider(api_key='via-arg'))
     output_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
@@ -140,25 +158,8 @@ async def test_require_response_tool(allow_model_requests: None):
     mrp = m.customize_request_parameters(mrp)
     tools = m._get_tools(mrp)
     tool_config = m._get_tool_config(mrp, tools)
-    assert tools == snapshot(
-        _GeminiTools(
-            function_declarations=[
-                _GeminiFunction(
-                    name='result',
-                    description='This is the tool for the final Result',
-                    parameters={
-                        'type': 'object',
-                        'properties': {'spam': {'type': 'number'}},
-                    },
-                ),
-            ]
-        )
-    )
-    assert tool_config == snapshot(
-        _GeminiToolConfig(
-            function_calling_config=_GeminiFunctionCallingConfig(mode='ANY', allowed_function_names=['result'])
-        )
-    )
+    assert tools == snapshot()
+    assert tool_config == snapshot()
 
 
 async def test_json_def_replaced(allow_model_requests: None):
@@ -198,33 +199,7 @@ async def test_json_def_replaced(allow_model_requests: None):
     )
     mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
     mrp = m.customize_request_parameters(mrp)
-    assert m._get_tools(mrp) == snapshot(
-        _GeminiTools(
-            function_declarations=[
-                _GeminiFunction(
-                    name='result',
-                    description='This is the tool for the final Result',
-                    parameters={
-                        'properties': {
-                            'locations': {
-                                'items': {
-                                    'properties': {
-                                        'lat': {'type': 'number'},
-                                        'lng': {'type': 'number'},
-                                    },
-                                    'required': ['lat'],
-                                    'type': 'object',
-                                },
-                                'type': 'array',
-                            }
-                        },
-                        'required': ['locations'],
-                        'type': 'object',
-                    },
-                )
-            ]
-        )
-    )
+    assert m._get_tools(mrp) == snapshot()
 
 
 async def test_json_def_replaced_any_of(allow_model_requests: None):
@@ -237,7 +212,7 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
 
     json_schema = Locations.model_json_schema()
 
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleProvider(api_key='via-arg'))
     output_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
@@ -246,28 +221,27 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
     mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
     mrp = m.customize_request_parameters(mrp)
     assert m._get_tools(mrp) == snapshot(
-        _GeminiTools(
-            function_declarations=[
-                _GeminiFunction(
-                    name='result',
-                    description='This is the tool for the final Result',
-                    parameters={
-                        'properties': {
-                            'op_location': {
-                                'properties': {
-                                    'lat': {'type': 'number'},
-                                    'lng': {'type': 'number'},
-                                },
-                                'required': ['lat', 'lng'],
-                                'nullable': True,
-                                'type': 'object',
-                            }
+        [
+            {
+                'function_declarations': [
+                    {
+                        'name': 'result',
+                        'description': 'This is the tool for the final Result',
+                        'parameters': {
+                            'properties': {
+                                'op_location': {
+                                    'properties': {'lat': {'type': 'number'}, 'lng': {'type': 'number'}},
+                                    'required': ['lat', 'lng'],
+                                    'type': 'object',
+                                    'nullable': True,
+                                }
+                            },
+                            'type': 'object',
                         },
-                        'type': 'object',
-                    },
-                )
-            ]
-        )
+                    }
+                ]
+            }
+        ]
     )
 
 
@@ -342,26 +316,7 @@ async def test_json_def_date(allow_model_requests: None):
     )
     mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
     mrp = m.customize_request_parameters(mrp)
-    assert m._get_tools(mrp) == snapshot(
-        _GeminiTools(
-            function_declarations=[
-                _GeminiFunction(
-                    description='This is the tool for the final Result',
-                    name='result',
-                    parameters={
-                        'properties': {
-                            'd': {'description': 'Format: date', 'type': 'string'},
-                            'dt': {'description': 'Format: date-time', 'type': 'string'},
-                            't': {'description': 'Format: time', 'type': 'string'},
-                            'td': {'description': 'my timedelta (format: duration)', 'type': 'string'},
-                        },
-                        'required': ['d', 'dt', 't', 'td'],
-                        'type': 'object',
-                    },
-                )
-            ]
-        )
-    )
+    assert m._get_tools(mrp) == snapshot()
 
 
 @dataclass
@@ -373,17 +328,19 @@ class AsyncByteStreamList(httpx.AsyncByteStream):
             yield chunk
 
 
-ResOrList: TypeAlias = '_GeminiResponse | httpx.AsyncByteStream | Sequence[_GeminiResponse | httpx.AsyncByteStream]'
-GetGeminiClient: TypeAlias = 'Callable[[ResOrList], httpx.AsyncClient]'
+ResOrList: TypeAlias = (
+    'GenerateContentResponse | httpx.AsyncByteStream | Sequence[GenerateContentResponse | httpx.AsyncByteStream]'
+)
+GetGeminiClient: TypeAlias = 'Callable[[ResOrList], genai.Client]'
 
 
 @pytest.fixture
 async def get_gemini_client(
     client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
 ) -> GetGeminiClient:
-    env.set('GEMINI_API_KEY', 'via-env-var')
+    env.set('GOOGLE_API_KEY', 'via-env-var')
 
-    def create_client(response_or_list: ResOrList) -> httpx.AsyncClient:
+    def create_client(response_or_list: ResOrList) -> genai.Client:
         index = 0
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -412,20 +369,27 @@ async def get_gemini_client(
                 headers={'Content-Type': 'application/json'},
             )
 
-        return client_with_handler(handler)
+        http_client = client_with_handler(handler)
+        client = genai.Client()
+        client._async_httpx_client = http_client
+        return client
 
     return create_client
 
 
-def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
-    candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
+def gemini_response(
+    content: ContentDict, finish_reason: Literal['STOP'] | None = 'STOP'
+) -> GenerateContentResponseDict:
+    candidate = CandidateDict(content=content, index=0, safety_ratings=[])
     if finish_reason:  # pragma: no cover
-        candidate['finish_reason'] = finish_reason
-    return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage(), model_version='gemini-1.5-flash-123')
+        candidate['finish_reason'] = FinishReason.STOP
+    return GenerateContentResponseDict(
+        candidates=[candidate], usage_metadata=example_usage(), model_version='gemini-1.5-flash-123'
+    )
 
 
-def example_usage() -> _GeminiUsageMetaData:
-    return _GeminiUsageMetaData(prompt_token_count=1, candidates_token_count=2, total_token_count=3)
+def example_usage() -> GenerateContentResponseUsageMetadataDict:
+    return {'prompt_token_count': 1, 'candidates_token_count': 2, 'total_token_count': 3}
 
 
 async def test_text_success(get_gemini_client: GetGeminiClient):
@@ -719,7 +683,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     d2 = _gemini_streamed_response_ta.dump_json(second_responses, by_alias=True)
     second_stream = AsyncByteStreamList([d2[:100], d2[100:]])
 
-    gemini_client = get_gemini_client([first_stream, second_stream])
+    http_client = get_gemini_client([first_stream, second_stream])
     model = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(model, output_type=tuple[int, int])
     tool_calls: list[str] = []
@@ -783,19 +747,18 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello ')]))),
         gemini_response(
-            _GeminiContent(
+            ContentDict(
                 role='model',
                 parts=[
-                    {'text': 'foo'},
-                    {'function_call': {'name': 'get_location', 'args': {'loc_name': 'San Fransisco'}}},
+                    PartDict(text='foo'),
+                    PartDict(function_call=FunctionCallDict(name='get_location', args={'loc_name': 'San Fransisco'})),
                 ],
             )
         ),
     ]
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
-    gemini_client = get_gemini_client(stream)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleProvider(client=get_gemini_client(stream)))
     agent = Agent(m)
 
     @agent.tool_plain()
@@ -835,144 +798,74 @@ async def test_empty_text_ignored():
     )
 
 
-async def test_model_settings(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        generation_config = json.loads(request.content)['generationConfig']
-        assert generation_config == {
-            'max_output_tokens': 1,
-            'temperature': 0.1,
-            'top_p': 0.2,
-            'presence_penalty': 0.3,
-            'frequency_penalty': 0.4,
-        }
-        return httpx.Response(
-            200,
-            content=_gemini_response_ta.dump_json(
-                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
-                by_alias=True,
-            ),
-            headers={'Content-Type': 'application/json'},
-        )
-
-    gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
+async def test_gemini_model_settings(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     result = await agent.run(
-        'hello',
-        model_settings={
-            'max_tokens': 1,
-            'temperature': 0.1,
-            'top_p': 0.2,
-            'presence_penalty': 0.3,
-            'frequency_penalty': 0.4,
-        },
+        'Hello!',
+        model_settings=ModelSettings(
+            max_tokens=1,
+            temperature=0.1,
+            top_p=0.2,
+            presence_penalty=0.3,
+            frequency_penalty=0.4,
+        ),
     )
-    assert result.output == 'world'
+    assert result.output == IsStr()
 
 
-def gemini_no_content_response(
-    safety_ratings: list[_GeminiSafetyRating], finish_reason: Literal['SAFETY'] | None = 'SAFETY'
-) -> _GeminiResponse:
-    candidate = _GeminiCandidates(safety_ratings=safety_ratings)
-    if finish_reason:
-        candidate['finish_reason'] = finish_reason
-    return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage())
+async def test_gemini_safety_settings_unsafe(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    agent = Agent(m)
 
-
-async def test_safety_settings_unsafe(
-    client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
-) -> None:
-    try:
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            safety_settings = json.loads(request.content)['safetySettings']
-            assert safety_settings == [
-                {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
-                {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
-            ]
-
-            return httpx.Response(
-                200,
-                content=_gemini_response_ta.dump_json(
-                    gemini_no_content_response(
-                        finish_reason='SAFETY',
-                        safety_ratings=[
-                            {'category': 'HARM_CATEGORY_HARASSMENT', 'probability': 'MEDIUM', 'blocked': True}
-                        ],
-                    ),
-                    by_alias=True,
-                ),
-                headers={'Content-Type': 'application/json'},
-            )
-
-        gemini_client = client_with_handler(handler)
-
-        m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
-        agent = Agent(m)
-
+    # NOTE: The user prompt example is from https://ai.google.dev/gemini-api/docs/safety-settings#rest
+    with pytest.raises(UnexpectedModelBehavior, match='Safety settings triggered'):
         await agent.run(
-            'a request for something rude',
+            'I support Martians Soccer Club and I think Jupiterians Football Club sucks! Write a ironic phrase about them.',
             model_settings=GeminiModelSettings(
                 gemini_safety_settings=[
-                    {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
-                    {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+                    {
+                        'category': HarmCategory.HARM_CATEGORY_HARASSMENT,
+                        'threshold': HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+                    },
                 ]
             ),
         )
-    except UnexpectedModelBehavior as e:
-        assert repr(e) == "UnexpectedModelBehavior('Safety settings triggered')"
 
 
-async def test_safety_settings_safe(
-    client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
-) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        safety_settings = json.loads(request.content)['safetySettings']
-        assert safety_settings == [
-            {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
-            {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
-        ]
-
-        return httpx.Response(
-            200,
-            content=_gemini_response_ta.dump_json(
-                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
-                by_alias=True,
-            ),
-            headers={'Content-Type': 'application/json'},
-        )
-
-    gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
+async def test_gemini_safety_settings_safe(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     result = await agent.run(
-        'hello',
+        'What color are potatoes?',
         model_settings=GeminiModelSettings(
             gemini_safety_settings=[
-                {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
-                {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
+                {
+                    'category': HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                    'threshold': HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+                },
             ]
         ),
     )
-    assert result.output == 'world'
+    assert result.output == snapshot(
+        'Potatoes come in a variety of colors, including brown, red, white, yellow, purple, and blue.\n'
+    )
 
 
-@pytest.mark.vcr()
 async def test_image_as_binary_content_input(
     allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
 ) -> None:
-    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     result = await agent.run(['What is the name of this fruit?', image_content])
     assert result.output == snapshot('The fruit in the image is a kiwi.')
 
 
-@pytest.mark.vcr()
-async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
-    m = GeminiModel('gemini-2.0-flash-exp', provider=GoogleGLAProvider(api_key=gemini_api_key))
+async def test_gemini_image_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash-exp', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     image_url = ImageUrl(url='https://goo.gle/instrument-img')
@@ -981,20 +874,20 @@ async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) 
     assert result.output == snapshot("This is not a fruit; it's a pipe organ console.")
 
 
-@pytest.mark.vcr()
-async def test_document_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
-    m = GeminiModel('gemini-2.0-flash-thinking-exp-01-21', provider=GoogleGLAProvider(api_key=gemini_api_key))
+async def test_gemini_document_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash-thinking-exp-01-21', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.output == snapshot('The main content of this document is that it is a **dummy PDF file**.')
+    assert result.output == snapshot(
+        'The main content of this document is that it is a **dummy PDF file**. The document contains the text "Dummy PDF file" at the top, indicating that it is a placeholder or example PDF document.'
+    )
 
 
-@pytest.mark.vcr()
 async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_api_key: str) -> None:
-    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1005,14 +898,12 @@ async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_
     assert result.output == snapshot('Your Chinese zodiac is Dragon.\n')
 
     result = await agent.run('I want to know my chinese zodiac. I am 17 years old.')
-    assert result.output == snapshot(
-        'I am sorry, I cannot fulfill this request. The age needs to be greater than 18.\n'
-    )
+    assert result.output == snapshot('I am sorry. I cannot fulfill this request. The age must be greater than 18.')
 
 
 @pytest.mark.vcr()
 async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_key: str):
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run('What is the capital of France?')

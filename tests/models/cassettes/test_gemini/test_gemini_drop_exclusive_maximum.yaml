@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '277'
+      - '322'
       content-type:
       - application/json
       host:
@@ -19,17 +19,18 @@ interactions:
       - parts:
         - text: I want to know my chinese zodiac. I am 20 years old.
         role: user
+      generationConfig: {}
       tools:
-        function_declarations:
+      - functionDeclarations:
         - description: ''
           name: get_chinese_zodiac
           parameters:
             properties:
               age:
-                type: integer
+                type: INTEGER
             required:
             - age
-            type: object
+            type: OBJECT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
@@ -40,7 +41,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=477
+      - gfet4t7; dur=499
       transfer-encoding:
       - chunked
       vary:
@@ -81,7 +82,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '483'
+      - '644'
       content-type:
       - application/json
       host:
@@ -96,25 +97,28 @@ interactions:
         - functionCall:
             args:
               age: 20
+            id: pyd_ai_e1755475d1444f39bdd7c73b97ad7939
             name: get_chinese_zodiac
         role: model
       - parts:
         - functionResponse:
+            id: pyd_ai_e1755475d1444f39bdd7c73b97ad7939
             name: get_chinese_zodiac
             response:
               return_value: Dragon
         role: user
+      generationConfig: {}
       tools:
-        function_declarations:
+      - functionDeclarations:
         - description: ''
           name: get_chinese_zodiac
           parameters:
             properties:
               age:
-                type: integer
+                type: INTEGER
             required:
             - age
-            type: object
+            type: OBJECT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
@@ -125,7 +129,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=461
+      - gfet4t7; dur=397
       transfer-encoding:
       - chunked
       vary:
@@ -164,7 +168,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '277'
+      - '322'
       content-type:
       - application/json
       host:
@@ -175,28 +179,29 @@ interactions:
       - parts:
         - text: I want to know my chinese zodiac. I am 17 years old.
         role: user
+      generationConfig: {}
       tools:
-        function_declarations:
+      - functionDeclarations:
         - description: ''
           name: get_chinese_zodiac
           parameters:
             properties:
               age:
-                type: integer
+                type: INTEGER
             required:
             - age
-            type: object
+            type: OBJECT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '734'
+      - '733'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=440
+      - gfet4t7; dur=451
       transfer-encoding:
       - chunked
       vary:
@@ -205,7 +210,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: 2.7694373524614742e-06
+      - avgLogprobs: 5.033366116029876e-06
         content:
           parts:
           - functionCall:
@@ -237,7 +242,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '685'
+      - '846'
       content-type:
       - application/json
       host:
@@ -252,10 +257,12 @@ interactions:
         - functionCall:
             args:
               age: 17
+            id: pyd_ai_796f1d1c5ea64a89b186371c2f8b4406
             name: get_chinese_zodiac
         role: model
       - parts:
         - functionResponse:
+            id: pyd_ai_796f1d1c5ea64a89b186371c2f8b4406
             name: get_chinese_zodiac
             response:
               call_error: |-
@@ -272,28 +279,29 @@ interactions:
 
                 Fix the errors and try again.
         role: user
+      generationConfig: {}
       tools:
-        function_declarations:
+      - functionDeclarations:
         - description: ''
           name: get_chinese_zodiac
           parameters:
             properties:
               age:
-                type: integer
+                type: INTEGER
             required:
             - age
-            type: object
+            type: OBJECT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '688'
+      - '681'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=442
+      - gfet4t7; dur=482
       transfer-encoding:
       - chunked
       vary:
@@ -302,24 +310,23 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.09825141863389449
+      - avgLogprobs: -0.1788372278213501
         content:
           parts:
-          - text: |
-              I am sorry, I cannot fulfill this request. The age needs to be greater than 18.
+          - text: I am sorry. I cannot fulfill this request. The age must be greater than 18.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
       usageMetadata:
-        candidatesTokenCount: 22
+        candidatesTokenCount: 20
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 22
+          tokenCount: 20
         promptTokenCount: 108
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 108
-        totalTokenCount: 130
+        totalTokenCount: 128
     status:
       code: 200
       message: OK
