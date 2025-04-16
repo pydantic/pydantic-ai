@@ -991,18 +991,19 @@ class _OpenAIJsonSchema(WalkJsonSchema):
         return result
 
     def transform(self, schema: JsonSchema) -> JsonSchema:  # noqa C901
-        # OpenAI Strict mode doesn't support siblings to "$ref", but _does_ allow siblings to "anyOf".
-        # So if there is a "description" field or any other extra info, we move the "$ref" into an "anyOf":
-        if '$ref' in schema and len(schema) > 1:
-            schema['anyOf'] = [{'$ref': schema.pop('$ref')}]
-
         # Remove unnecessary keys
         schema.pop('title', None)
         schema.pop('default', None)
         schema.pop('$schema', None)
         schema.pop('discriminator', None)
-        if self.root_ref and schema.get('$ref') == self.root_ref:
-            schema['$ref'] = '#'
+
+        if schema_ref := schema.get('$ref'):
+            if schema_ref == self.root_ref:
+                schema['$ref'] = '#'
+            if len(schema) > 1:
+                # OpenAI Strict mode doesn't support siblings to "$ref", but _does_ allow siblings to "anyOf".
+                # So if there is a "description" field or any other extra info, we move the "$ref" into an "anyOf":
+                schema['anyOf'] = [{'$ref': schema.pop('$ref')}]
 
         # Track strict-incompatible keys
         incompatible_values: dict[str, Any] = {}
