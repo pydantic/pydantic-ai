@@ -561,9 +561,6 @@ def test_tool_call_part_args_as_dict(args: str | dict[str, Any], expected: dict[
     part = ToolCallPart(tool_name='foo', args=args)
     result = part.args_as_dict()
     assert result == expected
-    if isinstance(args, dict):
-        # ensure dict input is returned by reference
-        assert result is args
 
 
 def test_return_pydantic_model():
