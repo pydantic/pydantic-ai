@@ -508,6 +508,10 @@ class ToolCallPart:
         """
         if isinstance(self.args, dict):
             return self.args
+        # support empty string args as no arguments
+        if isinstance(self.args, str) and not self.args:
+            return {}
+        # parse JSON string to dict
         args = pydantic_core.from_json(self.args)
         assert isinstance(args, dict), 'args should be a dict'
         return cast(dict[str, Any], args)

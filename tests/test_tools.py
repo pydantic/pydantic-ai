@@ -5,7 +5,6 @@ from typing import Annotated, Any, Callable, Literal, Union
 import pydantic_core
 import pytest
 from _pytest.logging import LogCaptureFixture
-from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
@@ -547,6 +546,23 @@ def test_init_ctx_tool_invalid():
 def test_init_plain_tool_invalid():
     with pytest.raises(UserError, match='RunContext annotations can only be used with tools that take context'):
         Tool(ctx_tool, takes_ctx=False)
+
+
+@pytest.mark.parametrize(
+    'args, expected',
+    [
+        ('', {}),
+        ({'x': 42, 'y': 'value'}, {'x': 42, 'y': 'value'}),
+        ('{"a": 1, "b": "c"}', {'a': 1, 'b': 'c'}),
+    ],
+)
+def test_tool_call_part_args_as_dict(args: str | dict[str, Any], expected: dict[str, Any]):
+    part = ToolCallPart(tool_name='foo', args=args)
+    result = part.args_as_dict()
+    assert result == expected
+    if isinstance(args, dict):
+        # ensure dict input is returned by reference
+        assert result is args
 
 
 def test_return_pydantic_model():
