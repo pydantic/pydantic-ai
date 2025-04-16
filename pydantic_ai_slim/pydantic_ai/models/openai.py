@@ -1012,7 +1012,8 @@ class _OpenAIJsonSchema(WalkJsonSchema):
                 for key, value in incompatible_values.items():
                     schema.pop(key)
                     notes.append(f'{key}={value}')
-                schema['description'] = notes if not description else f'{description} ({notes})'
+                notes_string = ', '.join(notes)
+                schema['description'] = notes_string if not description else f'{description} ({notes_string})'
             elif self.strict is None:
                 self.is_strict_compatible = False
 

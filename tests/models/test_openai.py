@@ -1082,12 +1082,12 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         'x': {
                             'prefixItems': [{'type': 'integer'}],
                             'type': 'array',
-                            'description': ['minItems=1', 'maxItems=1'],
+                            'description': 'minItems=1, maxItems=1',
                         },
                         'y': {
                             'prefixItems': [{'type': 'string'}],
                             'type': 'array',
-                            'description': ['minItems=1', 'maxItems=1'],
+                            'description': 'minItems=1, maxItems=1',
                         },
                     },
                     'required': ['x', 'y'],
@@ -1167,7 +1167,7 @@ def test_strict_schema():
                         'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                         'my_patterns': {
                             'additionalProperties': False,
-                            'description': ["patternProperties={'^my-pattern$': {'type': 'string'}}"],
+                            'description': "patternProperties={'^my-pattern$': {'type': 'string'}}",
                             'type': 'object',
                             'properties': {},
                             'required': [],
@@ -1176,7 +1176,7 @@ def test_strict_schema():
                         'my_tuple': {
                             'prefixItems': [{'type': 'integer'}],
                             'type': 'array',
-                            'description': ['minItems=1', 'maxItems=1'],
+                            'description': 'minItems=1, maxItems=1',
                         },
                     },
                     'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
@@ -1187,7 +1187,7 @@ def test_strict_schema():
                 'my_recursive': {'anyOf': [{'$ref': '#'}, {'type': 'null'}]},
                 'my_patterns': {
                     'type': 'object',
-                    'description': ["patternProperties={'^my-pattern$': {'type': 'string'}}"],
+                    'description': "patternProperties={'^my-pattern$': {'type': 'string'}}",
                     'additionalProperties': False,
                     'properties': {},
                     'required': [],
@@ -1195,7 +1195,7 @@ def test_strict_schema():
                 'my_tuple': {
                     'prefixItems': [{'type': 'integer'}],
                     'type': 'array',
-                    'description': ['minItems=1', 'maxItems=1'],
+                    'description': 'minItems=1, maxItems=1',
                 },
                 'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                 'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
