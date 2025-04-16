@@ -18,6 +18,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "clai",
     "mcp-run-python",
     "pydantic-ai",
     "pydantic-ai-examples",
@@ -673,6 +674,16 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/85/2d/a9790237cb4d01a6d57afadc8573c8b73c609ade20b80f4cda30802009ee/charset_normalizer-3.4.1-cp39-cp39-win_amd64.whl", hash = "sha256:49402233c892a461407c512a19435d1ce275543138294f7ef013f0b63d5d3765", size = 102811 },
     { url = "https://files.pythonhosted.org/packages/0e/f6/65ecc6878a89bb1c23a086ea335ad4bf21a588990c3f535a227b9eea9108/charset_normalizer-3.4.1-py3-none-any.whl", hash = "sha256:d98b1668f06378c6dbefec3b92299716b931cd4e6061f3c875a71ced1780ab85", size = 49767 },
 ]
+
+[[package]]
+name = "clai"
+source = { editable = "clai" }
+dependencies = [
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic-ai", editable = "." }]
 
 [[package]]
 name = "click"
