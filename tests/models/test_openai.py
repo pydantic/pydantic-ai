@@ -833,9 +833,13 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                             },
                             'type': 'object',
                         },
+                        'MyEnum': {'enum': ['a', 'b'], 'type': 'string'},
                         'MyRecursiveDc': {
-                            'properties': {'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]}},
-                            'required': ['field'],
+                            'properties': {
+                                'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]},
+                                'my_enum': {'description': 'my enum', 'anyOf': [{'$ref': '#/$defs/MyEnum'}]},
+                            },
+                            'required': ['field', 'my_enum'],
                             'type': 'object',
                         },
                     },
@@ -864,11 +868,15 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                             'additionalProperties': False,
                             'required': ['field'],
                         },
+                        'MyEnum': {'enum': ['a', 'b'], 'type': 'string'},
                         'MyRecursiveDc': {
-                            'properties': {'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]}},
+                            'properties': {
+                                'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]},
+                                'my_enum': {'description': 'my enum', 'anyOf': [{'$ref': '#/$defs/MyEnum'}]},
+                            },
                             'type': 'object',
                             'additionalProperties': False,
-                            'required': ['field'],
+                            'required': ['field', 'my_enum'],
                         },
                     },
                     'additionalProperties': False,
