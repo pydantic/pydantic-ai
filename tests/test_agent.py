@@ -2,7 +2,7 @@ import json
 import re
 import sys
 from datetime import timezone
-from typing import Any, Callable, Union
+from typing import Any, Callable, Union, cast
 
 import httpx
 import pytest
@@ -15,6 +15,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, 
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -1675,28 +1676,16 @@ def test_custom_output_type_invalid() -> None:
 def test_binary_content_all_messages_json():
     agent = Agent('test')
 
-    result = agent.run_sync(['Hello', BinaryContent(data=b'Hello', media_type='text/plain')])
-    assert json.loads(result.all_messages_json()) == snapshot(
-        [
-            {
-                'parts': [
-                    {
-                        'content': ['Hello', {'data': 'SGVsbG8=', 'media_type': 'text/plain', 'kind': 'binary'}],
-                        'timestamp': IsStr(),
-                        'part_kind': 'user-prompt',
-                    }
-                ],
-                'instructions': None,
-                'kind': 'request',
-            },
-            {
-                'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text'}],
-                'model_name': 'test',
-                'timestamp': IsStr(),
-                'kind': 'response',
-            },
-        ]
-    )
+    content = BinaryContent(data=b'Hello', media_type='text/plain')
+    result = agent.run_sync(['Hello', content])
+
+    serialized = result.all_messages_json()
+    assert json.loads(serialized)[0]['parts'][0]['content'][1]['data'] == 'SGVsbG8='
+
+    messages = ModelMessagesTypeAdapter.validate_json(serialized)
+    part = cast(UserPromptPart, messages[0].parts[0])
+    new_content = cast(BinaryContent, part.content[1])
+    assert new_content.data == content.data
 
 
 def test_instructions_raise_error_when_system_prompt_is_set():
