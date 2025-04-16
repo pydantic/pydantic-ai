@@ -3,11 +3,11 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import json
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
-from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
 from opentelemetry.trace import Span, Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
@@ -87,6 +87,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
+    get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
 
     output_schema: _output.OutputSchema[OutputDataT] | None
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
@@ -141,7 +142,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> _messages.ModelRequest:
         run_context = build_run_context(ctx)
-        history, next_message = await self._prepare_messages(self.user_prompt, ctx.state.message_history, run_context)
+        history, next_message = await self._prepare_messages(
+            self.user_prompt, ctx.state.message_history, ctx.deps.get_instructions, run_context
+        )
         ctx.state.message_history = history
         run_context.messages = history
 
@@ -155,6 +158,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None,
         message_history: list[_messages.ModelMessage] | None,
+        get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]],
         run_context: RunContext[DepsT],
     ) -> tuple[list[_messages.ModelMessage], _messages.ModelRequest]:
         try:
@@ -169,7 +173,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx_messages.used = True
 
         parts: list[_messages.ModelRequestPart] = []
-        instructions = await self._instructions(run_context)
+        instructions = await get_instructions(run_context)
         if message_history:
             # Shallow copy messages
             messages.extend(message_history)
@@ -209,15 +213,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             else:
                 messages.append(_messages.SystemPromptPart(prompt))
         return messages
-
-    async def _instructions(self, run_context: RunContext[DepsT]) -> str | None:
-        if self.instructions is None and not self.instructions_functions:
-            return None
-
-        instructions = self.instructions or ''
-        for instructions_runner in self.instructions_functions:
-            instructions += await instructions_runner.run(run_context)
-        return instructions
 
 
 async def _prepare_request_parameters(
@@ -479,7 +474,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             if tool_responses:
                 parts.extend(tool_responses)
-            self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=parts))
+            run_context = build_run_context(ctx)
+            instructions = await ctx.deps.get_instructions(run_context)
+            self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                _messages.ModelRequest(parts=parts, instructions=instructions)
+            )
 
     def _handle_final_result(
         self,
