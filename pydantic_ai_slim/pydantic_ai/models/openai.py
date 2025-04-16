@@ -975,14 +975,13 @@ class _OpenAIJsonSchema(WalkJsonSchema):
         self.root_ref = schema.get('$ref')
 
     def walk(self) -> JsonSchema:
-        # OpenAI does not support anyOf at the root in strict mode.
-        if 'anyOf' in self.schema:
-            self.is_strict_compatible = False
-
+        # Note: OpenAI does not support anyOf at the root in strict mode
+        # However, we don't need to check for it here because we ensure in pydantic_ai._utils.check_object_json_schema
+        # that the root schema either has type 'object' or is recursive.
         result = super().walk()
 
-        # We need to tweak the schema of recursive models to make it compatible with strict mode.
-        # Note: the following change should never change the semantics of the schema.
+        # For recursive models, we need to tweak the schema to make it compatible with strict mode.
+        # Because the following should never change the semantics of the schema we apply it unconditionally.
         if self.root_ref is not None:
             result.pop('$ref', None)  # We replace references to the self.root_ref with just '#' in the transform method
             root_key = re.sub(r'^#/\$defs/', '', self.root_ref)

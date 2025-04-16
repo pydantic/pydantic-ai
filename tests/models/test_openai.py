@@ -4,6 +4,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from functools import cached_property
 from typing import Annotated, Any, Callable, Literal, Union, cast
 
@@ -730,9 +731,15 @@ class MyDefaultDc:
     x: int = 1
 
 
+class MyEnum(Enum):
+    a = 'a'
+    b = 'b'
+
+
 @dataclass
 class MyRecursiveDc:
     field: MyRecursiveDc | None
+    my_enum: MyEnum = Field(description='my enum')
 
 
 @dataclass
