@@ -25,16 +25,20 @@ pytestmark = [
 ]
 
 
-async def test_stdio_server():
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+@pytest.mark.parametrize('prefix', ['', 'prefix'])
+async def test_stdio_server(prefix: str):
+    if prefix:
+        server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], prefix=prefix)
+    else:
+        server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = await server.list_tools()
         assert len(tools) == 1
-        assert tools[0].name == 'celsius_to_fahrenheit'
+        assert tools[0].name == f'{prefix}celsius_to_fahrenheit'
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
         # Test calling the temperature conversion tool
-        result = await server.call_tool('celsius_to_fahrenheit', {'celsius': 0})
+        result = await server.call_tool(f'{prefix}celsius_to_fahrenheit', {'celsius': 0})
         assert result.content == snapshot([TextContent(type='text', text='32.0')])
 
 

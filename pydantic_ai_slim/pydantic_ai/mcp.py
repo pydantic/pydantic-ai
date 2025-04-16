@@ -34,6 +34,7 @@ class MCPServer(ABC):
     """
 
     is_running: bool = False
+    prefix: str
 
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[JSONRPCMessage | Exception]
@@ -61,7 +62,7 @@ class MCPServer(ABC):
         tools = await self._client.list_tools()
         return [
             ToolDefinition(
-                name=tool.name,
+                name=f'{self.prefix}{tool.name}',
                 description=tool.description or '',
                 parameters_json_schema=tool.inputSchema,
             )
@@ -78,7 +79,7 @@ class MCPServer(ABC):
         Returns:
             The result of the tool call.
         """
-        return await self._client.call_tool(tool_name, arguments)
+        return await self._client.call_tool(tool_name.lstrip(self.prefix), arguments)
 
     async def __aenter__(self) -> Self:
         self._exit_stack = AsyncExitStack()
@@ -150,6 +151,9 @@ class MCPServerStdio(MCPServer):
     If you want to inherit the environment variables from the parent process, use `env=os.environ`.
     """
 
+    prefix: str = ''
+    """The optional prefix to add to tool names. Allow you to have tools with the same name on different servers."""
+
     @asynccontextmanager
     async def client_streams(
         self,
@@ -219,6 +223,8 @@ class MCPServerHTTP(MCPServer):
     If no new messages are received within this time, the connection will be considered stale
     and may be closed. Defaults to 5 minutes (300 seconds).
     """
+    prefix: str = ''
+    """The optional prefix to add to tool names. Allow you to have tools with the same name on different servers."""
 
     @asynccontextmanager
     async def client_streams(
