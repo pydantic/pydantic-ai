@@ -991,6 +991,11 @@ class _OpenAIJsonSchema(WalkJsonSchema):
         return result
 
     def transform(self, schema: JsonSchema) -> JsonSchema:  # noqa C901
+        # OpenAI Strict mode doesn't support siblings to "$ref", but _does_ allow siblings to "anyOf".
+        # So if there is a "description" field or any other extra info, we move the "$ref" into an "anyOf":
+        if '$ref' in schema and len(schema) > 1:
+            schema['anyOf'] = [{'$ref': schema.pop('$ref')}]
+
         # Remove unnecessary keys
         schema.pop('title', None)
         schema.pop('default', None)
