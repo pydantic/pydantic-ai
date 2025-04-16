@@ -12,7 +12,7 @@ bump = true
 
 [project]
 name = "clai"
-dynamic = ["version", "dependencies", "optional-dependencies"]
+dynamic = ["version", "dependencies"]
 description = "PydanticAI CLI: command line interface to chat to LLMs"
 authors = [
   { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
