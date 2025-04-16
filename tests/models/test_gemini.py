@@ -1029,3 +1029,40 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
             ),
         ]
     )
+
+
+class Location(BaseModel, extra='forbid'):
+    city: str
+    country: str
+
+
+@pytest.mark.vcr()
+async def test_gemini_additional_properties_is_false(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_temperature(location: Location) -> float:
+        return 20.0
+
+    result = await agent.run('What is the temperature in Tokyo?')
+    assert result.output == snapshot(
+        'The available tools lack the ability to obtain real-time temperature data. Therefore, I cannot answer your question.\n'
+    )
+
+
+@pytest.mark.vcr()
+async def test_gemini_additional_properties_is_true(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    with pytest.warns(UserWarning, match='.*additionalProperties.*'):
+
+        @agent.tool_plain
+        async def get_temperature(location: dict[str, Location]) -> float:
+            return 20.0
+
+        result = await agent.run('What is the temperature in Tokyo?')
+        assert result.output == snapshot(
+            'I need a location dictionary to use the `get_temperature` function.  I cannot provide a temperature without more information.\n'
+        )
