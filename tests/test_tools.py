@@ -5,6 +5,7 @@ from typing import Annotated, Any, Callable, Literal, Union
 import pydantic_core
 import pytest
 from _pytest.logging import LogCaptureFixture
+from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
