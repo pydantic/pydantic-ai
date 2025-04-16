@@ -620,6 +620,15 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             },
         )
 
+        async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
+            if self._instructions is None and not self._instructions_functions:
+                return None
+
+            instructions = self._instructions or ''
+            for instructions_runner in self._instructions_functions:
+                instructions += await instructions_runner.run(run_context)
+            return instructions
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
             prompt=user_prompt,
@@ -635,6 +644,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             mcp_servers=self._mcp_servers,
             run_span=run_span,
             tracer=tracer,
+            get_instructions=get_instructions,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,

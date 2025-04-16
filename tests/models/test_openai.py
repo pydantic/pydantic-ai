@@ -1215,3 +1215,41 @@ async def test_openai_model_without_system_prompt(allow_model_requests: None, op
     assert result.output == snapshot(
         "That's right—I am a potato! A spud of many talents, here to help you out. How can this humble potato be of service today?"
     )
+
+
+@pytest.mark.vcr()
+async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.')
+
+    @agent.tool_plain
+    async def get_temperature(city: str) -> float:
+        return 20.0
+
+    result = await agent.run('What is the temperature in Tokyo?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the temperature in Tokyo?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_temperature', args='{"city":"Tokyo"}', tool_call_id=IsStr())],
+                model_name='gpt-4.1-mini-2025-04-14',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_temperature', content=20.0, tool_call_id=IsStr(), timestamp=IsDatetime()
+                    )
+                ],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The temperature in Tokyo is currently 20.0 degrees Celsius.')],
+                model_name='gpt-4.1-mini-2025-04-14',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
