@@ -957,7 +957,7 @@ class _OpenAIJsonSchema(WalkJsonSchema):
         # Remove incompatible keys, but note their impact in the description provided to the LLM
         description = schema.get('description')
         min_length = schema.pop('minLength', None)
-        max_length = schema.pop('minLength', None)
+        max_length = schema.pop('maxLength', None)
         if description is not None:
             notes = list[str]()
             if min_length is not None:  # pragma: no cover
