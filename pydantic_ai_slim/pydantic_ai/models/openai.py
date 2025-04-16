@@ -955,6 +955,8 @@ _STRICT_INCOMPATIBLE_KEYS = [
     'uniqueItems',
 ]
 
+_sentinel = object()
+
 
 @dataclass
 class _OpenAIJsonSchema(WalkJsonSchema):
@@ -1000,8 +1002,9 @@ class _OpenAIJsonSchema(WalkJsonSchema):
         # Track strict-incompatible keys
         incompatible_values: dict[str, Any] = {}
         for key in _STRICT_INCOMPATIBLE_KEYS:
-            if key in schema:
-                incompatible_values[key] = schema.pop(key)
+            value = schema.get(key, _sentinel)
+            if value is not _sentinel:
+                incompatible_values[key] = value
         description = schema.get('description')
         if incompatible_values:
             if self.strict is True:
