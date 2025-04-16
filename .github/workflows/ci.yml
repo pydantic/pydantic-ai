@@ -318,6 +318,10 @@ jobs:
     environment:
       name: deploy-docs-preview
 
+    permissions:
+      deployments: write
+      statuses: write
+
     steps:
       - uses: actions/checkout@v4
 

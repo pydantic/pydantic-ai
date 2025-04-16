@@ -20,7 +20,7 @@ assert m, f'Could not find version ID in {DEPLOY_OUTPUT!r}'
 
 version_id = m.group(1)
 preview_url = f'https://{version_id}-{worker_name}.workers.dev'
-print('CloudFlare worker preview URL:', preview_url)
+print('CloudFlare worker preview URL:', preview_url, flush=True)
 
 gh_headers = {
     'Accept': 'application/vnd.github+json',
@@ -42,7 +42,7 @@ deployment_data: dict[str, typing.Any] = {
     })
 }
 r = httpx.post(deployment_url, headers=gh_headers, json=deployment_data)
-print(f'POST {deployment_url} {r.status_code} {r.text}')
+print(f'POST {deployment_url} {r.status_code} {r.text}', flush=True)
 r.raise_for_status()
 deployment_id = r.json()['id']
 
@@ -53,5 +53,5 @@ status_data = {
     'state': 'success',
 }
 r = httpx.post(status_url, headers=gh_headers, json=status_data)
-print(f'POST {status_url} {r.status_code} {r.text}')
+print(f'POST {status_url} {r.status_code} {r.text}', flush=True)
 r.raise_for_status()
