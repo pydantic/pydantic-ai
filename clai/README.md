@@ -18,8 +18,7 @@ clai
 ## Help
 
 ```
-usage: clai [-h] [-m [MODEL]] [-l] [-t [CODE_THEME]] [--no-stream] [--version]
-            [prompt]
+usage: clai [-h] [-m [MODEL]] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]
 
 PydanticAI CLI v...
 
