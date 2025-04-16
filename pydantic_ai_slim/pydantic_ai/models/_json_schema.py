@@ -20,11 +20,11 @@ class WalkJsonSchema(ABC):
     def __init__(
         self, schema: JsonSchema, *, prefer_inlined_defs: bool = False, simplify_nullable_unions: bool = False
     ):
-        self.schema = deepcopy(schema)
+        self.schema = schema
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
 
-        self.defs: dict[str, JsonSchema] = self.schema.pop('$defs', {})
+        self.defs: dict[str, JsonSchema] = self.schema.get('$defs', {})
         self.refs_stack = tuple[str, ...]()
         self.recursive_refs = set[str]()
 
@@ -34,7 +34,11 @@ class WalkJsonSchema(ABC):
         return schema
 
     def walk(self) -> JsonSchema:
-        handled = self._handle(deepcopy(self.schema))
+        schema = deepcopy(self.schema)
+
+        # First, handle everything but $defs:
+        schema.pop('$defs', None)
+        handled = self._handle(schema)
 
         if not self.prefer_inlined_defs and self.defs:
             handled['$defs'] = {k: self._handle(v) for k, v in self.defs.items()}
