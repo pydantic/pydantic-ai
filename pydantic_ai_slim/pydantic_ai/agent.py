@@ -699,15 +699,6 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
                                         for call, _ in result_schema.find_tool([new_part]):
                                             return FinalResult(s, call.tool_name, call.tool_call_id)
 
-                                elif isinstance(maybe_part_event, _messages.PartDeltaEvent) and isinstance(
-                                    maybe_part_event.delta, _messages.TextPartDelta
-                                ):
-                                    # If we're getting deltas, check if the delta has content
-                                    if maybe_part_event.delta.content_delta and _agent_graph.allow_text_result(
-                                        result_schema
-                                    ):
-                                        return FinalResult(s, None, None)
-
                             return None
 
                         final_result_details = await stream_to_final(streamed_response)
