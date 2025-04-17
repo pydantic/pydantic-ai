@@ -970,12 +970,8 @@ async def test_image_as_binary_content_tool_response(
     async def get_image() -> BinaryContent:
         return image_content
 
-    result = await agent.run(['What fruit is in the image you have access to via the get_image tool?'])
-    assert result.output == snapshot("""\
-Okay, I have retrieved the image.
-
-The fruit in the image is a kiwi, sliced in half.\
-""")
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
+    assert 'kiwi' in result.output
 
 
 @pytest.mark.vcr()

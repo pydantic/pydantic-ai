@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '361'
+      - '355'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       max_tokens: 1024
       messages:
       - content:
-        - text: What fruit is in the image you have access to via the get_image tool?
+        - text: What fruit is in the image you can get from the get_image tool?
           type: text
         role: user
       model: claude-3-5-sonnet-latest
@@ -47,11 +47,11 @@ interactions:
       content:
       - text: Let me get the image and check what fruit it contains.
         type: text
-      - id: toolu_01QGR8bP8KBcWZndsMrXMrP6
+      - id: toolu_01GP7S71uzF8HZJLLzBFhCGp
         input: {}
         name: get_image
         type: tool_use
-      id: msg_01PgghaQxK7X37k4mhPbb4CF
+      id: msg_01NK8ACxV17ivNMiRxpE6Wm3
       model: claude-3-5-sonnet-20241022
       role: assistant
       stop_reason: tool_use
@@ -60,7 +60,7 @@ interactions:
       usage:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 373
+        input_tokens: 372
         output_tokens: 49
     status:
       code: 200
@@ -74,7 +74,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2780310'
+      - '2780295'
       content-type:
       - application/json
       host:
@@ -84,21 +84,21 @@ interactions:
       max_tokens: 1024
       messages:
       - content:
-        - text: What fruit is in the image you have access to via the get_image tool?
+        - text: What fruit is in the image you can get from the get_image tool?
           type: text
         role: user
       - content:
         - text: Let me get the image and check what fruit it contains.
           type: text
-        - id: toolu_01QGR8bP8KBcWZndsMrXMrP6
+        - id: toolu_01GP7S71uzF8HZJLLzBFhCGp
           input: {}
           name: get_image
           type: tool_use
         role: assistant
       - content:
-        - content: See attached file 1.
+        - content: See file 1.
           is_error: false
-          tool_use_id: toolu_01QGR8bP8KBcWZndsMrXMrP6
+          tool_use_id: toolu_01GP7S71uzF8HZJLLzBFhCGp
           type: tool_result
         - text: 'This is file 1:'
           type: text
@@ -125,7 +125,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '559'
+      - '631'
       content-type:
       - application/json
       transfer-encoding:
@@ -133,10 +133,10 @@ interactions:
     parsed_body:
       content:
       - text: The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with
-          small black seeds arranged in a circular pattern around a white center core. The kiwi's fuzzy brown skin is visible
-          around the edges of the slice.
+          small black seeds arranged in a circular pattern around a white center core. The slice shows the typical cross-section
+          view of a kiwi with its distinctive radiating pattern and fuzzy brown skin visible around the edge.
         type: text
-      id: msg_01FUHKDCoBBwfENKjKLZkyiz
+      id: msg_01Tz1ufijp4cKBCMwfXsirYq
       model: claude-3-5-sonnet-20241022
       role: assistant
       stop_reason: end_turn
@@ -145,8 +145,8 @@ interactions:
       usage:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 2021
-        output_tokens: 57
+        input_tokens: 2019
+        output_tokens: 69
     status:
       code: 200
       message: OK
