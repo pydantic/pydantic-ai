@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Annotated, Any, Callable, Literal, Union
 
 import pydantic_core
@@ -906,3 +906,30 @@ def test_schema_generator():
             },
         ]
     )
+
+
+def test_dynamic_tools_agent_wide():
+    async def prepare_tools_def(ctx: RunContext[int], tools_def: list[ToolDefinition]) -> list[ToolDefinition]:
+        if ctx.deps == 42:
+            return []
+        elif ctx.deps == 21:
+            return [replace(tool_def, strict=True) for tool_def in tools_def]
+        return tools_def
+
+    agent = Agent('test', deps_type=int, prepare_tools=prepare_tools_def)
+
+    @agent.tool
+    def foobar(ctx: RunContext[int], x: int, y: str) -> str:
+        return f'{ctx.deps} {x} {y}'
+
+    result = agent.run_sync('', deps=42)
+    assert result.output == snapshot('success (no tool calls)')
+
+    with agent.override(model=FunctionModel(get_json_schema)):
+        result = agent.run_sync('', deps=21)
+        json_schema = json.loads(result.output)
+        assert agent._function_tools['foobar'].strict is None
+        assert json_schema['strict'] is True
+
+    result = agent.run_sync('', deps=1)
+    assert result.output == snapshot('{"foobar":"1 0 a"}')
