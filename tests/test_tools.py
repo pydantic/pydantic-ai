@@ -909,9 +909,11 @@ def test_schema_generator():
 
 
 def test_dynamic_tools_agent_wide():
-    async def prepare_tools_def(ctx: RunContext[int], tools_def: list[ToolDefinition]) -> list[ToolDefinition]:
+    async def prepare_tools_def(ctx: RunContext[int], tools_def: list[ToolDefinition]) -> list[ToolDefinition] | None:
         if ctx.deps == 42:
             return []
+        elif ctx.deps == 43:
+            return None
         elif ctx.deps == 21:
             return [replace(tool_def, strict=True) for tool_def in tools_def]
         return tools_def
@@ -923,6 +925,9 @@ def test_dynamic_tools_agent_wide():
         return f'{ctx.deps} {x} {y}'
 
     result = agent.run_sync('', deps=42)
+    assert result.output == snapshot('success (no tool calls)')
+
+    result = agent.run_sync('', deps=43)
     assert result.output == snapshot('success (no tool calls)')
 
     with agent.override(model=FunctionModel(get_json_schema)):

@@ -237,7 +237,7 @@ async def _prepare_request_parameters(
     if ctx.deps.prepare_tools:
         # Prepare the tools using the provided function
         # This also acts over tool definitions pulled from MCP servers
-        function_tool_defs = await ctx.deps.prepare_tools(run_context, function_tool_defs)
+        function_tool_defs = await ctx.deps.prepare_tools(run_context, function_tool_defs) or []
 
     output_schema = ctx.deps.output_schema
     return models.ModelRequestParameters(
