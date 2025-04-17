@@ -7,7 +7,8 @@
     ".": "./src/main.ts"
   },
   "tasks": {
-    "lint-format": "deno fmt && deno lint && deno check src"
+    "lint-format": "deno fmt && deno lint && deno check src && deno publish --dry-run --allow-dirty",
+    "dev": "deno run -N -R=node_modules -W=node_modules -R=src src/main.ts"
   },
   "imports": {
     "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@^1.8.0",
