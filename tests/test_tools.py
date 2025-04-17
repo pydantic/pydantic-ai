@@ -915,7 +915,9 @@ def test_schema_generator():
 
 
 def test_dynamic_tools_agent_wide():
-    async def prepare_tools_def(ctx: RunContext[int], tools_def: list[ToolDefinition]) -> list[ToolDefinition] | None:
+    async def prepare_tools_def(
+        ctx: RunContext[int], tools_def: list[ToolDefinition]
+    ) -> Union[list[ToolDefinition], None]:
         if ctx.deps == 42:
             return []
         elif ctx.deps == 43:
