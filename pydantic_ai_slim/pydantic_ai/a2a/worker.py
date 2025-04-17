@@ -56,6 +56,8 @@ class InMemoryWorker(Worker):
 
     async def _run_task_operations(self):
         async for task_operation in self._read_stream:
+            # TODO(Marcelo): Build the TaskContext to pass to the runner. The object can have a
+            # `save_task` or `save_artifact` or `save_task_history` method.
             if task_operation['operation'] == 'run':
                 self._task_group.start_soon(self._handle_send_task, task_operation['params'])
 
