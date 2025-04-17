@@ -264,6 +264,7 @@ class InstrumentedModel(WrapperModel):
         for message_index, message in enumerate(messages):
             message_events: list[Event] = []
             if isinstance(message, ModelRequest):
+                message_events.append(message.otel_event())
                 for part in message.parts:
                     if hasattr(part, 'otel_event'):
                         message_events.append(part.otel_event())

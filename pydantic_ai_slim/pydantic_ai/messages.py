@@ -463,6 +463,9 @@ class ModelRequest:
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
 
+    def otel_event(self) -> Event:
+        return Event('gen_ai.system.message', body={'content': self.instructions, 'role': 'system'})
+
 
 @dataclass
 class TextPart:
