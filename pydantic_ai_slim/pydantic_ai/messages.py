@@ -395,7 +395,7 @@ class RetryPromptPart:
     * the model returned plain text when a structured response was expected
     * Pydantic validation of a structured response failed, here content is derived from a Pydantic
       [`ValidationError`][pydantic_core.ValidationError]
-    * a result validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
+    * an output validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
     """
 
     content: list[pydantic_core.ErrorDetails] | str
@@ -456,6 +456,9 @@ class ModelRequest:
 
     parts: list[ModelRequestPart]
     """The parts of the user message."""
+
+    instructions: str | None = None
+    """The instructions for the model."""
 
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
@@ -586,7 +589,7 @@ ModelMessage = Annotated[Union[ModelRequest, ModelResponse], pydantic.Discrimina
 """Any message sent to or returned by a model."""
 
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(
-    list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64')
+    list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
 
@@ -771,10 +774,10 @@ class PartDeltaEvent:
 
 @dataclass
 class FinalResultEvent:
-    """An event indicating the response to the current model request matches the result schema."""
+    """An event indicating the response to the current model request matches the output schema and will produce a result."""
 
     tool_name: str | None
-    """The name of the result tool that was called. `None` if the result is from text content and not from a tool."""
+    """The name of the output tool that was called. `None` if the result is from text content and not from a tool."""
     tool_call_id: str | None
     """The tool call ID, if any, that this result is associated with."""
     event_kind: Literal['final_result'] = 'final_result'

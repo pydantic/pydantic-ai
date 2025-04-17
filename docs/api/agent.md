@@ -7,6 +7,6 @@
             - AgentRun
             - AgentRunResult
             - EndStrategy
-            - RunResultDataT
+            - RunOutputDataT
             - capture_run_messages
             - InstrumentationSettings

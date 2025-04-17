@@ -20,20 +20,20 @@ async def example_tool(ctx: RunContext[MyDeps]) -> str:
 
 def test_deps_used():
     result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
-    assert result.data == '{"example_tool":"MyDeps(foo=1, bar=2)"}'
+    assert result.output == '{"example_tool":"MyDeps(foo=1, bar=2)"}'
 
 
 def test_deps_override():
     with agent.override(deps=MyDeps(foo=3, bar=4)):
         result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
-        assert result.data == '{"example_tool":"MyDeps(foo=3, bar=4)"}'
+        assert result.output == '{"example_tool":"MyDeps(foo=3, bar=4)"}'
 
         with agent.override(deps=MyDeps(foo=5, bar=6)):
             result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
-            assert result.data == '{"example_tool":"MyDeps(foo=5, bar=6)"}'
+            assert result.output == '{"example_tool":"MyDeps(foo=5, bar=6)"}'
 
         result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
-        assert result.data == '{"example_tool":"MyDeps(foo=3, bar=4)"}'
+        assert result.output == '{"example_tool":"MyDeps(foo=3, bar=4)"}'
 
     result = agent.run_sync('foobar', deps=MyDeps(foo=1, bar=2))
-    assert result.data == '{"example_tool":"MyDeps(foo=1, bar=2)"}'
+    assert result.output == '{"example_tool":"MyDeps(foo=1, bar=2)"}'

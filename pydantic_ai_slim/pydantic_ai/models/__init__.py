@@ -19,7 +19,7 @@ from typing_extensions import Literal, TypeAliasType
 
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
-from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
+from ..messages import ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent
 from ..settings import ModelSettings
 from ..usage import Usage
 
@@ -107,6 +107,7 @@ KnownModelName = TypeAliasType(
         'google-gla:gemini-2.0-flash-lite-preview-02-05',
         'google-gla:gemini-2.0-pro-exp-02-05',
         'google-gla:gemini-2.5-pro-exp-03-25',
+        'google-gla:gemini-2.5-pro-preview-03-25',
         'google-vertex:gemini-1.0-pro',
         'google-vertex:gemini-1.5-flash',
         'google-vertex:gemini-1.5-flash-8b',
@@ -118,6 +119,7 @@ KnownModelName = TypeAliasType(
         'google-vertex:gemini-2.0-flash-lite-preview-02-05',
         'google-vertex:gemini-2.0-pro-exp-02-05',
         'google-vertex:gemini-2.5-pro-exp-03-25',
+        'google-vertex:gemini-2.5-pro-preview-03-25',
         'gpt-3.5-turbo',
         'gpt-3.5-turbo-0125',
         'gpt-3.5-turbo-0301',
@@ -137,6 +139,12 @@ KnownModelName = TypeAliasType(
         'gpt-4-turbo-2024-04-09',
         'gpt-4-turbo-preview',
         'gpt-4-vision-preview',
+        'gpt-4.1',
+        'gpt-4.1-2025-04-14',
+        'gpt-4.1-mini',
+        'gpt-4.1-mini-2025-04-14',
+        'gpt-4.1-nano',
+        'gpt-4.1-nano-2025-04-14',
         'gpt-4o',
         'gpt-4o-2024-05-13',
         'gpt-4o-2024-08-06',
@@ -206,6 +214,12 @@ KnownModelName = TypeAliasType(
         'openai:gpt-4-turbo-2024-04-09',
         'openai:gpt-4-turbo-preview',
         'openai:gpt-4-vision-preview',
+        'openai:gpt-4.1',
+        'openai:gpt-4.1-2025-04-14',
+        'openai:gpt-4.1-mini',
+        'openai:gpt-4.1-mini-2025-04-14',
+        'openai:gpt-4.1-nano',
+        'openai:gpt-4.1-nano-2025-04-14',
         'openai:gpt-4o',
         'openai:gpt-4o-2024-05-13',
         'openai:gpt-4o-2024-08-06',
@@ -240,11 +254,11 @@ KnownModelName = TypeAliasType(
 
 @dataclass
 class ModelRequestParameters:
-    """Configuration for an agent's request to a model, specifically related to tools and result handling."""
+    """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition]
-    allow_text_result: bool
-    result_tools: list[ToolDefinition]
+    allow_text_output: bool
+    output_tools: list[ToolDefinition]
 
 
 class Model(ABC):
@@ -305,6 +319,12 @@ class Model(ABC):
     def base_url(self) -> str | None:
         """The base URL for the provider API, if available."""
         return None
+
+    def _get_instructions(self, messages: list[ModelMessage]) -> str | None:
+        """Get instructions from the first ModelRequest found when iterating messages in reverse."""
+        for message in reversed(messages):
+            if isinstance(message, ModelRequest):
+                return message.instructions
 
 
 @dataclass
