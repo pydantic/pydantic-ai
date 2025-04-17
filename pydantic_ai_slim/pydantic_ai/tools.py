@@ -363,7 +363,7 @@ class Tool(Generic[AgentDepsT]):
     ) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
         try:
             if isinstance(message.args, str):
-                args_dict = self._validator.validate_json(message.args)
+                args_dict = self._validator.validate_json(message.args or '{}')
             else:
                 args_dict = self._validator.validate_python(message.args)
         except ValidationError as e:

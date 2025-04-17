@@ -50,7 +50,7 @@ from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import ClientWithHandler, IsNow, IsStr, TestEnv
+from ..conftest import ClientWithHandler, IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -837,7 +837,7 @@ async def test_empty_text_ignored():
 
 async def test_model_settings(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        generation_config = json.loads(request.content)['generation_config']
+        generation_config = json.loads(request.content)['generationConfig']
         assert generation_config == {
             'max_output_tokens': 1,
             'temperature': 0.1,
@@ -886,7 +886,7 @@ async def test_safety_settings_unsafe(
     try:
 
         def handler(request: httpx.Request) -> httpx.Response:
-            safety_settings = json.loads(request.content)['safety_settings']
+            safety_settings = json.loads(request.content)['safetySettings']
             assert safety_settings == [
                 {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
                 {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
@@ -928,7 +928,7 @@ async def test_safety_settings_safe(
     client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
 ) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        safety_settings = json.loads(request.content)['safety_settings']
+        safety_settings = json.loads(request.content)['safetySettings']
         assert safety_settings == [
             {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
             {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
@@ -1008,3 +1008,61 @@ async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_
     assert result.output == snapshot(
         'I am sorry, I cannot fulfill this request. The age needs to be greater than 18.\n'
     )
+
+
+@pytest.mark.vcr()
+async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.')
+
+    result = await agent.run('What is the capital of France?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The capital of France is Paris.\n')],
+                model_name='gemini-1.5-flash',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+class CurrentLocation(BaseModel, extra='forbid'):
+    city: str
+    country: str
+
+
+@pytest.mark.vcr()
+async def test_gemini_additional_properties_is_false(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_temperature(location: CurrentLocation) -> float:  # pragma: no cover
+        return 20.0
+
+    result = await agent.run('What is the temperature in Tokyo?')
+    assert result.output == snapshot(
+        'The available tools lack the ability to access real-time information, including current temperature.  Therefore, I cannot answer your question.\n'
+    )
+
+
+@pytest.mark.vcr()
+async def test_gemini_additional_properties_is_true(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    with pytest.warns(UserWarning, match='.*additionalProperties.*'):
+
+        @agent.tool_plain
+        async def get_temperature(location: dict[str, CurrentLocation]) -> float:  # pragma: no cover
+            return 20.0
+
+        result = await agent.run('What is the temperature in Tokyo?')
+        assert result.output == snapshot(
+            'I need a location dictionary to use the `get_temperature` function.  I cannot provide the temperature in Tokyo without more information.\n'
+        )

@@ -15,6 +15,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, 
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -1675,8 +1676,11 @@ def test_custom_output_type_invalid() -> None:
 def test_binary_content_all_messages_json():
     agent = Agent('test')
 
-    result = agent.run_sync(['Hello', BinaryContent(data=b'Hello', media_type='text/plain')])
-    assert json.loads(result.all_messages_json()) == snapshot(
+    content = BinaryContent(data=b'Hello', media_type='text/plain')
+    result = agent.run_sync(['Hello', content])
+
+    serialized = result.all_messages_json()
+    assert json.loads(serialized) == snapshot(
         [
             {
                 'parts': [
@@ -1686,6 +1690,7 @@ def test_binary_content_all_messages_json():
                         'part_kind': 'user-prompt',
                     }
                 ],
+                'instructions': None,
                 'kind': 'request',
             },
             {
@@ -1694,5 +1699,173 @@ def test_binary_content_all_messages_json():
                 'timestamp': IsStr(),
                 'kind': 'response',
             },
+        ]
+    )
+
+    # We also need to be able to round trip the serialized messages.
+    messages = ModelMessagesTypeAdapter.validate_json(serialized)
+    assert messages == result.all_messages()
+
+
+def test_instructions_raise_error_when_system_prompt_is_set():
+    agent = Agent('test', instructions='An instructions!')
+
+    @agent.system_prompt
+    def system_prompt() -> str:
+        return 'A system prompt!'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            instructions='An instructions!',
+        )
+    )
+
+
+def test_instructions_raise_error_when_instructions_is_set():
+    agent = Agent('test', system_prompt='A system prompt!')
+
+    @agent.instructions
+    def instructions() -> str:
+        return 'An instructions!'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            instructions='An instructions!',
+        )
+    )
+
+
+def test_instructions_both_instructions_and_system_prompt_are_set():
+    agent = Agent('test', instructions='An instructions!', system_prompt='A system prompt!')
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            instructions='An instructions!',
+        )
+    )
+
+
+def test_instructions_decorator_without_parenthesis():
+    agent = Agent('test')
+
+    @agent.instructions
+    def instructions() -> str:
+        return 'You are a helpful assistant.'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+            instructions='You are a helpful assistant.',
+        )
+    )
+
+
+def test_instructions_decorator_with_parenthesis():
+    agent = Agent('test')
+
+    @agent.instructions()
+    def instructions_2() -> str:
+        return 'You are a helpful assistant.'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+            instructions='You are a helpful assistant.',
+        )
+    )
+
+
+def test_instructions_with_message_history():
+    agent = Agent('test', instructions='You are a helpful assistant.')
+    result = agent.run_sync(
+        'Hello',
+        message_history=[ModelRequest(parts=[SystemPromptPart(content='You are a helpful assistant')])],
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='You are a helpful assistant', timestamp=IsNow(tz=timezone.utc))]
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+
+
+def test_empty_final_response():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('foo'), ToolCallPart('my_tool', {'x': 1})])
+        elif len(messages) == 3:
+            return ModelResponse(parts=[TextPart('bar'), ToolCallPart('my_tool', {'x': 2})])
+        else:
+            return ModelResponse(parts=[])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        return x * 2
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'bar'
+
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='foo'),
+                    ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id=IsStr()),
+                ],
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='bar'),
+                    ToolCallPart(tool_name='my_tool', args={'x': 2}, tool_call_id=IsStr()),
+                ],
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool', content=4, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
+            ),
+            ModelResponse(parts=[], model_name='function:llm:', timestamp=IsNow(tz=timezone.utc)),
         ]
     )

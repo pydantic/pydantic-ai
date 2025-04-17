@@ -829,12 +829,17 @@ def test_call_tool_without_unrequired_parameters(set_event_loop: None):
                     ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4}),
                     ToolCallPart(tool_name='my_tool_plain', args={'b': 17}),
                     ToolCallPart(tool_name='my_tool_plain', args={'a': 4, 'b': 17}),
+                    ToolCallPart(tool_name='no_args_tool', args=''),
                 ]
             )
         else:
             return ModelResponse(parts=[TextPart('finished')])
 
     agent = Agent(FunctionModel(call_tools_first))
+
+    @agent.tool_plain
+    def no_args_tool() -> None:
+        return None
 
     @agent.tool
     def my_tool(ctx: RunContext[None], a: int, b: int = 2) -> int:
@@ -858,9 +863,10 @@ def test_call_tool_without_unrequired_parameters(set_event_loop: None):
             {'a': 13, 'b': 4},
             {'b': 17},
             {'a': 4, 'b': 17},
+            '',
         ]
     )
-    assert tool_returns == snapshot([15, 17, 51, 68])
+    assert tool_returns == snapshot([15, 17, 51, 68, None])
 
 
 def test_schema_generator():

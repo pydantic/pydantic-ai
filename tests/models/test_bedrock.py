@@ -30,6 +30,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.models.bedrock import BedrockModelSettings
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, try_import
@@ -301,6 +302,43 @@ async def test_bedrock_model_top_p(allow_model_requests: None, bedrock_provider:
     )
 
 
+async def test_bedrock_model_performance_config(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model_settings = BedrockModelSettings(bedrock_performance_configuration={'latency': 'optimized'})
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot(
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
+    )
+
+
+async def test_bedrock_model_guardrail_config(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model_settings = BedrockModelSettings(
+        bedrock_guardrail_config={'guardrailIdentifier': 'guardrailv1', 'guardrailVersion': 'v1', 'trace': 'enabled'}
+    )
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot(
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
+    )
+
+
+async def test_bedrock_model_other_parameters(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model_settings = BedrockModelSettings(
+        bedrock_prompt_variables={'leo': {'text': 'aaaa'}},
+        bedrock_additional_model_requests_fields={'test': 'test'},
+        bedrock_request_metadata={'test': 'test'},
+        bedrock_additional_model_response_fields_paths=['test'],
+    )
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot(
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
+    )
+
+
 async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'top_p': 0.5})
@@ -483,6 +521,35 @@ The document you're referring to appears to be a test document, which means its 
 
 Since this is a test document, it probably doesn't contain any meaningful or specific information beyond what is necessary to serve its testing purpose. If you have specific questions about the format, structure, or any particular element within the document, feel free to ask!\
 """)
+
+
+@pytest.mark.vcr()
+async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    def instructions() -> str:
+        return 'You are a helpful assistant.'
+
+    agent = Agent(m, instructions=instructions)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The capital of France is Paris. Paris is not only the political and economic hub of the country but also a major center for culture, fashion, art, and tourism. It is renowned for its rich history, iconic landmarks such as the Eiffel Tower, Notre-Dame Cathedral, and the Louvre Museum, as well as its influence on global culture and cuisine.'
+                    )
+                ],
+                model_name='us.amazon.nova-pro-v1:0',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
 
 
 @pytest.mark.vcr()

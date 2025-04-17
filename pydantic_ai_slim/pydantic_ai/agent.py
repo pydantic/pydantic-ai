@@ -139,6 +139,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _deprecated_result_tool_description: str | None = dataclasses.field(repr=False)
     _output_schema: _output.OutputSchema[OutputDataT] | None = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
+    _instructions: str | None = dataclasses.field(repr=False)
+    _instructions_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
@@ -157,6 +159,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: type[OutputDataT] | ToolOutput[OutputDataT] = str,
+        instructions: str | _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -180,6 +183,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         result_type: type[OutputDataT] = str,
+        instructions: str | _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -202,6 +206,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         # TODO change this back to `output_type: type[OutputDataT] | ToolOutput[OutputDataT] = str,` when we remove the overloads
         output_type: Any = str,
+        instructions: str | _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -223,6 +228,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 you must provide the model when calling it. We allow str here since the actual list of allowed models changes frequently.
             output_type: The type of the output data, used to validate the data returned by the model,
                 defaults to `str`.
+            instructions: Instructions to use for this agent, you can also register instructions via a function with
+                [`instructions`][pydantic_ai.Agent.instructions].
             system_prompt: Static system prompts to use for this agent, you can also register system
                 prompts via a function with [`system_prompt`][pydantic_ai.Agent.system_prompt].
             deps_type: The type used for dependency injection, this parameter exists solely to allow you to fully
@@ -300,7 +307,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._output_schema = _output.OutputSchema[OutputDataT].build(
             output_type, self._deprecated_result_tool_name, self._deprecated_result_tool_description
         )
-        self._output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = []
+        self._output_validators = []
+
+        self._instructions_functions = (
+            [_system_prompt.SystemPromptRunner(instructions)] if callable(instructions) else []
+        )
+        self._instructions = instructions if isinstance(instructions, str) else None
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -515,6 +527,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             [
                 UserPromptNode(
                     user_prompt='What is the capital of France?',
+                    instructions=None,
+                    instructions_functions=[],
                     system_prompts=(),
                     system_prompt_functions=[],
                     system_prompt_dynamic_functions={},
@@ -528,6 +542,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                 part_kind='user-prompt',
                             )
                         ],
+                        instructions=None,
                         kind='request',
                     )
                 ),
@@ -618,6 +633,15 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             },
         )
 
+        async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
+            if self._instructions is None and not self._instructions_functions:
+                return None
+
+            instructions = self._instructions or ''
+            for instructions_runner in self._instructions_functions:
+                instructions += await instructions_runner.run(run_context)
+            return instructions
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
             prompt=user_prompt,
@@ -634,9 +658,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             run_span=run_span,
             tracer=tracer,
             prepare_tools=self.prepare_tools,
+            get_instructions=get_instructions,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
+            instructions=self._instructions,
+            instructions_functions=self._instructions_functions,
             system_prompts=self._system_prompts,
             system_prompt_functions=self._system_prompt_functions,
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
@@ -646,7 +673,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             start_node,
             state=state,
             deps=graph_deps,
-            span=use_span(run_span, end_on_exit=True),
+            span=use_span(run_span, end_on_exit=True) if run_span.is_recording() else None,
             infer_name=False,
         ) as graph_run:
             yield AgentRun(graph_run)
@@ -992,6 +1019,73 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 self._override_deps = override_deps_before
             if _utils.is_set(override_model_before):
                 self._override_model = override_model_before
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], str], /
+    ) -> Callable[[RunContext[AgentDepsT]], str]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]: ...
+
+    @overload
+    def instructions(self, func: Callable[[], str], /) -> Callable[[], str]: ...
+
+    @overload
+    def instructions(self, func: Callable[[], Awaitable[str]], /) -> Callable[[], Awaitable[str]]: ...
+
+    @overload
+    def instructions(
+        self, /
+    ) -> Callable[[_system_prompt.SystemPromptFunc[AgentDepsT]], _system_prompt.SystemPromptFunc[AgentDepsT]]: ...
+
+    def instructions(
+        self,
+        func: _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
+        /,
+    ) -> (
+        Callable[[_system_prompt.SystemPromptFunc[AgentDepsT]], _system_prompt.SystemPromptFunc[AgentDepsT]]
+        | _system_prompt.SystemPromptFunc[AgentDepsT]
+    ):
+        """Decorator to register an instructions function.
+
+        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
+        Can decorate a sync or async functions.
+
+        The decorator can be used bare (`agent.instructions`).
+
+        Overloads for every possible signature of `instructions` are included so the decorator doesn't obscure
+        the type of the function.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent, RunContext
+
+        agent = Agent('test', deps_type=str)
+
+        @agent.instructions
+        def simple_instructions() -> str:
+            return 'foobar'
+
+        @agent.instructions
+        async def async_instructions(ctx: RunContext[str]) -> str:
+            return f'{ctx.deps} is the best'
+        ```
+        """
+        if func is None:
+
+            def decorator(
+                func_: _system_prompt.SystemPromptFunc[AgentDepsT],
+            ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
+                self._instructions_functions.append(_system_prompt.SystemPromptRunner(func_))
+                return func_
+
+            return decorator
+        else:
+            self._instructions_functions.append(_system_prompt.SystemPromptRunner(func))
+            return func
 
     @overload
     def system_prompt(
@@ -1560,6 +1654,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         [
             UserPromptNode(
                 user_prompt='What is the capital of France?',
+                instructions=None,
+                instructions_functions=[],
                 system_prompts=(),
                 system_prompt_functions=[],
                 system_prompt_dynamic_functions={},
@@ -1573,6 +1669,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             part_kind='user-prompt',
                         )
                     ],
+                    instructions=None,
                     kind='request',
                 )
             ),
@@ -1695,6 +1792,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 [
                     UserPromptNode(
                         user_prompt='What is the capital of France?',
+                        instructions=None,
+                        instructions_functions=[],
                         system_prompts=(),
                         system_prompt_functions=[],
                         system_prompt_dynamic_functions={},
@@ -1708,6 +1807,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                                     part_kind='user-prompt',
                                 )
                             ],
+                            instructions=None,
                             kind='request',
                         )
                     ),

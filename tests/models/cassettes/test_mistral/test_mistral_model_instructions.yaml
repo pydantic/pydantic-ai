@@ -1,0 +1,48 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '196'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: You are a helpful assistant.
+        role: system
+      - content: What is the capital of France?
+        role: user
+      model: mistral-large-latest
+      n: 1
+      stream: false
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '81'
+      content-type:
+      - application/json; charset=utf-8
+      www-authenticate:
+      - Key
+    parsed_body:
+      message: Unauthorized
+      request_id: 634bbb2997303741ee738863c4acfa1f
+    status:
+      code: 401
+      message: Unauthorized
+version: 1

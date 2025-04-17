@@ -457,6 +457,9 @@ class ModelRequest:
     parts: list[ModelRequestPart]
     """The parts of the user message."""
 
+    instructions: str | None = None
+    """The instructions for the model."""
+
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
 
@@ -586,7 +589,7 @@ ModelMessage = Annotated[Union[ModelRequest, ModelResponse], pydantic.Discrimina
 """Any message sent to or returned by a model."""
 
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(
-    list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64')
+    list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
 

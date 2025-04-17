@@ -1,0 +1,76 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '296'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the temperature in Tokyo?
+        role: user
+      tools:
+        function_declarations:
+        - description: null
+          name: get_temperature
+          parameters:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '748'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=523
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.12538558465463143
+        content:
+          parts:
+          - text: |
+              The available tools lack the ability to access real-time information, including current temperature.  Therefore, I cannot answer your question.
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-1.5-flash
+      usageMetadata:
+        candidatesTokenCount: 27
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 27
+        promptTokenCount: 14
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 14
+        totalTokenCount: 41
+    status:
+      code: 200
+      message: OK
+version: 1
