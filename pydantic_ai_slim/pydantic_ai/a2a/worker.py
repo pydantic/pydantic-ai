@@ -6,7 +6,7 @@ import anyio
 from typing_extensions import TypedDict
 
 from .runner import Runner
-from .schema import Task, TaskIdParams, TaskSendParams
+from .schema import TaskIdParams, TaskSendParams
 from .storage import Storage
 
 
@@ -56,17 +56,14 @@ class InMemoryWorker(Worker):
 
     async def _run_task_operations(self):
         async for task_operation in self._read_stream:
-            task = await self.storage.load_task(task_operation['params']['id'])
-            assert task is not None
-
             if task_operation['operation'] == 'run':
-                self._task_group.start_soon(self.runner.run, task_operation['params'], task)
+                self._task_group.start_soon(self._handle_send_task, task_operation['params'])
 
-    async def _handle_run_task(self, task: Task):
-        pass
-
-    async def _handle_cancel_task(self, task: Task):
-        pass
+    async def _handle_send_task(self, params: TaskSendParams):
+        task = await self.storage.load_task(params['id'])
+        if task is None:
+            raise ValueError(f'Task {params["id"]} not found')
+        await self.runner.run(params, task)
 
     async def schedule_task(self, params: TaskSendParams) -> None:
         await self._write_stream.send(RunTask(operation='run', params=params))

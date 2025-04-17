@@ -90,12 +90,13 @@ class TaskManager:
 
     async def __aenter__(self):
         self.aexit_stack = AsyncExitStack()
+        await self.aexit_stack.__aenter__()
         await self.aexit_stack.enter_async_context(self.worker)
 
         return self
 
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any):
-        await self.aexit_stack.aclose()
+        await self.aexit_stack.__aexit__(exc_type, exc_value, traceback)
 
     async def send_task(self, request: SendTaskRequest) -> SendTaskResponse:
         """Send a task to the worker."""
