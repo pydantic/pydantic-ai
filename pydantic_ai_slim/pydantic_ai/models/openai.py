@@ -283,6 +283,7 @@ class OpenAIModel(Model):
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
+                extra_body={k: v for k, v in model_settings.items() if k not in OpenAIModelSettings.__annotations__},
                 extra_headers={'User-Agent': get_user_agent()},
             )
         except APIStatusError as e:

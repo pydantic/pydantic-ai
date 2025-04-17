@@ -165,6 +165,35 @@ agent = Agent(model)
 ...
 ```
 
+You can also create a custom model settings class to pass additional settings to the API:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel, OpenAIModelSettings
+from pydantic_ai.providers.openai import OpenAIProvider
+
+
+class CustomModelSettings(OpenAIModelSettings):
+    """Example of adding top_k parameter to model settings."""
+    top_k: int
+
+model = OpenAIModel(
+    'model_name',
+    provider=OpenAIProvider(
+        base_url='https://<openai-compatible-api-endpoint>.com', api_key='your-api-key'
+    ),
+)
+
+custom_model_settings = CustomModelSettings(
+    temperature=0.98,
+    top_p=0.37,
+    top_k=100,
+)
+
+agent = Agent(model, model_settings=custom_model_settings)
+...
+```
+
 You can also customize any provider with a custom `http_client`:
 
 ```python
