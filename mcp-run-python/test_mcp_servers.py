@@ -20,7 +20,6 @@ DENO_ARGS = [
     'run',
     '-N',
     '-R=mcp-run-python/node_modules',
-    '-R=mcp-run-python/src',  # required to get this from source only
     '-W=mcp-run-python/node_modules',
     '--node-modules-dir=auto',
     'mcp-run-python/src/main.ts',
