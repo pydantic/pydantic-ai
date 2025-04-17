@@ -128,9 +128,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield msg
                 break
 
-        async with _utils.group_by_temporal(self, debounce_by) as group_iter:
-            async for _items in group_iter:
-                yield self._raw_stream_response.get()  # current state of the response
+        group_iter = _utils.group_by_temporal(self, debounce_by)
+        async for _items in group_iter:
+            yield self._raw_stream_response.get()  # current state of the response
 
     def usage(self) -> Usage:
         """Return the usage of the whole run.
@@ -499,9 +499,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     async def _stream_response_structured(
         self, *, debounce_by: float | None = 0.1
     ) -> AsyncIterator[_messages.ModelResponse]:
-        async with _utils.group_by_temporal(self._stream_response, debounce_by) as group_iter:
-            async for _items in group_iter:
-                yield self._stream_response.get()
+        group_iter = _utils.group_by_temporal(self._stream_response, debounce_by)
+        async for _items in group_iter:
+            yield self._stream_response.get()
 
     async def _stream_response_text(
         self, *, delta: bool = False, debounce_by: float | None = 0.1
@@ -535,10 +535,10 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     yield event.delta.content_delta, event.index
 
         async def _stream_text_deltas() -> AsyncIterator[str]:
-            async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
-                async for items in group_iter:
-                    # Note: we are currently just dropping the part index on the group here
-                    yield ''.join([content for content, _ in items])
+            group_iter = _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by)
+            async for items in group_iter:
+                # Note: we are currently just dropping the part index on the group here
+                yield ''.join([content for content, _ in items])
 
         if delta:
             async for text in _stream_text_deltas():
