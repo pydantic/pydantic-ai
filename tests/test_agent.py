@@ -15,6 +15,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, 
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -1675,8 +1676,11 @@ def test_custom_output_type_invalid() -> None:
 def test_binary_content_all_messages_json():
     agent = Agent('test')
 
-    result = agent.run_sync(['Hello', BinaryContent(data=b'Hello', media_type='text/plain')])
-    assert json.loads(result.all_messages_json()) == snapshot(
+    content = BinaryContent(data=b'Hello', media_type='text/plain')
+    result = agent.run_sync(['Hello', content])
+
+    serialized = result.all_messages_json()
+    assert json.loads(serialized) == snapshot(
         [
             {
                 'parts': [
@@ -1697,6 +1701,10 @@ def test_binary_content_all_messages_json():
             },
         ]
     )
+
+    # We also need to be able to round trip the serialized messages.
+    messages = ModelMessagesTypeAdapter.validate_json(serialized)
+    assert messages == result.all_messages()
 
 
 def test_instructions_raise_error_when_system_prompt_is_set():
