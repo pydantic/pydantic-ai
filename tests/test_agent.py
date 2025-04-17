@@ -31,7 +31,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from .conftest import IsDatetime, IsNow, IsStr, TestEnv
+from .conftest import IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
