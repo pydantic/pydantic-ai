@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '195'
+      - '189'
       content-type:
       - application/json
       host:
@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: What fruit is in the image you have access to via the get_image tool?
+        - text: What fruit is in the image you can get from the get_image tool?
         role: user
       tools:
         function_declarations:
@@ -33,7 +33,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2278
+      - gfet4t7; dur=3372
       transfer-encoding:
       - chunked
       vary:
@@ -55,13 +55,13 @@ interactions:
         index: 0
       modelVersion: gemini-2.5-pro-preview-03-25
       usageMetadata:
-        candidatesTokenCount: 195
-        promptTokenCount: 39
+        candidatesTokenCount: 175
+        promptTokenCount: 38
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 39
-        thoughtsTokenCount: 167
-        totalTokenCount: 234
+          tokenCount: 38
+        thoughtsTokenCount: 147
+        totalTokenCount: 213
     status:
       code: 200
       message: OK
@@ -74,7 +74,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2780011'
+      - '2780005'
       content-type:
       - application/json
       host:
@@ -83,7 +83,7 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: What fruit is in the image you have access to via the get_image tool?
+        - text: What fruit is in the image you can get from the get_image tool?
         role: user
       - parts:
         - text: |+
@@ -113,11 +113,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '654'
+      - '632'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=9880
+      - gfet4t7; dur=73564
       transfer-encoding:
       - chunked
       vary:
@@ -128,21 +128,21 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: The image shows a cross-section of a kiwifruit (often called kiwi).
+          - text: The image shows a kiwi fruit, sliced in half.
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-pro-preview-03-25
       usageMetadata:
-        candidatesTokenCount: 266
-        promptTokenCount: 354
+        candidatesTokenCount: 294
+        promptTokenCount: 353
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 96
+          tokenCount: 95
         - modality: IMAGE
           tokenCount: 258
-        thoughtsTokenCount: 249
-        totalTokenCount: 620
+        thoughtsTokenCount: 283
+        totalTokenCount: 647
     status:
       code: 200
       message: OK

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '350'
+      - '344'
       content-type:
       - application/json
       host:
@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       input:
       - content:
-        - text: What fruit is in the image you have access to via the get_image tool?
+        - text: What fruit is in the image you can get from the get_image tool?
           type: input_text
         role: user
       model: gpt-4o
@@ -46,7 +46,7 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '480'
+      - '532'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -54,9 +54,9 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1744928594
+      created_at: 1744932152
       error: null
-      id: resp_68017f526ae081919017f587049a70f109a68a33423b207e
+      id: resp_68018d38a6048191adaf5fc6912277a304ff021e12dbda85
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -65,8 +65,8 @@ interactions:
       object: response
       output:
       - arguments: '{}'
-        call_id: call_oFjZd09OE3SqSXOZT0oD3SU3
-        id: fc_68017f52ce0c8191b5f6ca9742f80a6f09a68a33423b207e
+        call_id: call_65If5vKSWv0LUo4bDMKdy5IW
+        id: fc_68018d391b648191832042cb9730113a04ff021e12dbda85
         name: get_image
         status: completed
         type: function_call
@@ -95,13 +95,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 41
+        input_tokens: 40
         input_tokens_details:
           cached_tokens: 0
         output_tokens: 11
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 52
+        total_tokens: 51
       user: null
     status:
       code: 200
@@ -115,28 +115,28 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2780215'
+      - '2780209'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=7_i1iifK6HG7VW_biUaqD0YnkKVgdmbNl6tf9g9gNFA-1744928594-1.0.1.1-VzbNXMptVgS64pUcorddFpxUm4RtFZkvQZB09x5JBmIB1vnaJA_r08gKLdx5I8sK_ahHjvGenUbeDrMJQxhR8MFA5fPf_7MGYXc.Hitfqbk;
-        _cfuvid=Cfu0M0eCoBJGOrluNekpYipQjfS1nVTyIAm7vDyYs9Y-1744928594905-0.0.1.1-604800000
+      - __cf_bm=bCLJq8GV7pBtpmaAYMIZvNgx8eHwy6ijlm1UrgsF1As-1744932153-1.0.1.1-o0SsjtDtpaPBC88uuL9RQ_E1ghAAwPvOx1CYHkO1V9QqcwSsUdd65Z4bnWlbLB7yifCAG4yNfrR40pv5qSdRHj0ustFWbiSon4cyM5DJGDY;
+        _cfuvid=7Z.YuSzRQ73OOuo3sI3uJZc.6GNZlGE18GnFC6N78M8-1744932153196-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       input:
       - content:
-        - text: What fruit is in the image you have access to via the get_image tool?
+        - text: What fruit is in the image you can get from the get_image tool?
           type: input_text
         role: user
       - content: ''
         role: assistant
       - arguments: '{}'
-        call_id: call_oFjZd09OE3SqSXOZT0oD3SU3
+        call_id: call_65If5vKSWv0LUo4bDMKdy5IW
         name: get_image
         type: function_call
-      - call_id: call_oFjZd09OE3SqSXOZT0oD3SU3
+      - call_id: call_65If5vKSWv0LUo4bDMKdy5IW
         output: See file 1.
         type: function_call_output
       - content:
@@ -172,7 +172,7 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '3709'
+      - '7115'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -180,9 +180,9 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1744928600
+      created_at: 1744932216
       error: null
-      id: resp_68017f58472481918a22d711568ce8a1055de8be2972e669
+      id: resp_68018d7800f8819186a6d401f1bab35a0e89003a52bf45ad
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -194,7 +194,7 @@ interactions:
         - annotations: []
           text: The fruit in the image is a kiwi.
           type: output_text
-        id: msg_68017f5ac11c819182f41be63c66cd06055de8be2972e669
+        id: msg_68018d7d3e848191b56fc415795027e50e89003a52bf45ad
         role: assistant
         status: completed
         type: message
@@ -223,13 +223,13 @@ interactions:
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 1181
+        input_tokens: 1180
         input_tokens_details:
           cached_tokens: 0
         output_tokens: 11
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 1192
+        total_tokens: 1191
       user: null
     status:
       code: 200

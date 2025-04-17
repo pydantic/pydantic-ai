@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '351'
+      - '345'
       content-type:
       - application/json
       host:
@@ -17,7 +17,7 @@ interactions:
     parsed_body:
       messages:
       - content:
-        - text: What fruit is in the image you have access to via the get_image tool?
+        - text: What fruit is in the image you can get from the get_image tool?
           type: text
         role: user
       model: gpt-4o
@@ -49,7 +49,7 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '390'
+      - '408'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -70,10 +70,10 @@ interactions:
           - function:
               arguments: '{}'
               name: get_image
-            id: call_uiV1vG3liYlFd03A63hN0Ngh
+            id: call_CzWeF2Dl3IjNLuItiMyJVtbG
             type: function
-      created: 1744928565
-      id: chatcmpl-BNRv3POfvMj6OulsODRijJ86Rp2yT
+      created: 1744932074
+      id: chatcmpl-BNSpeh1GuHnSUNaFuTQRGFCB5KJvG
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
@@ -85,11 +85,11 @@ interactions:
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 47
+        prompt_tokens: 46
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 58
+        total_tokens: 57
     status:
       code: 200
       message: OK
@@ -102,19 +102,19 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2780195'
+      - '2780189'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=A9QuwCuwm.MTzQmjDUAdJUwjkNmnw1OHxwmdZD3UVXA-1744928566-1.0.1.1-._MyKdRVsYIjdlxhZzFxu7Q7V4_cZ3wvYOHj9c_OPJJ1w6SYmuUODvCsgLH3LTyW1SlohO5kEKmOuvQgK0zjM2vlBzQQaejmPVJz.3_faPA;
-        _cfuvid=n8GaXGmWNkc5zyzUn1iDyW9EPB3ZC6c8tsYBMXY9YHU-1744928566265-0.0.1.1-604800000
+      - __cf_bm=77NF3JW0pM_C2Y_jR67Otekbn.jbMyHXL_KFz_0umvc-1744932074-1.0.1.1-LaMaPUTc90PPf8ruLRh0TSZZZp0ng0GcDyoN3DaNRhSvEXoIavc5fYa.1cvsDCVzqrIPkL9rwDR7HMIW.txKhLM.LlIf2SDxn05J95VGXK8;
+        _cfuvid=ApBVMIPFw_HcDumjoezdbFZB6CZeUDcJGGaH8sskwyE-1744932074434-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       messages:
       - content:
-        - text: What fruit is in the image you have access to via the get_image tool?
+        - text: What fruit is in the image you can get from the get_image tool?
           type: text
         role: user
       - role: assistant
@@ -122,11 +122,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_image
-          id: call_uiV1vG3liYlFd03A63hN0Ngh
+          id: call_CzWeF2Dl3IjNLuItiMyJVtbG
           type: function
       - content: See file 1.
         role: tool
-        tool_call_id: call_uiV1vG3liYlFd03A63hN0Ngh
+        tool_call_id: call_CzWeF2Dl3IjNLuItiMyJVtbG
       - content:
         - text: 'This is file 1:'
           type: text
@@ -163,7 +163,7 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '2811'
+      - '2217'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -180,12 +180,12 @@ interactions:
           content: The fruit in the image is a kiwi.
           refusal: null
           role: assistant
-      created: 1744928576
-      id: chatcmpl-BNRvE0I0IfUk7lD6DgsVBDR1vk3ok
+      created: 1744932148
+      id: chatcmpl-BNSqqDpkpAR2xYTCOEodG8nVxKHLm
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_90122d973c
+      system_fingerprint: fp_55d88aaf2f
       usage:
         completion_tokens: 11
         completion_tokens_details:
@@ -193,11 +193,11 @@ interactions:
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 1181
+        prompt_tokens: 1180
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 1192
+        total_tokens: 1191
     status:
       code: 200
       message: OK
