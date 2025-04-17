@@ -15,6 +15,8 @@ There are a number of ways to register tools with an agent:
 * via the [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
 * via the [`tools`][pydantic_ai.Agent.__init__] keyword argument to `Agent` which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
 
+## Registering Function Tools via Decorator
+
 `@agent.tool` is considered the default decorator since in the majority of cases tools will need access to the agent context.
 
 Here's an example using both:
@@ -188,7 +190,7 @@ sequenceDiagram
     Note over Agent: Game session complete
 ```
 
-## Registering Function Tools via kwarg
+## Registering Function Tools via Agent Argument
 
 As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to reuse tools, and can also give more fine-grained control over the tools.
 
@@ -241,6 +243,59 @@ print(dice_result['b'].output)
 
 1. The simplest way to register tools via the `Agent` constructor is to pass a list of functions, the function signature is inspected to determine if the tool takes [`RunContext`][pydantic_ai.tools.RunContext].
 2. `agent_a` and `agent_b` are identical — but we can use [`Tool`][pydantic_ai.tools.Tool] to reuse tool definitions and give more fine-grained control over how tools are defined, e.g. setting their name or description, or using a custom [`prepare`](#tool-prepare) method.
+
+_(This example is complete, it can be run "as is")_
+
+## Function Tool Output
+
+Tools can return anything that Pydantic can serialize to JSON, as well as audio, video, image or document content depending on the types of [multi-modal input](input.md) the model supports:
+
+```python {title="function_tool_output.py"}
+from pydantic import BaseModel
+from pydantic_ai import Agent, ImageUrl, DocumentUrl
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from datetime import datetime
+
+class User(BaseModel):
+    name: str
+    age: int
+
+agent = Agent(model=OpenAIResponsesModel('gpt-4o'))
+
+@agent.tool_plain
+def get_current_time() -> datetime:
+    return datetime.now()
+
+@agent.tool_plain
+def get_user() -> User:
+    return User(name='John', age=30)
+
+@agent.tool_plain
+def get_company_logo() -> ImageUrl:
+    return ImageUrl(url='https://iili.io/3Hs4FMg.png')
+
+@agent.tool_plain
+def get_document() -> DocumentUrl:
+    return DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+result = agent.run_sync('What time is it?')
+print(result.output)
+# > The current time is 10:45 PM on April 17, 2025.
+
+result = agent.run_sync('What is the user name?')
+print(result.output)
+# > The user's name is John.
+
+result = agent.run_sync('What is the company name in the logo?')
+print(result.output)
+# > The company name in the logo is "Pydantic."
+
+result = agent.run_sync('What is the main content of the document?')
+print(result.output)
+# > The document contains just the text "Dummy PDF file."
+```
+
+Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
 
 _(This example is complete, it can be run "as is")_
 
@@ -306,8 +361,6 @@ agent.run_sync('hello', model=FunctionModel(print_schema))
 ```
 
 _(This example is complete, it can be run "as is")_
-
-The return type of tool can be anything which Pydantic can serialize to JSON as some models (e.g. Gemini) support semi-structured return values, some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
 
 If a tool has a single parameter that can be represented as an object in JSON schema (e.g. dataclass, TypedDict, pydantic model), the schema for the tool is simplified to be just that object.
 

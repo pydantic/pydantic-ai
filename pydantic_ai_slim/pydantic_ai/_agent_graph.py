@@ -576,7 +576,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     )
 
 
-async def process_function_tools(
+async def process_function_tools(  # noqa C901
     tool_calls: list[_messages.ToolCallPart],
     output_tool_name: str | None,
     output_tool_call_id: str | None,
@@ -662,6 +662,8 @@ async def process_function_tools(
     if not calls_to_run:
         return
 
+    user_parts: list[_messages.UserPromptPart] = []
+
     # Run all tool tasks in parallel
     results_by_index: dict[int, _messages.ModelRequestPart] = {}
     with ctx.deps.tracer.start_as_current_span(
@@ -675,6 +677,9 @@ async def process_function_tools(
             asyncio.create_task(tool.run(call, run_context, ctx.deps.tracer), name=call.tool_name)
             for tool, call in calls_to_run
         ]
+
+        file_index = 1
+
         pending = tasks
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
@@ -682,7 +687,23 @@ async def process_function_tools(
                 index = tasks.index(task)
                 result = task.result()
                 yield _messages.FunctionToolResultEvent(result, tool_call_id=call_index_to_event_id[index])
-                if isinstance(result, (_messages.ToolReturnPart, _messages.RetryPromptPart)):
+
+                if isinstance(result, _messages.RetryPromptPart):
+                    results_by_index[index] = result
+                elif isinstance(result, _messages.ToolReturnPart):
+                    if result.is_multi_modal:
+                        user_parts.append(
+                            _messages.UserPromptPart(
+                                content=[f'This is file {file_index}:', result.content],
+                                timestamp=result.timestamp,
+                                part_kind='user-prompt',
+                            )
+                        )
+
+                        result.content = f'See file {file_index}.'
+
+                        file_index += 1
+
                     results_by_index[index] = result
                 else:
                     assert_never(result)
@@ -691,6 +712,8 @@ async def process_function_tools(
     # This is mostly just to simplify testing
     for k in sorted(results_by_index):
         output_parts.append(results_by_index[k])
+
+    output_parts.extend(user_parts)
 
 
 async def _tool_from_mcp_server(

@@ -960,6 +960,25 @@ async def test_safety_settings_safe(
 
 
 @pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
+) -> None:
+    m = GeminiModel('gemini-2.5-pro-preview-03-25', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you have access to via the get_image tool?'])
+    assert result.output == snapshot("""\
+Okay, I have retrieved the image.
+
+The fruit in the image is a kiwi, sliced in half.\
+""")
+
+
+@pytest.mark.vcr()
 async def test_image_as_binary_content_input(
     allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
 ) -> None:
