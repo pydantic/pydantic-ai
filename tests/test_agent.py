@@ -2,7 +2,7 @@ import json
 import re
 import sys
 from datetime import timezone
-from typing import Any, Callable, Union, cast
+from typing import Any, Callable, Union
 
 import httpx
 import pytest
@@ -31,7 +31,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from .conftest import IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -1680,12 +1680,31 @@ def test_binary_content_all_messages_json():
     result = agent.run_sync(['Hello', content])
 
     serialized = result.all_messages_json()
-    assert json.loads(serialized)[0]['parts'][0]['content'][1]['data'] == 'SGVsbG8='
+    assert json.loads(serialized) == snapshot(
+        [
+            {
+                'parts': [
+                    {
+                        'content': ['Hello', {'data': 'SGVsbG8=', 'media_type': 'text/plain', 'kind': 'binary'}],
+                        'timestamp': IsStr(),
+                        'part_kind': 'user-prompt',
+                    }
+                ],
+                'instructions': None,
+                'kind': 'request',
+            },
+            {
+                'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text'}],
+                'model_name': 'test',
+                'timestamp': IsStr(),
+                'kind': 'response',
+            },
+        ]
+    )
 
+    # We also need to be able to round trip the serialized messages.
     messages = ModelMessagesTypeAdapter.validate_json(serialized)
-    part = cast(UserPromptPart, messages[0].parts[0])
-    new_content = cast(BinaryContent, part.content[1])
-    assert new_content.data == content.data
+    assert messages == result.all_messages()
 
 
 def test_instructions_raise_error_when_system_prompt_is_set():
