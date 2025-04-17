@@ -4,7 +4,6 @@ from collections.abc import Sequence
 from typing import Any
 
 from pydantic import TypeAdapter
-from pydantic_ai.a2a.history_manager import HistoryManager
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -13,6 +12,7 @@ from starlette.routing import Route
 from starlette.types import ExceptionHandler, Lifespan
 
 from pydantic_ai import Agent
+from pydantic_ai.a2a.history_manager import HistoryManager
 from pydantic_ai.a2a.task_manager import InMemoryTaskManager, TaskManager
 
 from .schema import A2ARequest, Skill, agent_card_ta
@@ -94,9 +94,9 @@ class FastA2A(Starlette):
         a2a_request = a2a_request_ta.validate_json(data)
 
         if a2a_request['method'] == 'tasks/send':
-            await self.task_manager.send_task(a2a_request['task'])
+            await self.task_manager.send_task(a2a_request)
         elif a2a_request['method'] == 'tasks/get':
-            await self.task_manager.get_task(a2a_request['task'])
+            await self.task_manager.get_task(a2a_request)
         elif a2a_request['method'] == 'tasks/cancel':
             ...
         else:

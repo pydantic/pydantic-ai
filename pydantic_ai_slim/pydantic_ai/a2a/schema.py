@@ -440,6 +440,10 @@ class JSONRPCRequest(JSONRPCMessage, Generic[Method, Params]):
     """The parameters to pass to the method."""
 
 
+###############################################################################################
+#######################################   Error codes   #######################################
+###############################################################################################
+
 CodeT = TypeVar('CodeT', bound=int)
 MessageT = TypeVar('MessageT', bound=str)
 
@@ -452,71 +456,16 @@ class JSONRPCError(TypedDict, Generic[CodeT, MessageT]):
     data: NotRequired[Any]
 
 
-Result = TypeVar('Result')
+ResultT = TypeVar('ResultT')
+ErrorT = TypeVar('ErrorT', bound=JSONRPCError[Any, Any])
 
 
-class JSONRPCResponse(JSONRPCMessage, Generic[Result]):
+class JSONRPCResponse(JSONRPCMessage, Generic[ResultT, ErrorT]):
     """A JSON RPC response."""
 
-    result: NotRequired[Result]
-    # TODO(Marcelo): I need to replace the Any by the actual types returned as error.
-    error: NotRequired[JSONRPCError[Any, Any]]
+    result: NotRequired[ResultT]
+    error: NotRequired[ErrorT]
 
-
-SendTaskRequest = JSONRPCRequest[Literal['tasks/send'], TaskSendParams]
-"""A JSON RPC request to send a task."""
-
-SendTaskResponse = JSONRPCResponse[Task]
-"""A JSON RPC response to send a task."""
-
-SendTaskStreamingRequest = JSONRPCRequest[Literal['tasks/sendSubscribe'], TaskSendParams]
-"""A JSON RPC request to send a task and receive updates."""
-
-SendTaskStreamingResponse = JSONRPCResponse[TaskStatusUpdateEvent | TaskArtifactUpdateEvent]
-"""A JSON RPC response to send a task and receive updates."""
-
-GetTaskRequest = JSONRPCRequest[Literal['tasks/get'], TaskQueryParams]
-"""A JSON RPC request to get a task."""
-
-GetTaskResponse = JSONRPCResponse[Task]
-"""A JSON RPC response to get a task."""
-
-CancelTaskRequest = JSONRPCRequest[Literal['tasks/cancel'], TaskIdParams]
-"""A JSON RPC request to cancel a task."""
-
-CancelTaskResponse = JSONRPCResponse[Task]
-"""A JSON RPC response to cancel a task."""
-
-SetTaskPushNotificationRequest = JSONRPCRequest[Literal['tasks/pushNotification/set'], TaskPushNotificationConfig]
-"""A JSON RPC request to set a task push notification."""
-
-SetTaskPushNotificationResponse = JSONRPCResponse[TaskPushNotificationConfig]
-"""A JSON RPC response to set a task push notification."""
-
-GetTaskPushNotificationRequest = JSONRPCRequest[Literal['tasks/pushNotification/get'], TaskIdParams]
-"""A JSON RPC request to get a task push notification."""
-
-GetTaskPushNotificationResponse = JSONRPCResponse[TaskPushNotificationConfig]
-"""A JSON RPC response to get a task push notification."""
-
-ResubscribeTaskRequest = JSONRPCRequest[Literal['tasks/resubscribe'], TaskIdParams]
-"""A JSON RPC request to resubscribe to a task."""
-
-A2ARequest = Annotated[
-    (
-        SendTaskRequest
-        | GetTaskRequest
-        | CancelTaskRequest
-        | SetTaskPushNotificationRequest
-        | GetTaskPushNotificationRequest
-        | ResubscribeTaskRequest
-    ),
-    Discriminator('method'),
-]
-
-###############################################################################################
-#######################################   Error codes   #######################################
-###############################################################################################
 
 JSONParseError = JSONRPCError[Literal[-32700], Literal['Invalid JSON payload']]
 """A JSON RPC error for a parse error."""
@@ -547,3 +496,58 @@ UnsupportedOperationError = JSONRPCError[Literal[-32004], Literal['This operatio
 
 ContentTypeNotSupportedError = JSONRPCError[Literal[-32005], Literal['Incompatible content types']]
 """A JSON RPC error for incompatible content types."""
+
+###############################################################################################
+#######################################   Requests and responses   ############################
+###############################################################################################
+
+SendTaskRequest = JSONRPCRequest[Literal['tasks/send'], TaskSendParams]
+"""A JSON RPC request to send a task."""
+
+SendTaskResponse = JSONRPCResponse[Task, JSONRPCError[Any, Any]]
+"""A JSON RPC response to send a task."""
+
+SendTaskStreamingRequest = JSONRPCRequest[Literal['tasks/sendSubscribe'], TaskSendParams]
+"""A JSON RPC request to send a task and receive updates."""
+
+SendTaskStreamingResponse = JSONRPCResponse[TaskStatusUpdateEvent | TaskArtifactUpdateEvent, InternalError]
+"""A JSON RPC response to send a task and receive updates."""
+
+GetTaskRequest = JSONRPCRequest[Literal['tasks/get'], TaskQueryParams]
+"""A JSON RPC request to get a task."""
+
+GetTaskResponse = JSONRPCResponse[Task, TaskNotFoundError]
+"""A JSON RPC response to get a task."""
+
+CancelTaskRequest = JSONRPCRequest[Literal['tasks/cancel'], TaskIdParams]
+"""A JSON RPC request to cancel a task."""
+
+CancelTaskResponse = JSONRPCResponse[Task, TaskNotCancelableError | TaskNotFoundError]
+"""A JSON RPC response to cancel a task."""
+
+SetTaskPushNotificationRequest = JSONRPCRequest[Literal['tasks/pushNotification/set'], TaskPushNotificationConfig]
+"""A JSON RPC request to set a task push notification."""
+
+SetTaskPushNotificationResponse = JSONRPCResponse[TaskPushNotificationConfig, PushNotificationNotSupportedError]
+"""A JSON RPC response to set a task push notification."""
+
+GetTaskPushNotificationRequest = JSONRPCRequest[Literal['tasks/pushNotification/get'], TaskIdParams]
+"""A JSON RPC request to get a task push notification."""
+
+GetTaskPushNotificationResponse = JSONRPCResponse[TaskPushNotificationConfig, PushNotificationNotSupportedError]
+"""A JSON RPC response to get a task push notification."""
+
+ResubscribeTaskRequest = JSONRPCRequest[Literal['tasks/resubscribe'], TaskIdParams]
+"""A JSON RPC request to resubscribe to a task."""
+
+A2ARequest = Annotated[
+    (
+        SendTaskRequest
+        | GetTaskRequest
+        | CancelTaskRequest
+        | SetTaskPushNotificationRequest
+        | GetTaskPushNotificationRequest
+        | ResubscribeTaskRequest
+    ),
+    Discriminator('method'),
+]

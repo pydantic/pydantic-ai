@@ -1,10 +1,63 @@
+"""This module defines the TaskManager class, which is responsible for managing tasks.
+
+In our structure, we have the following components:
+
+- TaskManager: A class that manages tasks.
+- Worker: A class that executes tasks.
+- Runner: A class that defines how tasks run and how history is structured.
+- Storage: A class that stores tasks and artifacts.
+
+Architecture:
+```
+  +-----------------+
+  |   HTTP Server   |
+  +-------+---------+
+          |
+          | Sends Requests/
+          | Receives Results
+          v
+  +-------+---------+        +----------------+
+  |                 |        |                |
+  |   TaskManager   |<------>|    Storage     |
+  |  (coordinates)  |        | (persistence)  |
+  |                 |        |                |
+  +-------+---------+        +----------------+
+          |                         ^
+          |                         |
+          | Triggers Tasks          |
+          v                         |
+  +------------------+              |
+  |      Worker      |--------------┘
+  | (executes tasks) |
+  +------------------+
+          ^
+          |
+          | Delegates Execution
+          v
+  +------------------+
+  |      Runner      |
+  | (implementation) |
+  +------------------+
+```
+
+The flow:
+1. The HTTP server sends a task to TaskManager
+2. TaskManager stores initial task state in Storage
+3. TaskManager triggers Worker to execute tasks
+4. Worker delegates to Runner for task execution
+5. Runner defines how tasks run and how history is structured
+6. Worker processes task results from Runner
+7. Worker reads from and writes to Storage directly
+8. Worker updates task status in Storage as execution progresses
+9. TaskManager can also read/write from Storage for task management
+10. Client queries TaskManager for results, which reads from Storage
+"""
+
 import datetime
 import uuid
-from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from typing import Any
-
-import anyio
 
 from pydantic_ai.a2a.schema import (
     CancelTaskRequest,
@@ -13,8 +66,6 @@ from pydantic_ai.a2a.schema import (
     GetTaskPushNotificationResponse,
     GetTaskRequest,
     GetTaskResponse,
-    Message,
-    Part,
     ResubscribeTaskRequest,
     SendTaskRequest,
     SendTaskResponse,
@@ -23,79 +74,23 @@ from pydantic_ai.a2a.schema import (
     SetTaskPushNotificationRequest,
     SetTaskPushNotificationResponse,
     Task,
-    TaskSendParams,
+    TaskNotFoundError,
     TaskStatus,
 )
-from pydantic_ai.agent import Agent
-from pydantic_ai.messages import (
-    AudioUrl,
-    BinaryContent,
-    DocumentUrl,
-    ImageUrl,
-    ModelMessage,
-    ModelRequest,
-    ModelRequestPart,
-    ModelResponse,
-    ModelResponsePart,
-    UserPromptPart,
-    VideoUrl,
-)
+from pydantic_ai.a2a.storage import Storage
+from pydantic_ai.a2a.worker import Worker
 
 
-class TaskManager(ABC):
-    """A task manager responsible for managing tasks.
+@dataclass
+class TaskManager:
+    """A task manager responsible for managing tasks."""
 
-    Only `send_task` and `get_task` are required.
-    """
-
-    def __init__(self): ...
-
-    @abstractmethod
-    async def send_task(self, request: SendTaskRequest) -> SendTaskResponse: ...
-
-    @abstractmethod
-    async def get_task(self, request: GetTaskRequest) -> GetTaskResponse: ...
-
-    async def cancel_task(self, request: CancelTaskRequest) -> CancelTaskResponse: ...
-
-    async def send_task_streaming(self, request: SendTaskStreamingRequest) -> SendTaskStreamingResponse: ...
-
-    async def set_task_push_notification(
-        self, request: SetTaskPushNotificationRequest
-    ) -> SetTaskPushNotificationResponse: ...
-
-    async def get_task_push_notification(
-        self, request: GetTaskPushNotificationRequest
-    ) -> GetTaskPushNotificationResponse: ...
-
-    async def resubscribe_task(self, request: ResubscribeTaskRequest) -> SendTaskStreamingResponse:
-        raise NotImplementedError('Resubscribe is not implemented yet.')
-
-
-# class TaskSerializer: ...
-
-
-# class Storage:
-#     artifacts: ...
-#     tasks: ...
-
-
-class InMemoryTaskManager(TaskManager):
-    """A task manager that stores tasks in memory."""
-
-    def __init__(self, agent: Agent):
-        self.agent = agent
-        # This could be Postgres.
-        self.tasks: dict[str, Task] = {}
-        self._write_stream, self._read_stream = anyio.create_memory_object_stream[Task]()
+    worker: Worker
+    storage: Storage
 
     async def __aenter__(self):
         self.aexit_stack = AsyncExitStack()
-        await self.aexit_stack.enter_async_context(self._read_stream)
-        await self.aexit_stack.enter_async_context(self._write_stream)
-
-        self.task_handler = anyio.create_task_group()
-        self.task_handler.start_soon(self._handle_tasks)
+        await self.aexit_stack.enter_async_context(self.worker)
 
         return self
 
@@ -103,77 +98,62 @@ class InMemoryTaskManager(TaskManager):
         await self.aexit_stack.aclose()
 
     async def send_task(self, request: SendTaskRequest) -> SendTaskResponse:
+        """Send a task to the worker."""
         request_id = str(uuid.uuid4())
         task_id = request['params']['id']
-        session_id = request['params'].get('session_id', str(uuid.uuid4()))
+        task = await self.storage.load_task(task_id)
 
-        task = Task(
-            id=task_id,
-            session_id=session_id,
-            status=TaskStatus(state='submitted', timestamp=datetime.datetime.now().isoformat()),
-        )
-        await self._write_stream.send(task)
+        if task is None:
+            session_id = request['params'].get('session_id', str(uuid.uuid4()))
+            task = Task(
+                id=task_id,
+                session_id=session_id,
+                status=TaskStatus(state='submitted', timestamp=datetime.datetime.now().isoformat()),
+            )
+            await self.storage.save_task(task)
+
+        await self.worker.schedule_task(request['params'])
         return SendTaskResponse(jsonrpc='2.0', id=request_id, result=task)
 
     async def get_task(self, request: GetTaskRequest) -> GetTaskResponse:
+        """Get a task, and return it to the client.
+
+        No further actions are needed here.
+        """
         task_id = request['params']['id']
-        return GetTaskResponse(jsonrpc='2.0', id=request['id'], result=self.tasks[task_id])
+        history_length = request['params'].get('history_length')
+        task = await self.storage.load_task(task_id, history_length)
+        if task is None:
+            return GetTaskResponse(
+                jsonrpc='2.0',
+                id=request['id'],
+                error=TaskNotFoundError(code=-32001, message='Task not found'),
+            )
+        return GetTaskResponse(jsonrpc='2.0', id=request['id'], result=task)
 
-    async def _handle_tasks(self):
-        while True:
-            task = await self._read_stream.receive()
-            self.tasks[task['id']] = task
+    async def cancel_task(self, request: CancelTaskRequest) -> CancelTaskResponse:
+        await self.worker.cancel_task(request['params'])
+        task = await self.storage.load_task(request['params']['id'])
+        if task is None:
+            return CancelTaskResponse(
+                jsonrpc='2.0',
+                id=request['id'],
+                error=TaskNotFoundError(code=-32001, message='Task not found'),
+            )
+        return CancelTaskResponse(jsonrpc='2.0', id=request['id'], result=task)
 
-            if task['status']['state'] == 'submitted':
-                self.task_handler.start_soon(self._handle_submitted_task, task)
+    async def send_task_streaming(self, request: SendTaskStreamingRequest) -> SendTaskStreamingResponse:
+        raise NotImplementedError('SendTaskStreaming is not implemented yet.')
 
-    @staticmethod
-    async def execute_task(send_task_params: TaskSendParams, task: Task, storage: Storage): ...
+    async def set_task_push_notification(
+        self, request: SetTaskPushNotificationRequest
+    ) -> SetTaskPushNotificationResponse:
+        raise NotImplementedError('SetTaskPushNotification is not implemented yet.')
 
-    async def _handle_submitted_task(self, request: SendTaskRequest):
-        task = request['params']
-        history: list[Message] = task.get('history', [])
-        result = await self.agent.run(message_history=self._map_history(history))
-        task['status']['state'] = 'completed'
-        # return result
+    async def get_task_push_notification(
+        self, request: GetTaskPushNotificationRequest
+    ) -> GetTaskPushNotificationResponse:
+        raise NotImplementedError('GetTaskPushNotification is not implemented yet.')
 
-    def _map_history(self, history: list[Message]) -> list[ModelMessage]:
-        model_messages: list[ModelMessage] = []
-        for message in history:
-            if message['role'] == 'user':
-                # NOTE: This is the user input message.
-                model_messages.append(ModelRequest(parts=self._map_request_parts(message['parts'])))
-            else:
-                model_messages.append(ModelResponse(parts=self._map_response_parts(message['parts'])))
-        return model_messages
-
-    def _map_request_parts(self, parts: list[Part]) -> list[ModelRequestPart]:
-        model_parts: list[ModelRequestPart] = []
-        for part in parts:
-            if part['type'] == 'text':
-                model_parts.append(UserPromptPart(content=part['text']))
-            elif part['type'] == 'file':
-                file = part['file']
-                if 'data' in file:
-                    data = file['data'].encode('utf-8')
-                    content = BinaryContent(data=data, media_type=file['mime_type'])
-                    model_parts.append(UserPromptPart(content=[content]))
-                else:
-                    url = file['url']
-                    for url_cls in (DocumentUrl, AudioUrl, ImageUrl, VideoUrl):
-                        content = url_cls(url=url)
-                        try:
-                            content.media_type
-                        except ValueError:
-                            continue
-                        else:
-                            break
-                    else:
-                        raise ValueError(f'Unknown file type: {file["mime_type"]}')
-                    model_parts.append(UserPromptPart(content=[content]))
-            elif part['type'] == 'data':
-                # TODO(Marcelo): Maybe we should use this for `ToolReturnPart`, and `RetryPromptPart`.
-                raise NotImplementedError('Data parts are not supported yet.')
-        return model_parts
-
-    def _map_response_parts(self, parts: list[Part]) -> list[ModelResponsePart]: ...
+    async def resubscribe_task(self, request: ResubscribeTaskRequest) -> SendTaskStreamingResponse:
+        raise NotImplementedError('Resubscribe is not implemented yet.')
