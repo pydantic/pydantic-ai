@@ -89,8 +89,6 @@ class ModelResponsePartsManager:
             UnexpectedModelBehavior: If attempting to apply text content to a part that is
                 not a TextPart.
         """
-        # We deliberately don't create empty TextParts since that will affect token counting
-        # The fix for empty TextParts from Ollama will be handled in the agent.py stream_to_final function
         existing_text_part_and_index: tuple[TextPart, int] | None = None
 
         if vendor_part_id is None:
