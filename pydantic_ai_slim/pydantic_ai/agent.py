@@ -245,7 +245,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDepsT | None = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -260,7 +260,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_type: type[RunResultDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDepsT | None = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -274,7 +274,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_type: type[RunResultDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDepsT | None = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -338,7 +338,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_type: type[RunResultDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDepsT | None = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -499,7 +499,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         *,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDepsT | None = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -514,7 +514,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_type: type[RunResultDataT] | None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDepsT | None = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -528,7 +528,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_type: type[RunResultDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDepsT | None = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -589,7 +589,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDepsT | None = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -604,7 +604,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_type: type[RunResultDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDepsT | None = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -619,7 +619,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         result_type: type[RunResultDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | None = None,
-        deps: AgentDepsT | None = None,
+        deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
@@ -1197,7 +1197,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
 
         return model_
 
-    def _get_deps(self: Agent[T, ResultDataT], deps: T | None) -> T:
+    def _get_deps(self: Agent[T, ResultDataT], deps: T) -> T:
         """Get deps for a run.
 
         If we've overridden deps via `_override_deps`, use that, otherwise use the deps passed to the call.
@@ -1207,7 +1207,7 @@ class Agent(Generic[AgentDepsT, ResultDataT]):
         if some_deps := self._override_deps:
             return some_deps.value
         else:
-            return deps  # type: ignore
+            return deps
 
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.
