@@ -7,11 +7,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Generic, Union, cast
 
+from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import TypeVar, assert_type, deprecated, overload
 
 from . import _utils, exceptions, messages as _messages, models
 from .messages import AgentStreamEvent, FinalResultEvent
-from .tools import AgentDepsT, RunContext
+from .tools import AgentDepsT, GenerateToolJsonSchema, RunContext
 from .usage import Usage, UsageLimits
 
 if TYPE_CHECKING:
@@ -76,12 +77,14 @@ class ToolOutput(Generic[OutputDataT]):
         description: str | None = None,
         max_retries: int | None = None,
         strict: bool | None = None,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ):
         self.output_type = type_
         self.name = name
         self.description = description
         self.max_retries = max_retries
         self.strict = strict
+        self.schema_generator = schema_generator
 
         # TODO: add support for call and make type_ optional, with the following logic:
         # if type_ is None and call is None:
