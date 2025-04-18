@@ -3,9 +3,9 @@
 PydanticAI is still pre-version 1, so breaking changes will occur, however:
 
 - We try to minimize them as much as possible.
-- We will use minor version bumps to signify breaking changes.
-- Wherever possible we'll deprecate old features so code continues to work with deprecation warnings when changing the public API.
-- We intend to release V1 in summer 2025, and then follow strict semantic versioning, e.g. no intentional breaking changes except in major versions.
+- We use minor version bumps to signify breaking changes.
+- Wherever possible we deprecate old features so code continues to work with deprecation warnings when changing the public API.
+- We intend to release V1 in summer 2025, and then follow strict semantic versioning, e.g. no intentional breaking changes except in minor or patch versions.
 
 ## Breaking Changes
 
@@ -27,11 +27,11 @@ See [#1484](https://github.com/pydantic/pydantic-ai/pull/1484) — `format_as_xm
 </div>
 
 <script>
-  async function getChangelog() {
-    const r = await fetch('/changelog.html');
+  fetch('/changelog.html').then(r => {
     if (r.ok) {
-      document.getElementById('display-changelog').innerHTML = await r.text();
+      r.text().then(t => {
+        document.getElementById('display-changelog').innerHTML = t;
+      });
     }
-  }
-  getChangelog();
+  });
 </script>

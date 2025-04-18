@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from types import TracebackType
 from typing import Any
 
@@ -150,13 +151,16 @@ class MCPServerStdio(MCPServer):
     If you want to inherit the environment variables from the parent process, use `env=os.environ`.
     """
 
+    cwd: str | Path | None = None
+    """The working directory to use when spawning the process."""
+
     @asynccontextmanager
     async def client_streams(
         self,
     ) -> AsyncIterator[
         tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
     ]:
-        server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env)
+        server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
         async with stdio_client(server=server) as (read_stream, write_stream):
             yield read_stream, write_stream
 

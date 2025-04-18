@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import warnings
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -776,6 +777,22 @@ class _GeminiJsonSchema(WalkJsonSchema):
         super().__init__(schema, prefer_inlined_defs=True, simplify_nullable_unions=True)
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
+        # Note: we need to remove `additionalProperties: False` since it is currently mishandled by Gemini
+        additional_properties = schema.pop(
+            'additionalProperties', None
+        )  # don't pop yet so it's included in the warning
+        if additional_properties:  # pragma: no cover
+            original_schema = {**schema, 'additionalProperties': additional_properties}
+            warnings.warn(
+                '`additionalProperties` is not supported by Gemini; it will be removed from the tool JSON schema.'
+                f' Full schema: {self.schema}\n\n'
+                f'Source of additionalProperties within the full schema: {original_schema}\n\n'
+                'If this came from a field with a type like `dict[str, MyType]`, that field will always be empty.\n\n'
+                "If Google's APIs are updated to support this properly, please create an issue on the PydanticAI GitHub"
+                ' and we will fix this behavior.',
+                UserWarning,
+            )
+
         schema.pop('title', None)
         schema.pop('default', None)
         schema.pop('$schema', None)

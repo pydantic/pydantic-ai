@@ -4,6 +4,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from functools import cached_property
 from typing import Annotated, Any, Callable, Literal, Union, cast
 
@@ -730,9 +731,15 @@ class MyDefaultDc:
     x: int = 1
 
 
+class MyEnum(Enum):
+    a = 'a'
+    b = 'b'
+
+
 @dataclass
 class MyRecursiveDc:
     field: MyRecursiveDc | None
+    my_enum: MyEnum = Field(description='my enum')
 
 
 @dataclass
@@ -826,9 +833,13 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                             },
                             'type': 'object',
                         },
+                        'MyEnum': {'enum': ['a', 'b'], 'type': 'string'},
                         'MyRecursiveDc': {
-                            'properties': {'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]}},
-                            'required': ['field'],
+                            'properties': {
+                                'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]},
+                                'my_enum': {'description': 'my enum', 'anyOf': [{'$ref': '#/$defs/MyEnum'}]},
+                            },
+                            'required': ['field', 'my_enum'],
                             'type': 'object',
                         },
                     },
@@ -857,11 +868,15 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                             'additionalProperties': False,
                             'required': ['field'],
                         },
+                        'MyEnum': {'enum': ['a', 'b'], 'type': 'string'},
                         'MyRecursiveDc': {
-                            'properties': {'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]}},
+                            'properties': {
+                                'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]},
+                                'my_enum': {'description': 'my enum', 'anyOf': [{'$ref': '#/$defs/MyEnum'}]},
+                            },
                             'type': 'object',
                             'additionalProperties': False,
-                            'required': ['field'],
+                            'required': ['field', 'my_enum'],
                         },
                     },
                     'additionalProperties': False,
@@ -998,7 +1013,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         }
                     },
                     'additionalProperties': False,
-                    'properties': {'x': {'oneOf': [{'type': 'integer'}, {'$ref': '#/$defs/MyDefaultDc'}]}},
+                    'properties': {'x': {'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/MyDefaultDc'}]}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -1079,12 +1094,15 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                        'x': {
+                            'prefixItems': [{'type': 'integer'}],
+                            'type': 'array',
+                            'description': 'minItems=1, maxItems=1',
+                        },
                         'y': {
-                            'maxItems': 1,
-                            'minItems': 1,
                             'prefixItems': [{'type': 'string'}],
                             'type': 'array',
+                            'description': 'minItems=1, maxItems=1',
                         },
                     },
                     'required': ['x', 'y'],
@@ -1160,28 +1178,46 @@ def test_strict_schema():
                 'MyModel': {
                     'additionalProperties': False,
                     'properties': {
-                        'my_discriminated_union': {'oneOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
+                        'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
                         'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                         'my_patterns': {
                             'additionalProperties': False,
-                            'patternProperties': {'^my-pattern$': {'type': 'string'}},
+                            'description': "patternProperties={'^my-pattern$': {'type': 'string'}}",
                             'type': 'object',
                             'properties': {},
                             'required': [],
                         },
-                        'my_recursive': {'anyOf': [{'$ref': '#/$defs/MyModel'}, {'type': 'null'}]},
+                        'my_recursive': {'anyOf': [{'$ref': '#'}, {'type': 'null'}]},
                         'my_tuple': {
-                            'maxItems': 1,
-                            'minItems': 1,
                             'prefixItems': [{'type': 'integer'}],
                             'type': 'array',
+                            'description': 'minItems=1, maxItems=1',
                         },
                     },
                     'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
                     'type': 'object',
                 },
             },
-            '$ref': '#/$defs/MyModel',
+            'properties': {
+                'my_recursive': {'anyOf': [{'$ref': '#'}, {'type': 'null'}]},
+                'my_patterns': {
+                    'type': 'object',
+                    'description': "patternProperties={'^my-pattern$': {'type': 'string'}}",
+                    'additionalProperties': False,
+                    'properties': {},
+                    'required': [],
+                },
+                'my_tuple': {
+                    'prefixItems': [{'type': 'integer'}],
+                    'type': 'array',
+                    'description': 'minItems=1, maxItems=1',
+                },
+                'my_list': {'items': {'type': 'number'}, 'type': 'array'},
+                'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
+            },
+            'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
+            'type': 'object',
+            'additionalProperties': False,
         }
     )
 
@@ -1214,4 +1250,42 @@ async def test_openai_model_without_system_prompt(allow_model_requests: None, op
     result = await agent.run()
     assert result.output == snapshot(
         "That's right—I am a potato! A spud of many talents, here to help you out. How can this humble potato be of service today?"
+    )
+
+
+@pytest.mark.vcr()
+async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.')
+
+    @agent.tool_plain
+    async def get_temperature(city: str) -> float:
+        return 20.0
+
+    result = await agent.run('What is the temperature in Tokyo?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the temperature in Tokyo?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_temperature', args='{"city":"Tokyo"}', tool_call_id=IsStr())],
+                model_name='gpt-4.1-mini-2025-04-14',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_temperature', content=20.0, tool_call_id=IsStr(), timestamp=IsDatetime()
+                    )
+                ],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The temperature in Tokyo is currently 20.0 degrees Celsius.')],
+                model_name='gpt-4.1-mini-2025-04-14',
+                timestamp=IsDatetime(),
+            ),
+        ]
     )
