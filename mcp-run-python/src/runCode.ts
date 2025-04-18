@@ -1,4 +1,3 @@
-// deno-lint-ignore-file no-explicit-any
 import { loadPyodide } from 'pyodide'
 import { preparePythonCode } from './prepareEnvCode.ts'
 import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js'
@@ -17,6 +16,7 @@ export async function runCode(
 ): Promise<RunSuccess | RunError> {
   // remove once https://github.com/pyodide/pyodide/pull/5514 is released
   const realConsoleLog = console.log
+  // deno-lint-ignore no-explicit-any
   console.log = (...args: any[]) => log('debug', args.join(' '))
 
   const output: string[] = []
@@ -55,15 +55,15 @@ export async function runCode(
 
   pathlib.Path(`${dirPath}/${moduleName}.py`).write_text(preparePythonCode)
 
-  const { prepare_env, RegisterFunction, dump_json }: PreparePyEnv = pyodide.pyimport(moduleName)
+  const preparePyEnv: PreparePyEnv = pyodide.pyimport(moduleName)
 
-  const prepareStatus = await prepare_env(pyodide.toPy(files))
+  const prepareStatus = await preparePyEnv.prepare_env(pyodide.toPy(files))
 
-  const globals: { [key: string]: string | RegisterFunctionType } = { __name__: '__main__' }
+  const globals: Record<string, unknown> = { __name__: '__main__' }
 
   if (functionNames && clientCallback) {
     for (const functionName of functionNames) {
-      globals[functionName] = RegisterFunction(functionName, clientCallback)
+      globals[functionName] = preparePyEnv.RegisterFunction(functionName, clientCallback)
     }
   }
 
@@ -86,7 +86,7 @@ export async function runCode(
         status: 'success',
         dependencies,
         output,
-        returnValueJson: dump_json(rawValue),
+        returnValueJson: preparePyEnv.dump_json(rawValue),
       }
     } catch (err) {
       runResult = {
@@ -153,6 +153,7 @@ function escapeClosing(closingTag: string): (str: string) => string {
   return (str) => str.replace(regex, onMatch)
 }
 
+// deno-lint-ignore no-explicit-any
 function formatError(err: any): string {
   let errStr = err.toString()
   errStr = errStr.replace(/^PythonError: +/, '')
@@ -180,17 +181,11 @@ interface PrepareError {
   message: string
 }
 
-interface PyObject {
-  toJs(): any
-}
-
-type RegisterFunctionType = (
-  func_name: string,
-  callback: (func_name: string, args?: string, kwargs?: string) => Promise<string>,
-) => any
-
 interface PreparePyEnv {
   prepare_env: (files: CodeFile[]) => Promise<PrepareSuccess | PrepareError>
-  RegisterFunction: RegisterFunctionType
-  dump_json: (value: any) => string | undefined
+  RegisterFunction: (
+    func_name: string,
+    callback: (func_name: string, args?: string, kwargs?: string) => Promise<string>,
+  ) => unknown
+  dump_json: (value: unknown) => string | undefined
 }
