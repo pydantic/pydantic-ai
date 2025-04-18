@@ -27,7 +27,6 @@ from . import (
     result,
     usage as _usage,
 )
-from ._utils import AbstractSpan
 from .models.instrumented import InstrumentationSettings, InstrumentedModel
 from .result import FinalResult, OutputDataT, StreamedRunResult, ToolOutput
 from .settings import ModelSettings, merge_model_settings
@@ -899,21 +898,66 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                     graph_ctx = agent_run.ctx
                     async with node._stream(graph_ctx) as streamed_response:  # pyright: ignore[reportPrivateUsage]
 
+                        # ruff: noqa: C901
                         async def stream_to_final(
                             s: models.StreamedResponse,
                         ) -> FinalResult[models.StreamedResponse] | None:
                             output_schema = graph_ctx.deps.output_schema
+                            has_tool_call = False
+                            has_text_part = False
+
                             async for maybe_part_event in streamed_response:
                                 if isinstance(maybe_part_event, _messages.PartStartEvent):
                                     new_part = maybe_part_event.part
                                     if isinstance(new_part, _messages.TextPart):
-                                        # Only consider non-empty text parts as potential final results
-                                        if _agent_graph.allow_text_output(output_schema) and new_part.has_content():
-                                            return FinalResult(s, None, None)
-                                        # Empty text parts are processed but don't end the stream
-                                    elif isinstance(new_part, _messages.ToolCallPart) and output_schema:
-                                        for call, _ in output_schema.find_tool([new_part]):
-                                            return FinalResult(s, call.tool_name, call.tool_call_id)
+                                        if (
+                                            _agent_graph.allow_text_output(output_schema)
+                                            and new_part.content
+                                            and new_part.content.strip()
+                                        ):
+                                            has_text_part = True
+                                            # Only return final result if we haven't seen a tool call
+                                            if not has_tool_call:
+                                                return FinalResult(s, None, None)
+                                    elif isinstance(new_part, _messages.ToolCallPart):
+                                        has_tool_call = True
+                                        if output_schema:
+                                            for call, _ in output_schema.find_tool([new_part]):
+                                                return FinalResult(s, call.tool_name, call.tool_call_id)
+                                elif isinstance(maybe_part_event, _messages.PartDeltaEvent):
+                                    if isinstance(maybe_part_event.delta, _messages.TextPartDelta):
+                                        if (
+                                            maybe_part_event.delta.content_delta
+                                            and maybe_part_event.delta.content_delta.strip()
+                                            and _agent_graph.allow_text_output(output_schema)
+                                        ):
+                                            has_text_part = True
+                                            # Only return final result if we haven't seen a tool call
+                                            if not has_tool_call:
+                                                return FinalResult(s, None, None)
+                                    elif isinstance(maybe_part_event.delta, _messages.ToolCallPartDelta):
+                                        has_tool_call = True
+                                        if output_schema:
+                                            # Check if we have a complete tool call
+                                            if (
+                                                maybe_part_event.delta.tool_name_delta
+                                                and maybe_part_event.delta.args_delta
+                                            ):
+                                                return FinalResult(
+                                                    s,
+                                                    maybe_part_event.delta.tool_name_delta,
+                                                    maybe_part_event.delta.tool_call_id,
+                                                )
+
+                            # If we've seen a tool call and have an output schema, let it complete
+                            # This ensures we don't prematurely end streaming when tool calls are present
+                            if has_tool_call and output_schema:
+                                return None
+
+                            # If we have text content but no tool calls, return final result
+                            if has_text_part and not has_tool_call:
+                                return FinalResult(s, None, None)
+
                             return None
 
                         final_result_details = await stream_to_final(streamed_response)
@@ -1685,14 +1729,31 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ]
 
     @overload
-    def _span(self, *, required: Literal[False]) -> AbstractSpan | None: ...
+    def _traceparent(self, *, required: Literal[False]) -> str | None: ...
     @overload
-    def _span(self) -> AbstractSpan: ...
-    def _span(self, *, required: bool = True) -> AbstractSpan | None:
-        span = self._graph_run._span(required=False)  # type: ignore[reportPrivateUsage]
-        if span is None and required:  # pragma: no cover
-            raise AttributeError('Span is not available for this agent run')
-        return span
+    def _traceparent(self) -> str: ...
+    def _traceparent(self, *, required: bool = True) -> str | None:
+        """Get the traceparent for this run.
+
+        Args:
+            required: If True, raise an AttributeError if no span was created.
+                     If False, return None if no span was created.
+        """
+        try:
+            span = self._graph_run._span(required=False)  # type: ignore[reportPrivateUsage]
+            if span is None:
+                if required:
+                    raise AttributeError('No span was created for this agent run')
+                return None
+            if not span.is_recording():  # pragma: no cover
+                return ''
+            from logfire.experimental.annotations import get_traceparent
+
+            return get_traceparent(span)
+        except AttributeError:
+            if required:
+                raise AttributeError('No span was created for this agent run')
+            return None
 
     @property
     def ctx(self) -> GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]]:
@@ -1731,7 +1792,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             graph_run_result.output.tool_name,
             graph_run_result.state,
             self._graph_run.deps.new_message_index,
-            self._graph_run._span(required=False),  # type: ignore[reportPrivateUsage]
+            self._traceparent(required=False),
         )
 
     def __aiter__(
@@ -1849,16 +1910,16 @@ class AgentRunResult(Generic[OutputDataT]):
     _output_tool_name: str | None = dataclasses.field(repr=False)
     _state: _agent_graph.GraphAgentState = dataclasses.field(repr=False)
     _new_message_index: int = dataclasses.field(repr=False)
-    _span_value: AbstractSpan | None = dataclasses.field(repr=False)
+    _traceparent_value: str | None = dataclasses.field(repr=False)
 
     @overload
-    def _span(self, *, required: Literal[False]) -> AbstractSpan | None: ...
+    def _traceparent(self, *, required: Literal[False]) -> str | None: ...
     @overload
-    def _span(self) -> AbstractSpan: ...
-    def _span(self, *, required: bool = True) -> AbstractSpan | None:
-        if self._span_value is None and required:  # pragma: no cover
-            raise AttributeError('Span is not available for this agent run')
-        return self._span_value
+    def _traceparent(self) -> str: ...
+    def _traceparent(self, *, required: bool = True) -> str | None:
+        if self._traceparent_value is None and required:  # pragma: no cover
+            raise AttributeError('No span was created for this agent run')
+        return self._traceparent_value
 
     @property
     @deprecated('`result.data` is deprecated, use `result.output` instead.')
