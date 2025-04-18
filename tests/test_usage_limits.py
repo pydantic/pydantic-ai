@@ -114,8 +114,8 @@ async def test_streamed_text_limits() -> None:
                 Usage(
                     requests=2,
                     request_tokens=103,
-                    response_tokens=8,
-                    total_tokens=111,
+                    response_tokens=5,
+                    total_tokens=108,
                 )
             )
             succeeded = True
