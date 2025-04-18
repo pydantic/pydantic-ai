@@ -30,7 +30,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models.bedrock import BedrockModelSettings
+from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+from pydantic_ai.providers.bedrock import BedrockProvider
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, try_import
@@ -559,4 +560,26 @@ async def test_bedrock_empty_system_prompt(allow_model_requests: None, bedrock_p
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
         'The capital of France is Paris. Paris, officially known as "Ville de Paris," is not only the capital city but also the most populous city in France. It is located in the northern central part of the country along the Seine River. Paris is a major global city, renowned for its cultural, political, economic, and social influence. It is famous for its landmarks such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées, among many other historic and modern attractions. The city has played a significant role in the history of art, fashion, gastronomy, and science.'
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_multiple_documents_in_history(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, document_content: BinaryContent
+):
+    m = BedrockConverseModel(model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    agent = Agent(model=m)
+
+    result = await agent.run(
+        'What is in the documents?',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content=['Here is a PDF document: ', document_content])]),
+            ModelResponse(parts=[TextPart(content='foo bar')]),
+            ModelRequest(parts=[UserPromptPart(content=['Here is another PDF document: ', document_content])]),
+            ModelResponse(parts=[TextPart(content='foo bar 2')]),
+        ],
+    )
+
+    assert result.output == snapshot(
+        'Based on the documents you\'ve shared, both Document 1.pdf and Document 2.pdf contain the text "Dummy PDF file". These appear to be placeholder or sample PDF documents rather than files with substantial content.'
     )
