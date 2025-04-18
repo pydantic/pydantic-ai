@@ -1,6 +1,6 @@
-# Image, Audio & Document Input
+# Image, Audio, Video & Document Input
 
-Some LLMs are now capable of understanding both audio, image and document content.
+Some LLMs are now capable of understanding audio, video, image and document content.
 
 ## Image Input
 
@@ -19,8 +19,8 @@ result = agent.run_sync(
         ImageUrl(url='https://iili.io/3Hs4FMg.png'),
     ]
 )
-print(result.data)
-#> This is the logo for Pydantic, a data validation and settings management library in Python.
+print(result.output)
+# > This is the logo for Pydantic, a data validation and settings management library in Python.
 ```
 
 If you have the image locally, you can also use [`BinaryContent`][pydantic_ai.BinaryContent]:
@@ -39,8 +39,8 @@ result = agent.run_sync(
         BinaryContent(data=image_response.content, media_type='image/png'),  # (1)!
     ]
 )
-print(result.data)
-#> This is the logo for Pydantic, a data validation and settings management library in Python.
+print(result.output)
+# > This is the logo for Pydantic, a data validation and settings management library in Python.
 ```
 
 1. To ensure the example is runnable we download this image from the web, but you can also use `Path().read_bytes()` to read a local file's contents.
@@ -51,6 +51,13 @@ print(result.data)
     Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input.
 
 You can provide audio input using either [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is analogous to the examples above.
+
+## Video Input
+
+!!! info
+    Some models do not support video input. Please check the model's documentation to confirm whether it supports audio input.
+
+You can provide video input using either [`VideoUrl`][pydantic_ai.VideoUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is analogous to the examples above.
 
 ## Document Input
 
@@ -79,8 +86,8 @@ result = agent.run_sync(
         DocumentUrl(url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf'),
     ]
 )
-print(result.data)
-#> This document is the technical report introducing Gemini 1.5, Google's latest large language model...
+print(result.output)
+# > This document is the technical report introducing Gemini 1.5, Google's latest large language model...
 ```
 
 The supported document formats vary by model.
@@ -99,6 +106,6 @@ result = agent.run_sync(
         BinaryContent(data=pdf_path.read_bytes(), media_type='application/pdf'),
     ]
 )
-print(result.data)
-#> The document discusses...
+print(result.output)
+# > The document discusses...
 ```

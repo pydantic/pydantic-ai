@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from types import TracebackType
 from typing import Any
 
@@ -114,7 +115,18 @@ class MCPServerStdio(MCPServer):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerStdio
 
-    server = MCPServerStdio('npx', ['-y', '@pydantic/mcp-run-python', 'stdio'])  # (1)!
+    server = MCPServerStdio(  # (1)!
+        'deno',
+        args=[
+            'run',
+            '-N',
+            '-R=node_modules',
+            '-W=node_modules',
+            '--node-modules-dir=auto',
+            'jsr:@pydantic/mcp-run-python',
+            'stdio',
+        ]
+    )
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
@@ -139,13 +151,16 @@ class MCPServerStdio(MCPServer):
     If you want to inherit the environment variables from the parent process, use `env=os.environ`.
     """
 
+    cwd: str | Path | None = None
+    """The working directory to use when spawning the process."""
+
     @asynccontextmanager
     async def client_streams(
         self,
     ) -> AsyncIterator[
         tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
     ]:
-        server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env)
+        server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
         async with stdio_client(server=server) as (read_stream, write_stream):
             yield read_stream, write_stream
 
@@ -177,8 +192,7 @@ class MCPServerHTTP(MCPServer):
             ...
     ```
 
-    1. E.g. you might be connecting to a server run with `npx @pydantic/mcp-run-python sse`,
-      see [MCP Run Python](../mcp/run-python.md) for more information.
+    1. E.g. you might be connecting to a server run with [`mcp-run-python`](../mcp/run-python.md).
     2. This will connect to a server running on `localhost:3001`.
     """
 

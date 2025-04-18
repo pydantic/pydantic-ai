@@ -12,7 +12,7 @@ binding = "ASSETS"
 run_worker_first = true
 
 [[kv_namespaces]]
-binding = "VERSION_NOTICE_CACHE"
+binding = "KV"
 id = "4e49a275426244488a79d572da40eb69"
 
 [env.previews]
@@ -20,5 +20,5 @@ workers_dev = true
 routes = []
 
 [[env.previews.kv_namespaces]]
-binding = "VERSION_NOTICE_CACHE"
+binding = "KV"
 id = "95eb127177234122896b4f0a80412f1b"

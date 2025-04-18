@@ -140,14 +140,14 @@ async def test_sync_request_text_response(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('hello')
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=5, response_tokens=10, total_tokens=15))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=5, response_tokens=10, total_tokens=15))
     assert result.all_messages() == snapshot(
         [
@@ -177,7 +177,7 @@ async def test_async_request_text_response(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('hello')
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=3, response_tokens=5, total_tokens=8))
 
 
@@ -188,10 +188,10 @@ async def test_request_structured_response(allow_model_requests: None):
     )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, result_type=list[int])
+    agent = Agent(m, output_type=list[int])
 
     result = await agent.run('hello')
-    assert result.data == [1, 2, 3]
+    assert result.output == [1, 2, 3]
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -248,7 +248,7 @@ async def test_request_tool_call(allow_model_requests: None):
             raise ModelRetry('Wrong location, please try again')
 
     result = await agent.run('hello')
-    assert result.data == 'final response'
+    assert result.output == 'final response'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -374,7 +374,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
     )
 
     result = await agent.run('Alice, Bob, Charlie and Daisy are a family. Who is the youngest?')
-    assert 'Daisy is the youngest' in result.data
+    assert 'Daisy is the youngest' in result.output
 
     all_messages = result.all_messages()
     first_response = all_messages[1]
@@ -442,7 +442,7 @@ async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
     agent = Agent(m)
 
     result = await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_metadata={'user_id': '123'}))
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert get_mock_chat_completion_kwargs(mock_client)[0]['metadata']['user_id'] == '123'
 
 
@@ -566,11 +566,9 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.data == snapshot("""\
-This is a potato. It's a yellow-skinned potato with a somewhat oblong or oval shape. The surface is covered in small eyes or dimples, which is typical of potato skin. The color is a golden-yellow, and the potato appears to be clean and fresh, photographed against a white background.
-
-Potatoes are root vegetables that are staple foods in many cuisines around the world. They can be prepared in numerous ways such as boiling, baking, roasting, frying, or mashing. This particular potato looks like it could be a Yukon Gold or a similar yellow-fleshed variety.\
-""")
+    assert result.output == snapshot(
+        "This is a potato. It's a yellow-brown, oblong-shaped potato with a smooth skin and some small eyes or blemishes visible on its surface. Potatoes are starchy root vegetables that are a staple food in many cuisines around the world. They can be prepared in numerous ways, such as boiling, baking, frying, or mashing, and are rich in carbohydrates and nutrients."
+    )
 
 
 @pytest.mark.vcr()
@@ -586,7 +584,7 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
             ),
         ]
     )
-    assert result.data == snapshot(
+    assert result.output == snapshot(
         'This is a Great Horned Owl (Bubo virginianus), a large and powerful owl species. It has distinctive ear tufts (the "horns"), large yellow eyes, and a mottled gray-brown plumage that provides excellent camouflage. In this image, the owl is perched on a branch, surrounded by soft yellow and green vegetation, which creates a beautiful, slightly blurred background that highlights the owl\'s sharp features. Great Horned Owls are known for their adaptability, wide distribution across the Americas, and their status as powerful nocturnal predators.'
     )
 
@@ -629,7 +627,7 @@ async def test_document_binary_content_input(
     agent = Agent(m)
 
     result = await agent.run(['What is the main content on this document?', document_content])
-    assert result.data == snapshot(
+    assert result.output == snapshot(
         'The document appears to be a simple PDF file with only the text "Dummy PDF file" displayed at the top. It appears to be mostly blank otherwise, likely serving as a template or placeholder document.'
     )
 
@@ -639,11 +637,11 @@ async def test_document_url_input(allow_model_requests: None, anthropic_api_key:
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
-    document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+    document_url = DocumentUrl(url='https://pdfobject.com/pdf/sample.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.data == snapshot(
-        'The document appears to be a simple PDF file with only the text "Dummy PDF file" displayed at the top. It seems to be a blank or template document with minimal content.'
+    assert result.output == snapshot(
+        'This document appears to be a sample PDF file that primarily contains Lorem ipsum text, which is placeholder text commonly used in design and publishing. The document begins with "Sample PDF" and states "This is a simple PDF file. Fun fun fun." followed by several paragraphs of Lorem ipsum text. The content doesn\'t convey any meaningful information as Lorem ipsum is essentially dummy text used to demonstrate the visual form of a document without the distraction of meaningful content.'
     )
 
 
@@ -655,7 +653,7 @@ async def test_text_document_url_input(allow_model_requests: None, anthropic_api
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
-    assert result.data == snapshot("""\
+    assert result.output == snapshot("""\
 This document is a TXT test file that primarily contains information about the use of placeholder names, specifically focusing on "John Doe" and its variants. The main content explains how these placeholder names are used in legal contexts and popular culture, particularly in English-speaking countries. The text describes:
 
 1. The various placeholder names used:
@@ -684,3 +682,28 @@ def test_init_with_provider_string(env: TestEnv):
     model = AnthropicModel('claude-3-opus-latest', provider='anthropic')
     assert model.model_name == 'claude-3-opus-latest'
     assert model.client is not None
+
+
+@pytest.mark.vcr()
+async def test_anthropic_model_instructions(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-opus-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m)
+
+    @agent.instructions
+    def simple_instructions():
+        return 'You are a helpful assistant.'
+
+    result = await agent.run('What is the capital of France?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The capital of France is Paris.')],
+                model_name='claude-3-opus-20240229',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )

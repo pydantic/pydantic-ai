@@ -1,10 +1,18 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
 
 [project]
 name = "pydantic-ai"
-version = "0.0.46"
+dynamic = ["version", "dependencies", "optional-dependencies"]
 description = "Agent Framework / shim to use Pydantic with LLMs"
 authors = [
     { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
@@ -35,19 +43,21 @@ classifiers = [
     "Framework :: Pydantic :: 2",
 ]
 requires-python = ">=3.9"
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere,bedrock,cli,mcp,evals]==0.0.46",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere,bedrock,cli,mcp,evals]=={{ version }}",
 ]
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
+examples = ["pydantic-ai-examples=={{ version }}"]
+logfire = ["logfire>=3.11.0"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
 Source = "https://github.com/pydantic/pydantic-ai"
 Documentation = "https://ai.pydantic.dev"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
-
-[project.optional-dependencies]
-examples = ["pydantic-ai-examples==0.0.46"]
-logfire = ["logfire>=3.11.0"]
 
 [project.scripts]
 pai = "pydantic_ai._cli:app"
@@ -73,10 +83,9 @@ members = [
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
     "black>=24.10.0",
-    "bs4>=0.0.2",
-    "markdownify>=0.14.1",
     "mkdocs>=1.6.1",
     "mkdocs-glightbox>=0.4.0",
+    "mkdocs-llmstxt>=0.2.0",
     "mkdocs-material[imaging]>=9.5.45",
     "mkdocstrings-python>=1.12.2",
 ]
@@ -102,7 +111,16 @@ include = [
 ]
 
 [tool.ruff.lint]
-extend-select = ["Q", "RUF100", "C90", "UP", "I", "D", "TID251"]
+extend-select = [
+    "Q",
+    "RUF100",
+    "RUF018",  # https://docs.astral.sh/ruff/rules/assignment-in-assert/
+    "C90",
+    "UP",
+    "I",
+    "D",
+    "TID251",
+]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 isort = { combine-as-imports = true, known-first-party = ["pydantic_ai"] }
 mccabe = { max-complexity = 15 }
@@ -173,6 +191,9 @@ filterwarnings = [
     # uvicorn (mcp server)
     "ignore:websockets.legacy is deprecated.*:DeprecationWarning:websockets.legacy",
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
+    # random resource warnings; I suspect these are coming from vendor SDKs when running examples..
+    "ignore:unclosed <socket:ResourceWarning",
+    "ignore:unclosed event loop:ResourceWarning"
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
@@ -199,6 +220,7 @@ exclude_lines = [
     'if TYPE_CHECKING:',
     'if typing.TYPE_CHECKING:',
     '@overload',
+    '@deprecated',
     '@typing.overload',
     '@abstractmethod',
     '\(Protocol\):$',

@@ -14,7 +14,7 @@ from opentelemetry.trace import ProxyTracerProvider, get_tracer_provider
 
 try:
     from logfire._internal.tracer import (
-        ProxyTracerProvider as LogfireProxyTracerProvider,  # pyright: ignore[reportAssignmentType,reportPrivateImportUsage]
+        ProxyTracerProvider as LogfireProxyTracerProvider,  # pyright: ignore
     )
 
     _LOGFIRE_IS_INSTALLED = True
@@ -49,7 +49,7 @@ def context_subtree() -> typing.Iterator[SpanTree | SpanTreeRecordingError]:
             yield spans
             return
         yield tree
-    tree.add_spans(spans)
+    tree.add_readable_spans(spans)
 
 
 @contextmanager

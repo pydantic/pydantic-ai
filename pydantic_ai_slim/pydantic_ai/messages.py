@@ -15,6 +15,34 @@ from typing_extensions import TypeAlias
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
 
+AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
+ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+DocumentMediaType: TypeAlias = Literal[
+    'application/pdf',
+    'text/plain',
+    'text/csv',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'text/html',
+    'text/markdown',
+    'application/vnd.ms-excel',
+]
+VideoMediaType: TypeAlias = Literal[
+    'video/x-matroska',
+    'video/quicktime',
+    'video/mp4',
+    'video/webm',
+    'video/x-flv',
+    'video/mpeg',
+    'video/x-ms-wmv',
+    'video/3gpp',
+]
+
+AudioFormat: TypeAlias = Literal['wav', 'mp3']
+ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
+DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
+VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
+
 
 @dataclass
 class SystemPromptPart:
@@ -40,6 +68,47 @@ class SystemPromptPart:
 
     def otel_event(self) -> Event:
         return Event('gen_ai.system.message', body={'content': self.content, 'role': 'system'})
+
+
+@dataclass
+class VideoUrl:
+    """A URL to an video."""
+
+    url: str
+    """The URL of the video."""
+
+    kind: Literal['video-url'] = 'video-url'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def media_type(self) -> VideoMediaType:  # pragma: no cover
+        """Return the media type of the video, based on the url."""
+        if self.url.endswith('.mkv'):
+            return 'video/x-matroska'
+        elif self.url.endswith('.mov'):
+            return 'video/quicktime'
+        elif self.url.endswith('.mp4'):
+            return 'video/mp4'
+        elif self.url.endswith('.webm'):
+            return 'video/webm'
+        elif self.url.endswith('.flv'):
+            return 'video/x-flv'
+        elif self.url.endswith(('.mpeg', '.mpg')):
+            return 'video/mpeg'
+        elif self.url.endswith('.wmv'):
+            return 'video/x-ms-wmv'
+        elif self.url.endswith('.three_gp'):
+            return 'video/3gpp'
+        else:
+            raise ValueError(f'Unknown video file extension: {self.url}')
+
+    @property
+    def format(self) -> VideoFormat:
+        """The file format of the video.
+
+        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
+        """
+        return _video_format(self.media_type)
 
 
 @dataclass
@@ -123,23 +192,6 @@ class DocumentUrl:
         return _document_format(self.media_type)
 
 
-AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
-ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-DocumentMediaType: TypeAlias = Literal[
-    'application/pdf',
-    'text/plain',
-    'text/csv',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'text/html',
-    'text/markdown',
-    'application/vnd.ms-excel',
-]
-AudioFormat: TypeAlias = Literal['wav', 'mp3']
-ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
-DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
-
-
 @dataclass
 class BinaryContent:
     """Binary content, e.g. an audio or image file."""
@@ -162,6 +214,11 @@ class BinaryContent:
     def is_image(self) -> bool:
         """Return `True` if the media type is an image type."""
         return self.media_type.startswith('image/')
+
+    @property
+    def is_video(self) -> bool:
+        """Return `True` if the media type is a video type."""
+        return self.media_type.startswith('video/')
 
     @property
     def is_document(self) -> bool:
@@ -189,10 +246,12 @@ class BinaryContent:
             return _image_format(self.media_type)
         elif self.is_document:
             return _document_format(self.media_type)
+        elif self.is_video:
+            return _video_format(self.media_type)
         raise ValueError(f'Unknown media type: {self.media_type}')
 
 
-UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | BinaryContent'
+UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
 
 
 def _document_format(media_type: str) -> DocumentFormat:
@@ -227,6 +286,27 @@ def _image_format(media_type: str) -> ImageFormat:
         return 'webp'
     else:
         raise ValueError(f'Unknown image media type: {media_type}')
+
+
+def _video_format(media_type: str) -> VideoFormat:
+    if media_type == 'video/x-matroska':
+        return 'mkv'
+    elif media_type == 'video/quicktime':
+        return 'mov'
+    elif media_type == 'video/mp4':
+        return 'mp4'
+    elif media_type == 'video/webm':
+        return 'webm'
+    elif media_type == 'video/x-flv':
+        return 'flv'
+    elif media_type == 'video/mpeg':
+        return 'mpeg'
+    elif media_type == 'video/x-ms-wmv':
+        return 'wmv'
+    elif media_type == 'video/3gpp':
+        return 'three_gp'
+    else:  # pragma: no cover
+        raise ValueError(f'Unknown video media type: {media_type}')
 
 
 @dataclass
@@ -315,7 +395,7 @@ class RetryPromptPart:
     * the model returned plain text when a structured response was expected
     * Pydantic validation of a structured response failed, here content is derived from a Pydantic
       [`ValidationError`][pydantic_core.ValidationError]
-    * a result validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
+    * an output validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
     """
 
     content: list[pydantic_core.ErrorDetails] | str
@@ -377,6 +457,9 @@ class ModelRequest:
     parts: list[ModelRequestPart]
     """The parts of the user message."""
 
+    instructions: str | None = None
+    """The instructions for the model."""
+
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
 
@@ -425,6 +508,8 @@ class ToolCallPart:
         """
         if isinstance(self.args, dict):
             return self.args
+        if isinstance(self.args, str) and not self.args:
+            return {}
         args = pydantic_core.from_json(self.args)
         assert isinstance(args, dict), 'args should be a dict'
         return cast(dict[str, Any], args)
@@ -506,7 +591,7 @@ ModelMessage = Annotated[Union[ModelRequest, ModelResponse], pydantic.Discrimina
 """Any message sent to or returned by a model."""
 
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(
-    list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64')
+    list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
 
@@ -691,10 +776,10 @@ class PartDeltaEvent:
 
 @dataclass
 class FinalResultEvent:
-    """An event indicating the response to the current model request matches the result schema."""
+    """An event indicating the response to the current model request matches the output schema and will produce a result."""
 
     tool_name: str | None
-    """The name of the result tool that was called. `None` if the result is from text content and not from a tool."""
+    """The name of the output tool that was called. `None` if the result is from text content and not from a tool."""
     tool_call_id: str | None
     """The tool call ID, if any, that this result is associated with."""
     event_kind: Literal['final_result'] = 'final_result'

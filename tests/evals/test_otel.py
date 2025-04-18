@@ -245,26 +245,26 @@ async def test_span_tree_repr(span_tree: SpanTree):
 """)
     assert span_tree.repr_xml(include_span_id=True) == snapshot("""\
 <SpanTree>
-  <SpanNode name='root' span_id=0000000000000001 >
-    <SpanNode name='child1' span_id=0000000000000003 >
-      <SpanNode name='grandchild1' span_id=0000000000000005 />
-      <SpanNode name='grandchild2' span_id=0000000000000007 />
+  <SpanNode name='root' span_id='0000000000000001' >
+    <SpanNode name='child1' span_id='0000000000000003' >
+      <SpanNode name='grandchild1' span_id='0000000000000005' />
+      <SpanNode name='grandchild2' span_id='0000000000000007' />
     </SpanNode>
-    <SpanNode name='child2' span_id=0000000000000009 >
-      <SpanNode name='grandchild3' span_id=000000000000000b />
+    <SpanNode name='child2' span_id='0000000000000009' >
+      <SpanNode name='grandchild3' span_id='000000000000000b' />
     </SpanNode>
   </SpanNode>
 </SpanTree>\
 """)
     assert span_tree.repr_xml(include_trace_id=True) == snapshot("""\
 <SpanTree>
-  <SpanNode name='root' trace_id=00000000000000000000000000000001 >
-    <SpanNode name='child1' trace_id=00000000000000000000000000000001 >
-      <SpanNode name='grandchild1' trace_id=00000000000000000000000000000001 />
-      <SpanNode name='grandchild2' trace_id=00000000000000000000000000000001 />
+  <SpanNode name='root' trace_id='00000000000000000000000000000001' >
+    <SpanNode name='child1' trace_id='00000000000000000000000000000001' >
+      <SpanNode name='grandchild1' trace_id='00000000000000000000000000000001' />
+      <SpanNode name='grandchild2' trace_id='00000000000000000000000000000001' />
     </SpanNode>
-    <SpanNode name='child2' trace_id=00000000000000000000000000000001 >
-      <SpanNode name='grandchild3' trace_id=00000000000000000000000000000001 />
+    <SpanNode name='child2' trace_id='00000000000000000000000000000001' >
+      <SpanNode name='grandchild3' trace_id='00000000000000000000000000000001' />
     </SpanNode>
   </SpanNode>
 </SpanTree>\
@@ -302,9 +302,9 @@ async def test_span_node_repr(span_tree: SpanTree):
     assert node is not None
 
     leaf_node = span_tree.first({'name_equals': 'grandchild1'})
-    assert str(leaf_node) == snapshot("<SpanNode name='grandchild1' span_id=0000000000000005 />")
+    assert str(leaf_node) == snapshot("<SpanNode name='grandchild1' span_id='0000000000000005' />")
 
-    assert str(node) == snapshot("<SpanNode name='child2' span_id=0000000000000009>...</SpanNode>")
+    assert str(node) == snapshot("<SpanNode name='child2' span_id='0000000000000009'>...</SpanNode>")
     assert repr(node) == snapshot("""\
 <SpanNode name='child2' >
   <SpanNode name='grandchild3' />
@@ -312,13 +312,13 @@ async def test_span_node_repr(span_tree: SpanTree):
 """)
     assert node.repr_xml(include_children=False) == snapshot("<SpanNode name='child2' children=... />")
     assert node.repr_xml(include_span_id=True) == snapshot("""\
-<SpanNode name='child2' span_id=0000000000000009 >
-  <SpanNode name='grandchild3' span_id=000000000000000b />
+<SpanNode name='child2' span_id='0000000000000009' >
+  <SpanNode name='grandchild3' span_id='000000000000000b' />
 </SpanNode>\
 """)
     assert node.repr_xml(include_trace_id=True) == snapshot("""\
-<SpanNode name='child2' trace_id=00000000000000000000000000000001 >
-  <SpanNode name='grandchild3' trace_id=00000000000000000000000000000001 />
+<SpanNode name='child2' trace_id='00000000000000000000000000000001' >
+  <SpanNode name='grandchild3' trace_id='00000000000000000000000000000001' />
 </SpanNode>\
 """)
     assert node.repr_xml(include_start_timestamp=True) == snapshot("""\
@@ -382,6 +382,17 @@ async def test_span_tree_ancestors_methods():
 
     assert not leaf_node.matches({'no_ancestor_has': {'name_matches_regex': 'root'}})
     assert leaf_node.matches({'no_ancestor_has': {'name_matches_regex': 'abc'}})
+
+    # Test stop_recursing_when:
+    assert not leaf_node.matches(
+        {'some_ancestor_has': {'name_equals': 'level1'}, 'stop_recursing_when': {'name_equals': 'level2'}}
+    )
+    assert leaf_node.matches(
+        {'all_ancestors_have': {'name_matches_regex': 'level'}, 'stop_recursing_when': {'name_equals': 'level1'}}
+    )
+    assert leaf_node.matches(
+        {'no_ancestor_has': {'name_matches_regex': 'root'}, 'stop_recursing_when': {'name_equals': 'level1'}}
+    )
 
 
 async def test_span_tree_descendants_methods():
@@ -461,6 +472,17 @@ async def test_span_tree_descendants_methods():
     assert leaf_node is not None
     assert leaf_node.matches(negated_descendant_query)
     assert leaf_node.matches({'no_descendant_has': {'has_attributes': {'depth': 4}}})
+
+    # Test stop_recursing_when:
+    assert not root_node.matches(
+        {'some_descendant_has': {'name_equals': 'leaf'}, 'stop_recursing_when': {'name_equals': 'level2'}}
+    )
+    assert root_node.matches(
+        {'all_descendants_have': {'has_attribute_keys': ['depth']}, 'stop_recursing_when': {'name_equals': 'level2'}}
+    )
+    assert root_node.matches(
+        {'no_descendant_has': {'name_equals': 'leaf'}, 'stop_recursing_when': {'name_equals': 'level3'}}
+    )
 
 
 async def test_log_levels_and_exceptions():

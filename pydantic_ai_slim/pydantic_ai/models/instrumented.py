@@ -260,10 +260,12 @@ class InstrumentedModel(WrapperModel):
 
     @staticmethod
     def messages_to_otel_events(messages: list[ModelMessage]) -> list[Event]:
-        result: list[Event] = []
+        events: list[Event] = []
+        last_model_request: ModelRequest | None = None
         for message_index, message in enumerate(messages):
             message_events: list[Event] = []
             if isinstance(message, ModelRequest):
+                last_model_request = message
                 for part in message.parts:
                     if hasattr(part, 'otel_event'):
                         message_events.append(part.otel_event())
@@ -274,10 +276,14 @@ class InstrumentedModel(WrapperModel):
                     'gen_ai.message.index': message_index,
                     **(event.attributes or {}),
                 }
-            result.extend(message_events)
-        for event in result:
+            events.extend(message_events)
+        if last_model_request and last_model_request.instructions:
+            events.insert(
+                0, Event('gen_ai.system.message', body={'content': last_model_request.instructions, 'role': 'system'})
+            )
+        for event in events:
             event.body = InstrumentedModel.serialize_any(event.body)
-        return result
+        return events
 
     @staticmethod
     def serialize_any(value: Any) -> str:

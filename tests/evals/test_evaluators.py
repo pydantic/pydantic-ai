@@ -7,6 +7,11 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
 
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import Usage
+
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -21,7 +26,7 @@ with try_import() as imports_successful:
         EqualsExpected,
         HasMatchingSpan,
         IsInstance,
-        LlmJudge,
+        LLMJudge,
         MaxDuration,
         Python,
     )
@@ -108,6 +113,34 @@ async def test_evaluator_spec_serialization():
     assert adapter.dump_python(spec_single_arg, context={'use_short_form': True}) == snapshot({'MyEvaluator': 'value1'})
 
 
+async def test_llm_judge_serialization():
+    # Ensure models are serialized based on their system + name when used with LLMJudge
+
+    class MyModel(Model):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> tuple[ModelResponse, Usage]:
+            raise NotImplementedError
+
+        @property
+        def model_name(self) -> str:
+            return 'my-model'
+
+        @property
+        def system(self) -> str:
+            return 'my-system'
+
+    adapter = TypeAdapter(Evaluator)
+
+    assert adapter.dump_python(LLMJudge(rubric='my rubric', model=MyModel())) == {
+        'name': 'LLMJudge',
+        'arguments': {'model': 'my-system:my-model', 'rubric': 'my rubric'},
+    }
+
+
 async def test_evaluator_call(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
     """Test calling an Evaluator."""
 
@@ -176,9 +209,9 @@ async def test_is_instance_evaluator():
 
 
 async def test_llm_judge_evaluator():
-    """Test the LlmJudge evaluator."""
+    """Test the LLMJudge evaluator."""
     # We can't easily test this without mocking the LLM, so we'll just check that it's importable
-    assert LlmJudge
+    assert LLMJudge
 
 
 async def test_custom_evaluator(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):

@@ -22,9 +22,9 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-from ..result import Usage
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
+from ..usage import Usage
 from . import (
     Model,
     ModelRequestParameters,
@@ -34,15 +34,15 @@ from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignor
 
 
 @dataclass
-class _TextResult:
-    """A private wrapper class to tag a result that came from the custom_result_text field."""
+class _WrappedTextOutput:
+    """A private wrapper class to tag an output that came from the custom_output_text field."""
 
     value: str | None
 
 
 @dataclass
-class _FunctionToolResult:
-    """A wrapper class to tag a result that came from the custom_result_args field."""
+class _WrappedToolOutput:
+    """A wrapper class to tag an output that came from the custom_output_args field."""
 
     value: Any | None
 
@@ -65,16 +65,16 @@ class TestModel(Model):
 
     call_tools: list[str] | Literal['all'] = 'all'
     """List of tools to call. If `'all'`, all tools will be called."""
-    custom_result_text: str | None = None
-    """If set, this text is returned as the final result."""
-    custom_result_args: Any | None = None
-    """If set, these args will be passed to the result tool."""
+    custom_output_text: str | None = None
+    """If set, this text is returned as the final output."""
+    custom_output_args: Any | None = None
+    """If set, these args will be passed to the output tool."""
     seed: int = 0
     """Seed for generating random data."""
     last_model_request_parameters: ModelRequestParameters | None = field(default=None, init=False)
     """The last ModelRequestParameters passed to the model in a request.
 
-    The ModelRequestParameters contains information about the function and result tools available during request handling.
+    The ModelRequestParameters contains information about the function and output tools available during request handling.
 
     This is set when a request is made, so will reflect the function tools from the last step of the last run.
     """
@@ -88,7 +88,6 @@ class TestModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, Usage]:
         self.last_model_request_parameters = model_request_parameters
-
         model_response = self._request(messages, model_settings, model_request_parameters)
         usage = _estimate_usage([*messages, model_response])
         return model_response, usage
@@ -128,29 +127,29 @@ class TestModel(Model):
             tools_to_call = (function_tools_lookup[name] for name in self.call_tools)
             return [(r.name, r) for r in tools_to_call]
 
-    def _get_result(self, model_request_parameters: ModelRequestParameters) -> _TextResult | _FunctionToolResult:
-        if self.custom_result_text is not None:
-            assert model_request_parameters.allow_text_result, (
-                'Plain response not allowed, but `custom_result_text` is set.'
+    def _get_output(self, model_request_parameters: ModelRequestParameters) -> _WrappedTextOutput | _WrappedToolOutput:
+        if self.custom_output_text is not None:
+            assert model_request_parameters.allow_text_output, (
+                'Plain response not allowed, but `custom_output_text` is set.'
             )
-            assert self.custom_result_args is None, 'Cannot set both `custom_result_text` and `custom_result_args`.'
-            return _TextResult(self.custom_result_text)
-        elif self.custom_result_args is not None:
-            assert model_request_parameters.result_tools is not None, (
-                'No result tools provided, but `custom_result_args` is set.'
+            assert self.custom_output_args is None, 'Cannot set both `custom_output_text` and `custom_output_args`.'
+            return _WrappedTextOutput(self.custom_output_text)
+        elif self.custom_output_args is not None:
+            assert model_request_parameters.output_tools is not None, (
+                'No output tools provided, but `custom_output_args` is set.'
             )
-            result_tool = model_request_parameters.result_tools[0]
+            output_tool = model_request_parameters.output_tools[0]
 
-            if k := result_tool.outer_typed_dict_key:
-                return _FunctionToolResult({k: self.custom_result_args})
+            if k := output_tool.outer_typed_dict_key:
+                return _WrappedToolOutput({k: self.custom_output_args})
             else:
-                return _FunctionToolResult(self.custom_result_args)
-        elif model_request_parameters.allow_text_result:
-            return _TextResult(None)
-        elif model_request_parameters.result_tools:
-            return _FunctionToolResult(None)
+                return _WrappedToolOutput(self.custom_output_args)
+        elif model_request_parameters.allow_text_output:
+            return _WrappedTextOutput(None)
+        elif model_request_parameters.output_tools:
+            return _WrappedToolOutput(None)
         else:
-            return _TextResult(None)
+            return _WrappedTextOutput(None)  # pragma: no cover
 
     def _request(
         self,
@@ -159,8 +158,8 @@ class TestModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         tool_calls = self._get_tool_calls(model_request_parameters)
-        result = self._get_result(model_request_parameters)
-        result_tools = model_request_parameters.result_tools
+        output_wrapper = self._get_output(model_request_parameters)
+        output_tools = model_request_parameters.output_tools
 
         # if there are tools, the first thing we want to do is call all of them
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
@@ -176,29 +175,29 @@ class TestModel(Model):
             # check if there are any retry prompts, if so retry them
             new_retry_names = {p.tool_name for p in last_message.parts if isinstance(p, RetryPromptPart)}
             if new_retry_names:
-                # Handle retries for both function tools and result tools
+                # Handle retries for both function tools and output tools
                 # Check function tools first
                 retry_parts: list[ModelResponsePart] = [
                     ToolCallPart(name, self.gen_tool_args(args)) for name, args in tool_calls if name in new_retry_names
                 ]
-                # Check result tools
-                if result_tools:
+                # Check output tools
+                if output_tools:
                     retry_parts.extend(
                         [
                             ToolCallPart(
                                 tool.name,
-                                result.value
-                                if isinstance(result, _FunctionToolResult) and result.value is not None
+                                output_wrapper.value
+                                if isinstance(output_wrapper, _WrappedToolOutput) and output_wrapper.value is not None
                                 else self.gen_tool_args(tool),
                             )
-                            for tool in result_tools
+                            for tool in output_tools
                             if tool.name in new_retry_names
                         ]
                     )
                 return ModelResponse(parts=retry_parts, model_name=self._model_name)
 
-        if isinstance(result, _TextResult):
-            if (response_text := result.value) is None:
+        if isinstance(output_wrapper, _WrappedTextOutput):
+            if (response_text := output_wrapper.value) is None:
                 # build up details of tool responses
                 output: dict[str, Any] = {}
                 for message in messages:
@@ -215,16 +214,16 @@ class TestModel(Model):
             else:
                 return ModelResponse(parts=[TextPart(response_text)], model_name=self._model_name)
         else:
-            assert result_tools, 'No result tools provided'
-            custom_result_args = result.value
-            result_tool = result_tools[self.seed % len(result_tools)]
-            if custom_result_args is not None:
+            assert output_tools, 'No output tools provided'
+            custom_output_args = output_wrapper.value
+            output_tool = output_tools[self.seed % len(output_tools)]
+            if custom_output_args is not None:
                 return ModelResponse(
-                    parts=[ToolCallPart(result_tool.name, custom_result_args)], model_name=self._model_name
+                    parts=[ToolCallPart(output_tool.name, custom_output_args)], model_name=self._model_name
                 )
             else:
-                response_args = self.gen_tool_args(result_tool)
-                return ModelResponse(parts=[ToolCallPart(result_tool.name, response_args)], model_name=self._model_name)
+                response_args = self.gen_tool_args(output_tool)
+                return ModelResponse(parts=[ToolCallPart(output_tool.name, response_args)], model_name=self._model_name)
 
 
 @dataclass
