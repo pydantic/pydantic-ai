@@ -46,7 +46,7 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '532'
+      - '549'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -54,9 +54,9 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1744932152
+      created_at: 1744983796
       error: null
-      id: resp_68018d38a6048191adaf5fc6912277a304ff021e12dbda85
+      id: resp_680256f490dc8191b212bd1d26f855a70dc943657879f059
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -65,8 +65,8 @@ interactions:
       object: response
       output:
       - arguments: '{}'
-        call_id: call_65If5vKSWv0LUo4bDMKdy5IW
-        id: fc_68018d391b648191832042cb9730113a04ff021e12dbda85
+        call_id: call_2hQWt32j0LvlVhi3jYuXsElZ
+        id: fc_680256f50bb481918cb88c79bd83d4120dc943657879f059
         name: get_image
         status: completed
         type: function_call
@@ -119,8 +119,8 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=bCLJq8GV7pBtpmaAYMIZvNgx8eHwy6ijlm1UrgsF1As-1744932153-1.0.1.1-o0SsjtDtpaPBC88uuL9RQ_E1ghAAwPvOx1CYHkO1V9QqcwSsUdd65Z4bnWlbLB7yifCAG4yNfrR40pv5qSdRHj0ustFWbiSon4cyM5DJGDY;
-        _cfuvid=7Z.YuSzRQ73OOuo3sI3uJZc.6GNZlGE18GnFC6N78M8-1744932153196-0.0.1.1-604800000
+      - __cf_bm=WCKCAg2CdBby.m_wgcjcSvd4TWiw5WpyPJ6ckLO3FiU-1744983797-1.0.1.1-ZoAuJSIwap9P_z0ZuHeJZHn6TttzGx5lyYfpgztHheQG6w2X1ru4FRNggmyzvy1TZarl0xa9fRSplG4v3TH7ANuaDIqfZPWHXlBMM2PEYeI;
+        _cfuvid=Fm_STciDLNBRPAbUXkLbRnIl7b5nEY9UCqLnwVlxMrQ-1744983797132-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -133,10 +133,10 @@ interactions:
       - content: ''
         role: assistant
       - arguments: '{}'
-        call_id: call_65If5vKSWv0LUo4bDMKdy5IW
+        call_id: call_2hQWt32j0LvlVhi3jYuXsElZ
         name: get_image
         type: function_call
-      - call_id: call_65If5vKSWv0LUo4bDMKdy5IW
+      - call_id: call_2hQWt32j0LvlVhi3jYuXsElZ
         output: See file 1.
         type: function_call_output
       - content:
@@ -172,7 +172,7 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '7115'
+      - '69095'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -180,9 +180,9 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1744932216
+      created_at: 1744983797
       error: null
-      id: resp_68018d7800f8819186a6d401f1bab35a0e89003a52bf45ad
+      id: resp_680256f5b3208191b6bcd17a3d6a04fd00c63e853df90ed4
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -194,7 +194,7 @@ interactions:
         - annotations: []
           text: The fruit in the image is a kiwi.
           type: output_text
-        id: msg_68018d7d3e848191b56fc415795027e50e89003a52bf45ad
+        id: msg_6802573a1ba881918a4ec8c8e843fd6000c63e853df90ed4
         role: assistant
         status: completed
         type: message
