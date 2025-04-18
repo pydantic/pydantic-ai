@@ -1,8 +1,11 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, cast
+from typing import Annotated, Any, cast
+
+from annotated_types import MinLen
 
 from pydantic_ai import models
 
@@ -157,26 +160,59 @@ class MaxDuration(Evaluator[object, object, object]):
 class LLMJudge(Evaluator[object, object, object]):
     """Judge whether the output of a language model meets the criteria of a provided rubric.
 
+    The accessors are used to extract the inputs to the judging agent from the context.
+
+    The default is `('output',)`, which means it will use the `output` attribute of the context.
+    Accessors with `.` are supported, so you can use `('output.text',)` to access the `text` attribute of the `output` object.
+    You can also use `('output.text', 'input')` to access both the `text` attribute of the `output` object and the `input` attribute of the context.
+    When an accessor would otherwise access an attribute from a Mapping, it uses `__getitem__` instead of `getattr`.
+    Accessors may not access attributes starting with `__`.
+
     If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-4o', but can be
     overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
     """
 
     rubric: str
     model: models.Model | models.KnownModelName | None = None
+    accessors: Sequence[Annotated[str, MinLen(1)]] = ('output',)
     include_input: bool = False
 
     async def evaluate(
         self,
         ctx: EvaluatorContext[object, object, object],
     ) -> EvaluationReason:
+        outputs: Any = {}
+
+        sentinel = object()
+        for accessor in self.accessors:
+            path = accessor.split('.')
+            value: Any = ctx
+            for key in path:
+                if key.startswith('__'):
+                    raise ValueError(f'Attributes starting with "__" are not allowed in accessors: {accessor=!r}')
+                next_value = getattr(value, key, sentinel)  # pyright: ignore[reportUnknownArgumentType]
+                if next_value is sentinel and isinstance(value, Mapping):
+                    next_value = value.get(key, sentinel)  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+                if next_value is sentinel:
+                    break  # stop handling this accessor if neither a matching attribute nor key was present
+                value = next_value  # pyright: ignore[reportUnknownVariableType]
+            else:
+                outputs[accessor] = value
+
+        if len(outputs) == 0:
+            raise ValueError(f'No valid accessors for this context.\n{self.accessors=}\n{ctx=}')
+        if len(outputs) == 1 and len(self.accessors) == 1:
+            outputs = next(iter(outputs.values()))
+
         if self.include_input:
             from .llm_as_a_judge import judge_input_output
 
-            grading_output = await judge_input_output(ctx.inputs, ctx.output, self.rubric, self.model)
+            grading_output = await judge_input_output(ctx.inputs, outputs, self.rubric, self.model)
         else:
             from .llm_as_a_judge import judge_output
 
-            grading_output = await judge_output(ctx.output, self.rubric, self.model)
+            grading_output = await judge_output(outputs, self.rubric, self.model)
+
         return EvaluationReason(value=grading_output.pass_, reason=grading_output.reason)
 
     def build_serialization_arguments(self):
