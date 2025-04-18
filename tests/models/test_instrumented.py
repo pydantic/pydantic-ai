@@ -696,14 +696,14 @@ def test_messages_to_otel_events_serialization_errors():
 
 def test_messages_to_otel_events_instructions():
     messages = [
-        ModelRequest(instructions='system_prompt', parts=[UserPromptPart('user_prompt')]),
+        ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
         ModelResponse(parts=[TextPart('text1')]),
     ]
     assert [
         InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
     ] == snapshot(
         [
-            {'content': 'system_prompt', 'role': 'system', 'event.name': 'gen_ai.system.message'},
+            {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
             {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
             {
                 'role': 'assistant',
@@ -711,5 +711,28 @@ def test_messages_to_otel_events_instructions():
                 'gen_ai.message.index': 1,
                 'event.name': 'gen_ai.assistant.message',
             },
+        ]
+    )
+
+
+def test_messages_to_otel_events_instructions_multiple_messages():
+    messages = [
+        ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
+        ModelResponse(parts=[TextPart('text1')]),
+        ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')]),
+    ]
+    assert [
+        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
+    ] == snapshot(
+        [
+            {'content': 'instructions2', 'role': 'system', 'event.name': 'gen_ai.system.message'},
+            {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {'content': 'user_prompt2', 'role': 'user', 'gen_ai.message.index': 2, 'event.name': 'gen_ai.user.message'},
         ]
     )
