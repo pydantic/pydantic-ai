@@ -248,6 +248,8 @@ class TestStreamedResponse(StreamedResponse):
                 if len(words) == 1 and len(text) > 2:
                     mid = len(text) // 2
                     words = [text[:mid], text[mid:]]
+                self._usage += _get_string_usage('')
+                yield self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
                 for word in words:
                     self._usage += _get_string_usage(word)
                     yield self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
