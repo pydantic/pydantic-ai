@@ -873,7 +873,7 @@ async def _run_task_and_evaluators(
     with _logfire.span(
         'case: {case_name}',
         task_name=get_unwrapped_function_name(task),
-        case_name=case.name,
+        case_name=report_case_name,
         inputs=case.inputs,
         metadata=case.metadata,
         expected_output=case.expected_output,
