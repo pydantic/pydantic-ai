@@ -971,7 +971,53 @@ async def test_image_as_binary_content_tool_response(
         return image_content
 
     result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
-    assert result.output == snapshot('The image shows a kiwi fruit, sliced in half.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+I need to use the `get_image` tool to see the image first.
+
+"""
+                    ),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
+                ],
+                model_name='gemini-2.5-pro-preview-03-25',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The image shows a kiwi fruit, sliced in half.')],
+                model_name='gemini-2.5-pro-preview-03-25',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
 
 
 @pytest.mark.vcr()
