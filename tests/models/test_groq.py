@@ -506,7 +506,7 @@ async def test_no_delta(allow_model_requests: None):
 
 @pytest.mark.vcr()
 async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('llama-3.2-11b-vision-preview', provider=GroqProvider(api_key=groq_api_key))
+    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m)
 
     result = await agent.run(
@@ -515,20 +515,90 @@ async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.output == snapshot("""\
-The image you provided appears to be a potato. It is a root vegetable that belongs to the nightshade family. Potatoes are a popular and versatile crop, widely cultivated and consumed around the world.
+    assert result.output == snapshot(
+        'The fruit depicted in the image is a potato. Although commonly mistaken as a vegetable, potatoes are technically fruits because they are the edible, ripened ovary of a flower, containing seeds. However, in culinary and everyday contexts, potatoes are often referred to as a vegetable due to their savory flavor and uses in dishes. The botanical classification of a potato as a fruit comes from its origin as the tuberous part of the Solanum tuberosum plant, which produces flowers and subsequently the potato as a fruit that grows underground.'
+    )
 
-**Characteristics and Uses:**
 
-Potatoes are known for their starchy, slightly sweet flavor and soft, white interior. They come in various shapes, sizes, and colors including white, yellow, red, and purple. Some popular types of potatoes include:
+@pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
+):
+    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m)
 
-* Russet potatoes (also known as Idaho potatoes)
-* Red potatoes
-* Yukon gold potatoes
-* Sweet potatoes
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
 
-Potatoes are a versatile food that can be prepared in many different ways, such as baked, mashed, boiled, fried, or used in soups and stews. They are an excellent source of dietary fiber, potassium, and several key vitamins and minerals.\
-""")
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_image',
+                        args='{"image_url": "https://example.com/fruit.jpg"}',
+                        tool_call_id='call_057m',
+                    )
+                ],
+                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'extra_forbidden',
+                                'loc': ('image_url',),
+                                'msg': 'Extra inputs are not permitted',
+                                'input': 'https://example.com/fruit.jpg',
+                            }
+                        ],
+                        tool_name='get_image',
+                        tool_call_id='call_057m',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_d2sm')],
+                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1.',
+                        tool_call_id='call_d2sm',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The fruit in the image is a kiwi.')],
+                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
 
 
 @pytest.mark.parametrize('media_type', ['audio/wav', 'audio/mpeg'])
@@ -548,12 +618,12 @@ async def test_audio_as_binary_content_input(allow_model_requests: None, media_t
 async def test_image_as_binary_content_input(
     allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
 ) -> None:
-    m = GroqModel('llama-3.2-11b-vision-preview', provider=GroqProvider(api_key=groq_api_key))
+    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m)
 
     result = await agent.run(['What is the name of this fruit?', image_content])
     assert result.output == snapshot(
-        "This is a kiwi, also known as a Chinese gooseberry. It's a small, green fruit with a hairy, brown skin and a bright green, juicy flesh inside. Kiwis are native to China and are often eaten raw, either on their own or added to salads, smoothies, and desserts. They're also a good source of vitamin C, vitamin K, and other nutrients."
+        'The fruit depicted in the image is a kiwi. The image shows a cross-section of a kiwi, revealing its characteristic green flesh and black seeds arranged in a radial pattern around a central white area. The fuzzy brown skin is visible on the edge of the slice.'
     )
 
 
