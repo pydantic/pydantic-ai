@@ -520,6 +520,21 @@ async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
     )
 
 
+@pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
+):
+    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
+    assert result.output == snapshot('The fruit in the image is a kiwi.')
+
+
 @pytest.mark.parametrize('media_type', ['audio/wav', 'audio/mpeg'])
 async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
