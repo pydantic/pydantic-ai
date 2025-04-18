@@ -30,14 +30,12 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
-from pydantic_ai.providers.bedrock import BedrockProvider
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.bedrock import BedrockConverseModel
+    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 pytestmark = [
