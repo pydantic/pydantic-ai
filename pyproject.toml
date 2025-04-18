@@ -60,14 +60,13 @@ Documentation = "https://ai.pydantic.dev"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.scripts]
-pai = "pydantic_ai._cli:app"
+pai = "pydantic_ai._cli:cli_exit"  # TODO remove this when clai has been out for a while
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
-mcp-run-python = { workspace = true }
 
 [tool.uv.workspace]
 members = [
@@ -75,6 +74,7 @@ members = [
     "pydantic_evals",
     "pydantic_graph",
     "mcp-run-python",
+    "clai",
     "examples",
 ]
 
@@ -106,6 +106,7 @@ include = [
     "pydantic_graph/**/*.py",
     "mcp-run-python/**/*.py",
     "examples/**/*.py",
+    "clai/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
 ]
@@ -163,6 +164,7 @@ include = [
     "mcp-run-python",
     "tests",
     "examples",
+    "clai",
 ]
 venvPath = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
