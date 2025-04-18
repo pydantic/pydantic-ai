@@ -24,6 +24,8 @@ from pydantic_ai import ModelHTTPError
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    DocumentUrl,
+    ImageUrl,
     ModelMessage,
     ModelResponse,
     RetryPromptPart,
@@ -400,6 +402,12 @@ tool_responses: dict[tuple[str, str], str] = {
 async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover  # noqa: C901
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
+        if isinstance(m.content, list) and m.content[0] == 'This is file 1:':
+            if isinstance(m.content[1], ImageUrl):
+                return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
+            elif isinstance(m.content[1], DocumentUrl):
+                return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
+
         assert isinstance(m.content, str)
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
             return ModelResponse(
@@ -435,6 +443,22 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         elif '<Rubric>\n' in m.content:
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'reason': '-', 'pass': True, 'score': 1.0})]
+            )
+        elif m.content == 'What time is it?':
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_current_time', args={}, tool_call_id='pyd_ai_tool_call_id')]
+            )
+        elif m.content == 'What is the user name?':
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_user', args={}, tool_call_id='pyd_ai_tool_call_id')]
+            )
+        elif m.content == 'What is the company name in the logo?':
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_company_logo', args={}, tool_call_id='pyd_ai_tool_call_id')]
+            )
+        elif m.content == 'What is the main content of the document?':
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id')]
             )
         elif 'Generate question-answer pairs about world capitals and landmarks.' in m.content:
             return ModelResponse(
@@ -534,6 +558,16 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         args = {'flight_number': m.content.flight_number}  # type: ignore
         return ModelResponse(
             parts=[ToolCallPart(tool_name='final_result_FlightDetails', args=args, tool_call_id='pyd_ai_tool_call_id')]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_current_time':
+        return ModelResponse(parts=[TextPart('The current time is 10:45 PM on April 17, 2025.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
+        return ModelResponse(parts=[TextPart("The user's name is John.")])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo':
+        return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document':
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
     else:
         sys.stdout.write(str(debug.format(messages, info)))
