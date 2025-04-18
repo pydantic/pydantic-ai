@@ -601,8 +601,51 @@ async def test_image_as_binary_content_tool_response(
         return image_content
 
     result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
-    assert result.output == snapshot(
-        "The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The kiwi's flesh has the typical fibrous texture radiating from the center, and you can also see the fuzzy brown skin on the exterior edge of the slice."
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Let me get the image and check what fruit it contains.'),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_019NraYuFG6RbdmXCoxPKmtk'),
+                ],
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1.',
+                        tool_call_id='toolu_019NraYuFG6RbdmXCoxPKmtk',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The kiwi's flesh has the typical fibrous texture radiating from the center, and you can also see the fuzzy brown skin on the exterior edge of the slice."
+                    )
+                ],
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+            ),
+        ]
     )
 
 

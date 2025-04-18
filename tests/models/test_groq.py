@@ -532,7 +532,73 @@ async def test_image_as_binary_content_tool_response(
         return image_content
 
     result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
-    assert result.output == snapshot('The fruit in the image is a kiwi.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_image',
+                        args='{"image_url": "https://example.com/fruit.jpg"}',
+                        tool_call_id='call_057m',
+                    )
+                ],
+                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'extra_forbidden',
+                                'loc': ('image_url',),
+                                'msg': 'Extra inputs are not permitted',
+                                'input': 'https://example.com/fruit.jpg',
+                            }
+                        ],
+                        tool_name='get_image',
+                        tool_call_id='call_057m',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_d2sm')],
+                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1.',
+                        tool_call_id='call_d2sm',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The fruit in the image is a kiwi.')],
+                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
 
 
 @pytest.mark.parametrize('media_type', ['audio/wav', 'audio/mpeg'])

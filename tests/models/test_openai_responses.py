@@ -233,7 +233,48 @@ async def test_image_as_binary_content_tool_response(
         return image_content
 
     result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
-    assert result.output == snapshot('The fruit in the image is a kiwi.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content=''),
+                    ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_2hQWt32j0LvlVhi3jYuXsElZ'),
+                ],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1.',
+                        tool_call_id='call_2hQWt32j0LvlVhi3jYuXsElZ',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The fruit in the image is a kiwi.')],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
 
 
 async def test_image_as_binary_content_input(
