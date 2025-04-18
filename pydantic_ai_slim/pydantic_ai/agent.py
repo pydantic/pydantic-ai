@@ -898,7 +898,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                     graph_ctx = agent_run.ctx
                     async with node._stream(graph_ctx) as streamed_response:  # pyright: ignore[reportPrivateUsage]
 
-                        # ruff: noqa: C901
                         async def stream_to_final(
                             s: models.StreamedResponse,
                         ) -> FinalResult[models.StreamedResponse] | None:
@@ -961,6 +960,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                             return None
 
                         final_result_details = await stream_to_final(streamed_response)
+
                         if final_result_details is not None:
                             if yielded:
                                 raise exceptions.AgentRunError('Agent run produced final results')
@@ -1733,27 +1733,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     @overload
     def _traceparent(self) -> str: ...
     def _traceparent(self, *, required: bool = True) -> str | None:
-        """Get the traceparent for this run.
-
-        Args:
-            required: If True, raise an AttributeError if no span was created.
-                     If False, return None if no span was created.
-        """
-        try:
-            span = self._graph_run._span(required=False)  # type: ignore[reportPrivateUsage]
-            if span is None:
-                if required:
-                    raise AttributeError('No span was created for this agent run')
-                return None
-            if not span.is_recording():  # pragma: no cover
-                return ''
-            from logfire.experimental.annotations import get_traceparent
-
-            return get_traceparent(span)
-        except AttributeError:
-            if required:
-                raise AttributeError('No span was created for this agent run')
-            return None
+        traceparent = self._graph_run._traceparent(required=False)  # type: ignore[reportPrivateUsage]
+        if traceparent is None and required:  # pragma: no cover
+            raise AttributeError('No span was created for this agent run')
+        return traceparent
 
     @property
     def ctx(self) -> GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]]:
