@@ -55,7 +55,7 @@ class DuckDuckGoSearchTool:
         search = functools.partial(self.client.text, max_results=self.max_results)
         results = await anyio.to_thread.run_sync(search, query)
         if len(results) == 0:
-            raise RuntimeError('No search results found.')
+            results = [DuckDuckGoResult(title='No results found', href='', body='')]
         return duckduckgo_ta.validate_python(results)
 
 
