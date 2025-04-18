@@ -427,6 +427,18 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # No events are emitted during the handling of text responses, so we don't need to yield anything
                     self._next_node = await self._handle_text_response(ctx, texts)
                 else:
+                    # we've got an empty response, this sometimes happens with anthropic (and perhaps other models)
+                    # when the model has already returned text along side tool calls
+                    # in this scenario, if text responses are allowed, we return text from the most recent model
+                    # response, if any
+                    if allow_text_output(ctx.deps.output_schema):
+                        for message in reversed(ctx.state.message_history):
+                            if isinstance(message, _messages.ModelResponse):
+                                last_texts = [p.content for p in message.parts if isinstance(p, _messages.TextPart)]
+                                if last_texts:
+                                    self._next_node = await self._handle_text_response(ctx, last_texts)
+                                    return
+
                     raise exceptions.UnexpectedModelBehavior('Received empty model response')
 
             self._events_iterator = _run_stream()
@@ -530,6 +542,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         text = '\n\n'.join(texts)
         if allow_text_output(output_schema):
+            # The following cast is safe because we know `str` is an allowed result type
             result_data_input = cast(NodeRunEndT, text)
             try:
                 result_data = await _validate_output(result_data_input, ctx, None)
@@ -537,7 +550,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx.state.increment_retries(ctx.deps.max_result_retries)
                 return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
             else:
-                # The following cast is safe because we know `str` is an allowed result type
                 return self._handle_final_result(ctx, result.FinalResult(result_data, None, None), [])
         else:
             ctx.state.increment_retries(ctx.deps.max_result_retries)

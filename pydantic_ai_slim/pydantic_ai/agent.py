@@ -659,7 +659,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             start_node,
             state=state,
             deps=graph_deps,
-            span=use_span(run_span, end_on_exit=True),
+            span=use_span(run_span, end_on_exit=True) if run_span.is_recording() else None,
             infer_name=False,
         ) as graph_run:
             yield AgentRun(graph_run)

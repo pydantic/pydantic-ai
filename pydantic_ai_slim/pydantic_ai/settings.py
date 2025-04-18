@@ -141,6 +141,16 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     """
 
+    extra_body: object
+    """Extra body to send to the model.
+
+    Supported by:
+
+    * OpenAI
+    * Anthropic
+    * Groq
+    """
+
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
     """Merge two sets of model settings, preferring the overrides.

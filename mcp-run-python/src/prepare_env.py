@@ -1,4 +1,3 @@
-export const preparePythonCode = `
 """Logic for installing dependencies in Pyodide.
 
 Mostly taken from https://github.com/pydantic/pydantic.run/blob/main/src/frontend/src/prepare_env.py
@@ -162,7 +161,7 @@ def _read_pep723_metadata(code: str) -> dict[str, Any]:
     Copied from https://packaging.python.org/en/latest/specifications/inline-script-metadata/#reference-implementation
     """
     name = 'script'
-    magic_comment_regex = r'(?m)^# /// (?P<type>[a-zA-Z0-9-]+)$\\s(?P<content>(^#(| .*)$\\s)+)^# ///$'
+    magic_comment_regex = r'(?m)^# /// (?P<type>[a-zA-Z0-9-]+)$\s(?P<content>(^#(| .*)$\s)+)^# ///$'
     matches = list(filter(lambda m: m.group('type') == name, re.finditer(magic_comment_regex, code)))
     if len(matches) > 1:
         raise ValueError(f'Multiple {name} blocks found')
@@ -199,4 +198,3 @@ def _find_imports_to_install(imports: list[str]) -> Iterable[str]:
                 yield package_name
             elif '.' not in module:
                 yield module
-`

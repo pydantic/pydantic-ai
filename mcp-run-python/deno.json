@@ -1,17 +1,21 @@
 {
   "name": "@pydantic/mcp-run-python",
-  "version": "0.0.11",
+  "version": "0.0.13",
   "license": "MIT",
   "nodeModulesDir": "auto",
   "exports": {
     ".": "./src/main.ts"
   },
   "tasks": {
-    "lint-format": "deno fmt && deno lint && deno check src"
+    "build": "deno run -R=. -W=src build.ts",
+    "lint-format": "deno task build && deno fmt && deno lint && deno check src && deno publish --dry-run --allow-dirty",
+    "dev": "deno task build && deno run -N -R=node_modules -W=node_modules src/main.ts",
+    "build-publish": "deno task build && deno publish"
   },
   "imports": {
     "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@^1.8.0",
     "@std/cli": "jsr:@std/cli@^1.0.15",
+    "@std/path": "jsr:@std/path@^1.0.8",
     "pyodide": "npm:pyodide@^0.27.4",
     "zod": "npm:zod@^3.24.2"
   },
@@ -20,17 +24,15 @@
     "semiColons": false,
     "singleQuote": true,
     "include": [
-      "src/"
+      "."
     ]
   },
-  "compilerOptions": {
-    "types": [
-      "node"
-    ],
-    "lib": [
-      "ESNext",
-      "deno.ns",
-      "dom" // console needs this
+  "publish": {
+    "include": [
+      "src/*.ts",
+      "src/prepareEnvCode.ts", // required to override gitignore
+      "README.md",
+      "deno.json"
     ]
   }
 }
