@@ -17,7 +17,6 @@ class AgentCard(TypedDict):
     name: str
     """Human readable name of the agent e.g. "Recipe Agent"."""
 
-    # TODO(Marcelo): The spec makes description required.
     description: NotRequired[str]
     """A human-readable description of the agent.
 
@@ -551,3 +550,13 @@ A2ARequest = Annotated[
     ),
     Discriminator('method'),
 ]
+"""A JSON RPC request to the A2A server."""
+
+A2AResponse = (
+    SendTaskResponse
+    | GetTaskResponse
+    | CancelTaskResponse
+    | SetTaskPushNotificationResponse
+    | GetTaskPushNotificationResponse
+)
+"""A JSON RPC response from the A2A server."""
