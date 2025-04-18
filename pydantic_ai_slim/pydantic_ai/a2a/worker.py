@@ -1,8 +1,10 @@
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
-from typing import Any, Generic, Literal, Self, TypeVar
+from dataclasses import dataclass
+from typing import Annotated, Any, Generic, Literal, Self, TypeVar
 
 import anyio
+from pydantic import Discriminator
 from typing_extensions import TypedDict
 
 from .runner import Runner
@@ -10,6 +12,7 @@ from .schema import TaskIdParams, TaskSendParams
 from .storage import Storage
 
 
+@dataclass
 class Worker(ABC):
     """In charge of executing tasks."""
 
@@ -26,7 +29,7 @@ class Worker(ABC):
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any): ...
 
     @abstractmethod
-    async def schedule_task(self, params: TaskSendParams) -> None: ...
+    async def run_task(self, params: TaskSendParams) -> None: ...
 
     @abstractmethod
     async def cancel_task(self, params: TaskIdParams) -> None: ...
@@ -59,15 +62,13 @@ class InMemoryWorker(Worker):
             # TODO(Marcelo): Build the TaskContext to pass to the runner. The object can have a
             # `save_task` or `save_artifact` or `save_task_history` method.
             if task_operation['operation'] == 'run':
-                self._task_group.start_soon(self._handle_send_task, task_operation['params'])
+                self._task_group.start_soon(self._handle_run_task, task_operation['params'])
 
-    async def _handle_send_task(self, params: TaskSendParams):
-        task = await self.storage.load_task(params['id'])
-        if task is None:
-            raise ValueError(f'Task {params["id"]} not found')
-        await self.runner.run(params, task)
+    async def _handle_run_task(self, params: TaskSendParams):
+        task_context = TaskContext(storage=self.storage, params=params)
+        await self.runner.run(task_context)
 
-    async def schedule_task(self, params: TaskSendParams) -> None:
+    async def run_task(self, params: TaskSendParams) -> None:
         await self._write_stream.send(RunTask(operation='run', params=params))
 
     async def cancel_task(self, params: TaskIdParams) -> None:
@@ -79,6 +80,8 @@ ParamsT = TypeVar('ParamsT')
 
 
 class TaskOperation(TypedDict, Generic[OperationT, ParamsT]):
+    """A task operation."""
+
     operation: OperationT
     params: ParamsT
 
@@ -86,4 +89,17 @@ class TaskOperation(TypedDict, Generic[OperationT, ParamsT]):
 RunTask = TaskOperation[Literal['run'], TaskSendParams]
 CancelTask = TaskOperation[Literal['cancel'], TaskIdParams]
 
-TaskOperations = RunTask | CancelTask
+TaskOperations = Annotated[RunTask | CancelTask, Discriminator('operation')]
+
+TaskParamsT = TypeVar('TaskParamsT')
+
+
+@dataclass
+class TaskContext(Generic[TaskParamsT]):
+    """A context for a task."""
+
+    storage: Storage
+    """The storage to save and load tasks."""
+
+    params: TaskParamsT
+    """The parameters of the task."""

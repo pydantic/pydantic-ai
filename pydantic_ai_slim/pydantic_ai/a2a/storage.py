@@ -1,8 +1,9 @@
 """This module defines the Storage class, which is responsible for storing and retrieving tasks."""
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 
-from .schema import Task
+from .schema import Message, Task, TaskStatus
 
 
 class Storage(ABC):
@@ -16,7 +17,12 @@ class Storage(ABC):
         """
 
     @abstractmethod
-    async def save_task(self, task: Task): ...
+    async def submit_task(self, id: str, session_id: str) -> Task:
+        """Submit a task to storage."""
+
+    @abstractmethod
+    async def complete_task(self, task_id: str, message: Message) -> Task:
+        """Save the result of a task."""
 
 
 class InMemoryStorage(Storage):
@@ -40,5 +46,19 @@ class InMemoryStorage(Storage):
             task['history'] = task['history'][-history_length:]
         return task
 
-    async def save_task(self, task: Task):
-        self.tasks[task['id']] = task
+    async def submit_task(self, id: str, session_id: str) -> Task:
+        if id in self.tasks:
+            raise ValueError(f'Task {id} already exists')
+
+        task_status = TaskStatus(state='submitted', timestamp=datetime.now().isoformat())
+        task = Task(id=id, session_id=session_id, status=task_status)
+        self.tasks[id] = task
+        return task
+
+    async def complete_task(self, task_id: str, message: Message) -> Task:
+        """Save the result of a task."""
+        task = self.tasks[task_id]
+        if 'history' not in task:
+            task['history'] = []
+        task['history'].append(message)
+        return task
