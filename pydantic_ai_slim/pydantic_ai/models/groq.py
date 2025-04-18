@@ -23,6 +23,7 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -82,13 +83,13 @@ See <https://console.groq.com/docs/models> for an up to date date list of models
 """
 
 
-class GroqModelSettings(ModelSettings):
+class GroqModelSettings(ModelSettings, total=False):
     """Settings used for a Groq model request.
 
     ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    # This class is a placeholder for any future groq-specific settings
+    groq_reasoning_format: Literal['hidden', 'raw', 'parsed']
 
 
 @dataclass(init=False)
@@ -215,6 +216,7 @@ class GroqModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 seed=model_settings.get('seed', NOT_GIVEN),
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
+                reasoning_format=model_settings.get('groq_reasoning_format', NOT_GIVEN),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers={'User-Agent': get_user_agent()},
@@ -231,7 +233,25 @@ class GroqModel(Model):
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         if choice.message.content is not None:
-            items.append(TextPart(content=choice.message.content))
+            content = choice.message.content
+            # The `<think>` tag is only present if `groq_reasoning_format` is set to `raw`.
+            while '<think>' in content:
+                before_think, content = content.split('<think>', 1)
+                if before_think.strip():
+                    items.append(TextPart(content=before_think))
+
+                if '</think>' in content:
+                    think_content, content = content.split('</think>', 1)
+                    items.append(ThinkingPart(content=think_content))
+                else:
+                    # Malformed tag
+                    items.append(TextPart(content=content))
+                    content = ''
+            if content:
+                items.append(TextPart(content=content))
+        # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
+        if choice.message.reasoning is not None:
+            items.append(ThinkingPart(content=choice.message.reasoning))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
@@ -270,6 +290,9 @@ class GroqModel(Model):
                         texts.append(item.content)
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
+                    elif isinstance(item, ThinkingPart):
+                        # Skip thinking parts when mapping to Groq messages
+                        continue
                     else:
                         assert_never(item)
                 message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')

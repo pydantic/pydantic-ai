@@ -28,6 +28,7 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -59,6 +60,7 @@ try:
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
+    from openai.types.responses.response_reasoning_item_param import ResponseReasoningItemParam, Summary
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 except ImportError as _import_error:
@@ -123,6 +125,9 @@ class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
     """
 
     openai_reasoning_generate_summary: Literal['detailed', 'concise']
+    """Deprecated alias for `openai_reasoning_summary`."""
+
+    openai_reasoning_summary: Literal['detailed', 'concise']
     """A summary of the reasoning performed by the model.
 
     This can be useful for debugging and understanding the model's reasoning process.
@@ -546,10 +551,13 @@ class OpenAIResponsesModel(Model):
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created_at, tz=timezone.utc)
         items: list[ModelResponsePart] = []
-        items.append(TextPart(response.output_text))
         for item in response.output:
-            if item.type == 'function_call':
+            if item.type == 'reasoning':
+                for summary in item.summary:
+                    items.append(ThinkingPart(content=summary.text, signature=item.id))
+            elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
+        items.append(TextPart(response.output_text))
         return ModelResponse(items, model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(
@@ -633,11 +641,22 @@ class OpenAIResponsesModel(Model):
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
+        reasoning_summary = model_settings.get('openai_reasoning_summary', None)
         reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
 
-        if reasoning_effort is None and reasoning_generate_summary is None:
+        if reasoning_summary and reasoning_generate_summary:
+            raise ValueError('`openai_reasoning_summary` and `openai_reasoning_generate_summary` cannot both be set.')
+
+        if reasoning_generate_summary is not None:
+            warnings.warn(
+                '`openai_reasoning_generate_summary` is deprecated, use `openai_reasoning_summary` instead',
+                DeprecationWarning,
+            )
+            reasoning_summary = reasoning_generate_summary
+
+        if reasoning_effort is None and reasoning_summary is None:
             return NOT_GIVEN
-        return Reasoning(effort=reasoning_effort, generate_summary=reasoning_generate_summary)
+        return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
@@ -693,13 +712,24 @@ class OpenAIResponsesModel(Model):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
+                thinking_parts: list[ThinkingPart] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
+                    elif isinstance(item, ThinkingPart):
+                        thinking_parts.append(item)
                     else:
                         assert_never(item)
+                if thinking_parts:
+                    openai_messages.append(
+                        ResponseReasoningItemParam(
+                            id=thinking_parts[0].signature,
+                            summary=[Summary(text=item.content, type='summary_text') for item in thinking_parts],
+                            type='reasoning',
+                        )
+                    )
             else:
                 assert_never(message)
         instructions = self._get_instructions(messages) or NOT_GIVEN

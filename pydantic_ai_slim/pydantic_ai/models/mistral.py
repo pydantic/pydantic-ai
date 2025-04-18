@@ -91,7 +91,7 @@ Since [the Mistral docs](https://docs.mistral.ai/getting-started/models/models_o
 """
 
 
-class MistralModelSettings(ModelSettings):
+class MistralModelSettings(ModelSettings, total=False):
     """Settings used for a Mistral model request.
 
     ALL FIELDS MUST BE `mistral_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.

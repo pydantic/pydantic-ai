@@ -73,7 +73,7 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 """
 
 
-class GeminiModelSettings(ModelSettings):
+class GeminiModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request.
 
     ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
