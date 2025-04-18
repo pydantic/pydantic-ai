@@ -909,11 +909,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                 if isinstance(maybe_part_event, _messages.PartStartEvent):
                                     new_part = maybe_part_event.part
                                     if isinstance(new_part, _messages.TextPart):
-                                        if (
-                                            _agent_graph.allow_text_output(output_schema)
-                                            and new_part.content
-                                            and new_part.content.strip()
-                                        ):
+                                        if _agent_graph.allow_text_output(output_schema) and new_part.content:
                                             has_text_part = True
                                             # Only return final result if we haven't seen a tool call
                                             if not has_tool_call:
@@ -925,10 +921,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                                 return FinalResult(s, call.tool_name, call.tool_call_id)
                                 elif isinstance(maybe_part_event, _messages.PartDeltaEvent):
                                     if isinstance(maybe_part_event.delta, _messages.TextPartDelta):
-                                        if (
-                                            maybe_part_event.delta.content_delta
-                                            and maybe_part_event.delta.content_delta.strip()
-                                            and _agent_graph.allow_text_output(output_schema)
+                                        if maybe_part_event.delta.content_delta and _agent_graph.allow_text_output(
+                                            output_schema
                                         ):
                                             has_text_part = True
                                             # Only return final result if we haven't seen a tool call
@@ -960,7 +954,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                             return None
 
                         final_result_details = await stream_to_final(streamed_response)
-
                         if final_result_details is not None:
                             if yielded:
                                 raise exceptions.AgentRunError('Agent run produced final results')
