@@ -11,7 +11,7 @@ on:
 env:
   COLUMNS: 150
   UV_PYTHON: 3.12
-  UV_FROZEN: '1'
+  UV_FROZEN: "1"
 
 permissions:
   contents: read
@@ -29,10 +29,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --all-packages --group lint
 
-      - uses: actions/setup-node@v4
-
-      - run: npm install
-        working-directory: mcp-run-python
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
 
       - uses: pre-commit/action@v3.0.0
         with:
@@ -93,7 +92,7 @@ jobs:
   test-live:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: "github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'"
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
 
@@ -143,6 +142,10 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
 
       - run: mkdir coverage
 
@@ -233,21 +236,15 @@ jobs:
         with:
           enable-cache: true
 
-      - uses: actions/setup-node@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
 
-      - run: npm install
-        working-directory: mcp-run-python
-
-      - run: npm run lint
-        working-directory: mcp-run-python
-
-      - run: npm run prepare
-        working-directory: mcp-run-python
+      - run: make lint-js
 
       - run: uv run --package mcp-run-python pytest mcp-run-python -v
 
-      # check npx works
-      - run: npx . warmup
+      - run: deno task dev warmup
         working-directory: mcp-run-python
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
@@ -265,7 +262,7 @@ jobs:
 
   deploy-docs:
     needs: [check]
-    if: "success() && startsWith(github.ref, 'refs/tags/')"
+    if: success() && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     environment:
       name: deploy-docs
@@ -301,14 +298,67 @@ jobs:
         env:
           ALGOLIA_WRITE_API_KEY: ${{ secrets.ALGOLIA_WRITE_API_KEY }}
 
+  deploy-docs-preview:
+    needs: [check]
+    if: success() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: deploy-docs-preview
+
+    permissions:
+      deployments: write
+      statuses: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+      - run: npm install
+        working-directory: docs-site
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: site
+
+      - uses: cloudflare/wrangler-action@v3
+        id: deploy
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          environment: previews
+          workingDirectory: docs-site
+          command: >
+            deploy
+            --var GIT_COMMIT_SHA:${{ github.sha }}
+            --var GIT_BRANCH:main
+
+      - name: Set preview URL
+        run: uv run --no-project --with httpx .github/set_docs_main_preview_url.py
+        env:
+          DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          REF: ${{ github.sha }}
+
+  # TODO(Marcelo): We need to split this into two jobs: `build` and `release`.
   release:
     needs: [check]
-    if: "success() && startsWith(github.ref, 'refs/tags/')"
+    if: success() && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    environment: release
+
+    environment:
+      name: release
+      url: https://pypi.org/project/pydantic-ai/${{ steps.inspect_package.outputs.version }}
 
     permissions:
       id-token: write
+
+    outputs:
+      package-version: ${{ steps.inspect_package.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -319,7 +369,52 @@ jobs:
 
       - run: uv build --all-packages
 
+      - name: Inspect package version
+        id: inspect_package
+        run: |
+          uv tool install --with uv-dynamic-versioning hatchling
+          version=$(uvx hatchling version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+
+  send-tweet:
+    name: Send tweet
+    needs: [release]
+    if: needs.release.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install tweepy==4.14.0
+      - name: Send tweet
+        shell: python
+        run: |
+          import os
+          import tweepy
+
+          client = tweepy.Client(
+              access_token=os.getenv("TWITTER_ACCESS_TOKEN"),
+              access_token_secret=os.getenv("TWITTER_ACCESS_TOKEN_SECRET"),
+              consumer_key=os.getenv("TWITTER_CONSUMER_KEY"),
+              consumer_secret=os.getenv("TWITTER_CONSUMER_SECRET"),
+          )
+          version = os.getenv("VERSION").strip('"')
+          tweet = os.getenv("TWEET").format(version=version)
+          client.create_tweet(text=tweet)
+        env:
+          VERSION: ${{ needs.release.outputs.package-version }}
+          TWEET: |
+            PydanticAI version {version} is out! 🎉
+
+            https://github.com/pydantic/pydantic-ai/releases/tag/v{version}
+          TWITTER_CONSUMER_KEY: ${{ secrets.TWITTER_CONSUMER_KEY }}
+          TWITTER_CONSUMER_SECRET: ${{ secrets.TWITTER_CONSUMER_SECRET }}
+          TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
+          TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}

@@ -1,5 +1,7 @@
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
+from pathlib import Path
+
 import pytest
 from dirty_equals import IsInstance
 from inline_snapshot import snapshot
@@ -38,6 +40,14 @@ async def test_stdio_server():
         assert result.content == snapshot([TextContent(type='text', text='32.0')])
 
 
+async def test_stdio_server_with_cwd():
+    test_dir = Path(__file__).parent
+    server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
+    async with server:
+        tools = await server.list_tools()
+        assert len(tools) == 1
+
+
 def test_sse_server():
     sse_server = MCPServerHTTP(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
@@ -62,7 +72,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, openai_api_ke
     agent = Agent(model, mcp_servers=[server])
     async with agent.run_mcp_servers():
         result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
-        assert result.data == snapshot('0 degrees Celsius is 32.0 degrees Fahrenheit.')
+        assert result.output == snapshot('0 degrees Celsius is 32.0 degrees Fahrenheit.')
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(

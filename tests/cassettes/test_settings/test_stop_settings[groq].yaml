@@ -1,0 +1,71 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '136'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: llama3-8b-8192
+      n: 1
+      stop:
+      - Paris
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '562'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin, Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: 'The capital of France is '
+          role: assistant
+      created: 1744190899
+      id: chatcmpl-9de98446-dccf-439b-bcb8-996ee77471d8
+      model: llama3-8b-8192
+      object: chat.completion
+      system_fingerprint: fp_dadc9d6142
+      usage:
+        completion_time: 0.006666667
+        completion_tokens: 8
+        prompt_time: 0.003914844
+        prompt_tokens: 17
+        queue_time: 0.5322581550000001
+        total_time: 0.010581511
+        total_tokens: 25
+      usage_breakdown:
+        models: null
+      x_groq:
+        id: req_01jrcy20hceg1t9cpsg7cmj7f9
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -72,7 +72,7 @@ async def test_streamed_text_response():
                 total_tokens=108,
             )
         )
-        response = await result.get_data()
+        response = await result.get_output()
         assert response == snapshot('{"ret_a":"a-apple"}')
         assert result.is_complete
         assert result.timestamp() == IsNow(tz=timezone.utc)
@@ -111,32 +111,32 @@ async def test_streamed_text_response():
 async def test_streamed_structured_response():
     m = TestModel()
 
-    agent = Agent(m, result_type=tuple[str, str], name='fig_jam')
+    agent = Agent(m, output_type=tuple[str, str], name='fig_jam')
 
     async with agent.run_stream('') as result:
         assert agent.name == 'fig_jam'
         assert not result.is_complete
-        response = await result.get_data()
+        response = await result.get_output()
         assert response == snapshot(('a', 'a'))
         assert result.is_complete
 
 
 async def test_structured_response_iter():
     async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        assert agent_info.result_tools is not None
-        assert len(agent_info.result_tools) == 1
-        name = agent_info.result_tools[0].name
+        assert agent_info.output_tools is not None
+        assert len(agent_info.output_tools) == 1
+        name = agent_info.output_tools[0].name
         json_data = json.dumps({'response': [1, 2, 3, 4]})
         yield {0: DeltaToolCall(name=name)}
         yield {0: DeltaToolCall(json_args=json_data[:15])}
         yield {0: DeltaToolCall(json_args=json_data[15:])}
 
-    agent = Agent(FunctionModel(stream_function=text_stream), result_type=list[int])
+    agent = Agent(FunctionModel(stream_function=text_stream), output_type=list[int])
 
     chunks: list[list[int]] = []
     async with agent.run_stream('') as result:
         async for structured_response, last in result.stream_structured(debounce_by=None):
-            response_data = await result.validate_structured_result(structured_response, allow_partial=not last)
+            response_data = await result.validate_structured_output(structured_response, allow_partial=not last)
             chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4]])
@@ -148,7 +148,7 @@ async def test_structured_response_iter():
 
 
 async def test_streamed_text_stream():
-    m = TestModel(custom_result_text='The cat sat on the mat.')
+    m = TestModel(custom_output_text='The cat sat on the mat.')
 
     agent = Agent(m)
 
@@ -241,7 +241,7 @@ async def test_plain_response():
         yield 'hello '
         yield 'world'
 
-    agent = Agent(FunctionModel(stream_function=text_stream), result_type=tuple[str, str])
+    agent = Agent(FunctionModel(stream_function=text_stream), output_type=tuple[str, str])
 
     with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
         async with agent.run_stream(''):
@@ -269,15 +269,15 @@ async def test_call_tool():
             last = messages[-1]
             assert isinstance(last, ModelRequest)
             assert isinstance(last.parts[0], ToolReturnPart)
-            assert agent_info.result_tools is not None
-            assert len(agent_info.result_tools) == 1
-            name = agent_info.result_tools[0].name
+            assert agent_info.output_tools is not None
+            assert len(agent_info.output_tools) == 1
+            name = agent_info.output_tools[0].name
             json_data = json.dumps({'response': [last.parts[0].content, 2]})
             yield {0: DeltaToolCall(name=name)}
             yield {0: DeltaToolCall(json_args=json_data[:5])}
             yield {0: DeltaToolCall(json_args=json_data[5:])}
 
-    agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
+    agent = Agent(FunctionModel(stream_function=stream_structured_function), output_type=tuple[str, int])
 
     @agent.tool_plain
     async def ret_a(x: str) -> str:
@@ -305,7 +305,7 @@ async def test_call_tool():
                 ),
             ]
         )
-        assert await result.get_data() == snapshot(('hello world', 2))
+        assert await result.get_output() == snapshot(('hello world', 2))
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -353,7 +353,7 @@ async def test_call_tool_empty():
     async def stream_structured_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         yield {}
 
-    agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=tuple[str, int])
+    agent = Agent(FunctionModel(stream_function=stream_structured_function), output_type=tuple[str, int])
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream('hello'):
@@ -366,7 +366,7 @@ async def test_call_tool_wrong_name():
 
     agent = Agent(
         FunctionModel(stream_function=stream_structured_function),
-        result_type=tuple[str, int],
+        output_type=tuple[str, int],
         retries=0,
     )
 
@@ -391,7 +391,7 @@ async def test_call_tool_wrong_name():
     )
 
 
-class ResultType(BaseModel):
+class OutputType(BaseModel):
     """Result type used by all tests."""
 
     value: str
@@ -402,12 +402,12 @@ async def test_early_strategy_stops_after_first_final_result():
     tool_called: list[str] = []
 
     async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         yield {1: DeltaToolCall('final_result', '{"value": "final"}')}
         yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
         yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
 
-    agent = Agent(FunctionModel(stream_function=sf), result_type=ResultType, end_strategy='early')
+    agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='early')
 
     @agent.tool_plain
     def regular_tool(x: int) -> int:  # pragma: no cover
@@ -422,7 +422,7 @@ async def test_early_strategy_stops_after_first_final_result():
         return y
 
     async with agent.run_stream('test early strategy') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response.value == snapshot('final')
         messages = result.all_messages()
 
@@ -472,14 +472,14 @@ async def test_early_strategy_uses_first_final_result():
     """Test that 'early' strategy uses the first final result and ignores subsequent ones."""
 
     async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
         yield {2: DeltaToolCall('final_result', '{"value": "second"}')}
 
-    agent = Agent(FunctionModel(stream_function=sf), result_type=ResultType, end_strategy='early')
+    agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='early')
 
     async with agent.run_stream('test multiple final results') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response.value == snapshot('first')
         messages = result.all_messages()
 
@@ -507,7 +507,7 @@ async def test_early_strategy_uses_first_final_result():
                     ),
                     ToolReturnPart(
                         tool_name='final_result',
-                        content='Result tool not used - a final result was already processed.',
+                        content='Output tool not used - a final result was already processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     ),
@@ -522,14 +522,14 @@ async def test_exhaustive_strategy_executes_all_tools():
     tool_called: list[str] = []
 
     async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
         yield {2: DeltaToolCall('regular_tool', '{"x": 42}')}
         yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
         yield {4: DeltaToolCall('final_result', '{"value": "second"}')}
         yield {5: DeltaToolCall('unknown_tool', '{"value": "???"}')}
 
-    agent = Agent(FunctionModel(stream_function=sf), result_type=ResultType, end_strategy='exhaustive')
+    agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='exhaustive')
 
     @agent.tool_plain
     def regular_tool(x: int) -> int:
@@ -544,7 +544,7 @@ async def test_exhaustive_strategy_executes_all_tools():
         return y
 
     async with agent.run_stream('test exhaustive strategy') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response.value == snapshot('first')
         messages = result.all_messages()
 
@@ -573,7 +573,7 @@ async def test_exhaustive_strategy_executes_all_tools():
                     ),
                     ToolReturnPart(
                         tool_name='final_result',
-                        content='Result tool not used - a final result was already processed.',
+                        content='Output tool not used - a final result was already processed.',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     ),
@@ -600,13 +600,13 @@ async def test_early_strategy_with_final_result_in_middle():
     tool_called: list[str] = []
 
     async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         yield {1: DeltaToolCall('regular_tool', '{"x": 1}')}
         yield {2: DeltaToolCall('final_result', '{"value": "final"}')}
         yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
         yield {4: DeltaToolCall('unknown_tool', '{"value": "???"}')}
 
-    agent = Agent(FunctionModel(stream_function=sf), result_type=ResultType, end_strategy='early')
+    agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='early')
 
     @agent.tool_plain
     def regular_tool(x: int) -> int:  # pragma: no cover
@@ -621,7 +621,7 @@ async def test_early_strategy_with_final_result_in_middle():
         return y
 
     async with agent.run_stream('test early strategy with final result in middle') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response.value == snapshot('final')
         messages = result.all_messages()
 
@@ -715,7 +715,7 @@ async def test_early_strategy_with_final_result_in_middle():
 async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
     """Test that 'early' strategy does not apply to tool calls without final tool."""
     tool_called: list[str] = []
-    agent = Agent(TestModel(), result_type=ResultType, end_strategy='early')
+    agent = Agent(TestModel(), output_type=OutputType, end_strategy='early')
 
     @agent.tool_plain
     def regular_tool(x: int) -> int:
@@ -724,7 +724,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
         return x
 
     async with agent.run_stream('test early strategy with regular tool calls') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response.value == snapshot('a')
         messages = result.all_messages()
 
@@ -770,37 +770,37 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
     )
 
 
-async def test_custom_result_type_default_str() -> None:
+async def test_custom_output_type_default_str() -> None:
     agent = Agent('test')
 
     async with agent.run_stream('test') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response == snapshot('success (no tool calls)')
 
-    async with agent.run_stream('test', result_type=ResultType) as result:
-        response = await result.get_data()
-        assert response == snapshot(ResultType(value='a'))
+    async with agent.run_stream('test', output_type=OutputType) as result:
+        response = await result.get_output()
+        assert response == snapshot(OutputType(value='a'))
 
 
-async def test_custom_result_type_default_structured() -> None:
-    agent = Agent('test', result_type=ResultType)
+async def test_custom_output_type_default_structured() -> None:
+    agent = Agent('test', output_type=OutputType)
 
     async with agent.run_stream('test') as result:
-        response = await result.get_data()
-        assert response == snapshot(ResultType(value='a'))
+        response = await result.get_output()
+        assert response == snapshot(OutputType(value='a'))
 
-    async with agent.run_stream('test', result_type=str) as result:
-        response = await result.get_data()
+    async with agent.run_stream('test', output_type=str) as result:
+        response = await result.get_output()
         assert response == snapshot('success (no tool calls)')
 
 
 async def test_iter_stream_output():
-    m = TestModel(custom_result_text='The cat sat on the mat.')
+    m = TestModel(custom_output_text='The cat sat on the mat.')
 
     agent = Agent(m)
 
-    @agent.result_validator
-    def result_validator_simple(data: str) -> str:
+    @agent.output_validator
+    def output_validator_simple(data: str) -> str:
         # Make a substitution in the validated results
         return re.sub('cat sat', 'bat sat', data)
 
@@ -816,7 +816,7 @@ async def test_iter_stream_output():
                     async for chunk in stream.stream_output(debounce_by=None):
                         messages.append(chunk)
                 stream_usage = deepcopy(stream.usage())
-    assert run.next_node == End(data=FinalResult(data='The bat sat on the mat.', tool_name=None, tool_call_id=None))
+    assert run.next_node == End(data=FinalResult(output='The bat sat on the mat.', tool_name=None, tool_call_id=None))
     assert (
         run.usage()
         == stream_usage
@@ -836,12 +836,12 @@ async def test_iter_stream_output():
 
 
 async def test_iter_stream_responses():
-    m = TestModel(custom_result_text='The cat sat on the mat.')
+    m = TestModel(custom_output_text='The cat sat on the mat.')
 
     agent = Agent(m)
 
-    @agent.result_validator
-    def result_validator_simple(data: str) -> str:
+    @agent.output_validator
+    def output_validator_simple(data: str) -> str:
         # Make a substitution in the validated results
         return re.sub('cat sat', 'bat sat', data)
 
@@ -874,27 +874,27 @@ async def test_iter_stream_responses():
         ]
     ]
 
-    # Note: as you can see above, the result validator is not applied to the streamed responses, just the final result:
+    # Note: as you can see above, the output validator is not applied to the streamed responses, just the final result:
     assert run.result is not None
-    assert run.result.data == 'The bat sat on the mat.'
+    assert run.result.output == 'The bat sat on the mat.'
 
 
 async def test_stream_iter_structured_validator() -> None:
-    class NotResultType(BaseModel):
+    class NotOutputType(BaseModel):
         not_value: str
 
-    agent = Agent[None, Union[ResultType, NotResultType]]('test', result_type=Union[ResultType, NotResultType])  # pyright: ignore[reportArgumentType]
+    agent = Agent[None, Union[OutputType, NotOutputType]]('test', output_type=Union[OutputType, NotOutputType])  # pyright: ignore[reportArgumentType]
 
-    @agent.result_validator
-    def result_validator(data: ResultType | NotResultType) -> ResultType | NotResultType:
-        assert isinstance(data, ResultType)
-        return ResultType(value=data.value + ' (validated)')
+    @agent.output_validator
+    def output_validator(data: OutputType | NotOutputType) -> OutputType | NotOutputType:
+        assert isinstance(data, OutputType)
+        return OutputType(value=data.value + ' (validated)')
 
-    outputs: list[ResultType] = []
+    outputs: list[OutputType] = []
     async with agent.iter('test') as run:
         async for node in run:
             if agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
                     async for output in stream.stream_output(debounce_by=None):
                         outputs.append(output)
-    assert outputs == [ResultType(value='a (validated)'), ResultType(value='a (validated)')]
+    assert outputs == [OutputType(value='a (validated)'), OutputType(value='a (validated)')]

@@ -1,0 +1,33 @@
+name: ❓ Pydantic AI Question
+description: "Ask a question about Pydantic AI"
+labels: ["question"]
+
+body:
+  - type: markdown
+    attributes:
+      value: Thank you for reaching out to the Pydantic AI community! We're here to help! 🤝
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: |
+        Please provide as much detail as possible about your question. 🙏
+
+        You might like to include:
+        * Code snippets showing what you've tried
+        * Error messages you're encountering (if any)
+        * Expected vs actual behavior
+        * Your use case and what you're trying to achieve
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: |
+        Please provide any additional context that might help us better understand your question, such as:
+        * Your Pydantic AI version
+        * Your Python version
+        * Relevant configuration or environment details 📝

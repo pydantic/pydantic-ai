@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
+from typing import Annotated
 
 import httpx
 import pytest
@@ -49,7 +50,7 @@ from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import ClientWithHandler, IsNow, IsStr, TestEnv
+from ..conftest import ClientWithHandler, IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -60,9 +61,10 @@ async def test_model_simple(allow_model_requests: None):
     assert m.model_name == 'gemini-1.5-flash'
     assert 'x-goog-api-key' in m.client.headers
 
-    arc = ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[])
-    tools = m._get_tools(arc)
-    tool_config = m._get_tool_config(arc, tools)
+    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[])
+    mrp = m.customize_request_parameters(mrp)
+    tools = m._get_tools(mrp)
+    tool_config = m._get_tool_config(mrp, tools)
     assert tools is None
     assert tool_config is None
 
@@ -86,15 +88,16 @@ async def test_model_tools(allow_model_requests: None):
             },
         ),
     ]
-    result_tool = ToolDefinition(
+    output_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}, 'required': ['spam']},
     )
 
-    arc = ModelRequestParameters(function_tools=tools, allow_text_result=True, result_tools=[result_tool])
-    tools = m._get_tools(arc)
-    tool_config = m._get_tool_config(arc, tools)
+    mrp = ModelRequestParameters(function_tools=tools, allow_text_output=True, output_tools=[output_tool])
+    mrp = m.customize_request_parameters(mrp)
+    tools = m._get_tools(mrp)
+    tool_config = m._get_tool_config(mrp, tools)
     assert tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -128,14 +131,15 @@ async def test_model_tools(allow_model_requests: None):
 
 async def test_require_response_tool(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
-    result_tool = ToolDefinition(
+    output_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
     )
-    arc = ModelRequestParameters(function_tools=[], allow_text_result=False, result_tools=[result_tool])
-    tools = m._get_tools(arc)
-    tool_config = m._get_tool_config(arc, tools)
+    mrp = ModelRequestParameters(function_tools=[], allow_text_output=False, output_tools=[output_tool])
+    mrp = m.customize_request_parameters(mrp)
+    tools = m._get_tools(mrp)
+    tool_config = m._get_tool_config(mrp, tools)
     assert tools == snapshot(
         _GeminiTools(
             function_declarations=[
@@ -187,14 +191,14 @@ async def test_json_def_replaced(allow_model_requests: None):
     )
 
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
-    result_tool = ToolDefinition(
+    output_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         json_schema,
     )
-    assert m._get_tools(
-        ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool])
-    ) == snapshot(
+    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+    mrp = m.customize_request_parameters(mrp)
+    assert m._get_tools(mrp) == snapshot(
         _GeminiTools(
             function_declarations=[
                 _GeminiFunction(
@@ -234,14 +238,14 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
     json_schema = Locations.model_json_schema()
 
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
-    result_tool = ToolDefinition(
+    output_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         json_schema,
     )
-    assert m._get_tools(
-        ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool])
-    ) == snapshot(
+    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+    mrp = m.customize_request_parameters(mrp)
+    assert m._get_tools(mrp) == snapshot(
         _GeminiTools(
             function_declarations=[
                 _GeminiFunction(
@@ -297,13 +301,15 @@ async def test_json_def_recursive(allow_model_requests: None):
     )
 
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
-    result_tool = ToolDefinition(
+    output_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         json_schema,
     )
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
-        m._get_tools(ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool]))
+        mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+        mrp = m.customize_request_parameters(mrp)
+        m._get_tools(mrp)
 
 
 async def test_json_def_date(allow_model_requests: None):
@@ -329,14 +335,14 @@ async def test_json_def_date(allow_model_requests: None):
     )
 
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
-    result_tool = ToolDefinition(
+    output_tool = ToolDefinition(
         'result',
         'This is the tool for the final Result',
         json_schema,
     )
-    assert m._get_tools(
-        ModelRequestParameters(function_tools=[], allow_text_result=True, result_tools=[result_tool])
-    ) == snapshot(
+    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+    mrp = m.customize_request_parameters(mrp)
+    assert m._get_tools(mrp) == snapshot(
         _GeminiTools(
             function_declarations=[
                 _GeminiFunction(
@@ -429,7 +435,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     agent = Agent(m)
 
     result = await agent.run('Hello')
-    assert result.data == 'Hello world'
+    assert result.output == 'Hello world'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -443,7 +449,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
 
     result = await agent.run('Hello', message_history=result.new_messages())
-    assert result.data == 'Hello world'
+    assert result.output == 'Hello world'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -468,10 +474,10 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     )
     gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
-    agent = Agent(m, result_type=list[int])
+    agent = Agent(m, output_type=list[int])
 
     result = await agent.run('Hello')
-    assert result.data == [1, 2, 123]
+    assert result.output == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -525,7 +531,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             raise ModelRetry('Wrong location, please try again')
 
     result = await agent.run('Hello')
-    assert result.data == 'final response'
+    assert result.output == 'final response'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -685,7 +691,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
     gemini_client = get_gemini_client(stream)
     model = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
-    agent = Agent(model, result_type=tuple[int, int])
+    agent = Agent(model, output_type=tuple[int, int])
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
@@ -715,7 +721,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
 
     gemini_client = get_gemini_client([first_stream, second_stream])
     model = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
-    agent = Agent(model, result_type=tuple[int, int])
+    agent = Agent(model, output_type=tuple[int, int])
     tool_calls: list[str] = []
 
     @agent.tool_plain
@@ -729,7 +735,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
         return y
 
     async with agent.run_stream('Hello') as result:
-        response = await result.get_data()
+        response = await result.get_output()
         assert response == snapshot((1, 2))
     assert result.usage() == snapshot(Usage(requests=2, request_tokens=3, response_tokens=6, total_tokens=9))
     assert result.all_messages() == snapshot(
@@ -797,7 +803,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
         return f'Location for {loc_name}'
 
     async with agent.run_stream('Hello') as result:
-        data = await result.get_data()
+        data = await result.get_output()
 
     assert data == 'Hello foo'
 
@@ -831,7 +837,7 @@ async def test_empty_text_ignored():
 
 async def test_model_settings(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        generation_config = json.loads(request.content)['generation_config']
+        generation_config = json.loads(request.content)['generationConfig']
         assert generation_config == {
             'max_output_tokens': 1,
             'temperature': 0.1,
@@ -862,7 +868,7 @@ async def test_model_settings(client_with_handler: ClientWithHandler, env: TestE
             'frequency_penalty': 0.4,
         },
     )
-    assert result.data == 'world'
+    assert result.output == 'world'
 
 
 def gemini_no_content_response(
@@ -880,7 +886,7 @@ async def test_safety_settings_unsafe(
     try:
 
         def handler(request: httpx.Request) -> httpx.Response:
-            safety_settings = json.loads(request.content)['safety_settings']
+            safety_settings = json.loads(request.content)['safetySettings']
             assert safety_settings == [
                 {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
                 {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
@@ -922,7 +928,7 @@ async def test_safety_settings_safe(
     client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
 ) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        safety_settings = json.loads(request.content)['safety_settings']
+        safety_settings = json.loads(request.content)['safetySettings']
         assert safety_settings == [
             {'category': 'HARM_CATEGORY_CIVIC_INTEGRITY', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
             {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_LOW_AND_ABOVE'},
@@ -950,7 +956,7 @@ async def test_safety_settings_safe(
             ]
         ),
     )
-    assert result.data == 'world'
+    assert result.output == 'world'
 
 
 @pytest.mark.vcr()
@@ -961,7 +967,7 @@ async def test_image_as_binary_content_input(
     agent = Agent(m)
 
     result = await agent.run(['What is the name of this fruit?', image_content])
-    assert result.data == snapshot('The fruit in the image is a kiwi.')
+    assert result.output == snapshot('The fruit in the image is a kiwi.')
 
 
 @pytest.mark.vcr()
@@ -972,7 +978,7 @@ async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) 
     image_url = ImageUrl(url='https://goo.gle/instrument-img')
 
     result = await agent.run(['What is the name of this fruit?', image_url])
-    assert result.data == snapshot("This is not a fruit; it's a pipe organ console.")
+    assert result.output == snapshot("This is not a fruit; it's a pipe organ console.")
 
 
 @pytest.mark.vcr()
@@ -983,4 +989,80 @@ async def test_document_url_input(allow_model_requests: None, gemini_api_key: st
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.data == snapshot('The main content of this document is that it is a **dummy PDF file**.')
+    assert result.output == snapshot('The main content of this document is that it is a **dummy PDF file**.')
+
+
+@pytest.mark.vcr()
+async def test_gemini_drop_exclusive_maximum(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_chinese_zodiac(age: Annotated[int, Field(gt=18)]) -> str:
+        return 'Dragon'
+
+    result = await agent.run('I want to know my chinese zodiac. I am 20 years old.')
+    assert result.output == snapshot('Your Chinese zodiac is Dragon.\n')
+
+    result = await agent.run('I want to know my chinese zodiac. I am 17 years old.')
+    assert result.output == snapshot(
+        'I am sorry, I cannot fulfill this request. The age needs to be greater than 18.\n'
+    )
+
+
+@pytest.mark.vcr()
+async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.')
+
+    result = await agent.run('What is the capital of France?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The capital of France is Paris.\n')],
+                model_name='gemini-1.5-flash',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+class CurrentLocation(BaseModel, extra='forbid'):
+    city: str
+    country: str
+
+
+@pytest.mark.vcr()
+async def test_gemini_additional_properties_is_false(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_temperature(location: CurrentLocation) -> float:  # pragma: no cover
+        return 20.0
+
+    result = await agent.run('What is the temperature in Tokyo?')
+    assert result.output == snapshot(
+        'The available tools lack the ability to access real-time information, including current temperature.  Therefore, I cannot answer your question.\n'
+    )
+
+
+@pytest.mark.vcr()
+async def test_gemini_additional_properties_is_true(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    with pytest.warns(UserWarning, match='.*additionalProperties.*'):
+
+        @agent.tool_plain
+        async def get_temperature(location: dict[str, CurrentLocation]) -> float:  # pragma: no cover
+            return 20.0
+
+        result = await agent.run('What is the temperature in Tokyo?')
+        assert result.output == snapshot(
+            'I need a location dictionary to use the `get_temperature` function.  I cannot provide the temperature in Tokyo without more information.\n'
+        )

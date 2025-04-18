@@ -133,8 +133,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
         model_settings=ModelSettings(temperature=1),
         model_request_parameters=ModelRequestParameters(
             function_tools=[],
-            allow_text_result=True,
-            result_tools=[],
+            allow_text_output=True,
+            output_tools=[],
         ),
     )
 
@@ -152,7 +152,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
                     'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
@@ -329,8 +329,8 @@ async def test_instrumented_model_not_recording():
         model_settings=ModelSettings(temperature=1),
         model_request_parameters=ModelRequestParameters(
             function_tools=[],
-            allow_text_result=True,
-            result_tools=[],
+            allow_text_output=True,
+            output_tools=[],
         ),
     )
 
@@ -351,8 +351,8 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
         model_settings=ModelSettings(temperature=1),
         model_request_parameters=ModelRequestParameters(
             function_tools=[],
-            allow_text_result=True,
-            result_tools=[],
+            allow_text_output=True,
+            output_tools=[],
         ),
     ) as response_stream:
         assert [event async for event in response_stream] == snapshot(
@@ -376,7 +376,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
                     'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
@@ -439,8 +439,8 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
             model_settings=ModelSettings(temperature=1),
             model_request_parameters=ModelRequestParameters(
                 function_tools=[],
-                allow_text_result=True,
-                result_tools=[],
+                allow_text_output=True,
+                output_tools=[],
             ),
         ) as response_stream:
             async for event in response_stream:
@@ -461,7 +461,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
                     'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
@@ -546,8 +546,8 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
         model_settings=ModelSettings(temperature=1),
         model_request_parameters=ModelRequestParameters(
             function_tools=[],
-            allow_text_result=True,
-            result_tools=[],
+            allow_text_output=True,
+            output_tools=[],
         ),
     )
 
@@ -565,7 +565,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -692,3 +692,47 @@ def test_messages_to_otel_events_serialization_errors():
             'event.name': 'gen_ai.tool.message',
         },
     ]
+
+
+def test_messages_to_otel_events_instructions():
+    messages = [
+        ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
+        ModelResponse(parts=[TextPart('text1')]),
+    ]
+    assert [
+        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
+    ] == snapshot(
+        [
+            {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
+            {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+        ]
+    )
+
+
+def test_messages_to_otel_events_instructions_multiple_messages():
+    messages = [
+        ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
+        ModelResponse(parts=[TextPart('text1')]),
+        ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')]),
+    ]
+    assert [
+        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
+    ] == snapshot(
+        [
+            {'content': 'instructions2', 'role': 'system', 'event.name': 'gen_ai.system.message'},
+            {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {'content': 'user_prompt2', 'role': 'user', 'gen_ai.message.index': 2, 'event.name': 'gen_ai.user.message'},
+        ]
+    )

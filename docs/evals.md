@@ -82,6 +82,7 @@ class MyEvaluator(Evaluator):
 
 dataset.add_evaluator(MyEvaluator())
 ```
+
 1. You can add built-in evaluators to a dataset using the [`add_evaluator`][pydantic_evals.Dataset.add_evaluator] method.
 2. This custom evaluator returns a simple score based on whether the output matches the expected output.
 
@@ -162,8 +163,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
-from pydantic_ai.format_as_xml import format_as_xml
+from pydantic_ai import Agent, format_as_xml
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import IsInstance, LLMJudge
 
@@ -180,7 +180,7 @@ class Recipe(BaseModel):
 
 recipe_agent = Agent(
     'groq:llama-3.3-70b-versatile',
-    result_type=Recipe,
+    output_type=Recipe,
     system_prompt=(
         'Generate a recipe to cook the dish that meets the dietary restrictions.'
     ),
@@ -189,7 +189,7 @@ recipe_agent = Agent(
 
 async def transform_recipe(customer_order: CustomerOrder) -> Recipe:  # (2)!
     r = await recipe_agent.run(format_as_xml(customer_order))
-    return r.data
+    return r.output
 
 
 recipe_dataset = Dataset[CustomerOrder, Recipe, Any](  # (3)!
@@ -282,7 +282,6 @@ cases:
     dietary_restriction: vegetarian
   metadata:
     focus: vegetarian
-  expected_output: null
   evaluators:
   - LLMJudge: Recipe should not contain meat or animal products
 - name: gluten_free_recipe
@@ -291,7 +290,6 @@ cases:
     dietary_restriction: gluten-free
   metadata:
     focus: gluten-free
-  expected_output: null
   evaluators:
   - LLMJudge: Recipe should not contain gluten or wheat products
 evaluators:
@@ -537,6 +535,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from pydantic_evals import Dataset
 from pydantic_evals.generation import generate_dataset
 
 
@@ -569,9 +568,7 @@ class MetadataType(BaseModel, use_attribute_docstrings=True):  # (3)!
 
 async def main():
     dataset = await generate_dataset(  # (4)!
-        inputs_type=QuestionInputs,
-        output_type=AnswerOutput,
-        metadata_type=MetadataType,
+        dataset_type=Dataset[QuestionInputs, AnswerOutput, MetadataType],
         n_examples=2,
         extra_instructions="""
         Generate question-answer pairs about world capitals and landmarks.
@@ -624,14 +621,13 @@ from pathlib import Path
 
 from generate_dataset_example import AnswerOutput, MetadataType, QuestionInputs
 
+from pydantic_evals import Dataset
 from pydantic_evals.generation import generate_dataset
 
 
 async def main():
     dataset = await generate_dataset(  # (1)!
-        inputs_type=QuestionInputs,
-        output_type=AnswerOutput,
-        metadata_type=MetadataType,
+        dataset_type=Dataset[QuestionInputs, AnswerOutput, MetadataType],
         n_examples=2,
         extra_instructions="""
         Generate question-answer pairs about world capitals and landmarks.

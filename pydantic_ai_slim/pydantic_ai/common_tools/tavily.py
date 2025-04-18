@@ -63,8 +63,6 @@ class TavilySearchTool:
             The search results.
         """
         results = await self.client.search(query, search_depth=search_deep, topic=topic, time_range=time_range)  # type: ignore[reportUnknownMemberType]
-        if not results['results']:
-            raise RuntimeError('No search results found.')
         return tavily_search_ta.validate_python(results['results'])
 
 

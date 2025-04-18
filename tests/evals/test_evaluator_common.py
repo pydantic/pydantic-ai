@@ -222,10 +222,10 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     assert result.value is True
     assert result.reason == 'Test passed'
 
-    mock_judge_output.assert_called_once_with('Hello world', 'Content contains a greeting', 'openai:gpt-4o')
+    mock_judge_output.assert_called_once_with('Hello world', 'Content contains a greeting', None)
 
     # Test with input
-    evaluator = LLMJudge(rubric='Output contains input', include_input=True)
+    evaluator = LLMJudge(rubric='Output contains input', include_input=True, model='openai:gpt-4o')
     result = await evaluator.evaluate(ctx)
     assert isinstance(result, EvaluationReason)
     assert result.value is True

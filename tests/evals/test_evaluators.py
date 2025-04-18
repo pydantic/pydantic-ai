@@ -7,6 +7,11 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
 
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import Usage
+
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -106,6 +111,34 @@ async def test_evaluator_spec_serialization():
     spec_single_arg = EvaluatorSpec(name='MyEvaluator', arguments=single_arg)
     assert adapter.dump_python(spec_single_arg) == snapshot({'name': 'MyEvaluator', 'arguments': ('value1',)})
     assert adapter.dump_python(spec_single_arg, context={'use_short_form': True}) == snapshot({'MyEvaluator': 'value1'})
+
+
+async def test_llm_judge_serialization():
+    # Ensure models are serialized based on their system + name when used with LLMJudge
+
+    class MyModel(Model):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> tuple[ModelResponse, Usage]:
+            raise NotImplementedError
+
+        @property
+        def model_name(self) -> str:
+            return 'my-model'
+
+        @property
+        def system(self) -> str:
+            return 'my-system'
+
+    adapter = TypeAdapter(Evaluator)
+
+    assert adapter.dump_python(LLMJudge(rubric='my rubric', model=MyModel())) == {
+        'name': 'LLMJudge',
+        'arguments': {'model': 'my-system:my-model', 'rubric': 'my rubric'},
+    }
 
 
 async def test_evaluator_call(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
