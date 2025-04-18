@@ -27,3 +27,8 @@ body:
       label: References
       description: |
         Please add any links or references that might help us understand your feature request better. 📚
+
+  - type: markdown
+    attributes:
+      value: |
+        *If you're interested in this feature, please add a 👍 reaction to the issue to help us prioritize.*
