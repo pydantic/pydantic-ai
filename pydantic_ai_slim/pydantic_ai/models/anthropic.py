@@ -239,6 +239,7 @@ class AnthropicModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
                 extra_headers={'User-Agent': get_user_agent()},
+                extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:

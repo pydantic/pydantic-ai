@@ -284,6 +284,7 @@ class OpenAIModel(Model):
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 extra_headers={'User-Agent': get_user_agent()},
+                extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
@@ -623,6 +624,7 @@ class OpenAIResponsesModel(Model):
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 extra_headers={'User-Agent': get_user_agent()},
+                extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
