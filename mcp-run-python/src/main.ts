@@ -15,15 +15,16 @@ const VERSION = '0.0.13'
 
 export async function main() {
   const { args } = Deno
-  if (args.length === 1 && args[0] === 'stdio') {
-    await runStdio()
+  const flags = parseArgs(args, {
+    string: ['port', 'functions'],
+    default: { port: '3001' },
+  })
+  const functions = flags.functions ? flags.functions.split(',') : []
+  if (args.length >= 1 && args[0] === 'stdio') {
+    await runStdio(functions)
   } else if (args.length >= 1 && args[0] === 'sse') {
-    const flags = parseArgs(Deno.args, {
-      string: ['port'],
-      default: { port: '3001' },
-    })
     const port = parseInt(flags.port)
-    runSse(port)
+    runSse(functions, port)
   } else if (args.length === 1 && args[0] === 'warmup') {
     await warmup()
   } else {
@@ -34,7 +35,8 @@ Invalid arguments.
 Usage: deno run -N -R=node_modules -W=node_modules --node-modules-dir=auto jsr:@pydantic/mcp-run-python [stdio|sse|warmup]
 
 options:
-  --port <port>  Port to run the SSE server on (default: 3001)`,
+  --port <port>  Port to run the SSE server on (default: 3001)
+  --functions <client-function-names> Comma separated list of client functions which the server can call`,
     )
     Deno.exit(1)
   }
@@ -43,7 +45,7 @@ options:
 /*
  * Create an MCP server with the `run_python_code` tool registered.
  */
-function createServer(): McpServer {
+function createServer(functions: string[]): McpServer {
   const server = new McpServer(
     {
       name: 'MCP Run Python',
@@ -85,29 +87,46 @@ print('python code here')
     { python_code: z.string().describe('Python code to run') },
     async ({ python_code }: { python_code: string }) => {
       const logPromises: Promise<void>[] = []
-      const result = await runCode([{
+      const mainPy = {
         name: 'main.py',
         content: python_code,
         active: true,
-      }], (level, data) => {
+      }
+      const codeLog = (level: LoggingLevel, data: string) => {
         if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
           logPromises.push(server.server.sendLoggingMessage({ level, data }))
         }
-      })
+      }
+      async function clientCallback(func: string, args?: string, kwargs?: string) {
+        const { content } = await server.server.createMessage({
+          messages: [],
+          maxTokens: 0,
+          systemPrompt: '__python_function_call__',
+          metadata: { func, args, kwargs },
+        })
+        if (content.type !== 'text') {
+          throw new Error('Expected return content type to be "text"')
+        } else {
+          return content.text
+        }
+      }
+
+      const result = await runCode([mainPy], codeLog, functions, clientCallback)
       await Promise.all(logPromises)
       return {
         content: [{ type: 'text', text: asXml(result) }],
       }
     },
   )
+
   return server
 }
 
 /*
  * Run the MCP server using the SSE transport, e.g. over HTTP.
  */
-function runSse(port: number) {
-  const mcpServer = createServer()
+function runSse(functions: string[], port: number) {
+  const mcpServer = createServer(functions)
   const transports: { [sessionId: string]: SSEServerTransport } = {}
 
   const server = http.createServer(async (req, res) => {
@@ -162,8 +181,8 @@ function runSse(port: number) {
 /*
  * Run the MCP server using the Stdio transport.
  */
-async function runStdio() {
-  const mcpServer = createServer()
+async function runStdio(functions: string[]) {
+  const mcpServer = createServer(functions)
   const transport = new StdioServerTransport()
   await mcpServer.connect(transport)
 }

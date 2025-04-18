@@ -10,15 +10,17 @@ import logging
 import re
 import sys
 import traceback
-from collections.abc import Iterable, Iterator
+from collections.abc import Awaitable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, Callable, Literal, TypedDict
 
 import micropip
 import pyodide_js
 import tomllib
+from pydantic import ConfigDict, TypeAdapter
+from pydantic_core import to_json
 from pyodide.code import find_imports
 
 __all__ = 'prepare_env', 'dump_json'
@@ -31,18 +33,18 @@ class File(TypedDict):
 
 
 @dataclass
-class Success:
+class PrepSuccess:
     dependencies: list[str] | None
     kind: Literal['success'] = 'success'
 
 
 @dataclass
-class Error:
+class PrepError:
     message: str
     kind: Literal['error'] = 'error'
 
 
-async def prepare_env(files: list[File]) -> Success | Error:
+async def prepare_env(files: list[File]) -> PrepSuccess | PrepError:
     sys.setrecursionlimit(400)
 
     cwd = Path.cwd()
@@ -68,20 +70,62 @@ async def prepare_env(files: list[File]) -> Success | Error:
             except Exception:
                 with open(logs_filename) as f:
                     logs = f.read()
-                return Error(message=f'{logs} {traceback.format_exc()}')
+                return PrepError(message=f'{logs} {traceback.format_exc()}')
 
-    return Success(dependencies=dependencies)
+    return PrepSuccess(dependencies=dependencies)
 
 
-def dump_json(value: Any) -> str | None:
-    from pydantic_core import to_json
-
+def pretty_result(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
         return value
     else:
         return to_json(value, indent=2, fallback=_json_fallback).decode()
+
+
+def dump_json(value: Any) -> str | None:
+    if value:
+        return to_json(value, fallback=_json_fallback).decode()
+
+
+class CallSuccess(TypedDict):
+    return_value: Any
+    kind: Literal['success']
+
+
+class CallError(TypedDict):
+    exc_type: str
+    message: str
+    kind: Literal['error']
+
+
+call_result_ta: TypeAdapter[CallSuccess | CallError] = TypeAdapter(
+    CallSuccess | CallError, config=ConfigDict(defer_build=True)
+)
+
+
+@dataclass(slots=True)
+class ClientCallback:
+    _func_name: str
+    _callback: Callable[[tuple[Any, ...], dict[str, Any]], Awaitable[str]]
+
+    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        result_json = await self._callback(args, kwargs)
+        result = call_result_ta.validate_json(result_json)
+        if result['kind'] == 'success':
+            return result['return_value']
+
+        exc_type, message = result['exc_type'], result['message']
+        try:
+            exc_type_ = __builtins__[exc_type]
+        except KeyError:
+            raise Exception(f'{message}\n(Raised exception type: {exc_type})')
+        else:
+            raise exc_type_(message)
+
+    def __repr__(self) -> str:
+        return f'<client callback {self._func_name}>'
 
 
 def _json_fallback(value: Any) -> Any:

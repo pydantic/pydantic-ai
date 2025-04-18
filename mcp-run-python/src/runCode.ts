@@ -1,4 +1,4 @@
-/* eslint @typescript-eslint/no-explicit-any: off */
+// deno-lint-ignore-file no-explicit-any
 import { loadPyodide } from 'pyodide'
 import { preparePythonCode } from './prepareEnvCode.ts'
 import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js'
@@ -12,10 +12,11 @@ export interface CodeFile {
 export async function runCode(
   files: CodeFile[],
   log: (level: LoggingLevel, data: string) => void,
+  functionNames?: string[],
+  clientCallback?: (func: string, args?: string, kwargs?: string) => Promise<string>,
 ): Promise<RunSuccess | RunError> {
   // remove once https://github.com/pyodide/pyodide/pull/5514 is released
   const realConsoleLog = console.log
-  // deno-lint-ignore no-explicit-any
   console.log = (...args: any[]) => log('debug', args.join(' '))
 
   const output: string[] = []
@@ -54,9 +55,20 @@ export async function runCode(
 
   pathlib.Path(`${dirPath}/${moduleName}.py`).write_text(preparePythonCode)
 
-  const preparePyEnv: PreparePyEnv = pyodide.pyimport(moduleName)
+  const { prepare_env, ClientCallback, dump_json, pretty_result }: PreparePyEnv = pyodide.pyimport(moduleName)
 
-  const prepareStatus = await preparePyEnv.prepare_env(pyodide.toPy(files))
+  const prepareStatus = await prepare_env(pyodide.toPy(files))
+
+  const globals: { [key: string]: string | ClientCallbackType } = { __name__: '__main__' }
+
+  if (functionNames && clientCallback) {
+    for (const functionName of functionNames) {
+      globals[functionName] = ClientCallback(
+        functionName,
+        async (args, kwargs) => pyodide.toPy(await clientCallback(functionName, dump_json(args), dump_json(kwargs))),
+      )
+    }
+  }
 
   let runResult: RunSuccess | RunError
   if (prepareStatus.kind == 'error') {
@@ -70,14 +82,14 @@ export async function runCode(
     const activeFile = files.find((f) => f.active)! || files[0]
     try {
       const rawValue = await pyodide.runPythonAsync(activeFile.content, {
-        globals: pyodide.toPy({ __name__: '__main__' }),
+        globals: pyodide.toPy(globals),
         filename: activeFile.name,
       })
       runResult = {
         status: 'success',
         dependencies,
         output,
-        returnValueJson: preparePyEnv.dump_json(rawValue),
+        returnValueJson: pretty_result(rawValue),
       }
     } catch (err) {
       runResult = {
@@ -99,7 +111,7 @@ interface RunSuccess {
   // we could record stdout and stderr separately, but I suspect simplicity is more important
   output: string[]
   dependencies: string[]
-  returnValueJson: string | null
+  returnValueJson: string | undefined
 }
 
 interface RunError {
@@ -144,7 +156,6 @@ function escapeClosing(closingTag: string): (str: string) => string {
   return (str) => str.replace(regex, onMatch)
 }
 
-// deno-lint-ignore no-explicit-any
 function formatError(err: any): string {
   let errStr = err.toString()
   errStr = errStr.replace(/^PythonError: +/, '')
@@ -153,6 +164,13 @@ function formatError(err: any): string {
     / {2}File "\/lib\/python\d+\.zip\/_pyodide\/.*\n {4}.*\n(?: {4,}\^+\n)?/g,
     '',
   )
+  // remove frames from _prepare_env.py
+  errStr = errStr.replace(
+    / {2}File "\/tmp\/mcp_run_python\/_prepare_env.py".*\n {4,}.+\n/g,
+    '',
+  )
+  // remove trailing newlines
+  errStr = errStr.replace(/\n+$/, '')
   return errStr
 }
 
@@ -164,8 +182,30 @@ interface PrepareError {
   kind: 'error'
   message: string
 }
+
+interface PyObject {
+  toJs(): any
+}
+
+interface CallSuccess {
+  kind: 'success'
+  return_value: any
+}
+
+interface CallError {
+  kind: 'error'
+  exc_type: string
+  message: string
+}
+
+type ClientCallbackType = (
+  func_name: string,
+  callback: (args: PyObject, kwargs: PyObject) => Promise<CallSuccess | CallError>,
+) => any
+
 interface PreparePyEnv {
   prepare_env: (files: CodeFile[]) => Promise<PrepareSuccess | PrepareError>
-  // deno-lint-ignore no-explicit-any
-  dump_json: (value: any) => string | null
+  ClientCallback: ClientCallbackType
+  pretty_result: (value: any) => string | undefined
+  dump_json: (value: any) => string | undefined
 }
