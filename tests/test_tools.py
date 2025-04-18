@@ -549,6 +549,20 @@ def test_init_plain_tool_invalid():
         Tool(ctx_tool, takes_ctx=False)
 
 
+@pytest.mark.parametrize(
+    'args, expected',
+    [
+        ('', {}),
+        ({'x': 42, 'y': 'value'}, {'x': 42, 'y': 'value'}),
+        ('{"a": 1, "b": "c"}', {'a': 1, 'b': 'c'}),
+    ],
+)
+def test_tool_call_part_args_as_dict(args: Union[str, dict[str, Any]], expected: dict[str, Any]):
+    part = ToolCallPart(tool_name='foo', args=args)
+    result = part.args_as_dict()
+    assert result == expected
+
+
 def test_return_pydantic_model():
     agent = Agent('test')
 
