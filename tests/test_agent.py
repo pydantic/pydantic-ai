@@ -8,10 +8,11 @@ import httpx
 import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, TypeAdapter, field_validator
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
+from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -1869,3 +1870,16 @@ def test_empty_final_response():
             ModelResponse(parts=[], model_name='function:llm:', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
+
+
+def test_agent_run_result_serialization() -> None:
+    agent = Agent('test', output_type=Foo)
+    result = agent.run_sync('Hello')
+
+    # Check that dump_json doesn't raise an error
+    adapter = TypeAdapter(AgentRunResult[Foo])
+    serialized_data = adapter.dump_json(result)
+
+    # Check that we can load the data back
+    deserialized_result = adapter.validate_json(serialized_data)
+    assert deserialized_result == result
