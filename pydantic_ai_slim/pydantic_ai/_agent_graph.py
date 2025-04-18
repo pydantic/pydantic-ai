@@ -397,7 +397,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         async for _event in stream:
             pass
 
-    async def _run_stream(
+    async def _run_stream(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         if self._events_iterator is None:
