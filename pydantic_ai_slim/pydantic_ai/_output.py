@@ -19,6 +19,7 @@ T = TypeVar('T')
 """An invariant TypeVar."""
 
 
+# TODO: Deprecate output validators in favor of ToolOutput with a call
 @dataclass
 class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
     function: OutputValidatorFunc[AgentDepsT, OutputDataT_inv]
@@ -98,12 +99,14 @@ class OutputSchema(Generic[OutputDataT]):
         if output_type is str:
             return None
 
+        call: Callable[..., T | Awaitable[T]] | None = None
         if isinstance(output_type, ToolOutput):
             # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
             name = output_type.name
             description = output_type.description
             output_type_ = output_type.output_type
             strict = output_type.strict
+            call = output_type.call
         else:
             output_type_ = output_type
 
@@ -115,6 +118,7 @@ class OutputSchema(Generic[OutputDataT]):
 
         tools: dict[str, OutputSchemaTool[T]] = {}
         if args := get_union_args(output_type_):
+            # Note: this will not be hit if output_type_ is a ToolOutput since get_union_args will return ()
             for i, arg in enumerate(args, start=1):
                 tool_name = raw_tool_name = union_tool_name(name, arg)
                 while tool_name in tools:
@@ -122,7 +126,12 @@ class OutputSchema(Generic[OutputDataT]):
                 tools[tool_name] = cast(
                     OutputSchemaTool[T],
                     OutputSchemaTool(
-                        output_type=arg, name=tool_name, description=description, multiple=True, strict=strict
+                        output_type=arg,
+                        call=call,
+                        name=tool_name,
+                        description=description,
+                        multiple=True,
+                        strict=strict,
                     ),
                 )
         else:
@@ -130,7 +139,12 @@ class OutputSchema(Generic[OutputDataT]):
             tools[name] = cast(
                 OutputSchemaTool[T],
                 OutputSchemaTool(
-                    output_type=output_type_, name=name, description=description, multiple=False, strict=strict
+                    output_type=output_type_,
+                    call=call,
+                    name=name,
+                    description=description,
+                    multiple=False,
+                    strict=strict,
                 ),
             )
 
@@ -171,18 +185,26 @@ DEFAULT_DESCRIPTION = 'The final response which ends this conversation'
 class OutputSchemaTool(Generic[OutputDataT]):
     tool_def: ToolDefinition
     type_adapter: TypeAdapter[Any]
+    call: Callable[..., OutputDataT | Awaitable[OutputDataT]] | None
 
     def __init__(
-        self, *, output_type: type[OutputDataT], name: str, description: str | None, multiple: bool, strict: bool | None
+        self,
+        *,
+        output_type: type[OutputDataT],
+        call: Callable[..., OutputDataT | Awaitable[OutputDataT]] | None,
+        name: str,
+        description: str | None,
+        multiple: bool,
+        strict: bool | None,
     ):
         """Build a OutputSchemaTool from a response type."""
-        if _utils.is_model_like(output_type):
+        self.call = call
+
+        outer_typed_dict_key: str | None = None
+        if call is not None:
+            self.type_adapter = TypeAdapter(call)
+        elif _utils.is_model_like(output_type):
             self.type_adapter = TypeAdapter(output_type)
-            outer_typed_dict_key: str | None = None
-            # noinspection PyArgumentList
-            parameters_json_schema = _utils.check_object_json_schema(
-                self.type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
-            )
         else:
             response_data_typed_dict = TypedDict(  # noqa: UP013
                 'response_data_typed_dict',
@@ -190,10 +212,12 @@ class OutputSchemaTool(Generic[OutputDataT]):
             )
             self.type_adapter = TypeAdapter(response_data_typed_dict)
             outer_typed_dict_key = 'response'
-            # noinspection PyArgumentList
-            parameters_json_schema = _utils.check_object_json_schema(
-                self.type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
-            )
+
+        # noinspection PyArgumentList
+        parameters_json_schema = _utils.check_object_json_schema(
+            self.type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+        )
+        if outer_typed_dict_key is not None:
             # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
             parameters_json_schema.pop('title')
 
@@ -215,14 +239,14 @@ class OutputSchemaTool(Generic[OutputDataT]):
             strict=strict,
         )
 
-    def validate(
+    async def execute(
         self, tool_call: _messages.ToolCallPart, allow_partial: bool = False, wrap_validation_errors: bool = True
     ) -> OutputDataT:
-        """Validate an output message.
+        """Execute the tool call. In the case that the `call` attribute is None, this just amounts to validation.
 
         Args:
-            tool_call: The tool call from the LLM to validate.
-            allow_partial: If true, allow partial validation.
+            tool_call: The tool call from the LLM to execute.
+            allow_partial: If true, allow partial validation (prior to execution if there is a call).
             wrap_validation_errors: If true, wrap the validation errors in a retry message.
 
         Returns:
@@ -234,6 +258,13 @@ class OutputSchemaTool(Generic[OutputDataT]):
                 output = self.type_adapter.validate_json(tool_call.args, experimental_allow_partial=pyd_allow_partial)
             else:
                 output = self.type_adapter.validate_python(tool_call.args, experimental_allow_partial=pyd_allow_partial)
+        except ModelRetry as e:
+            m = _messages.RetryPromptPart(
+                tool_name=tool_call.tool_name,
+                content=e.message,
+                tool_call_id=tool_call.tool_call_id,
+            )
+            raise ToolRetryError(m) from e
         except ValidationError as e:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -247,7 +278,11 @@ class OutputSchemaTool(Generic[OutputDataT]):
         else:
             if k := self.tool_def.outer_typed_dict_key:
                 output = output[k]
-            return output
+
+        if self.call and inspect.isawaitable(output):
+            # The check for `self.call` is just there to skip the `isawaitable` check when no call is present
+            output = await output
+        return output
 
 
 def union_tool_name(base_name: str | None, union_arg: Any) -> str:
