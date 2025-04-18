@@ -47,11 +47,11 @@ interactions:
       content:
       - text: Let me get the image and check what fruit it contains.
         type: text
-      - id: toolu_01GP7S71uzF8HZJLLzBFhCGp
+      - id: toolu_019NraYuFG6RbdmXCoxPKmtk
         input: {}
         name: get_image
         type: tool_use
-      id: msg_01NK8ACxV17ivNMiRxpE6Wm3
+      id: msg_01FFNWKyRoRRQo8rNQ9uWn9i
       model: claude-3-5-sonnet-20241022
       role: assistant
       stop_reason: tool_use
@@ -90,7 +90,7 @@ interactions:
       - content:
         - text: Let me get the image and check what fruit it contains.
           type: text
-        - id: toolu_01GP7S71uzF8HZJLLzBFhCGp
+        - id: toolu_019NraYuFG6RbdmXCoxPKmtk
           input: {}
           name: get_image
           type: tool_use
@@ -98,7 +98,7 @@ interactions:
       - content:
         - content: See file 1.
           is_error: false
-          tool_use_id: toolu_01GP7S71uzF8HZJLLzBFhCGp
+          tool_use_id: toolu_019NraYuFG6RbdmXCoxPKmtk
           type: tool_result
         - text: 'This is file 1:'
           type: text
@@ -125,7 +125,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '631'
+      - '642'
       content-type:
       - application/json
       transfer-encoding:
@@ -133,10 +133,10 @@ interactions:
     parsed_body:
       content:
       - text: The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with
-          small black seeds arranged in a circular pattern around a white center core. The slice shows the typical cross-section
-          view of a kiwi with its distinctive radiating pattern and fuzzy brown skin visible around the edge.
+          small black seeds arranged in a circular pattern around a white center core. The kiwi's flesh has the typical fibrous
+          texture radiating from the center, and you can also see the fuzzy brown skin on the exterior edge of the slice.
         type: text
-      id: msg_01Tz1ufijp4cKBCMwfXsirYq
+      id: msg_01NwNqdXFTCYU4CaBwUWAS5S
       model: claude-3-5-sonnet-20241022
       role: assistant
       stop_reason: end_turn
@@ -146,7 +146,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 2019
-        output_tokens: 69
+        output_tokens: 75
     status:
       code: 200
       message: OK

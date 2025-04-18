@@ -233,7 +233,7 @@ async def test_image_as_binary_content_tool_response(
         return image_content
 
     result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
-    assert 'kiwi' in result.output
+    assert result.output == snapshot('The fruit in the image is a kiwi.')
 
 
 async def test_image_as_binary_content_input(

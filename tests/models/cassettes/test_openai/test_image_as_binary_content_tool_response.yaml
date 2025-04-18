@@ -49,7 +49,7 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '408'
+      - '419'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -70,10 +70,10 @@ interactions:
           - function:
               arguments: '{}'
               name: get_image
-            id: call_CzWeF2Dl3IjNLuItiMyJVtbG
+            id: call_UW4lGJ6K4GuC52hnC3dIwAjM
             type: function
-      created: 1744932074
-      id: chatcmpl-BNSpeh1GuHnSUNaFuTQRGFCB5KJvG
+      created: 1744983790
+      id: chatcmpl-BNgHm29oGlQfbsX1xuF2FLdihgVSS
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
@@ -106,8 +106,8 @@ interactions:
       content-type:
       - application/json
       cookie:
-      - __cf_bm=77NF3JW0pM_C2Y_jR67Otekbn.jbMyHXL_KFz_0umvc-1744932074-1.0.1.1-LaMaPUTc90PPf8ruLRh0TSZZZp0ng0GcDyoN3DaNRhSvEXoIavc5fYa.1cvsDCVzqrIPkL9rwDR7HMIW.txKhLM.LlIf2SDxn05J95VGXK8;
-        _cfuvid=ApBVMIPFw_HcDumjoezdbFZB6CZeUDcJGGaH8sskwyE-1744932074434-0.0.1.1-604800000
+      - __cf_bm=0tJ7M9u9Y7kpNFCZRFeB5_iqMGD14SgFxMQpyE.t8TU-1744983791-1.0.1.1-QZApOOMBmlLbDhYgSilpGjdCpAuaW4e3HPhXydDzjj06nlEVk56ohiK4FMU78BMnxmDmOiDOm5Eg2KUypr2U96af_0ZxolYKGt.49xUB9mo;
+        _cfuvid=egGmj8FO33zqQ5c3h2aJxWGUjxEo6Re3CThcp8EFlkg-1744983791054-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -122,11 +122,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_image
-          id: call_CzWeF2Dl3IjNLuItiMyJVtbG
+          id: call_UW4lGJ6K4GuC52hnC3dIwAjM
           type: function
       - content: See file 1.
         role: tool
-        tool_call_id: call_CzWeF2Dl3IjNLuItiMyJVtbG
+        tool_call_id: call_UW4lGJ6K4GuC52hnC3dIwAjM
       - content:
         - text: 'This is file 1:'
           type: text
@@ -163,7 +163,7 @@ interactions:
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '2217'
+      - '2332'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -180,12 +180,12 @@ interactions:
           content: The fruit in the image is a kiwi.
           refusal: null
           role: assistant
-      created: 1744932148
-      id: chatcmpl-BNSqqDpkpAR2xYTCOEodG8nVxKHLm
+      created: 1744983793
+      id: chatcmpl-BNgHp8GmT0a7QMEAqGQEIfD8Cwqvl
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_55d88aaf2f
+      system_fingerprint: fp_90122d973c
       usage:
         completion_tokens: 11
         completion_tokens_details:
