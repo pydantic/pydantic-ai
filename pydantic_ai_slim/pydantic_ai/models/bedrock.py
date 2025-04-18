@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -252,11 +253,16 @@ class BedrockConverseModel(Model):
         items: list[ModelResponsePart] = []
         if message := response['output'].get('message'):
             for item in message['content']:
+                if reasoning_content := item.get('reasoningContent'):
+                    reasoning_text = reasoning_content.get('reasoningText')
+                    if reasoning_text:
+                        thinking_part = ThinkingPart(content=reasoning_text['text'])
+                        if reasoning_signature := reasoning_text.get('signature'):
+                            thinking_part.signature = reasoning_signature
+                        items.append(thinking_part)
                 if text := item.get('text'):
                     items.append(TextPart(content=text))
-                else:
-                    tool_use = item.get('toolUse')
-                    assert tool_use is not None, f'Found a content that is not a text or tool use: {item}'
+                elif tool_use := item.get('toolUse'):
                     items.append(
                         ToolCallPart(
                             tool_name=tool_use['name'],
