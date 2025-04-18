@@ -55,18 +55,15 @@ export async function runCode(
 
   pathlib.Path(`${dirPath}/${moduleName}.py`).write_text(preparePythonCode)
 
-  const { prepare_env, ClientCallback, dump_json, pretty_result }: PreparePyEnv = pyodide.pyimport(moduleName)
+  const { prepare_env, RegisterFunction, dump_json }: PreparePyEnv = pyodide.pyimport(moduleName)
 
   const prepareStatus = await prepare_env(pyodide.toPy(files))
 
-  const globals: { [key: string]: string | ClientCallbackType } = { __name__: '__main__' }
+  const globals: { [key: string]: string | RegisterFunctionType } = { __name__: '__main__' }
 
   if (functionNames && clientCallback) {
     for (const functionName of functionNames) {
-      globals[functionName] = ClientCallback(
-        functionName,
-        async (args, kwargs) => pyodide.toPy(await clientCallback(functionName, dump_json(args), dump_json(kwargs))),
-      )
+      globals[functionName] = RegisterFunction(functionName, clientCallback)
     }
   }
 
@@ -89,7 +86,7 @@ export async function runCode(
         status: 'success',
         dependencies,
         output,
-        returnValueJson: pretty_result(rawValue),
+        returnValueJson: dump_json(rawValue),
       }
     } catch (err) {
       runResult = {
@@ -187,25 +184,13 @@ interface PyObject {
   toJs(): any
 }
 
-interface CallSuccess {
-  kind: 'success'
-  return_value: any
-}
-
-interface CallError {
-  kind: 'error'
-  exc_type: string
-  message: string
-}
-
-type ClientCallbackType = (
+type RegisterFunctionType = (
   func_name: string,
-  callback: (args: PyObject, kwargs: PyObject) => Promise<CallSuccess | CallError>,
+  callback: (func_name: string, args?: string, kwargs?: string) => Promise<string>,
 ) => any
 
 interface PreparePyEnv {
   prepare_env: (files: CodeFile[]) => Promise<PrepareSuccess | PrepareError>
-  ClientCallback: ClientCallbackType
-  pretty_result: (value: any) => string | undefined
+  RegisterFunction: RegisterFunctionType
   dump_json: (value: any) => string | undefined
 }

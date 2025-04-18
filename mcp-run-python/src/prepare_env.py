@@ -75,18 +75,13 @@ async def prepare_env(files: list[File]) -> PrepSuccess | PrepError:
     return PrepSuccess(dependencies=dependencies)
 
 
-def pretty_result(value: Any) -> str | None:
+def dump_json(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
         return value
     else:
         return to_json(value, indent=2, fallback=_json_fallback).decode()
-
-
-def dump_json(value: Any) -> str | None:
-    if value:
-        return to_json(value, fallback=_json_fallback).decode()
 
 
 class CallSuccess(TypedDict):
@@ -106,12 +101,12 @@ call_result_ta: TypeAdapter[CallSuccess | CallError] = TypeAdapter(
 
 
 @dataclass(slots=True)
-class ClientCallback:
+class RegisterFunction:
     _func_name: str
-    _callback: Callable[[tuple[Any, ...], dict[str, Any]], Awaitable[str]]
+    _callback: Callable[[str, str | None, str | None], Awaitable[str]]
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        result_json = await self._callback(args, kwargs)
+        result_json = await self._callback(self._func_name, _dump_args(args), _dump_args(kwargs))
         result = call_result_ta.validate_json(result_json)
         if result['kind'] == 'success':
             return result['return_value']
@@ -126,6 +121,11 @@ class ClientCallback:
 
     def __repr__(self) -> str:
         return f'<client callback {self._func_name}>'
+
+
+def _dump_args(value: Any) -> str | None:
+    if value:
+        return to_json(value, fallback=_json_fallback).decode()
 
 
 def _json_fallback(value: Any) -> Any:
