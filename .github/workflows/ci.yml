@@ -150,15 +150,15 @@ jobs:
       - run: mkdir coverage
 
       # run tests with just `pydantic-ai-slim` dependencies
-      - run: uv run --package pydantic-ai-slim coverage run -m pytest
+      - run: uv run --package pydantic-ai-slim coverage run -m pytest --durations=100
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
 
-      - run: uv run coverage run -m pytest
+      - run: uv run coverage run -m pytest --durations=100
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-standard
 
-      - run: uv run --all-extras coverage run -m pytest
+      - run: uv run --all-extras coverage run -m pytest --durations=100
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
 
@@ -169,7 +169,7 @@ jobs:
         if: matrix.python-version != '3.9'
         run: |
           unset UV_FROZEN
-          uv run --all-extras --resolution lowest-direct coverage run -m pytest
+          uv run --all-extras --resolution lowest-direct coverage run -m pytest --durations=100
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-lowest-versions
 
