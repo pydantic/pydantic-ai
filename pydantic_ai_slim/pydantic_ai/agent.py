@@ -1728,7 +1728,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             graph_run_result.output.tool_name,
             graph_run_result.state,
             self._graph_run.deps.new_message_index,
-            self._graph_run._span(required=False),  # type: ignore[reportPrivateUsage]
+            self._traceparent(required=False),
         )
 
     def __aiter__(
