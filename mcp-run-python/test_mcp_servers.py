@@ -147,7 +147,6 @@ Traceback (most recent call last):
     print(unknown)
           ^^^^^^^
 NameError: name 'unknown' is not defined
-
 </error>\
 """),
             id='undefined-variable',
