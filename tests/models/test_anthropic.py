@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -29,7 +30,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -62,6 +63,7 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
     pytest.mark.anyio,
+    pytest.mark.vcr,
 ]
 
 # Type variable for generic AsyncStream
@@ -345,7 +347,6 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     )
 
 
-@pytest.mark.vcr
 async def test_multiple_parallel_tool_calls(allow_model_requests: None):
     async def retrieve_entity_info(name: str) -> str:
         """Get the knowledge about the given entity."""
@@ -555,7 +556,6 @@ async def test_stream_structured(allow_model_requests: None):
         assert tool_called
 
 
-@pytest.mark.vcr()
 async def test_image_url_input(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -571,7 +571,6 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
     )
 
 
-@pytest.mark.vcr()
 async def test_image_url_input_invalid_mime_type(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -619,7 +618,6 @@ def test_model_status_error(allow_model_requests: None) -> None:
     )
 
 
-@pytest.mark.vcr()
 async def test_document_binary_content_input(
     allow_model_requests: None, anthropic_api_key: str, document_content: BinaryContent
 ):
@@ -632,7 +630,6 @@ async def test_document_binary_content_input(
     )
 
 
-@pytest.mark.vcr()
 async def test_document_url_input(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -645,7 +642,6 @@ async def test_document_url_input(allow_model_requests: None, anthropic_api_key:
     )
 
 
-@pytest.mark.vcr()
 async def test_text_document_url_input(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -684,7 +680,6 @@ def test_init_with_provider_string(env: TestEnv):
     assert model.client is not None
 
 
-@pytest.mark.vcr()
 async def test_anthropic_model_instructions(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-opus-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -703,6 +698,96 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
                 model_name='claude-3-opus-20240229',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_model_thinking_part(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-7-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+This is a basic question about street safety. I should provide a clear, step-by-step explanation of how to safely cross a street, which is important information for pedestrian safety.
+
+I'll include:
+1. Finding the right place to cross (crosswalks, intersections)
+2. Checking for traffic signals
+3. Looking both ways for approaching vehicles
+4. Making eye contact with drivers
+5. Walking (not running) across the street
+6. Staying alert while crossing
+
+I'll keep my answer straightforward but comprehensive enough to cover the safety basics.\
+""",
+                        signature='ErUBCkYIAhgCIkD6Sf780fvjL4z6Yhyi47E7OTaBUOozPicKLssA43+GnYsYdzS85o3UQzwQuV+Fu0+H3FEnUKyvBRGa+DDFRIZsEgwmJ7GKgytXI8oSssoaDOQwWyeED8Rn1NGmXSIwoZUSqGbh36VMg5xH0Rp7+9HzCcE1p8r0NFRY/YJ1l9rY6H3tOY55/eBrzfPayiK9Kh0XEK9GAM9LQgQPvaDlvDhdbDFQfcHoClFRoI4r4hgC',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                model_name='claude-3-7-sonnet-20250219',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
+                model_name='claude-3-7-sonnet-20250219',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+This question is asking me to apply similar principles for crossing a street to crossing a river, using analogy. Let me think about the comparable safety concerns and steps:
+
+Street crossing safety elements:
+1. Finding the right place to cross (crosswalks, intersections)
+2. Checking for signals/traffic
+3. Looking both ways
+4. Being visible
+5. Crossing at a steady pace
+6. Staying alert
+
+For river crossing, I'll need to address:
+1. Finding the right place to cross (bridges, shallow areas, designated crossing points)
+2. Checking conditions (current, depth)
+3. Looking for hazards
+4. Safety equipment/visibility
+5. Crossing method and pace
+6. Staying alert for changing conditions
+
+I'll structure my answer similarly to the street crossing response, focusing on safety while acknowledging the different hazards and methods relevant to river crossing.\
+""",
+                        signature='ErUBCkYIAhgCIkB2BUY56TQbBYl46yDgVWTsaHGOGtJS3iTMiAnLZZUSqxqwSlIDAu7VINAVKPkt1rPdRmQbD/pnQXmHUWPtg3JMEgwX5++FVgV41/x9mtwaDJHFKMSNqLpHIsc3jSIwus0KQjezK3yrtzqekYfYulN1ZGKj9Jo5JmVIjLpvM4eXKq9E3K1YP7fWB/radhmbKh3pq4qSkEvr+QrxqVUlJoAdTB4LFRD6aWbtXGyzKhgC',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
             ),
         ]

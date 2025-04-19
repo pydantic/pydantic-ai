@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.groq import GroqModelSettings
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
@@ -56,6 +57,7 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='groq not installed'),
     pytest.mark.anyio,
+    pytest.mark.vcr,
 ]
 
 
@@ -504,7 +506,6 @@ async def test_no_delta(allow_model_requests: None):
         assert result.is_complete
 
 
-@pytest.mark.vcr()
 async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('llama-3.2-11b-vision-preview', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m)
@@ -544,7 +545,6 @@ async def test_audio_as_binary_content_input(allow_model_requests: None, media_t
         await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
 
 
-@pytest.mark.vcr()
 async def test_image_as_binary_content_input(
     allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
 ) -> None:
@@ -588,7 +588,6 @@ async def test_init_with_provider_string():
         assert model.client is not None
 
 
-@pytest.mark.vcr()
 async def test_groq_model_instructions(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.')
@@ -607,3 +606,18 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
             ),
         ]
     )
+
+
+async def test_groq_model_thinking_part_raw_format(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('deepseek-r1-distill-llama-70b', provider=GroqProvider(api_key=groq_api_key))
+    settings = GroqModelSettings(groq_reasoning_format='raw')
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot()
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.all_messages() == snapshot()

@@ -554,6 +554,8 @@ class OpenAIResponsesModel(Model):
         for item in response.output:
             if item.type == 'reasoning':
                 for summary in item.summary:
+                    # NOTE: We use the same id for all summaries because we can merge them on the round trip.
+                    # The providers don't force the signature to be unique.
                     items.append(ThinkingPart(content=summary.text, signature=item.id))
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))

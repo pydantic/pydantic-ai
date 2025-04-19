@@ -1,46 +1,49 @@
-import asyncio
+from rich.pretty import pprint
 
 from pydantic_ai import Agent
-from pydantic_ai.models.anthropic import AnthropicModelSettings
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-agent = Agent(
-    model='anthropic:claude-3-7-sonnet-latest',
-    model_settings=AnthropicModelSettings(anthropic_thinking={'budget_tokens': 1024, 'type': 'enabled'}),
+model = OpenAIResponsesModel('o4-mini')
+agent = Agent(model=model)
+result = agent.run_sync(
+    'Tell me the steps to cross the street!',
+    model_settings=OpenAIResponsesModelSettings(
+        openai_reasoning_effort='high',
+        openai_reasoning_generate_summary='detailed',
+    ),
 )
+pprint(result.all_messages())
+
+# anthropic_agent = Agent('anthropic:claude-3-7-sonnet-latest')
+# result = anthropic_agent.run_sync(
+#     'Now make analogous steps to cross the river!',
+#     model_settings=AnthropicModelSettings(
+#         anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024},
+#     ),
+#     message_history=result.all_messages(),
+# )
+# pprint(result.all_messages())
+
+# groq_agent = Agent('groq:deepseek-r1-distill-llama-70b')
+# result = groq_agent.run_sync(
+#     'Tell me the steps to cross the ocean!',
+#     model_settings=GroqModelSettings(groq_reasoning_format='raw'),
+#     message_history=result.all_messages(),
+# )
+# pprint(result.all_messages())
+
+bedrock_agent = Agent('bedrock:us.deepseek.r1-v1:0')
+result = bedrock_agent.run_sync(
+    'Tell me the steps to cross the ocean!',
+    # message_history=result.all_messages(),
+)
+pprint(result.all_messages())
 
 
-@agent.tool_plain
-def sum(a: int, b: int) -> int:
-    """Get the sum of two numbers.
-
-    Args:
-        a: The first number.
-        b: The second number.
-
-    Returns:
-        The sum of the two numbers.
-    """
-    return a + b
-
-
-async def main():
-    result = await agent.run('Get me the sum of 1 and 2, using the sum tool.')
-    print(result.data)
-
-    result = await agent.run(
-        'Sum the previous result with 3.', model='openai:gpt-4o', message_history=result.all_messages()
-    )
-    print(result.data)
-
-    from rich.pretty import pprint
-
-    pprint(result.all_messages())
-    # async with agent.iter('Get me the sum of 1 and 2, using the sum tool.') as agent_run:
-    #     async for node in agent_run:
-    #         print(node)
-    #         print()
-    # print(agent_run.result)
-
-
-if __name__ == '__main__':
-    asyncio.run(main())
+# deepseek_agent = Agent('deepseek:deepseek-reasoner')
+# result = deepseek_agent.run_sync(
+#     'Tell me the steps to cross the ocean!',
+#     model_settings=OpenAIModelSettings(openai_reasoning_effort='high'),
+#     # message_history=result.all_messages(),
+# )
+# pprint(result.all_messages())
