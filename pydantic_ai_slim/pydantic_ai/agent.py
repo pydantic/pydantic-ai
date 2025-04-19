@@ -898,6 +898,49 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                     graph_ctx = agent_run.ctx
                     async with node._stream(graph_ctx) as streamed_response:  # pyright: ignore[reportPrivateUsage]
 
+                        async def handle_stream_event(
+                            event: _messages.ModelResponseStreamEvent,
+                            has_tool_call: bool,
+                            has_text_part: bool,
+                            s: models.StreamedResponse,
+                            output_schema: _output.OutputSchema | None,
+                        ) -> tuple[bool, bool, FinalResult[models.StreamedResponse] | None]:
+                            """Handle a stream event and return updated state and final result if any."""
+                            if isinstance(event, _messages.PartStartEvent):
+                                if isinstance(event.part, _messages.TextPart):
+                                    if _agent_graph.allow_text_output(output_schema) and event.part.content:
+                                        has_text_part = True
+                                        if not has_tool_call:
+                                            return has_tool_call, has_text_part, FinalResult(s, None, None)
+                                elif isinstance(event.part, _messages.ToolCallPart):
+                                    has_tool_call = True
+                                    if output_schema:
+                                        for call, _ in output_schema.find_tool([event.part]):
+                                            return (
+                                                has_tool_call,
+                                                has_text_part,
+                                                FinalResult(s, call.tool_name, call.tool_call_id),
+                                            )
+                            elif isinstance(event, _messages.PartDeltaEvent):
+                                if isinstance(event.delta, _messages.TextPartDelta):
+                                    if event.delta.content_delta and _agent_graph.allow_text_output(output_schema):
+                                        has_text_part = True
+                                        if not has_tool_call:
+                                            return has_tool_call, has_text_part, FinalResult(s, None, None)
+                                elif isinstance(event.delta, _messages.ToolCallPartDelta):
+                                    has_tool_call = True
+                                    if output_schema and event.delta.tool_name_delta and event.delta.args_delta:
+                                        return (
+                                            has_tool_call,
+                                            has_text_part,
+                                            FinalResult(
+                                                s,
+                                                event.delta.tool_name_delta,
+                                                event.delta.tool_call_id,
+                                            ),
+                                        )
+                            return has_tool_call, has_text_part, None
+
                         async def stream_to_final(
                             s: models.StreamedResponse,
                         ) -> FinalResult[models.StreamedResponse] | None:
@@ -905,45 +948,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                             has_tool_call = False
                             has_text_part = False
 
-                            async for maybe_part_event in streamed_response:
-                                if isinstance(maybe_part_event, _messages.PartStartEvent):
-                                    new_part = maybe_part_event.part
-                                    if isinstance(new_part, _messages.TextPart):
-                                        if _agent_graph.allow_text_output(output_schema) and new_part.content:
-                                            has_text_part = True
-                                            # Only return final result if we haven't seen a tool call
-                                            if not has_tool_call:
-                                                return FinalResult(s, None, None)
-                                    elif isinstance(new_part, _messages.ToolCallPart):
-                                        has_tool_call = True
-                                        if output_schema:
-                                            for call, _ in output_schema.find_tool([new_part]):
-                                                return FinalResult(s, call.tool_name, call.tool_call_id)
-                                elif isinstance(maybe_part_event, _messages.PartDeltaEvent):
-                                    if isinstance(maybe_part_event.delta, _messages.TextPartDelta):
-                                        if maybe_part_event.delta.content_delta and _agent_graph.allow_text_output(
-                                            output_schema
-                                        ):
-                                            has_text_part = True
-                                            # Only return final result if we haven't seen a tool call
-                                            if not has_tool_call:
-                                                return FinalResult(s, None, None)
-                                    elif isinstance(maybe_part_event.delta, _messages.ToolCallPartDelta):
-                                        has_tool_call = True
-                                        if output_schema:
-                                            # Check if we have a complete tool call
-                                            if (
-                                                maybe_part_event.delta.tool_name_delta
-                                                and maybe_part_event.delta.args_delta
-                                            ):
-                                                return FinalResult(
-                                                    s,
-                                                    maybe_part_event.delta.tool_name_delta,
-                                                    maybe_part_event.delta.tool_call_id,
-                                                )
+                            async for event in streamed_response:
+                                has_tool_call, has_text_part, final = await handle_stream_event(
+                                    event, has_tool_call, has_text_part, s, output_schema
+                                )
+                                if final is not None:
+                                    return final
 
                             # If we've seen a tool call and have an output schema, let it complete
-                            # This ensures we don't prematurely end streaming when tool calls are present
                             if has_tool_call and output_schema:
                                 return None
 
