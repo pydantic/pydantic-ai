@@ -65,13 +65,23 @@ The code may be async, and the value on the last line will be returned as the re
 
 The code will be executed with Python 3.12.
 
-Dependencies may be defined via PEP 723 script metadata, e.g. to install "pydantic", the script should start
-with a comment of the form:
+Dependencies may be defined via PEP 723 script metadata.
 
+To make HTTP requests, you must use the "httpx" library in async mode.
+
+For example:
+
+\`\`\`python
 # /// script
-# dependencies = ['pydantic']
+# dependencies = ['httpx']
 # ///
-print('python code here')
+import httpx
+
+async with httpx.AsyncClient() as client:
+    response = await client.get('https://example.com')
+# return the text of the page
+response.text
+\`\`\`
 `
 
   let setLogLevel: LoggingLevel = 'emergency'
