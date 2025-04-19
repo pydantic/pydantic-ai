@@ -1,4 +1,3 @@
-/* eslint @typescript-eslint/no-explicit-any: off */
 import { loadPyodide } from 'pyodide'
 import { preparePythonCode } from './prepareEnvCode.ts'
 import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js'
@@ -12,6 +11,8 @@ export interface CodeFile {
 export async function runCode(
   files: CodeFile[],
   log: (level: LoggingLevel, data: string) => void,
+  functionNames?: string[],
+  clientCallback?: (func: string, args?: string, kwargs?: string) => Promise<string>,
 ): Promise<RunSuccess | RunError> {
   // remove once https://github.com/pyodide/pyodide/pull/5514 is released
   const realConsoleLog = console.log
@@ -58,6 +59,14 @@ export async function runCode(
 
   const prepareStatus = await preparePyEnv.prepare_env(pyodide.toPy(files))
 
+  const globals: Record<string, unknown> = { __name__: '__main__' }
+
+  if (functionNames && clientCallback) {
+    for (const functionName of functionNames) {
+      globals[functionName] = preparePyEnv.RegisterFunction(functionName, clientCallback)
+    }
+  }
+
   let runResult: RunSuccess | RunError
   if (prepareStatus.kind == 'error') {
     runResult = {
@@ -70,7 +79,7 @@ export async function runCode(
     const activeFile = files.find((f) => f.active)! || files[0]
     try {
       const rawValue = await pyodide.runPythonAsync(activeFile.content, {
-        globals: pyodide.toPy({ __name__: '__main__' }),
+        globals: pyodide.toPy(globals),
         filename: activeFile.name,
       })
       runResult = {
@@ -99,7 +108,7 @@ interface RunSuccess {
   // we could record stdout and stderr separately, but I suspect simplicity is more important
   output: string[]
   dependencies: string[]
-  returnValueJson: string | null
+  returnValueJson: string | undefined
 }
 
 interface RunError {
@@ -153,6 +162,13 @@ function formatError(err: any): string {
     / {2}File "\/lib\/python\d+\.zip\/_pyodide\/.*\n {4}.*\n(?: {4,}\^+\n)?/g,
     '',
   )
+  // remove frames from _prepare_env.py
+  errStr = errStr.replace(
+    / {2}File "\/tmp\/mcp_run_python\/_prepare_env.py".*\n {4,}.+\n/g,
+    '',
+  )
+  // remove trailing newlines
+  errStr = errStr.replace(/\n+$/, '')
   return errStr
 }
 
@@ -164,8 +180,12 @@ interface PrepareError {
   kind: 'error'
   message: string
 }
+
 interface PreparePyEnv {
   prepare_env: (files: CodeFile[]) => Promise<PrepareSuccess | PrepareError>
-  // deno-lint-ignore no-explicit-any
-  dump_json: (value: any) => string | null
+  RegisterFunction: (
+    func_name: string,
+    callback: (func_name: string, args?: string, kwargs?: string) => Promise<string>,
+  ) => unknown
+  dump_json: (value: unknown) => string | undefined
 }
