@@ -97,6 +97,7 @@ print(dice_result.all_messages())
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
         kind='response',
+        request_id=None,
     ),
     ModelRequest(
         parts=[
@@ -123,6 +124,7 @@ print(dice_result.all_messages())
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
         kind='response',
+        request_id=None,
     ),
     ModelRequest(
         parts=[
@@ -147,6 +149,7 @@ print(dice_result.all_messages())
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
         kind='response',
+        request_id=None,
     ),
 ]
 """
