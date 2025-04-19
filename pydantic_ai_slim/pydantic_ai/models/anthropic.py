@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import io
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -8,6 +9,7 @@ from datetime import datetime, timezone
 from json import JSONDecodeError, loads as json_loads
 from typing import Any, Literal, Union, cast, overload
 
+from anthropic.types import RedactedThinkingBlock
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -264,6 +266,12 @@ class AnthropicModel(Model):
         for item in response.content:
             if isinstance(item, TextBlock):
                 items.append(TextPart(content=item.text))
+            elif isinstance(item, RedactedThinkingBlock):
+                warnings.warn(
+                    'PydanticAI currently does not handle redacted thinking blocks. '
+                    'If you have a suggestion on how we should handle them, please open an issue.',
+                    UserWarning,
+                )
             elif isinstance(item, ThinkingBlock):
                 items.append(ThinkingPart(content=item.thinking, signature=item.signature))
             else:

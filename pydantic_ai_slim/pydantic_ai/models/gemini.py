@@ -30,6 +30,7 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -80,6 +81,15 @@ class GeminiModelSettings(ModelSettings, total=False):
     """
 
     gemini_safety_settings: list[GeminiSafetySettings]
+
+    gemini_thinking_config: ThinkingConfig
+    """Thinking is on by default in both the API and AI Studio.
+
+    Being on by default doesn't mean the model will send back thoughts. For that, you need to set `include_thoughts`
+    to `True`. If you want to turn it off, set `thinking_budget` to `0`.
+
+    See more about it on <https://ai.google.dev/gemini-api/docs/thinking>.
+    """
 
 
 @dataclass(init=False)
@@ -223,7 +233,9 @@ class GeminiModel(Model):
                 generation_config['presence_penalty'] = presence_penalty
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
                 generation_config['frequency_penalty'] = frequency_penalty
-            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) != []:
+            if (thinkingConfig := model_settings.get('gemini_thinking_config')) is not None:
+                generation_config['thinking_config'] = thinkingConfig
+            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) is not None:
                 request_data['safetySettings'] = gemini_safety_settings
         if generation_config:
             request_data['generationConfig'] = generation_config
@@ -499,6 +511,16 @@ class GeminiSafetySettings(TypedDict):
     """
 
 
+class ThinkingConfig(TypedDict, total=False):
+    """The thinking features configuration."""
+
+    include_thoughts: Annotated[bool, pydantic.Field(alias='includeThoughts')]
+    """Indicates whether to include thoughts in the response. If true, thoughts are returned only if the model supports thought and thoughts are available."""
+
+    thinking_budget: Annotated[int, pydantic.Field(alias='thinkingBudget')]
+    """Indicates the thinking budget in tokens."""
+
+
 class _GeminiGenerationConfig(TypedDict, total=False):
     """Schema for an API request to the Gemini API.
 
@@ -513,6 +535,7 @@ class _GeminiGenerationConfig(TypedDict, total=False):
     presence_penalty: float
     frequency_penalty: float
     stop_sequences: list[str]
+    thinking_config: ThinkingConfig
 
 
 class _GeminiContent(TypedDict):
@@ -525,6 +548,8 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
     for item in m.parts:
         if isinstance(item, ToolCallPart):
             parts.append(_function_call_part_from_call(item))
+        elif isinstance(item, ThinkingPart):
+            parts.append(_GeminiTextPart(text=item.content, thought=True))
         elif isinstance(item, TextPart):
             if item.content:
                 parts.append(_GeminiTextPart(text=item.content))
@@ -533,33 +558,38 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
     return _GeminiContent(role='model', parts=parts)
 
 
-class _GeminiTextPart(TypedDict):
+class _BasePart(TypedDict):
+    thought: NotRequired[bool]
+    """Indicates if the part is thought from the model."""
+
+
+class _GeminiTextPart(_BasePart):
     text: str
 
 
-class _GeminiInlineData(TypedDict):
+class _GeminiInlineData(_BasePart):
     data: str
     mime_type: Annotated[str, pydantic.Field(alias='mimeType')]
 
 
-class _GeminiInlineDataPart(TypedDict):
+class _GeminiInlineDataPart(_BasePart):
     """See <https://ai.google.dev/api/caching#Blob>."""
 
     inline_data: Annotated[_GeminiInlineData, pydantic.Field(alias='inlineData')]
 
 
-class _GeminiFileData(TypedDict):
+class _GeminiFileData(_BasePart):
     """See <https://ai.google.dev/api/caching#FileData>."""
 
     file_uri: Annotated[str, pydantic.Field(alias='fileUri')]
     mime_type: Annotated[str, pydantic.Field(alias='mimeType')]
 
 
-class _GeminiFileDataPart(TypedDict):
+class _GeminiFileDataPart(_BasePart):
     file_data: Annotated[_GeminiFileData, pydantic.Field(alias='fileData')]
 
 
-class _GeminiFunctionCallPart(TypedDict):
+class _GeminiFunctionCallPart(_BasePart):
     function_call: Annotated[_GeminiFunctionCall, pydantic.Field(alias='functionCall')]
 
 
@@ -573,7 +603,12 @@ def _process_response_from_parts(
     items: list[ModelResponsePart] = []
     for part in parts:
         if 'text' in part:
-            items.append(TextPart(content=part['text']))
+            # NOTE: Google doesn't include the `thought` field anymore. We add it just in case they decide to change
+            # their mind and start including it again.
+            if part.get('thought'):  # pragma: no cover
+                items.append(ThinkingPart(content=part['text']))
+            else:
+                items.append(TextPart(content=part['text']))
         elif 'function_call' in part:
             items.append(ToolCallPart(tool_name=part['function_call']['name'], args=part['function_call']['args']))
         elif 'function_response' in part:

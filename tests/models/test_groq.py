@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -30,7 +31,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.groq import GroqModelSettings
 from pydantic_ai.usage import Usage
 
-from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -608,16 +609,213 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
     )
 
 
-async def test_groq_model_thinking_part_raw_format(allow_model_requests: None, groq_api_key: str):
+async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('deepseek-r1-distill-llama-70b', provider=GroqProvider(api_key=groq_api_key))
     settings = GroqModelSettings(groq_reasoning_format='raw')
-    agent = Agent(m, model_settings=settings)
+    agent = Agent(m, instructions='You are a chef.', model_settings=settings)
 
-    result = await agent.run('How do I cross the street?')
-    assert result.all_messages() == snapshot()
+    result = await agent.run('I want a recipe to cook Uruguayan alfajores.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='I want a recipe to cook Uruguayan alfajores.', timestamp=IsDatetime())],
+                instructions='You are a chef.',
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content=IsStr()),
+                    TextPart(
+                        content="""\
+
+
+To make Uruguayan alfajores, follow these organized steps for a delightful baking experience:
+
+### Ingredients:
+- 2 cups all-purpose flour
+- 1 cup cornstarch
+- 1 tsp baking powder
+- 1/2 tsp salt
+- 1 cup unsalted butter, softened
+- 1 cup powdered sugar
+- 1 egg
+- 1 tsp vanilla extract
+- Dulce de leche (store-bought or homemade)
+- Powdered sugar for coating
+
+### Instructions:
+
+1. **Preheat Oven:**
+   - Preheat your oven to 300°F (150°C). Line a baking sheet with parchment paper.
+
+2. **Prepare Dough:**
+   - In a bowl, whisk together flour, cornstarch, baking powder, and salt.
+   - In another bowl, cream butter and powdered sugar until smooth. Add egg and vanilla, mixing well.
+   - Gradually incorporate the dry ingredients into the wet mixture until a dough forms. Wrap and let rest for 30 minutes.
+
+3. **Roll and Cut:**
+   - Roll dough to 1/4 inch thickness. Cut into 2-inch circles using a cutter or glass.
+
+4. **Bake:**
+   - Place cookies on the prepared baking sheet, bake for 15-20 minutes until edges are lightly golden. Cool on the sheet for 5 minutes, then transfer to a wire rack to cool completely.
+
+5. **Assemble Alfajores:**
+   - Spread a layer of dulce de leche on one cookie half. Sandwich with another cookie. Handle gently to avoid breaking.
+
+6. **Coat with Powdered Sugar:**
+   - Roll each alfajor in powdered sugar, pressing gently to adhere.
+
+7. **Optional Chocolate Coating:**
+   - For a chocolate version, melt chocolate and dip alfajores, then chill to set.
+
+8. **Storage:**
+   - Store in an airtight container at room temperature for up to a week. Freeze for longer storage.
+
+### Tips:
+- Ensure butter is softened for smooth creaming.
+- Check cookies after 15 minutes to avoid over-browning.
+- Allow cookies to cool completely before handling.
+- Homemade dulce de leche can be made by heating condensed milk until thickened.
+
+Enjoy your traditional Uruguayan alfajores with a cup of coffee or tea!\
+"""
+                    ),
+                ],
+                model_name='deepseek-r1-distill-llama-70b',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
 
     result = await agent.run(
-        'Considering the way to cross the street, analogously, how do I cross the river?',
+        'Considering the Uruguayan recipe, how can I cook the Argentinian one?',
         message_history=result.all_messages(),
+        model_settings=GroqModelSettings(groq_reasoning_format='parsed'),
     )
-    assert result.all_messages() == snapshot()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='I want a recipe to cook Uruguayan alfajores.', timestamp=IsDatetime())],
+                instructions='You are a chef.',
+            ),
+            ModelResponse(
+                parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
+                model_name='deepseek-r1-distill-llama-70b',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the Uruguayan recipe, how can I cook the Argentinian one?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='You are a chef.',
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+Alright, so I want to make Argentinian alfajores after successfully making the Uruguayan ones. I know that both countries have their own versions of alfajores, but I'm not entirely sure how they differ. Maybe the ingredients or the preparation steps are slightly different? I should probably start by researching what makes Argentinian alfajores unique compared to the Uruguayan ones.
+
+First, I remember that in the Uruguayan recipe, the cookies were more delicate, and the filling was a generous amount of dulce de leche. The process involved making the dough from scratch, baking the cookies, and then assembling them with the filling and sometimes coating them in powdered sugar or chocolate.
+
+For Argentinian alfajores, I think the cookies might have a different texture—perhaps they're crunchier or have a different flavor profile. Maybe the type of flour used is different, or there's an addition like cocoa powder for a chocolate version. Also, the filling might have variations, like adding caramel or nuts to the dulce de leche.
+
+I should look up some authentic Argentinian recipes to see the differences. Maybe the method of making the dough is slightly different, or the baking time and temperature vary. I also wonder if Argentinian alfajores are typically coated in something else besides powdered sugar, like cinnamon or coconut flakes.
+
+Another thing to consider is the size and shape of the cookies. Uruguayan alfajores might be smaller and rounder, while Argentinian ones could be larger or have a different shape. I should also check if there are any additional steps, like toasting the cookies or adding a layer of meringue.
+
+I need to make sure I have all the necessary ingredients. If the Argentinian version requires something different, like a specific type of flour or a particular flavoring, I'll need to adjust my shopping list. Also, if the filling is different, I might need to prepare it in a different way or add extra ingredients.
+
+I should also think about the assembly process. Maybe Argentinian alfajores are sandwiched with more filling or have a different way of sealing the cookies together. Perhaps they're rolled in coconut after being filled, or there's a step involving dipping them in chocolate.
+
+It would be helpful to watch a video or read a detailed recipe from an Argentinian source to get a better understanding. That way, I can follow the traditional method and ensure that my alfajores turn out authentic. I should also consider any tips or tricks that Argentinian bakers use to make their alfajores special.
+
+Finally, I need to plan the timing. Making alfajores can be a bit time-consuming, especially if you're making the dulce de leche from scratch. I should allocate enough time for preparing the dough, baking the cookies, and assembling the alfajores.
+
+Overall, the key steps I think I'll need to follow are:
+
+1. Research authentic Argentinian alfajores recipes to identify unique ingredients and steps.
+2. Adjust the ingredient list based on the differences from the Uruguayan version.
+3. Prepare the dough according to the Argentinian method, which might involve different mixing techniques or additional ingredients.
+4. Bake the cookies, possibly at a different temperature or for a different duration.
+5. Prepare the filling, which might include variations like caramel or nuts.
+6. Assemble the alfajores, possibly adding extra coatings or layers.
+7. Allow the alfajores to set before serving, to ensure the flavors meld together.
+
+By carefully following these steps and paying attention to the unique aspects of Argentinian alfajores, I should be able to create a delicious and authentic batch that captures the essence of this traditional South American treat.
+"""
+                    ),
+                    TextPart(
+                        content="""\
+To create authentic Argentinian alfajores, follow these organized steps, which highlight the unique characteristics and differences from the Uruguayan version:
+
+### Ingredients:
+- **For the Cookies:**
+  - 2 cups all-purpose flour
+  - 1/2 cup cornstarch
+  - 1/4 cup unsweetened cocoa powder (optional for chocolate version)
+  - 1 teaspoon baking powder
+  - 1/2 teaspoon salt
+  - 1 cup unsalted butter, softened
+  - 1 cup powdered sugar
+  - 1 egg
+  - 1 teaspoon vanilla extract
+
+- **For the Filling:**
+  - Dulce de leche (store-bought or homemade)
+  - Optional: caramel sauce, chopped nuts, or cinnamon for added flavor
+
+- **For Coating:**
+  - Powdered sugar
+  - Optional: cinnamon, shredded coconut, or melted chocolate
+
+### Instructions:
+
+1. **Prepare the Dough:**
+   - In a large bowl, whisk together the flour, cornstarch, cocoa powder (if using), baking powder, and salt.
+   - In another bowl, cream the softened butter and powdered sugar until smooth. Add the egg and vanilla extract, mixing well.
+   - Gradually incorporate the dry ingredients into the wet mixture until a dough forms. Wrap the dough in plastic wrap and let it rest for 30 minutes.
+
+2. **Roll and Cut the Cookies:**
+   - Roll the dough to about 1/4 inch thickness on a lightly floured surface.
+   - Use a round cookie cutter or the rim of a glass to cut out circles of dough. Argentinian alfajores are often slightly larger than their Uruguayan counterparts.
+
+3. **Bake the Cookies:**
+   - Preheat the oven to 300°F (150°C). Line a baking sheet with parchment paper.
+   - Place the cookie rounds on the prepared baking sheet, leaving about 1 inch of space between each cookie.
+   - Bake for 15-20 minutes, or until the edges are lightly golden. Allow the cookies to cool on the baking sheet for 5 minutes before transferring them to a wire rack to cool completely.
+
+4. **Prepare the Filling:**
+   - Use store-bought dulce de leche or make your own by heating sweetened condensed milk until thickened.
+   - Optional: Stir in caramel sauce or chopped nuts into the dulce de leche for added flavor.
+
+5. **Assemble the Alfajores:**
+   - Once the cookies are completely cool, spread a generous amount of dulce de leche on the flat side of one cookie.
+   - Sandwich with another cookie, pressing gently to adhere. For an extra touch, roll the edges in chopped nuts or shredded coconut.
+
+6. **Coat with Powdered Sugar or Chocolate:**
+   - Roll each alfajor in powdered sugar, pressing gently to ensure it adheres.
+   - Optional: Melt chocolate and dip the alfajores, then sprinkle with cinnamon or coconut before the chocolate sets.
+
+7. **Allow to Set:**
+   - Let the alfajores sit for about 30 minutes to allow the flavors to meld together.
+
+8. **Serve and Enjoy:**
+   - Serve with a cup of coffee or tea. Store any leftovers in an airtight container at room temperature for up to a week.
+
+### Tips:
+- **Dough Handling:** Ensure the butter is softened for a smooth dough, and don’t overwork the dough to maintain the cookies' tender texture.
+- **Baking:** Keep an eye on the cookies after 15 minutes to prevent over-browning.
+- **Filling Variations:** Experiment with different fillings like caramel or nuts to create unique flavor profiles.
+- **Coating Options:** Try different coatings such as cinnamon or coconut for a varied texture and taste.
+
+By following these steps, you'll create authentic Argentinian alfajores that capture the rich flavors and traditions of this beloved South American treat.\
+"""
+                    ),
+                ],
+                model_name='deepseek-r1-distill-llama-70b',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )

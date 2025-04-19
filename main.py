@@ -1,6 +1,7 @@
 from rich.pretty import pprint
 
 from pydantic_ai import Agent
+from pydantic_ai.models.gemini import GeminiModelSettings
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 model = OpenAIResponsesModel('o4-mini')
@@ -32,12 +33,12 @@ pprint(result.all_messages())
 # )
 # pprint(result.all_messages())
 
-bedrock_agent = Agent('bedrock:us.deepseek.r1-v1:0')
-result = bedrock_agent.run_sync(
-    'Tell me the steps to cross the ocean!',
-    # message_history=result.all_messages(),
-)
-pprint(result.all_messages())
+# bedrock_agent = Agent('bedrock:us.deepseek.r1-v1:0')
+# result = bedrock_agent.run_sync(
+#     'Tell me the steps to cross the ocean!',
+#     # message_history=result.all_messages(),
+# )
+# pprint(result.all_messages())
 
 
 # deepseek_agent = Agent('deepseek:deepseek-reasoner')
@@ -47,3 +48,11 @@ pprint(result.all_messages())
 #     # message_history=result.all_messages(),
 # )
 # pprint(result.all_messages())
+
+gemini_agent = Agent('google-gla:gemini-2.5-flash-preview-04-17')
+result = gemini_agent.run_sync(
+    'And how do I cross the ocean?',
+    model_settings=GeminiModelSettings(gemini_thinking_config={'thinking_budget': 1024, 'include_thoughts': True}),
+    message_history=result.all_messages(),
+)
+pprint(result.all_messages())

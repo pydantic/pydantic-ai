@@ -232,6 +232,9 @@ class GroqModel(Model):
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+        # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
+        if choice.message.reasoning is not None:
+            items.append(ThinkingPart(content=choice.message.reasoning))
         if choice.message.content is not None:
             content = choice.message.content
             # The `<think>` tag is only present if `groq_reasoning_format` is set to `raw`.
@@ -249,9 +252,6 @@ class GroqModel(Model):
                     content = ''
             if content:
                 items.append(TextPart(content=content))
-        # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
-        if choice.message.reasoning is not None:
-            items.append(ThinkingPart(content=choice.message.reasoning))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))

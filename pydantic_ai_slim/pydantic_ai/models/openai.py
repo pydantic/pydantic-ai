@@ -551,6 +551,7 @@ class OpenAIResponsesModel(Model):
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created_at, tz=timezone.utc)
         items: list[ModelResponsePart] = []
+        items.append(TextPart(response.output_text))
         for item in response.output:
             if item.type == 'reasoning':
                 for summary in item.summary:
@@ -559,7 +560,6 @@ class OpenAIResponsesModel(Model):
                     items.append(ThinkingPart(content=summary.text, signature=item.id))
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
-        items.append(TextPart(response.output_text))
         return ModelResponse(items, model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(

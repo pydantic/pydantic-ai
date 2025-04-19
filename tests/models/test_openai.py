@@ -34,7 +34,7 @@ from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -1300,11 +1300,11 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
                     TextPart(content=IsStr()),
+                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
                 ],
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
@@ -1321,11 +1321,11 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
                     TextPart(content=IsStr()),
+                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), signature='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
                 ],
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
@@ -1340,10 +1340,10 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr(), signature='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), signature='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), signature='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
                     TextPart(content=IsStr()),
+                    ThinkingPart(content=IsStr(), signature='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), signature='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), signature='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
                 ],
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
