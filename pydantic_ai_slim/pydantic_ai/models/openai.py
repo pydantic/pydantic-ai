@@ -57,6 +57,7 @@ try:
     )
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
+    from openai.types.chat.chat_completion_content_part_param import File
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.shared import ReasoningEffort
@@ -435,25 +436,15 @@ class OpenAIModel(Model):
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
                     audio = InputAudio(data=base64_encoded, format=response.headers.get('content-type'))
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
-                elif isinstance(item, DocumentUrl):  # pragma: no cover
-                    raise NotImplementedError('DocumentUrl is not supported for OpenAI')
-                    # The following implementation should have worked, but it seems we have the following error:
-                    # pydantic_ai.exceptions.ModelHTTPError: status_code: 400, model_name: gpt-4o, body:
-                    # {
-                    #   'message': "Unknown parameter: 'messages[1].content[1].file.data'.",
-                    #   'type': 'invalid_request_error',
-                    #   'param': 'messages[1].content[1].file.data',
-                    #   'code': 'unknown_parameter'
-                    # }
-                    #
-                    # client = cached_async_http_client()
-                    # response = await client.get(item.url)
-                    # response.raise_for_status()
-                    # base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    # media_type = response.headers.get('content-type').split(';')[0]
-                    # file_data = f'data:{media_type};base64,{base64_encoded}'
-                    # file = File(file={'file_data': file_data, 'file_name': item.url, 'file_id': item.url}, type='file')
-                    # content.append(file)
+                elif isinstance(item, DocumentUrl):
+                    client = cached_async_http_client()
+                    response = await client.get(item.url)
+                    response.raise_for_status()
+                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                    media_type = response.headers.get('content-type').split(';')[0]
+                    file_data = f'data:{media_type};base64,{base64_encoded}'
+                    file = File(file={'file_data': file_data, 'filename': item.url}, type='file')
+                    content.append(file)
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
                 else:
