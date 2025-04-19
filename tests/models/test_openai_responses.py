@@ -123,7 +123,7 @@ async def test_openai_responses_reasoning_generate_summary(allow_model_requests:
     agent = Agent(
         model=model,
         model_settings=OpenAIResponsesModelSettings(
-            openai_reasoning_generate_summary='concise',
+            openai_reasoning_summary='concise',
             openai_truncation='auto',
         ),
     )

@@ -56,7 +56,7 @@ dependencies = [
 # WARNING if you add optional groups, please update docs/install.md
 logfire = ["logfire>=3.11.0"]
 # Models
-openai = ["openai>=1.74.0"]
+openai = ["openai>=1.75.0"]
 cohere = ["cohere>=5.13.11; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.3"]
 anthropic = ["anthropic>=0.49.0"]
