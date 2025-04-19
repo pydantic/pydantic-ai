@@ -29,7 +29,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.gemini import GeminiModel
-from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
@@ -54,6 +53,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import (
         OpenAIModel,
         OpenAIModelSettings,
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
         OpenAISystemPromptRole,
         _OpenAIJsonSchema,  # pyright: ignore[reportPrivateUsage]
     )

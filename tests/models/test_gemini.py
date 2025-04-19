@@ -47,13 +47,11 @@ from pydantic_ai.models.gemini import (
     _GeminiTools,
     _GeminiUsageMetaData,
 )
-from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv
+from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 pytestmark = pytest.mark.anyio
 
@@ -1073,6 +1071,13 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
 
 @pytest.mark.vcr()
 async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
+    with try_import() as imports_successful:
+        from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+    if not imports_successful():  # pragma: no cover
+        pytest.skip('OpenAI is not installed')
+
     openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     gemini_model = GeminiModel('gemini-2.5-flash-preview-04-17', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(openai_model)
