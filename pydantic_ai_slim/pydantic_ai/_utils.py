@@ -291,13 +291,4 @@ class PeekableAsyncStream(Generic[T]):
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun | GraphRunResult) -> str:
-    import logfire
-    import logfire_api
-    from logfire.experimental.annotations import get_traceparent
-
-    span: AbstractSpan | None = x._span(required=False)  # type: ignore[reportPrivateUsage]
-    if not span:  # pragma: no cover
-        return ''
-    if isinstance(span, logfire_api.LogfireSpan):  # pragma: no cover
-        assert isinstance(span, logfire.LogfireSpan)
-    return get_traceparent(span)
+    return x._traceparent(required=False) or ''  # type: ignore[reportPrivateUsage]
