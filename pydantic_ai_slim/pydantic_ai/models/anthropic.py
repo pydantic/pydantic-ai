@@ -409,13 +409,25 @@ def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage
     if response_usage is None:
         return usage.Usage()
 
+    # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence these getattr calls
     request_tokens = getattr(response_usage, 'input_tokens', None)
+    cache_creation_request_tokens = getattr(response_usage, 'cache_creation_input_tokens', None)
+    cache_read_request_tokens = getattr(response_usage, 'cache_read_input_tokens', None)
+    details: dict[str, int] = {}
+    # Tokens are only counted once between input_tokens, cache_creation_input_tokens, and cache_read_input_tokens
+    # This approach maintains request_tokens as the count of all input tokens, with cached counts as details
+    if isinstance(cache_creation_request_tokens, int):
+        request_tokens = (request_tokens or 0) + cache_creation_request_tokens
+        details['cache_creation_input_tokens'] = cache_creation_request_tokens
+    if isinstance(cache_read_request_tokens, int):
+        request_tokens = (request_tokens or 0) + cache_read_request_tokens
+        details['cache_read_input_tokens'] = cache_read_request_tokens
 
     return usage.Usage(
-        # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence this getattr
         request_tokens=request_tokens,
         response_tokens=response_usage.output_tokens,
         total_tokens=(request_tokens or 0) + response_usage.output_tokens,
+        details=details,
     )
 
 

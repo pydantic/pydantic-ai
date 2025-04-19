@@ -167,6 +167,36 @@ async def test_sync_request_text_response(allow_model_requests: None):
     )
 
 
+async def test_async_request_prompt_caching(allow_model_requests: None):
+    c = completion_message(
+        [TextBlock(text='world', type='text')],
+        usage=AnthropicUsage(
+            input_tokens=3,
+            output_tokens=5,
+            cache_creation_input_tokens=4,
+            cache_read_input_tokens=6,
+        ),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+    assert result.usage() == snapshot(
+        Usage(
+            requests=1,
+            request_tokens=13,
+            response_tokens=5,
+            total_tokens=18,
+            details={
+                'cache_creation_input_tokens': 4,
+                'cache_read_input_tokens': 6,
+            },
+        )
+    )
+
+
 async def test_async_request_text_response(allow_model_requests: None):
     c = completion_message(
         [TextBlock(text='world', type='text')],
