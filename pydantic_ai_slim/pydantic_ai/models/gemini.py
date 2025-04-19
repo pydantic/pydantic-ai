@@ -30,6 +30,7 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -548,6 +549,8 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
     for item in m.parts:
         if isinstance(item, ToolCallPart):
             parts.append(_function_call_part_from_call(item))
+        elif isinstance(item, ThinkingPart):
+            parts.append(_GeminiTextPart(text=item.content, thought=True))
         elif isinstance(item, TextPart):
             if item.content:
                 parts.append(_GeminiTextPart(text=item.content))
@@ -556,33 +559,38 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
     return _GeminiContent(role='model', parts=parts)
 
 
-class _GeminiTextPart(TypedDict):
+class _BasePart(TypedDict):
+    thought: NotRequired[bool]
+    """Indicates if the part is thought from the model."""
+
+
+class _GeminiTextPart(_BasePart):
     text: str
 
 
-class _GeminiInlineData(TypedDict):
+class _GeminiInlineData(_BasePart):
     data: str
     mime_type: Annotated[str, pydantic.Field(alias='mimeType')]
 
 
-class _GeminiInlineDataPart(TypedDict):
+class _GeminiInlineDataPart(_BasePart):
     """See <https://ai.google.dev/api/caching#Blob>."""
 
     inline_data: Annotated[_GeminiInlineData, pydantic.Field(alias='inlineData')]
 
 
-class _GeminiFileData(TypedDict):
+class _GeminiFileData(_BasePart):
     """See <https://ai.google.dev/api/caching#FileData>."""
 
     file_uri: Annotated[str, pydantic.Field(alias='fileUri')]
     mime_type: Annotated[str, pydantic.Field(alias='mimeType')]
 
 
-class _GeminiFileDataPart(TypedDict):
+class _GeminiFileDataPart(_BasePart):
     file_data: Annotated[_GeminiFileData, pydantic.Field(alias='fileData')]
 
 
-class _GeminiFunctionCallPart(TypedDict):
+class _GeminiFunctionCallPart(_BasePart):
     function_call: Annotated[_GeminiFunctionCall, pydantic.Field(alias='functionCall')]
 
 
@@ -596,7 +604,12 @@ def _process_response_from_parts(
     items: list[ModelResponsePart] = []
     for part in parts:
         if 'text' in part:
-            items.append(TextPart(content=part['text']))
+            # NOTE: Google doesn't include the `thought` field anymore. We add it just in case they decide to change
+            # their mind and start including it again.
+            if part.get('thought'):  # pragma: no cover
+                items.append(ThinkingPart(content=part['text']))
+            else:
+                items.append(TextPart(content=part['text']))
         elif 'function_call' in part:
             items.append(ToolCallPart(tool_name=part['function_call']['name'], args=part['function_call']['args']))
         elif 'function_response' in part:
