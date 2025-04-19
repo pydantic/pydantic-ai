@@ -427,6 +427,16 @@ class OpenAIModel(Model):
                         assert item.format in ('wav', 'mp3')
                         audio = InputAudio(data=base64_encoded, format=item.format)
                         content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
+                    elif item.is_document:
+                        content.append(
+                            File(
+                                file={
+                                    'file_data': f'data:{item.media_type};base64,{base64_encoded}',
+                                    'filename': f'filename.{item.format}',
+                                },
+                                type='file',
+                            )
+                        )
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):  # pragma: no cover

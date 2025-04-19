@@ -678,6 +678,17 @@ async def test_audio_as_binary_content_input(
     assert result.output == snapshot('The name mentioned in the audio is Marcelo.')
 
 
+@pytest.mark.vcr()
+async def test_document_as_binary_content_input(
+    allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What is the main content on this document?', document_content])
+    assert result.output == snapshot('The main content of the document is "Dummy PDF file."')
+
+
 def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
