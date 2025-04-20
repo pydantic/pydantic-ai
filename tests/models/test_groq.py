@@ -28,7 +28,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.groq import GroqModelSettings
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
@@ -48,7 +47,7 @@ with try_import() as imports_successful:
     from groq.types.chat.chat_completion_message_tool_call import Function
     from groq.types.completion_usage import CompletionUsage
 
-    from pydantic_ai.models.groq import GroqModel
+    from pydantic_ai.models.groq import GroqModel, GroqModelSettings
     from pydantic_ai.providers.groq import GroqProvider
 
     # note: we use Union here so that casting works with Python 3.9
