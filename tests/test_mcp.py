@@ -45,7 +45,7 @@ async def test_stdio_server_with_cwd():
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == 1
+        assert len(tools) == 2
 
 
 def test_sse_server():
