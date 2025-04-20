@@ -62,12 +62,15 @@ try:
         RawMessageStartEvent,
         RawMessageStopEvent,
         RawMessageStreamEvent,
+        RedactedThinkingBlock,
+        SignatureDelta,
         TextBlock,
         TextBlockParam,
         TextDelta,
         ThinkingBlock,
         ThinkingBlockParam,
         ThinkingConfigParam,
+        ThinkingDelta,
         ToolChoiceParam,
         ToolParam,
         ToolResultBlockParam,
@@ -476,10 +479,18 @@ class AnthropicStreamedResponse(StreamedResponse):
         async for event in self._response:
             self._usage += _map_usage(event)
 
+            breakpoint()
+
             if isinstance(event, RawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, TextBlock) and current_block.text:
                     yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=current_block.text)
+                elif isinstance(current_block, ThinkingBlock):
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='thinking',
+                        content=current_block.thinking,
+                        signature=current_block.signature,
+                    )
                 elif isinstance(current_block, ToolUseBlock):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=current_block.id,
@@ -493,6 +504,14 @@ class AnthropicStreamedResponse(StreamedResponse):
             elif isinstance(event, RawContentBlockDeltaEvent):
                 if isinstance(event.delta, TextDelta):
                     yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=event.delta.text)
+                elif isinstance(event.delta, ThinkingDelta):
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='thinking', content=event.delta.thinking
+                    )
+                elif isinstance(event.delta, SignatureDelta):
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='thinking', signature=event.delta.signature
+                    )
                 elif (
                     current_block and event.delta.type == 'input_json_delta' and isinstance(current_block, ToolUseBlock)
                 ):
