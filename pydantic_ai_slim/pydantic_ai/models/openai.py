@@ -11,6 +11,7 @@ from typing import Any, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
+from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -302,7 +303,7 @@ class OpenAIModel(Model):
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         if choice.message.content is not None:
-            items.append(TextPart(choice.message.content))
+            items.extend(split_content_into_text_and_thinking(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
@@ -340,6 +341,8 @@ class OpenAIModel(Model):
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         texts.append(item.content)
+                    elif isinstance(item, ThinkingPart):
+                        texts.append(f'<think>\n{item.content}\n</think>')
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     else:

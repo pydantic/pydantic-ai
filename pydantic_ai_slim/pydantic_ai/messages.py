@@ -638,6 +638,54 @@ class TextPartDelta:
 
 
 @dataclass
+class ThinkingPartDelta:
+    """A partial update (delta) for a `ThinkingPart` to append new thinking content."""
+
+    content_delta: str | None = None
+    """The incremental thinking content to add to the existing `ThinkingPart` content."""
+
+    signature_delta: str | None = None
+    """Optional signature delta.
+
+    Note this is never treated as a delta — it can replace None.
+    """
+
+    part_delta_kind: Literal['thinking'] = 'thinking'
+    """Part delta type identifier, used as a discriminator."""
+
+    @overload
+    def apply(self, part: ModelResponsePart) -> ThinkingPart: ...
+
+    @overload
+    def apply(self, part: ModelResponsePart | ThinkingPartDelta) -> ThinkingPart | ThinkingPartDelta: ...
+
+    def apply(self, part: ModelResponsePart | ThinkingPartDelta) -> ThinkingPart | ThinkingPartDelta:
+        """Apply this thinking delta to an existing `ThinkingPart`.
+
+        Args:
+            part: The existing model response part, which must be a `ThinkingPart`.
+
+        Returns:
+            A new `ThinkingPart` with updated thinking content.
+
+        Raises:
+            ValueError: If `part` is not a `ThinkingPart`.
+        """
+        if isinstance(part, ThinkingPart):
+            return replace(part, content=part.content + self.content_delta if self.content_delta else None)
+        elif isinstance(part, ThinkingPartDelta):
+            if self.content_delta is None and self.signature_delta is None:
+                raise ValueError('Cannot apply ThinkingPartDelta with no content or signature')
+            if self.signature_delta is not None:
+                return replace(part, signature_delta=self.signature_delta)
+            if self.content_delta is not None:
+                return replace(part, content_delta=self.content_delta)
+        raise ValueError(
+            f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
+        )
+
+
+@dataclass
 class ToolCallPartDelta:
     """A partial update (delta) for a `ToolCallPart` to modify tool name, arguments, or tool call ID."""
 
@@ -752,7 +800,9 @@ class ToolCallPartDelta:
         return part
 
 
-ModelResponsePartDelta = Annotated[Union[TextPartDelta, ToolCallPartDelta], pydantic.Discriminator('part_delta_kind')]
+ModelResponsePartDelta = Annotated[
+    Union[TextPartDelta, ThinkingPartDelta, ToolCallPartDelta], pydantic.Discriminator('part_delta_kind')
+]
 """A partial update (delta) for any model response part."""
 
 

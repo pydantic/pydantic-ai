@@ -792,3 +792,19 @@ I'll structure my answer similarly to the street crossing response, focusing on 
             ),
         ]
     )
+
+
+async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-7-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
+    agent = Agent(m, model_settings=settings)
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert event_parts == snapshot()

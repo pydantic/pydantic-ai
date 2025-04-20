@@ -9,6 +9,8 @@ from typing import Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
+from pydantic_ai._thinking_part import split_content_into_text_and_thinking
+
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
@@ -236,22 +238,8 @@ class GroqModel(Model):
         if choice.message.reasoning is not None:
             items.append(ThinkingPart(content=choice.message.reasoning))
         if choice.message.content is not None:
-            content = choice.message.content
-            # The `<think>` tag is only present if `groq_reasoning_format` is set to `raw`.
-            while '<think>' in content:
-                before_think, content = content.split('<think>', 1)
-                if before_think.strip():
-                    items.append(TextPart(content=before_think))
-
-                if '</think>' in content:
-                    think_content, content = content.split('</think>', 1)
-                    items.append(ThinkingPart(content=think_content))
-                else:
-                    # Malformed tag
-                    items.append(TextPart(content=content))
-                    content = ''
-            if content:
-                items.append(TextPart(content=content))
+            # NOTE: The `<think>` tag is only present if `groq_reasoning_format` is set to `raw`.
+            items.extend(split_content_into_text_and_thinking(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))

@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from json import JSONDecodeError, loads as json_loads
 from typing import Any, Literal, Union, cast, overload
 
-from anthropic.types import RedactedThinkingBlock
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -61,12 +60,15 @@ try:
         RawMessageStartEvent,
         RawMessageStopEvent,
         RawMessageStreamEvent,
+        RedactedThinkingBlock,
+        SignatureDelta,
         TextBlock,
         TextBlockParam,
         TextDelta,
         ThinkingBlock,
         ThinkingBlockParam,
         ThinkingConfigParam,
+        ThinkingDelta,
         ToolChoiceParam,
         ToolParam,
         ToolResultBlockParam,
@@ -122,10 +124,6 @@ class AnthropicModel(Model):
     Internally, this uses the [Anthropic Python client](https://github.com/anthropics/anthropic-sdk-python) to interact with the API.
 
     Apart from `__init__`, all methods are private or match those of the base class.
-
-    !!! note
-        The `AnthropicModel` class does not yet support streaming responses.
-        We anticipate adding support for streaming responses in a near-term future release.
     """
 
     client: AsyncAnthropic = field(repr=False)
@@ -463,10 +461,18 @@ class AnthropicStreamedResponse(StreamedResponse):
         async for event in self._response:
             self._usage += _map_usage(event)
 
+            breakpoint()
+
             if isinstance(event, RawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, TextBlock) and current_block.text:
                     yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=current_block.text)
+                elif isinstance(current_block, ThinkingBlock):
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='thinking',
+                        content=current_block.thinking,
+                        signature=current_block.signature,
+                    )
                 elif isinstance(current_block, ToolUseBlock):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=current_block.id,
@@ -480,6 +486,14 @@ class AnthropicStreamedResponse(StreamedResponse):
             elif isinstance(event, RawContentBlockDeltaEvent):
                 if isinstance(event.delta, TextDelta):
                     yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=event.delta.text)
+                elif isinstance(event.delta, ThinkingDelta):
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='thinking', content=event.delta.thinking
+                    )
+                elif isinstance(event.delta, SignatureDelta):
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='thinking', signature=event.delta.signature
+                    )
                 elif (
                     current_block and event.delta.type == 'input_json_delta' and isinstance(current_block, ToolUseBlock)
                 ):
