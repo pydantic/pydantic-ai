@@ -194,6 +194,8 @@ KnownModelName = TypeAliasType(
         'o1-mini-2024-09-12',
         'o1-preview',
         'o1-preview-2024-09-12',
+        'o3',
+        'o3-2025-04-16',
         'o3-mini',
         'o3-mini-2025-01-31',
         'openai:chatgpt-4o-latest',
