@@ -603,8 +603,8 @@ def _process_response_from_parts(
     items: list[ModelResponsePart] = []
     for part in parts:
         if 'text' in part:
-            # NOTE: Google doesn't include the `thought` field anymore. We add it just in case they decide to change
-            # their mind and start including it again.
+            # NOTE: Google doesn't include the `thought` field anymore. We handle this here in case they decide to
+            # change their mind and start including it again.
             if part.get('thought'):  # pragma: no cover
                 items.append(ThinkingPart(content=part['text']))
             else:

@@ -461,8 +461,6 @@ class AnthropicStreamedResponse(StreamedResponse):
         async for event in self._response:
             self._usage += _map_usage(event)
 
-            breakpoint()
-
             if isinstance(event, RawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, TextBlock) and current_block.text:
