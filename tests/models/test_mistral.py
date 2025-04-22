@@ -22,13 +22,14 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
 
-from ..conftest import IsDatetime, IsNow, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -53,14 +54,16 @@ with try_import() as imports_successful:
     from mistralai.types.basemodel import Unset as MistralUnset
 
     from pydantic_ai.models.mistral import MistralModel, MistralStreamedResponse
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.mistral import MistralProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
     # note: we use Union here so that casting works with Python 3.9
     MockChatCompletion = Union[MistralChatCompletionResponse, Exception]
     MockCompletionEvent = Union[MistralCompletionEvent, Exception]
 
 pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='mistral not installed'),
+    pytest.mark.skipif(not imports_successful(), reason='mistral or openai not installed'),
     pytest.mark.anyio,
 ]
 
@@ -1858,6 +1861,66 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='mistral-large-123',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+async def test_mistral_model_thinking_part(allow_model_requests: None, openai_api_key: str, mistral_api_key: str):
+    openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
+    agent = Agent(openai_model, model_settings=settings)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    TextPart(content=IsStr()),
+                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
+                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
+                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
+                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
+                ],
+                model_name='o3-mini-2025-01-31',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+    mistral_model = MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key))
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        model=mistral_model,
+        message_history=result.all_messages(),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    TextPart(content=IsStr()),
+                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
+                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
+                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
+                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
+                ],
+                model_name='o3-mini-2025-01-31',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                model_name='mistral-large-latest',
                 timestamp=IsDatetime(),
             ),
         ]
