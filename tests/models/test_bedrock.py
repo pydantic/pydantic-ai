@@ -865,7 +865,7 @@ Wait\
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' visible. That')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s a good")),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' point. Also')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', crossing')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' in groups')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' if possible,')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' as more')),
@@ -897,7 +897,7 @@ Let\
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the steps:')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 1.')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Find a safe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' crossing')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' point. ')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='2. Observe')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' traffic signals.')),
@@ -1086,30 +1086,14 @@ Also\
 """
                 ),
             ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' **')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Basic')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Steps**')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-1.\
-"""
-                ),
-            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' **Find a')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Safe Spot')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='**:')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-   -\
-"""
-                ),
-            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Use a **')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='crosswalk**')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or pedestrian signal')),
@@ -1117,7 +1101,7 @@ Also\
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Avoid j')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='aywalking')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', as it')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="'s illegal")),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' in')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' many areas')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' and less')),
@@ -1129,26 +1113,10 @@ Also\
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' a well')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='-lit area with')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' clear visibility in')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- both directions.
-
-"""
-                ),
-            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='2. **')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Check Traffic Signals')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-**:
-  \
-"""
-                ),
-            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' - Wait')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for the')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' "walk')),
@@ -1162,15 +1130,7 @@ Also\
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='down timers')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' to ensure you')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' have enough time')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- to cross.
-
-"""
-                ),
-            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='3. **')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Look Both')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Ways**:  \n')),
@@ -1194,29 +1154,13 @@ Also\
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' especially bikes')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or quiet')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' electric')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- cars.
-
-"""
-                ),
-            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='4. **')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Ensure All')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Traffic')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Has')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Stopped**:')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-  \
-"""
-                ),
-            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' - Make')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' eye contact with')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' drivers if possible')),
@@ -1231,29 +1175,13 @@ Also\
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' into')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' the road')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-   -\
-"""
-                ),
-            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Watch for turning')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' vehicles,')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' even if you')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' have the right')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' of')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- way.
-
-"""
-                ),
-            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='5. **')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Cross Prompt')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ly and')),
@@ -1262,25 +1190,17 @@ Also\
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='   - Walk')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' straight across')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='—')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="don't")),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' run or')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' stop')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' midway')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-.
-  \
-"""
-                ),
-            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' - Stay inside')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' cross')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='walk')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' lines')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' if they')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="'re present")),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(
                 index=1,
                 delta=TextPartDelta(
@@ -1322,15 +1242,7 @@ Also\
             ),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='### **Additional')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Tips**')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-- **\
-"""
-                ),
-            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='At')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Night**:')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Wear reflective')),
@@ -1385,15 +1297,7 @@ Also\
                 ),
             ),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Remember**:')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-- **\
-"""
-                ),
-            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Right')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' of Way ≠')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Inv')),
@@ -1404,32 +1308,16 @@ Also\
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='-check that')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' cars')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' are stopping.')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-- **\
-"""
-                ),
-            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Distractions Kill')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='**: Stay')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' focused—')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='no texting')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or scrolling while')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- crossing.
-
-"""
-                ),
-            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='By following these')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' steps,')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=" you'")),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ll minimize')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' risks and')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' cross')),
