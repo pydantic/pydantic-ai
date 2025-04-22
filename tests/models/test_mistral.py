@@ -1924,6 +1924,7 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
     )
 
 
+@pytest.mark.vcr()
 async def test_mistral_model_thinking_part(allow_model_requests: None, openai_api_key: str, mistral_api_key: str):
     openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
@@ -1936,10 +1937,10 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
             ModelResponse(
                 parts=[
                     TextPart(content=IsStr()),
-                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
-                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
-                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
-                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
+                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
                 ],
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
@@ -1959,10 +1960,10 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
             ModelResponse(
                 parts=[
                     TextPart(content=IsStr()),
-                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
-                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
-                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
-                    ThinkingPart(content=IsStr(), signature='rs_68079629f6048191a22448740e41d3290a3deaf82386dfb9'),
+                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
                 ],
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
