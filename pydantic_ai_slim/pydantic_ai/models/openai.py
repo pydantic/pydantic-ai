@@ -57,7 +57,7 @@ try:
     )
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
-    from openai.types.chat.chat_completion_content_part_param import File
+    from openai.types.chat.chat_completion_content_part_param import File, FileFile
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.shared import ReasoningEffort
@@ -430,10 +430,10 @@ class OpenAIModel(Model):
                     elif item.is_document:
                         content.append(
                             File(
-                                file={
-                                    'file_data': f'data:{item.media_type};base64,{base64_encoded}',
-                                    'filename': f'filename.{item.format}',
-                                },
+                                file=FileFile(
+                                    file_data=f'data:{item.media_type};base64,{base64_encoded}',
+                                    filename=f'filename.{item.format}',
+                                ),
                                 type='file',
                             )
                         )
@@ -453,7 +453,10 @@ class OpenAIModel(Model):
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
                     media_type = response.headers.get('content-type').split(';')[0]
                     file_data = f'data:{media_type};base64,{base64_encoded}'
-                    file = File(file={'file_data': file_data, 'filename': item.url}, type='file')
+                    file = File(
+                        file=FileFile(file_data=file_data, filename=f'filename.{item.format}'),
+                        type='file',
+                    )
                     content.append(file)
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
@@ -770,10 +773,11 @@ class OpenAIResponsesModel(Model):
                     response = await client.get(item.url)
                     response.raise_for_status()
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                    media_type = response.headers.get('content-type').split(';')[0]
                     content.append(
                         responses.ResponseInputFileParam(
                             type='input_file',
-                            file_data=f'data:{item.media_type};base64,{base64_encoded}',
+                            file_data=f'data:{media_type};base64,{base64_encoded}',
                             filename=f'filename.{item.format}',
                         )
                     )
