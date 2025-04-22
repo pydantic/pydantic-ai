@@ -303,6 +303,8 @@ class OpenAIModel(Model):
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+        if reasoning_content := getattr(choice.message, 'reasoning_content', None):
+            items.append(ThinkingPart(content=reasoning_content))
         if choice.message.content is not None:
             items.extend(split_content_into_text_and_thinking(choice.message.content))
         if choice.message.tool_calls is not None:
