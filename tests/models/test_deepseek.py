@@ -1,23 +1,17 @@
 from __future__ import annotations as _annotations
 
-from typing import Union
-
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
-from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.deepseek import DeepSeekProvider
 
 from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
-    from openai.types import chat
+    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.providers.deepseek import DeepSeekProvider
 
-    # note: we use Union here so that casting works with Python 3.9
-    MockChatCompletion = Union[chat.ChatCompletion, Exception]
-    MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),

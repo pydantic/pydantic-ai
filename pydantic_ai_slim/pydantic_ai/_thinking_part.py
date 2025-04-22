@@ -1,3 +1,5 @@
+from __future__ import annotations as _annotations
+
 from pydantic_ai.messages import TextPart, ThinkingPart
 
 START_THINK_TAG = '<think>'
