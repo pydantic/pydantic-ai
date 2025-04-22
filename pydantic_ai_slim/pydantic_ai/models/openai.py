@@ -61,7 +61,7 @@ try:
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
-    from openai.types.responses.response_reasoning_item_param import ResponseReasoningItemParam, Summary
+    from openai.types.responses.response_reasoning_item_param import Summary
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 except ImportError as _import_error:
@@ -729,8 +729,8 @@ class OpenAIResponsesModel(Model):
                         assert_never(item)
                 if thinking_parts:
                     openai_messages.append(
-                        ResponseReasoningItemParam(
-                            id=thinking_parts[0].signature,
+                        responses.ResponseReasoningItemParam(
+                            id=thinking_parts[0].signature or '',
                             summary=[Summary(text=item.content, type='summary_text') for item in thinking_parts],
                             type='reasoning',
                         )
@@ -874,6 +874,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
 
+            elif isinstance(chunk, responses.ResponseAudioDeltaEvent):
+                # TODO(Marcelo): The reasoning events are getting this type.
+                # See https://github.com/openai/openai-python/issues/2311 for more details.
+                pass
+
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                 pass  # there's nothing we need to do here
 
@@ -913,6 +918,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         args=chunk.item.arguments,
                         tool_call_id=chunk.item.id,
                     )
+                elif isinstance(chunk.item, responses.ResponseReasoningItem):
+                    content = chunk.item.summary[0].text if chunk.item.summary else ''
+                    yield self._parts_manager.handle_thinking_delta(vendor_part_id=chunk.item.id, content=content)
+                elif isinstance(chunk.item, responses.ResponseOutputMessage):
+                    pass
+                else:
+                    raise RuntimeError(f'Unexpected item type: {type(chunk.item)}')
 
             elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
                 # NOTE: We only need this if the tool call deltas don't include the final info.
