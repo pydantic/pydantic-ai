@@ -1147,7 +1147,7 @@ Here's the analogous guide for crossing a river:
 
 1.  **Before you approach the river:**
     *   Just as you use a sidewalk to get to the street's edge, use a trail or the riverbank to get to a spot where you can assess the river.
-    *   If you’re inexperienced with rivers or unsure about the conditions, try to have someone experienced accompany you.
+    *   If you're inexperienced with rivers or unsure about the conditions, try to have someone experienced accompany you.
 
 2.  **When you're ready to cross:**
     *   Just as you look and listen for vehicles, carefully **assess the river conditions**. Look in all directions (upstream, downstream, across):
@@ -1168,7 +1168,7 @@ Here's the analogous guide for crossing a river:
     *   Move with purpose, but carefully. If wading, maintain your balance against the current and watch your footing. If swimming, focus on your technique and direction. Stay aware of where you are relative to your intended path and the river's flow.
 
 5.  **After crossing:**
-    *   Once you’ve safely reached the other side, take a moment to ensure you are truly out of the main flow and on stable ground. Be aware of the riverbank conditions.
+    *   Once you've safely reached the other side, take a moment to ensure you are truly out of the main flow and on stable ground. Be aware of the riverbank conditions.
 
 **Analogous Takeaway:**
 

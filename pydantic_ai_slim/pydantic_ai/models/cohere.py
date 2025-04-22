@@ -4,8 +4,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal, Union, cast
 
-from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from typing_extensions import assert_never
+
+from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id

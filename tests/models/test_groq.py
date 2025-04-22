@@ -804,7 +804,7 @@ To create authentic Argentinian alfajores, follow these organized steps, which h
    - Serve with a cup of coffee or tea. Store any leftovers in an airtight container at room temperature for up to a week.
 
 ### Tips:
-- **Dough Handling:** Ensure the butter is softened for a smooth dough, and don’t overwork the dough to maintain the cookies' tender texture.
+- **Dough Handling:** Ensure the butter is softened for a smooth dough, and don't overwork the dough to maintain the cookies' tender texture.
 - **Baking:** Keep an eye on the cookies after 15 minutes to prevent over-browning.
 - **Filling Variations:** Experiment with different fillings like caramel or nuts to create unique flavor profiles.
 - **Coating Options:** Try different coatings such as cinnamon or coconut for a varied texture and taste.
