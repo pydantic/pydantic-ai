@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, assert_never
 
 import pydantic_core
 
@@ -19,6 +19,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -240,7 +241,7 @@ class TestStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for i, part in enumerate(self._structured_response.parts):
-            if isinstance(part, TextPart):
+            if isinstance(part, (TextPart, ThinkingPart)):
                 text = part.content
                 *words, last_word = text.split(' ')
                 words = [f'{word} ' for word in words]
@@ -249,14 +250,22 @@ class TestStreamedResponse(StreamedResponse):
                     mid = len(text) // 2
                     words = [text[:mid], text[mid:]]
                 self._usage += _get_string_usage('')
-                yield self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
-                for word in words:
-                    self._usage += _get_string_usage(word)
-                    yield self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
-            else:
+                if part.part_kind == 'text':
+                    yield self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
+                    for word in words:
+                        self._usage += _get_string_usage(word)
+                        yield self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
+                else:
+                    yield self._parts_manager.handle_thinking_delta(vendor_part_id=i, content='')
+                    for word in words:
+                        self._usage += _get_string_usage(word)
+                        yield self._parts_manager.handle_thinking_delta(vendor_part_id=i, content=word)
+            elif isinstance(part, ToolCallPart):
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
                 )
+            else:
+                assert_never(part)
 
     @property
     def model_name(self) -> str:
