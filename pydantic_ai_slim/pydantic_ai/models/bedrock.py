@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import typing
+import warnings
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -541,6 +542,15 @@ class BedrockStreamedResponse(StreamedResponse):
             if 'contentBlockDelta' in chunk:
                 index = chunk['contentBlockDelta']['contentBlockIndex']
                 delta = chunk['contentBlockDelta']['delta']
+                if 'reasoningContent' in delta:
+                    if text := delta['reasoningContent'].get('text'):
+                        yield self._parts_manager.handle_thinking_delta(vendor_part_id=index, content=text)
+                    else:  # pragma: no cover
+                        warnings.warn(
+                            f'Only text reasoning content is supported yet, but you got {delta["reasoningContent"]}. '
+                            'Please report this to the maintainers.',
+                            UserWarning,
+                        )
                 if 'text' in delta:
                     yield self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
                 if 'toolUse' in delta:
