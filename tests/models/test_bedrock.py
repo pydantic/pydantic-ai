@@ -4,7 +4,6 @@ import datetime
 from typing import Any
 
 import pytest
-from dirty_equals import IsInstance
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
@@ -25,6 +24,7 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -32,7 +32,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import Usage
 
-from ..conftest import IsDatetime, try_import
+from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
@@ -580,4 +580,49 @@ async def test_bedrock_multiple_documents_in_history(
 
     assert result.output == snapshot(
         'Based on the documents you\'ve shared, both Document 1.pdf and Document 2.pdf contain the text "Dummy PDF file". These appear to be placeholder or sample PDF documents rather than files with substantial content.'
+    )
+
+
+async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
+                model_name='us.deepseek.r1-v1:0',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[IsInstance(TextPart), IsInstance(ThinkingPart)],
+                model_name='us.deepseek.r1-v1:0',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[IsInstance(TextPart), IsInstance(ThinkingPart)],
+                model_name='us.deepseek.r1-v1:0',
+                timestamp=IsDatetime(),
+            ),
+        ]
     )

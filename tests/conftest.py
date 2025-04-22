@@ -247,6 +247,11 @@ def document_content(assets_path: Path) -> BinaryContent:
 
 
 @pytest.fixture(scope='session')
+def deepseek_api_key() -> str:
+    return os.getenv('DEEPSEEK_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def openai_api_key() -> str:
     return os.getenv('OPENAI_API_KEY', 'mock-api-key')
 

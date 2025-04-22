@@ -425,6 +425,9 @@ class BedrockConverseModel(Model):
                 for item in m.parts:
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
+                    elif isinstance(item, ThinkingPart):
+                        # NOTE: We don't pass the thinking part to Bedrock since it raises an error.
+                        pass
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
