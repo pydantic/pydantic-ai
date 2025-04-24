@@ -1,9 +1,9 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-import contextvars
 import time
 import uuid
+from anyio.to_thread import run_sync
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, is_dataclass
@@ -32,10 +32,11 @@ _R = TypeVar('_R')
 
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    loop = asyncio.get_running_loop()
-    ctx = contextvars.copy_context()  # copy the current context to the new thread
-    func_call = partial(func, *args, **kwargs)
-    return await loop.run_in_executor(None, ctx.run, func_call)
+    if kwargs:
+        wrapped_func = partial(func, *args, **kwargs)
+        return await run_sync(wrapped_func)
+    else:
+        return await run_sync(func, *args)
 
 
 def is_model_like(type_: Any) -> bool:
