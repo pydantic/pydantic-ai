@@ -32,11 +32,8 @@ _R = TypeVar('_R')
 
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    if kwargs:
-        wrapped_func = partial(func, *args, **kwargs)
-        return await run_sync(wrapped_func)
-    else:
-        return await run_sync(func, *args)
+    wrapped_func = partial(func, *args, **kwargs)
+    return await run_sync(wrapped_func)
 
 
 def is_model_like(type_: Any) -> bool:
