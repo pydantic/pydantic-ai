@@ -990,9 +990,8 @@ async def test_video_as_binary_content_input(
     agent = Agent(m, system_prompt='You are a helpful chatbot.')
 
     result = await agent.run(['Explain me this video', video_content])
-    assert (
-        result.output.strip()
-        == "That's a picture of a small, portable monitor attached to a camera, likely used for filming. The monitor displays a scene of a canyon or similar rocky landscape.  This suggests the camera is being used to film this landscape. The camera itself is mounted on a tripod, indicating a stable and likely professional setup.  The background is out of focus, but shows the same canyon as seen on the monitor. This makes it clear that the image shows the camera's viewfinder or recording output, rather than an unrelated display."
+    assert result.output.strip() == snapshot(
+        "That's a picture of a small, portable monitor attached to a camera, likely used for filming. The monitor displays a scene of a canyon or similar rocky landscape.  This suggests the camera is being used to film this landscape. The camera itself is mounted on a tripod, indicating a stable and likely professional setup.  The background is out of focus, but shows the same canyon as seen on the monitor. This makes it clear that the image shows the camera's viewfinder or recording output, rather than an unrelated display."
     )
 
 
@@ -1006,7 +1005,7 @@ async def test_video_url_input(allow_model_requests: None, gemini_api_key: str) 
     )
 
     result = await agent.run(['Explain me this video', video_url])
-    assert result.output.strip() == (
+    assert result.output.strip() == snapshot(
         "That's an abstract animation.  There's no specific meaning or narrative; it's purely visual.\n"
         'The video features three rectangular shapes arranged in a T-shape.  The largest rectangle is at the top, and two smaller ones are below, mirroring each other.  These shapes appear to be constructed of many thin, vertical lines of varying shades of red, orange, blue, and yellow.\n'
         "The animation's key features:\n"
