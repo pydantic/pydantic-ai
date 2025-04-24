@@ -1002,13 +1002,19 @@ async def test_video_url_input(allow_model_requests: None, gemini_api_key: str) 
     agent = Agent(m, system_prompt='You are a helpful chatbot.')
 
     video_url = VideoUrl(
-        url='https://data.grepit.app/data/offline/50935358-714a-442b-97e7-62fe0184ed94/1909882892416589902/_gNB8FCkau-xPVYm.mp4'
+        url='https://data.grepit.app/data/offline/b9baaea5-79a2-4510-998b-d752e923af80/1903081239164404008/O4MkPE-UIe6oxq_f.mp4'
     )
 
     result = await agent.run(['Explain me this video', video_url])
-    assert (
-        result.output.strip()
-        == "Here's an explanation of the video: The video shows a woman cooking meat and potatoes.  What's unique is that the cooking surface is a countertop with an invisible induction cooktop installed underneath.  The cooktop heats the cookware using magnetic induction.  There are no visible burners.  She moves the pans, and the cooking continues without interruption as if nothing happened.  The brand name of this technology is Invisacook, and the video claims that it brings an extra sense of space, elegance, and luxury to the kitchen."
+    assert result.output.strip() == (
+        "That's an abstract animation.  There's no specific meaning or narrative; it's purely visual.\n"
+        'The video features three rectangular shapes arranged in a T-shape.  The largest rectangle is at the top, and two smaller ones are below, mirroring each other.  These shapes appear to be constructed of many thin, vertical lines of varying shades of red, orange, blue, and yellow.\n'
+        "The animation's key features:\n"
+        '* **Color Shifting:** The colors within each rectangle subtly shift and change throughout the video, creating a dynamic visual effect.  The overall color palette is predominantly warm (reds and oranges) in the top rectangle and cooler (blues and purples) in the bottom two.  There are also hints of yellow and orange throughout all three rectangles.\n'
+        '* **Motion Blur Effect:** The vertical lines appear slightly blurred, giving the impression of motion or a kind of "hazy" texture. This is likely achieved with motion blur, a post-processing effect.\n'
+        '* **Looping Animation:** The animation appears to loop seamlessly.  It cycles through the color variations and shifts.\n'
+        '* **Isometric Perspective:** The shapes are presented in an isometric perspective, giving a sense of three-dimensionality.\n'
+        'In short, the video is an example of abstract motion graphics designed for visual appeal rather than communicating any particular message or story.'
     )
 
 
