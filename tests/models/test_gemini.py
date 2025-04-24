@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.gemini import (
@@ -979,6 +980,36 @@ async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) 
 
     result = await agent.run(['What is the name of this fruit?', image_url])
     assert result.output == snapshot("This is not a fruit; it's a pipe organ console.")
+
+
+@pytest.mark.vcr()
+async def test_video_as_binary_content_input(
+    allow_model_requests: None, gemini_api_key: str, video_content: BinaryContent
+) -> None:
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+
+    result = await agent.run(['Explain me this video', video_content])
+    assert (
+        result.output.strip()
+        == "That's a picture of a small, portable monitor attached to a camera, likely used for filming. The monitor displays a scene of a canyon or similar rocky landscape.  This suggests the camera is being used to film this landscape. The camera itself is mounted on a tripod, indicating a stable and likely professional setup.  The background is out of focus, but shows the same canyon as seen on the monitor. This makes it clear that the image shows the camera's viewfinder or recording output, rather than an unrelated display."
+    )
+
+
+@pytest.mark.vcr()
+async def test_video_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+
+    video_url = VideoUrl(
+        url='https://data.grepit.app/data/offline/50935358-714a-442b-97e7-62fe0184ed94/1909882892416589902/_gNB8FCkau-xPVYm.mp4'
+    )
+
+    result = await agent.run(['Explain me this video', video_url])
+    assert (
+        result.output.strip()
+        == "Here's an explanation of the video: The video shows a woman cooking meat and potatoes.  What's unique is that the cooking surface is a countertop with an invisible induction cooktop installed underneath.  The cooktop heats the cookware using magnetic induction.  There are no visible burners.  She moves the pans, and the cooking continues without interruption as if nothing happened.  The brand name of this technology is Invisacook, and the video claims that it brings an extra sense of space, elegance, and luxury to the kitchen."
+    )
 
 
 @pytest.mark.vcr()
