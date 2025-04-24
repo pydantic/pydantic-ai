@@ -420,12 +420,13 @@ class GeminiStreamedResponse(StreamedResponse):
             responses_to_yield = gemini_responses[:-1]
             for r in responses_to_yield[current_gemini_response_index:]:
                 current_gemini_response_index += 1
+                self._usage = _metadata_as_usage(r)
                 yield r
 
         # Now yield the final response, which should be complete
         if gemini_responses:
             r = gemini_responses[-1]
-            self._usage += _metadata_as_usage(r)
+            self._usage = _metadata_as_usage(r)
             yield r
 
     @property
