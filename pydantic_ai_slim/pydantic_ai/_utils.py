@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import asyncio
 import time
 import uuid
-from anyio.to_thread import run_sync
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, is_dataclass
@@ -12,6 +11,7 @@ from functools import partial
 from types import GenericAlias
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union
 
+from anyio.to_thread import run_sync
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import ParamSpec, TypeAlias, TypeGuard, is_typeddict
