@@ -303,10 +303,9 @@ result = agent.run_sync('What is the main content of the document?')
 print(result.output)
 #> The document contains just the text "Dummy PDF file."
 ```
+_(This example is complete, it can be run "as is")_
 
 Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
-
-_(This example is complete, it can be run "as is")_
 
 ## Function Tools vs. Structured Outputs
 

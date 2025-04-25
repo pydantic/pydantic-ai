@@ -691,7 +691,7 @@ async def process_function_tools(  # noqa C901
                 if isinstance(result, _messages.RetryPromptPart):
                     results_by_index[index] = result
                 elif isinstance(result, _messages.ToolReturnPart):
-                    if result.is_multi_modal:
+                    if isinstance(result.content, _messages.MultiModalContentTypes):
                         user_parts.append(
                             _messages.UserPromptPart(
                                 content=[f'This is file {file_index}:', result.content],
@@ -701,7 +701,6 @@ async def process_function_tools(  # noqa C901
                         )
 
                         result.content = f'See file {file_index}.'
-
                         file_index += 1
 
                     results_by_index[index] = result

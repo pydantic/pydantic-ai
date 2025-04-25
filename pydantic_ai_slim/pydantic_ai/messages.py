@@ -367,11 +367,6 @@ class ToolReturnPart:
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    @property
-    def is_multi_modal(self) -> bool:
-        """Return `True` if the content is a multi-modal content."""
-        return isinstance(self.content, MultiModalContentTypes)
-
     def model_response_str(self) -> str:
         """Return a string representation of the content for the model."""
         if isinstance(self.content, str):
