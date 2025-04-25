@@ -24,6 +24,7 @@ def split_content_into_text_and_thinking(content: str) -> list[ThinkingPart | Te
             think_content, content = content.split(END_THINK_TAG, 1)
             parts.append(ThinkingPart(content=think_content))
         else:
+            # We lose the `<think>` tag, but it shouldn't matter.
             parts.append(TextPart(content=content))
             content = ''
     if content:

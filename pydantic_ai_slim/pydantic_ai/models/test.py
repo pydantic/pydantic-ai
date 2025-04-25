@@ -242,7 +242,7 @@ class TestStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for i, part in enumerate(self._structured_response.parts):
-            if isinstance(part, (TextPart, ThinkingPart)):
+            if isinstance(part, TextPart):
                 text = part.content
                 *words, last_word = text.split(' ')
                 words = [f'{word} ' for word in words]
@@ -251,20 +251,17 @@ class TestStreamedResponse(StreamedResponse):
                     mid = len(text) // 2
                     words = [text[:mid], text[mid:]]
                 self._usage += _get_string_usage('')
-                if part.part_kind == 'text':
-                    yield self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
-                    for word in words:
-                        self._usage += _get_string_usage(word)
-                        yield self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
-                else:
-                    yield self._parts_manager.handle_thinking_delta(vendor_part_id=i, content='')
-                    for word in words:
-                        self._usage += _get_string_usage(word)
-                        yield self._parts_manager.handle_thinking_delta(vendor_part_id=i, content=word)
+                yield self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
+                for word in words:
+                    self._usage += _get_string_usage(word)
+                    yield self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
             elif isinstance(part, ToolCallPart):
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
                 )
+            elif isinstance(part, ThinkingPart):
+                # NOTE: There's no way to reach this part of the code, since we don't generate ThinkingPart on TestModel.
+                pass  # pragma: no cover
             else:
                 assert_never(part)
 

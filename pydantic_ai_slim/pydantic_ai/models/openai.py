@@ -303,6 +303,7 @@ class OpenAIModel(Model):
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+        # The `reasoning_content` is only present in DeepSeek models.
         if reasoning_content := getattr(choice.message, 'reasoning_content', None):
             items.append(ThinkingPart(content=reasoning_content))
         if choice.message.content is not None:
