@@ -411,6 +411,7 @@ class BedrockConverseModel(Model):
                             )
                         )
                     elif isinstance(part, RetryPromptPart):
+                        # TODO(Marcelo): We need to add a test here.
                         if part.tool_name is None:  # pragma: no cover
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
                         else:
