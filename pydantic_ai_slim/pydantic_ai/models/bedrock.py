@@ -170,7 +170,7 @@ class BedrockModelSettings(ModelSettings, total=False):
 class BedrockConverseModel(Model):
     """A model that uses the Bedrock Converse API."""
 
-    client: BedrockRuntimeClient
+    client: Any  # Use Any at runtime, BedrockRuntimeClient for type checking
 
     _model_name: BedrockModelName = field(repr=False)
     _system: str = field(default='bedrock', repr=False)
@@ -205,7 +205,7 @@ class BedrockConverseModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
-        self.client = cast('BedrockRuntimeClient', provider.client)
+        self.client = cast('BedrockRuntimeClient', provider.client)  # Use string for cast
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
@@ -368,6 +368,7 @@ class BedrockConverseModel(Model):
         self, messages: list[ModelMessage]
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
         """Maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`.
+
         Groups consecutive ToolReturnPart objects into a single user message as required by Bedrock Claude/Nova models.
         """
         system_prompt: list[SystemContentBlockTypeDef] = []
@@ -387,39 +388,48 @@ class BedrockConverseModel(Model):
                         i += 1
                     elif isinstance(part, ToolReturnPart):
                         # Group consecutive ToolReturnParts
-                        tool_results = []
+                        tool_results: list[dict[str, typing.Any]] = []
                         while i < len(parts) and isinstance(parts[i], ToolReturnPart):
-                            tr_part = parts[i]
-                            assert tr_part.tool_call_id is not None
-                            tool_results.append({
-                                'toolResult': {
-                                    'toolUseId': tr_part.tool_call_id,
-                                    'content': [{'text': tr_part.model_response_str()}],
-                                    'status': 'success',
+                            tr_part = typing.cast(ToolReturnPart, parts[i])
+                            # Remove unnecessary None check, tool_call_id is always str
+                            tool_results.append(
+                                {
+                                    'toolResult': {
+                                        'toolUseId': tr_part.tool_call_id,
+                                        'content': [{'text': tr_part.model_response_str()}],
+                                        'status': 'success',
+                                    }
                                 }
-                            })
+                            )
                             i += 1
-                        bedrock_messages.append({
-                            'role': 'user',
-                            'content': tool_results,
-                        })
+                        bedrock_messages.append(
+                            cast(
+                                'MessageUnionTypeDef',
+                                {
+                                    'role': 'user',
+                                    'content': tool_results,
+                                },
+                            )
+                        )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:  # pragma: no cover
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
                         else:
-                            assert part.tool_call_id is not None
-                            bedrock_messages.append({
-                                'role': 'user',
-                                'content': [
-                                    {
-                                        'toolResult': {
-                                            'toolUseId': part.tool_call_id,
-                                            'content': [{'text': part.model_response()}],
-                                            'status': 'error',
+                            assert hasattr(part, 'tool_call_id')
+                            bedrock_messages.append(
+                                {
+                                    'role': 'user',
+                                    'content': [
+                                        {
+                                            'toolResult': {
+                                                'toolUseId': part.tool_call_id,
+                                                'content': [{'text': part.model_response()}],
+                                                'status': 'error',
+                                            }
                                         }
-                                    }
-                                ],
-                            })
+                                    ],
+                                }
+                            )
                         i += 1
                     else:
                         i += 1
