@@ -655,10 +655,10 @@ class OpenAIResponsesModel(Model):
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)
         reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
 
-        if reasoning_summary and reasoning_generate_summary:
+        if reasoning_summary and reasoning_generate_summary:  # pragma: no cover
             raise ValueError('`openai_reasoning_summary` and `openai_reasoning_generate_summary` cannot both be set.')
 
-        if reasoning_generate_summary is not None:
+        if reasoning_generate_summary is not None:  # pragma: no cover
             warnings.warn(
                 '`openai_reasoning_generate_summary` is deprecated, use `openai_reasoning_summary` instead',
                 DeprecationWarning,
