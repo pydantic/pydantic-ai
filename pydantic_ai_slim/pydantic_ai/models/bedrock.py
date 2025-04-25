@@ -391,7 +391,6 @@ class BedrockConverseModel(Model):
                         tool_results: list[dict[str, typing.Any]] = []
                         while i < len(parts) and isinstance(parts[i], ToolReturnPart):
                             tr_part = typing.cast(ToolReturnPart, parts[i])
-                            # Remove unnecessary None check, tool_call_id is always str
                             tool_results.append(
                                 {
                                     'toolResult': {
