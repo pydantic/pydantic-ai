@@ -1000,23 +1000,22 @@ async def test_video_url_input(allow_model_requests: None, gemini_api_key: str) 
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m, system_prompt='You are a helpful chatbot.')
 
-    video_url = VideoUrl(
-        url='https://data.grepit.app/data/offline/692f6aeb-01d6-46ed-9257-ef7eb0eb452c/1907272632229081205/Np3tEOuIagmfYU7e.mp4'
-    )
+    video_url = VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4')
 
     result = await agent.run(['Explain me this video', video_url])
     assert result.output.strip() == snapshot(
-        """That's a video of a quaint outdoor cafe situated on the coast of what appears to be a Greek island.
+        """That's a lovely picture!  It shows a picturesque outdoor cafe or restaurant situated in a narrow, whitewashed alleyway.
 
 
-The scene:
+Here's a breakdown of what we see:
 
-* **Setting:** The cafe is nestled in a narrow alleyway between two whitewashed buildings, characteristic of Greek island architecture. The alleyway opens directly onto a body of water, likely the sea, with visible waves.
-* **Cafe:** The cafe features several wooden tables and chairs, offering diners a stunning view of the ocean.  There are also cushioned bench seats along one wall.  The furniture has a simple, rustic style.
-* **Atmosphere:** The video evokes a peaceful, serene atmosphere. The sound of waves and a calm, possibly instrumental, background music enhances this feeling.  The sun is shining, indicating a bright, sunny day.
+* **Location:** The cafe is nestled between two white buildings, typical of Greek island architecture (possibly Mykonos or a similar island, judging by the style).  The alleyway opens up to a view of the Aegean Sea, which is visible in the background. The sea appears somewhat choppy.
 
+* **Setting:** The cafe has several wooden tables and chairs set out along the alley. The tables are simple and seem to be made of light-colored wood. There are cushions on a built-in bench along one wall providing seating. Small potted plants are on some tables, adding to the ambiance. The cobblestone ground in the alley adds to the charming, traditional feel.
 
-In short, the video is a short visual showcasing a picturesque and tranquil seaside cafe."""
+* **Atmosphere:** The overall feel is relaxed and serene, despite the somewhat windy conditions indicated by the sea. The bright white buildings and the blue sea create a classic Mediterranean vibe. The picture evokes a sense of calmness and escape.
+
+In short, the image depicts an idyllic scene of a charming seaside cafe in a picturesque Greek island setting."""
     )
 
 
