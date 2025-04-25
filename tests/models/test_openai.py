@@ -17,6 +17,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -645,6 +646,17 @@ async def test_image_url_input(allow_model_requests: None):
 
 
 @pytest.mark.vcr()
+async def test_document_url_input(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert result.output == snapshot('The document contains the text "Dummy PDF file" on its single page.')
+
+
+@pytest.mark.vcr()
 async def test_image_as_binary_content_input(
     allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
 ):
@@ -664,6 +676,17 @@ async def test_audio_as_binary_content_input(
 
     result = await agent.run(['Whose name is mentioned in the audio?', audio_content])
     assert result.output == snapshot('The name mentioned in the audio is Marcelo.')
+
+
+@pytest.mark.vcr()
+async def test_document_as_binary_content_input(
+    allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What is the main content on this document?', document_content])
+    assert result.output == snapshot('The main content of the document is "Dummy PDF file."')
 
 
 def test_model_status_error(allow_model_requests: None) -> None:

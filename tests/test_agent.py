@@ -32,7 +32,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from .conftest import IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -1813,6 +1813,23 @@ def test_instructions_with_message_history():
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
+    )
+
+
+def test_instructions_parameter_with_sequence():
+    def instructions() -> str:
+        return 'You are a potato.'
+
+    agent = Agent('test', instructions=('You are a helpful assistant.', instructions))
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+            instructions="""\
+You are a helpful assistant.
+You are a potato.\
+""",
+        )
     )
 
 
