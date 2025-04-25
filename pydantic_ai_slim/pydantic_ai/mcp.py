@@ -9,7 +9,7 @@ from types import TracebackType
 from typing import Any
 
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from mcp.types import JSONRPCMessage
+from mcp.types import JSONRPCMessage, LoggingLevel
 from typing_extensions import Self
 
 from pydantic_ai.tools import ToolDefinition
@@ -52,6 +52,11 @@ class MCPServer(ABC):
         raise NotImplementedError('MCP Server subclasses must implement this method.')
         yield
 
+    @abstractmethod
+    def _get_log_level(self) -> LoggingLevel | None:
+        """Get the log level for the MCP server."""
+        raise NotImplementedError('MCP Server subclasses must implement this method.')
+
     async def list_tools(self) -> list[ToolDefinition]:
         """Retrieve tools that are currently active on the server.
 
@@ -89,6 +94,8 @@ class MCPServer(ABC):
         self._client = await self._exit_stack.enter_async_context(client)
 
         await self._client.initialize()
+        if log_level := self._get_log_level():
+            await self._client.set_logging_level(log_level)
         self.is_running = True
         return self
 
@@ -150,6 +157,13 @@ class MCPServerStdio(MCPServer):
     By default the subprocess will not inherit any environment variables from the parent process.
     If you want to inherit the environment variables from the parent process, use `env=os.environ`.
     """
+    log_level: LoggingLevel | None = None
+    """The log level to set when connecting to the server, if any.
+
+    See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
+
+    If `None`, no log level will be set.
+    """
 
     cwd: str | Path | None = None
     """The working directory to use when spawning the process."""
@@ -163,6 +177,9 @@ class MCPServerStdio(MCPServer):
         server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
         async with stdio_client(server=server) as (read_stream, write_stream):
             yield read_stream, write_stream
+
+    def _get_log_level(self) -> LoggingLevel | None:
+        return self.log_level
 
 
 @dataclass
@@ -223,6 +240,13 @@ class MCPServerHTTP(MCPServer):
     If no new messages are received within this time, the connection will be considered stale
     and may be closed. Defaults to 5 minutes (300 seconds).
     """
+    log_level: LoggingLevel | None = None
+    """The log level to set when connecting to the server, if any.
+
+    See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
+
+    If `None`, no log level will be set.
+    """
 
     @asynccontextmanager
     async def client_streams(
@@ -234,3 +258,6 @@ class MCPServerHTTP(MCPServer):
             url=self.url, headers=self.headers, timeout=self.timeout, sse_read_timeout=self.sse_read_timeout
         ) as (read_stream, write_stream):
             yield read_stream, write_stream
+
+    def _get_log_level(self) -> LoggingLevel | None:
+        return self.log_level
