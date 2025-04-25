@@ -67,6 +67,7 @@ nav:
       - api/usage.md
       - api/mcp.md
       - api/format_as_xml.md
+      - api/low_level.md
       - api/models/base.md
       - api/models/openai.md
       - api/models/anthropic.md

@@ -100,7 +100,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     model: models.Model | models.KnownModelName | str | None
     """The default model configured for this agent.
 
-    We allow str here since the actual list of allowed models changes frequently.
+    We allow `str` here since the actual list of allowed models changes frequently.
     """
 
     name: str | None
@@ -225,7 +225,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         Args:
             model: The default model to use for this agent, if not provide,
-                you must provide the model when calling it. We allow str here since the actual list of allowed models changes frequently.
+                you must provide the model when calling it. We allow `str` here since the actual list of allowed models changes frequently.
             output_type: The type of the output data, used to validate the data returned by the model,
                 defaults to `str`.
             instructions: Instructions to use for this agent, you can also register instructions via a function with

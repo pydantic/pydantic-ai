@@ -474,6 +474,11 @@ class ModelRequest:
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
 
+    @classmethod
+    def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
+        """Create a `ModelRequest` with a single user prompt as text."""
+        return cls(parts=[UserPromptPart(user_prompt)], instructions=instructions)
+
 
 @dataclass
 class TextPart:
