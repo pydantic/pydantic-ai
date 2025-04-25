@@ -724,24 +724,36 @@ class OpenAIResponsesModel(Model):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
-                thinking_parts: list[ThinkingPart] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
-                        openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
+                        openai_messages.append(
+                            responses.ResponseOutputMessageParam(
+                                id=item.id or '',
+                                role='assistant',
+                                content=[
+                                    responses.ResponseOutputTextParam(
+                                        text=item.content,
+                                        type='output_text',
+                                        annotations=[],
+                                    )
+                                ],
+                                status='completed',
+                                type='message',
+                            )
+                        )
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        thinking_parts.append(item)
+                        # Reasoning needs to precede the tool call, it shouldn't get added last
+                        openai_messages.append(
+                            responses.ResponseReasoningItemParam(
+                                id=item.signature or '',
+                                summary=[Summary(text=item.content, type='summary_text')],
+                                type='reasoning',
+                            )
+                        )
                     else:
                         assert_never(item)
-                if thinking_parts:
-                    openai_messages.append(
-                        responses.ResponseReasoningItemParam(
-                            id=thinking_parts[0].signature or '',
-                            summary=[Summary(text=item.content, type='summary_text') for item in thinking_parts],
-                            type='reasoning',
-                        )
-                    )
             else:
                 assert_never(message)
         instructions = self._get_instructions(messages) or NOT_GIVEN
@@ -750,6 +762,7 @@ class OpenAIResponsesModel(Model):
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> responses.ResponseFunctionToolCallParam:
         return responses.ResponseFunctionToolCallParam(
+            id=t.id or '',
             arguments=t.args_as_json_str(),
             call_id=_guard_tool_call_id(t=t),
             name=t.tool_name,
@@ -888,6 +901,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseContentPartDoneEvent):
                 pass  # there's nothing we need to do here
 
+            elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryTextDoneEvent):
+                pass  # there's nothing we need to do here
+
             elif isinstance(chunk, responses.ResponseCreatedEvent):
                 pass  # there's nothing we need to do here
 
@@ -919,11 +941,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         vendor_part_id=chunk.item.id,
                         tool_name=chunk.item.name,
                         args=chunk.item.arguments,
-                        tool_call_id=chunk.item.id,
+                        tool_call_id=chunk.item.call_id,
                     )
                 elif isinstance(chunk.item, responses.ResponseReasoningItem):
                     content = chunk.item.summary[0].text if chunk.item.summary else ''
-                    yield self._parts_manager.handle_thinking_delta(vendor_part_id=chunk.item.id, content=content)
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id=chunk.item.id,
+                        content=content,
+                        signature=chunk.item.id,
+                    )
                 elif isinstance(chunk.item, responses.ResponseOutputMessage):
                     pass
                 else:
@@ -950,7 +976,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                yield self._parts_manager.handle_text_delta(vendor_part_id=chunk.content_index, content=chunk.delta)
+                yield self._parts_manager.handle_text_delta(vendor_part_id=chunk.item_id, content=chunk.delta)
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=chunk.item_id,
+                    content=chunk.delta,
+                    signature=chunk.item_id,
+                )
 
             elif isinstance(chunk, responses.ResponseTextDoneEvent):
                 pass  # there's nothing we need to do here
