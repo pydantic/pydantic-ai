@@ -367,53 +367,62 @@ class BedrockConverseModel(Model):
     async def _map_messages(
         self, messages: list[ModelMessage]
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
-        """Just maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`."""
+        """Maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`.
+        Groups consecutive ToolReturnPart objects into a single user message as required by Bedrock Claude/Nova models.
+        """
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)
         for m in messages:
             if isinstance(m, ModelRequest):
-                for part in m.parts:
+                parts = m.parts
+                i = 0
+                while i < len(parts):
+                    part = parts[i]
                     if isinstance(part, SystemPromptPart):
                         system_prompt.append({'text': part.content})
+                        i += 1
                     elif isinstance(part, UserPromptPart):
                         bedrock_messages.extend(await self._map_user_prompt(part, document_count))
+                        i += 1
                     elif isinstance(part, ToolReturnPart):
-                        assert part.tool_call_id is not None
-                        bedrock_messages.append(
-                            {
+                        # Group consecutive ToolReturnParts
+                        tool_results = []
+                        while i < len(parts) and isinstance(parts[i], ToolReturnPart):
+                            tr_part = parts[i]
+                            assert tr_part.tool_call_id is not None
+                            tool_results.append({
+                                'toolResult': {
+                                    'toolUseId': tr_part.tool_call_id,
+                                    'content': [{'text': tr_part.model_response_str()}],
+                                    'status': 'success',
+                                }
+                            })
+                            i += 1
+                        bedrock_messages.append({
+                            'role': 'user',
+                            'content': tool_results,
+                        })
+                    elif isinstance(part, RetryPromptPart):
+                        if part.tool_name is None:  # pragma: no cover
+                            bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
+                        else:
+                            assert part.tool_call_id is not None
+                            bedrock_messages.append({
                                 'role': 'user',
                                 'content': [
                                     {
                                         'toolResult': {
                                             'toolUseId': part.tool_call_id,
-                                            'content': [{'text': part.model_response_str()}],
-                                            'status': 'success',
+                                            'content': [{'text': part.model_response()}],
+                                            'status': 'error',
                                         }
                                     }
                                 ],
-                            }
-                        )
-                    elif isinstance(part, RetryPromptPart):
-                        # TODO(Marcelo): We need to add a test here.
-                        if part.tool_name is None:  # pragma: no cover
-                            bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
-                        else:
-                            assert part.tool_call_id is not None
-                            bedrock_messages.append(
-                                {
-                                    'role': 'user',
-                                    'content': [
-                                        {
-                                            'toolResult': {
-                                                'toolUseId': part.tool_call_id,
-                                                'content': [{'text': part.model_response()}],
-                                                'status': 'error',
-                                            }
-                                        }
-                                    ],
-                                }
-                            )
+                            })
+                        i += 1
+                    else:
+                        i += 1
             elif isinstance(m, ModelResponse):
                 content: list[ContentBlockOutputTypeDef] = []
                 for item in m.parts:
