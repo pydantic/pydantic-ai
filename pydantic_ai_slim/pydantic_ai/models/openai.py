@@ -123,11 +123,11 @@ class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
     See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
     """
 
-    openai_reasoning_generate_summary: Literal['detailed', 'concise']
+    openai_reasoning_summary: Literal['auto', 'detailed', 'concise']
     """A summary of the reasoning performed by the model.
 
     This can be useful for debugging and understanding the model's reasoning process.
-    One of `concise` or `detailed`.
+    One of `auto`, `detailed` or `concise`.
 
     Check the [OpenAI Computer use documentation](https://platform.openai.com/docs/guides/tools-computer-use#1-send-a-request-to-the-model)
     for more details.
@@ -637,11 +637,11 @@ class OpenAIResponsesModel(Model):
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
-        reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
+        reasoning_summary = model_settings.get('openai_reasoning_summary', None)
 
-        if reasoning_effort is None and reasoning_generate_summary is None:
+        if reasoning_effort is None and reasoning_summary is None:
             return NOT_GIVEN
-        return Reasoning(effort=reasoning_effort, generate_summary=reasoning_generate_summary)
+        return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
