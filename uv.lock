@@ -2987,7 +2987,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-evals", marker = "extra == 'evals'", editable = "pydantic_evals" },
     { name = "pydantic-graph", editable = "pydantic_graph" },
-    { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.3" },
+    { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.2" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13" },
     { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
