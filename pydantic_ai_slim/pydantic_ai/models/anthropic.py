@@ -264,7 +264,7 @@ class AnthropicModel(Model):
         for item in response.content:
             if isinstance(item, TextBlock):
                 items.append(TextPart(content=item.text))
-            elif isinstance(item, RedactedThinkingBlock):
+            elif isinstance(item, RedactedThinkingBlock):  # pragma: no cover
                 warnings.warn(
                     'PydanticAI currently does not handle redacted thinking blocks. '
                     'If you have a suggestion on how we should handle them, please open an issue.',

@@ -881,11 +881,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
 
-            elif isinstance(chunk, responses.ResponseAudioDeltaEvent):
-                # TODO(Marcelo): The reasoning events are getting this type.
-                # See https://github.com/openai/openai-python/issues/2311 for more details.
-                pass
-
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                 pass  # there's nothing we need to do here
 
@@ -936,6 +931,22 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
                 # NOTE: We only need this if the tool call deltas don't include the final info.
                 pass
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryTextDoneEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=chunk.item_id,
+                    content=chunk.delta,
+                    signature=chunk.item_id,
+                )
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 yield self._parts_manager.handle_text_delta(vendor_part_id=chunk.content_index, content=chunk.delta)
