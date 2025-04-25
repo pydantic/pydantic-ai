@@ -581,3 +581,34 @@ async def test_bedrock_multiple_documents_in_history(
     assert result.output == snapshot(
         'Based on the documents you\'ve shared, both Document 1.pdf and Document 2.pdf contain the text "Dummy PDF file". These appear to be placeholder or sample PDF documents rather than files with substantial content.'
     )
+
+
+async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: BedrockProvider):
+    """
+    Test that consecutive ToolReturnPart objects are grouped into a single user message for Bedrock.
+    """
+    from pydantic_ai.models.bedrock import BedrockConverseModel
+    from pydantic_ai.messages import ModelRequest, ToolReturnPart
+    import datetime
+
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+    # Create a ModelRequest with 3 consecutive ToolReturnParts
+    req = ModelRequest(parts=[
+        ToolReturnPart(tool_name='tool1', content='result1', tool_call_id='id1', timestamp=now),
+        ToolReturnPart(tool_name='tool2', content='result2', tool_call_id='id2', timestamp=now),
+        ToolReturnPart(tool_name='tool3', content='result3', tool_call_id='id3', timestamp=now),
+    ])
+    # Call the mapping function directly
+    system_prompt, bedrock_messages = await model._map_messages([req])
+    # There should be one user message with 3 tool results
+    assert len(bedrock_messages) == 1
+    user_msg = bedrock_messages[0]
+    assert user_msg['role'] == 'user'
+    assert isinstance(user_msg['content'], list)
+    assert len(user_msg['content']) == 3
+    for idx, tool_result in enumerate(user_msg['content'], 1):
+        assert 'toolResult' in tool_result
+        assert tool_result['toolResult']['toolUseId'] == f'id{idx}'
+        assert tool_result['toolResult']['content'][0]['text'] == f'result{idx}'
+        assert tool_result['toolResult']['status'] == 'success'
