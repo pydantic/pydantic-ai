@@ -476,6 +476,8 @@ class TextPart:
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    id: str | None = None
+
     def has_content(self) -> bool:
         """Return `True` if the text content is non-empty."""
         return bool(self.content)
@@ -493,6 +495,8 @@ class ThinkingPart:
 
     part_kind: Literal['thinking'] = 'thinking'
     """Part type identifier, this is available on all parts as a discriminator."""
+
+    id: str | None = None
 
     def has_content(self) -> bool:
         """Return `True` if the thinking content is non-empty."""
