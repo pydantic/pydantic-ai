@@ -54,7 +54,7 @@ interactions:
       ratelimitbysize-remaining:
       - '4968000'
       ratelimitbysize-reset:
-      - '37'
+      - '19'
       transfer-encoding:
       - chunked
     parsed_body:
@@ -69,10 +69,10 @@ interactions:
           - function:
               arguments: '{}'
               name: get_image
-            id: u73r99WZa
+            id: 7y9B4SNod
             index: 0
-      created: 1745002643
-      id: 2dfb1f83295645ec8a175ebe907cfe45
+      created: 1745623781
+      id: fd8566b89bda45b2bdd0f70ee8251fa9
       model: pixtral-12b-latest
       object: chat.completion
       usage:
@@ -91,11 +91,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2780323'
+      - '2780299'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=vUohgAc2GQ6CS3oUu0wqKHSQ4Bb8zlsU_sUy_WxC4lM-1745002643-1.0.1.1-DfmXYGY6.TDqs0NU1yWv41YsuuULmCj_PqmoicCRbV1tR_7wRxdFD2RiXjuUqjdb0DLhQ9ZllWwqwGx7M3aVUUUz1GaEBPzXO_A1y9guOX0
+      - __cf_bm=L9eUr5YJZt1oi_FgR0aJp8aW9lFNKRj70b6L2xULOaM-1745623781-1.0.1.1-HZH8890qyux.GUDgiWL3BwtU6aZ7b59uO29HFhwr7je6zNd61nUVFD7OVLEqL8Ae4ccNsB5XOVGNHRzrxZ43gpp2BVQ149ql1H_LQfomy5M;
+        _cfuvid=92xu1F_Dht_xLrPF.goEaIF6kjjswk5T6qkdnFZX3QI-1745623781518-0.0.1.1-604800000
       host:
       - api.mistral.ai
     method: POST
@@ -112,14 +113,14 @@ interactions:
         - function:
             arguments: '{}'
             name: get_image
-          id: u73r99WZa
+          id: 7y9B4SNod
           index: 0
           type: function
       - content: See file 1.
         role: tool
-        tool_call_id: u73r99WZa
+        tool_call_id: 7y9B4SNod
       - content:
-        - text: Thanks, I'll look at file.
+        - text: OK
           type: text
         prefix: false
         role: assistant
@@ -154,7 +155,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '566'
+      - '509'
       content-type:
       - application/json
       ratelimitbysize-limit:
@@ -162,9 +163,9 @@ interactions:
       ratelimitbysize-query-cost:
       - '32004'
       ratelimitbysize-remaining:
-      - '4935996'
+      - '4844519'
       ratelimitbysize-reset:
-      - '37'
+      - '19'
       transfer-encoding:
       - chunked
     parsed_body:
@@ -173,19 +174,18 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: The image shows a halved kiwi fruit. Kiwis are known for their bright green flesh with tiny black seeds
-            and a sweet, tangy flavor. They are also rich in vitamin C and fiber. Is there anything specific you would like
-            to know about kiwis or the image?
+          content: The image shows a kiwi fruit that has been cut in half. Kiwis are known for their bright green flesh with
+            tiny black seeds and a sweet, tangy flavor. They are also rich in vitamin C and fiber.
           role: assistant
           tool_calls: null
-      created: 1745002645
-      id: b0b1416fa1014119a29a5ad4d1121112
+      created: 1745623783
+      id: 27506ccefb4949d1a9ef5b4ab13549db
       model: pixtral-12b-latest
       object: chat.completion
       usage:
-        completion_tokens: 60
-        prompt_tokens: 2930
-        total_tokens: 2990
+        completion_tokens: 47
+        prompt_tokens: 2921
+        total_tokens: 2968
     status:
       code: 200
       message: OK

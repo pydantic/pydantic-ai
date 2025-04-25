@@ -494,9 +494,7 @@ class MistralModel(Model):
                 next_message = mistral_messages[i + 1]
                 if isinstance(next_message, MistralUserMessage):
                     # Insert a dummy assistant message
-                    processed_messages.append(
-                        MistralAssistantMessage(content=[MistralTextChunk(text="Thanks, I'll look at file.")])
-                    )
+                    processed_messages.append(MistralAssistantMessage(content=[MistralTextChunk(text='OK')]))
 
         return processed_messages
 
