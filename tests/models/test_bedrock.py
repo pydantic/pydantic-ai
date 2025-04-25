@@ -585,8 +585,8 @@ async def test_bedrock_multiple_documents_in_history(
 
 
 async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    m = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
-    agent = Agent(m)
+    deepseek_model = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
+    agent = Agent(deepseek_model)
 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
@@ -600,8 +600,15 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
         ]
     )
 
+    anthropic_model = BedrockConverseModel('us.anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
     result = await agent.run(
         'Considering the way to cross the street, analogously, how do I cross the river?',
+        model=anthropic_model,
+        model_settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={
+                'thinking': {'type': 'enabled', 'budget_tokens': 1024},
+            }
+        ),
         message_history=result.all_messages(),
     )
     assert result.all_messages() == snapshot(
@@ -621,8 +628,14 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
                 ]
             ),
             ModelResponse(
-                parts=[IsInstance(TextPart), IsInstance(ThinkingPart)],
-                model_name='us.deepseek.r1-v1:0',
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature='ErcBCkgIAhABGAIiQMuiyDObz/Z/ryneAVaQDk4iH6JqSNKJmJTwpQ1RqPz07UFTEffhkJW76u0WVKZaYykZAHmZl/IbQOPDLGU0nhQSDDuHLg82YIApYmWyfhoMe8vxT1/WGTJwyCeOIjC5OfF0+c6JOAvXvv9ElFXHo3yS3am1V0KpTiFj4YCy/bqfxv1wFGBw0KOMsTgq7ugqHeuOpzNM91a/RgtYHUdrcAKm9iCRu24jIOCjr5+h',
+                    ),
+                    IsInstance(TextPart),
+                ],
+                model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
             ),
         ]
