@@ -727,7 +727,21 @@ class OpenAIResponsesModel(Model):
             elif isinstance(message, ModelResponse):
                 for item in message.parts:
                     if isinstance(item, TextPart):
-                        openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
+                        openai_messages.append(
+                            responses.ResponseOutputMessageParam(
+                                id=item.id or '',
+                                role='assistant',
+                                content=[
+                                    responses.ResponseOutputTextParam(
+                                        text=item.content,
+                                        type='output_text',
+                                        annotations=[],
+                                    )
+                                ],
+                                status='completed',
+                                type='message',
+                            )
+                        )
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
@@ -952,7 +966,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                yield self._parts_manager.handle_text_delta(vendor_part_id=chunk.content_index, content=chunk.delta)
+                yield self._parts_manager.handle_text_delta(vendor_part_id=chunk.item_id, content=chunk.delta)
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
                 yield self._parts_manager.handle_thinking_delta(

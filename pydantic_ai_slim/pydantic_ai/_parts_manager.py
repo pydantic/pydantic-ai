@@ -111,7 +111,7 @@ class ModelResponsePartsManager:
         if existing_text_part_and_index is None:
             # There is no existing text part that should be updated, so create a new one
             new_part_index = len(self._parts)
-            part = TextPart(content=content)
+            part = TextPart(id=vendor_part_id, content=content)
             if vendor_part_id is not None:
                 self._vendor_id_to_part_index[vendor_part_id] = new_part_index
             self._parts.append(part)
