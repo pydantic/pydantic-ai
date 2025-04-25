@@ -16,6 +16,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
@@ -642,6 +643,17 @@ async def test_image_url_input(allow_model_requests: None):
                 'extra_body': None,
             }
         ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_openai_audio_url_input(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o-audio-preview', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['Hello', AudioUrl(url='https://cdn.openai.com/API/docs/audio/alloy.wav')])
+    assert result.output == snapshot(
+        'Yes, the phenomenon of the sun rising in the east and setting in the west is due to the rotation of the Earth. The Earth rotates on its axis from west to east, making the sun appear to rise on the eastern horizon and set in the west. This is a daily occurrence and has been a fundamental aspect of human observation and timekeeping throughout history.'
     )
 
 
