@@ -676,7 +676,7 @@ class _GeminiTextContent(TypedDict):
 
 
 class _GeminiTools(TypedDict):
-    function_declarations: list[Annotated[_GeminiFunction, pydantic.Field(alias='functionDeclarations')]]
+    function_declarations: Annotated[list[_GeminiFunction], pydantic.Field(alias='functionDeclarations')]
 
 
 class _GeminiFunction(TypedDict):
