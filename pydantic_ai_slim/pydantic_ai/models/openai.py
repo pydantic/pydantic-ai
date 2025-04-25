@@ -433,7 +433,8 @@ class OpenAIModel(Model):
                     response = await client.get(item.url)
                     response.raise_for_status()
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    audio = InputAudio(data=base64_encoded, format=response.headers.get('content-type'))
+                    audio_format: Any = response.headers['content-type'].removeprefix('audio/')
+                    audio = InputAudio(data=base64_encoded, format=audio_format)
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):  # pragma: no cover
                     raise NotImplementedError('DocumentUrl is not supported for OpenAI')
