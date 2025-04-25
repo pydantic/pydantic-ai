@@ -351,6 +351,8 @@ class ToolReturnPart:
     tool_call_id: str
     """The tool call identifier, this is used by some models including OpenAI."""
 
+    id: str | None = None
+
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
@@ -509,6 +511,8 @@ class ToolCallPart:
 
     This is stored either as a JSON string or a Python dictionary depending on how data was received.
     """
+
+    id: str | None = None
 
     tool_call_id: str = field(default_factory=_generate_tool_call_id)
     """The tool call identifier, this is used by some models including OpenAI.
@@ -799,8 +803,9 @@ class ToolCallPartDelta:
             updated_dict = {**(part.args or {}), **self.args_delta}
             part = replace(part, args=updated_dict)
 
+        # Does this ever change? Not sure why this is needed
         if self.tool_call_id:
-            part = replace(part, tool_call_id=self.tool_call_id)
+            part = replace(part, id=self.tool_call_id)
         return part
 
 
