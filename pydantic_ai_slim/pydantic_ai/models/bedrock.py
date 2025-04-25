@@ -170,7 +170,7 @@ class BedrockModelSettings(ModelSettings, total=False):
 class BedrockConverseModel(Model):
     """A model that uses the Bedrock Converse API."""
 
-    client: Any  # Use Any at runtime, BedrockRuntimeClient for type checking
+    client: BedrockRuntimeClient
 
     _model_name: BedrockModelName = field(repr=False)
     _system: str = field(default='bedrock', repr=False)
@@ -205,7 +205,7 @@ class BedrockConverseModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
-        self.client = cast('BedrockRuntimeClient', provider.client)  # Use string for cast
+        self.client = cast('BedrockRuntimeClient', provider.client)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
