@@ -253,6 +253,9 @@ class BinaryContent:
 
 UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
 
+# Ideally this would be a Union of types, but Python 3.9 requires it to be a string, and strings don't work with `isinstance``.
+MultiModalContentTypes = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
+
 
 def _document_format(media_type: str) -> DocumentFormat:
     if media_type == 'application/pdf':
@@ -363,6 +366,11 @@ class ToolReturnPart:
 
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def is_multi_modal(self) -> bool:
+        """Return `True` if the content is a multi-modal content."""
+        return isinstance(self.content, MultiModalContentTypes)
 
     def model_response_str(self) -> str:
         """Return a string representation of the content for the model."""
