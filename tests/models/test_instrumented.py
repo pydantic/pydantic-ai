@@ -36,7 +36,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import Usage
 
-from ..conftest import try_import
+from ..conftest import IsStr, try_import
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
@@ -806,7 +806,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
                 'event.name': 'gen_ai.user.message',
             },
             {
-                'content': ['user_prompt6', {'kind': 'binary'}],
+                'content': ['user_prompt6', {'kind': 'binary', 'content': IsStr(), 'media_type': 'application/pdf'}],
                 'role': 'user',
                 'gen_ai.message.index': 5,
                 'event.name': 'gen_ai.user.message',
@@ -815,31 +815,6 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
                 'role': 'assistant',
                 'content': 'text1',
                 'gen_ai.message.index': 6,
-                'event.name': 'gen_ai.assistant.message',
-            },
-        ]
-    )
-
-
-def test_messages_to_otel_events_binary_content():
-    messages = [
-        ModelRequest(parts=[UserPromptPart(content=[BinaryContent(data=b'binary_data', media_type='image/png')])]),
-        ModelResponse(parts=[TextPart('text1')]),
-    ]
-    assert [
-        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
-    ] == snapshot(
-        [
-            {
-                'content': [{'kind': 'binary', 'content': 'YmluYXJ5X2RhdGE=', 'media_type': 'image/png'}],
-                'role': 'user',
-                'gen_ai.message.index': 0,
-                'event.name': 'gen_ai.user.message',
-            },
-            {
-                'content': 'text1',
-                'role': 'assistant',
-                'gen_ai.message.index': 1,
                 'event.name': 'gen_ai.assistant.message',
             },
         ]
