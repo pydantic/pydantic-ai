@@ -819,3 +819,28 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
             },
         ]
     )
+
+
+def test_messages_to_otel_events_binary_content():
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content=[BinaryContent(data=b'binary_data', media_type='image/png')])]),
+        ModelResponse(parts=[TextPart('text1')]),
+    ]
+    assert [
+        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
+    ] == snapshot(
+        [
+            {
+                'content': [{'kind': 'binary', 'content': 'YmluYXJ5X2RhdGE=', 'media_type': 'image/png'}],
+                'role': 'user',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'content': 'text1',
+                'role': 'assistant',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+        ]
+    )

@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import base64
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
@@ -337,6 +338,9 @@ class UserPromptPart:
                     content.append(part)
                 elif isinstance(part, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
                     content.append({'kind': part.kind, 'url': part.url})
+                elif isinstance(part, BinaryContent):
+                    base64_data = base64.b64encode(part.data).decode()
+                    content.append({'kind': part.kind, 'content': base64_data, 'media_type': part.media_type})
                 else:
                     content.append({'kind': part.kind})
         return Event('gen_ai.user.message', body={'content': content, 'role': 'user'})
