@@ -932,8 +932,7 @@ def test_tool_parameters_with_attribute_docstrings():
         """The second parameter"""
 
     @agent.tool_plain
-    def get_score(data: Data) -> int:
-        return data['a'] + data['b']
+    def get_score(data: Data) -> int: ...
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
