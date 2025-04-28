@@ -1325,17 +1325,18 @@ wheels = [
 
 [[package]]
 name = "inline-snapshot"
-version = "0.20.2"
+version = "0.23.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asttokens" },
     { name = "executing" },
+    { name = "pytest" },
     { name = "rich" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/57/1d/eb7aca1df3900f4d27f55c55e7aa9464ab9b1f2d2a7150f66cf82ca0ba2b/inline_snapshot-0.20.2.tar.gz", hash = "sha256:c276a2e018575d50e720e9b79b70f7030d292120f96e6be2e138a87a5a6d096b", size = 91060 }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/a3/9e78da370d20b896861cd5db3fa6fde89348b700ec144d8c1457c18ea113/inline_snapshot-0.23.0.tar.gz", hash = "sha256:872d027b1eae4e3e3b4028e0d46128bafbf62889a2424a2667dbe4b69cb1ffdf", size = 259375 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/27/d7/e9fdfdd574290c6f093f7a3c6b9968b1c6f99da4cdc41e6a790ddd51782c/inline_snapshot-0.20.2-py3-none-any.whl", hash = "sha256:52507d2976ea80abdcf72a89d31d0fda9a46f37cbae3ee1dcb67c9324b34ef44", size = 47844 },
+    { url = "https://files.pythonhosted.org/packages/71/ab/4ad6bb9808f242e659ca8437ee475efaa201f18ff20a0dd5553280c85ae5/inline_snapshot-0.23.0-py3-none-any.whl", hash = "sha256:b1a5feab675aee8d03a51f1b6291f412100ce750d846c2d58eab16c90ee2c4dd", size = 50119 },
 ]
 
 [[package]]
