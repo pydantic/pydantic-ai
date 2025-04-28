@@ -685,7 +685,7 @@ class OpenAIResponsesModel(Model):
             'strict': f.strict or False,
         }
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage]
     ) -> tuple[str | NotGiven, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
@@ -722,24 +722,33 @@ class OpenAIResponsesModel(Model):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
-                thinking_parts: list[ThinkingPart] = []
+                last_thinking_part_idx: int | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        thinking_parts.append(item)
+                        assert item.signature is not None, 'If this is triggered, please create an issue.'
+                        if last_thinking_part_idx is not None:
+                            reasoning_item = cast(responses.ResponseReasoningItemParam, openai_messages[last_thinking_part_idx])  # fmt: skip
+                            if item.signature == reasoning_item['id']:
+                                assert isinstance(reasoning_item['summary'], list)
+                                reasoning_item['summary'].append(Summary(text=item.content, type='summary_text'))
+                                continue
+                        last_thinking_part_idx = len(openai_messages)
+                        openai_messages.append(
+                            responses.ResponseReasoningItemParam(
+                                id=item.signature,
+                                summary=[Summary(text=item.content, type='summary_text')],
+                                type='reasoning',
+                            )
+                        )
                     else:
                         assert_never(item)
-                if thinking_parts:
-                    openai_messages.append(
-                        responses.ResponseReasoningItemParam(
-                            id=thinking_parts[0].signature or '',
-                            summary=[Summary(text=item.content, type='summary_text') for item in thinking_parts],
-                            type='reasoning',
-                        )
-                    )
+                from rich.pretty import pprint
+
+                pprint(openai_messages)
             else:
                 assert_never(message)
         instructions = self._get_instructions(messages) or NOT_GIVEN
@@ -877,6 +886,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
+            from rich.pretty import pprint
+
+            pprint(chunk)
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
 
@@ -917,11 +929,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         vendor_part_id=chunk.item.id,
                         tool_name=chunk.item.name,
                         args=chunk.item.arguments,
-                        tool_call_id=chunk.item.id,
+                        tool_call_id=chunk.item.call_id,
                     )
                 elif isinstance(chunk.item, responses.ResponseReasoningItem):
                     content = chunk.item.summary[0].text if chunk.item.summary else ''
-                    yield self._parts_manager.handle_thinking_delta(vendor_part_id=chunk.item.id, content=content)
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id=chunk.item.id,
+                        content=content,
+                        signature=chunk.item.id,
+                    )
                 elif isinstance(chunk.item, responses.ResponseOutputMessage):
                     pass
                 else:

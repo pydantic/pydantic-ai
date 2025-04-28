@@ -259,7 +259,7 @@ class TestStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
                 )
-            elif isinstance(part, ThinkingPart):
+            elif isinstance(part, ThinkingPart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate ThinkingPart on TestModel.
                 pass  # pragma: no cover
             else:
