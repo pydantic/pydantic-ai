@@ -439,12 +439,13 @@ class OpenAIModel(Model):
                         )
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
-                elif isinstance(item, AudioUrl):  # pragma: no cover
+                elif isinstance(item, AudioUrl):
                     client = cached_async_http_client()
                     response = await client.get(item.url)
                     response.raise_for_status()
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    audio = InputAudio(data=base64_encoded, format=response.headers.get('content-type'))
+                    audio_format: Any = response.headers['content-type'].removeprefix('audio/')
+                    audio = InputAudio(data=base64_encoded, format=audio_format)
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
                     client = cached_async_http_client()
@@ -453,10 +454,7 @@ class OpenAIModel(Model):
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
                     media_type = response.headers.get('content-type').split(';')[0]
                     file_data = f'data:{media_type};base64,{base64_encoded}'
-                    file = File(
-                        file=FileFile(file_data=file_data, filename=f'filename.{item.format}'),
-                        type='file',
-                    )
+                    file = File(file=FileFile(file_data=file_data, filename=f'filename.{item.format}'), type='file')
                     content.append(file)
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')

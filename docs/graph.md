@@ -411,7 +411,7 @@ class WriteEmail(BaseNode[State]):
             prompt,
             message_history=ctx.state.write_agent_messages,
         )
-        ctx.state.write_agent_messages += result.all_messages()
+        ctx.state.write_agent_messages += result.new_messages()
         return Feedback(result.output)
 
 
@@ -681,7 +681,7 @@ Instead of running the entire graph in a single process invocation, we run the g
                 'Ask a simple question with a single correct answer.',
                 message_history=ctx.state.ask_agent_messages,
             )
-            ctx.state.ask_agent_messages += result.all_messages()
+            ctx.state.ask_agent_messages += result.new_messages()
             ctx.state.question = result.output
             return Answer(result.output)
 
@@ -722,7 +722,7 @@ Instead of running the entire graph in a single process invocation, we run the g
                 format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
                 message_history=ctx.state.evaluate_agent_messages,
             )
-            ctx.state.evaluate_agent_messages += result.all_messages()
+            ctx.state.evaluate_agent_messages += result.new_messages()
             if result.output.correct:
                 return End(result.output.comment)
             else:

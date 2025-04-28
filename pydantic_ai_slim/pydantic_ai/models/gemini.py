@@ -328,7 +328,7 @@ class GeminiModel(Model):
                     content.append(
                         _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
                     )
-                elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl)):
+                elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl, VideoUrl)):
                     client = cached_async_http_client()
                     response = await client.get(item.url, follow_redirects=True)
                     response.raise_for_status()
@@ -337,8 +337,6 @@ class GeminiModel(Model):
                         inline_data={'data': base64.b64encode(response.content).decode('utf-8'), 'mime_type': mime_type}
                     )
                     content.append(inline_data)
-                elif isinstance(item, VideoUrl):  # pragma: no cover
-                    raise NotImplementedError('VideoUrl is not supported for Gemini.')
                 else:
                     assert_never(item)
         return content
@@ -641,7 +639,7 @@ class _GeminiTextContent(TypedDict):
 
 
 class _GeminiTools(TypedDict):
-    function_declarations: list[Annotated[_GeminiFunction, pydantic.Field(alias='functionDeclarations')]]
+    function_declarations: Annotated[list[_GeminiFunction], pydantic.Field(alias='functionDeclarations')]
 
 
 class _GeminiFunction(TypedDict):

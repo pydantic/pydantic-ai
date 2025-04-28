@@ -152,7 +152,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: type[OutputDataT] | ToolOutput[OutputDataT] = str,
-        instructions: str | _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
+        instructions: str
+        | _system_prompt.SystemPromptFunc[AgentDepsT]
+        | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
+        | None = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -175,7 +178,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         result_type: type[OutputDataT] = str,
-        instructions: str | _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
+        instructions: str
+        | _system_prompt.SystemPromptFunc[AgentDepsT]
+        | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
+        | None = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -197,7 +203,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         # TODO change this back to `output_type: type[OutputDataT] | ToolOutput[OutputDataT] = str,` when we remove the overloads
         output_type: Any = str,
-        instructions: str | _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
+        instructions: str
+        | _system_prompt.SystemPromptFunc[AgentDepsT]
+        | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
+        | None = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -296,10 +305,16 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         )
         self._output_validators = []
 
-        self._instructions_functions = (
-            [_system_prompt.SystemPromptRunner(instructions)] if callable(instructions) else []
-        )
-        self._instructions = instructions if isinstance(instructions, str) else None
+        self._instructions = ''
+        self._instructions_functions = []
+        if isinstance(instructions, (str, Callable)):
+            instructions = [instructions]
+        for instruction in instructions or []:
+            if isinstance(instruction, str):
+                self._instructions += instruction + '\n'
+            else:
+                self._instructions_functions.append(_system_prompt.SystemPromptRunner(instruction))
+        self._instructions = self._instructions.strip() or None
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -625,8 +640,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
             instructions = self._instructions or ''
             for instructions_runner in self._instructions_functions:
-                instructions += await instructions_runner.run(run_context)
-            return instructions
+                instructions += '\n' + await instructions_runner.run(run_context)
+            return instructions.strip()
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
