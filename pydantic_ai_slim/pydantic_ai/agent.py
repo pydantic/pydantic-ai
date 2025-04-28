@@ -692,28 +692,29 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         finally:
             try:
                 if run_span.is_recording():
-                    run_span.set_attributes(
-                        {
-                            **usage.opentelemetry_attributes(),
-                            'all_messages_events': json.dumps(
-                                [
-                                    InstrumentedModel.event_to_dict(e)
-                                    for e in InstrumentedModel.messages_to_otel_events(state.message_history)
-                                ]
-                            ),
-                            'logfire.json_schema': json.dumps(
-                                {
-                                    'type': 'object',
-                                    'properties': {
-                                        'all_messages_events': {'type': 'array'},
-                                        'final_result': {'type': 'object'},
-                                    },
-                                }
-                            ),
-                        }
-                    )
+                    run_span.set_attributes(self._run_span_end_attributes(state, usage))
             finally:
                 run_span.end()
+
+    def _run_span_end_attributes(self, state: _agent_graph.GraphAgentState, usage: _usage.Usage):
+        return {
+            **usage.opentelemetry_attributes(),
+            'all_messages_events': json.dumps(
+                [
+                    InstrumentedModel.event_to_dict(e)
+                    for e in InstrumentedModel.messages_to_otel_events(state.message_history)
+                ]
+            ),
+            'logfire.json_schema': json.dumps(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'all_messages_events': {'type': 'array'},
+                        'final_result': {'type': 'object'},
+                    },
+                }
+            ),
+        }
 
     @overload
     def run_sync(
