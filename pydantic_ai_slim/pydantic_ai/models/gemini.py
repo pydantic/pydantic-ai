@@ -235,6 +235,8 @@ class GeminiModel(Model):
                 generation_config['presence_penalty'] = presence_penalty
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
                 generation_config['frequency_penalty'] = frequency_penalty
+            if (thinkingConfig := model_settings.get('gemini_thinking_config')) is not None:
+                generation_config['thinking_config'] = thinkingConfig  # pragma: no cover
             if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) is not None:
                 request_data['safetySettings'] = gemini_safety_settings
         if generation_config:
