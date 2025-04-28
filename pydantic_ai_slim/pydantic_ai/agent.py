@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import inspect
+import json
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
@@ -600,9 +601,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         )
 
         # Build the initial state
+        usage = usage or _usage.Usage()
         state = _agent_graph.GraphAgentState(
             message_history=message_history[:] if message_history else [],
-            usage=usage or _usage.Usage(),
+            usage=usage,
             retries=0,
             run_step=0,
         )
@@ -669,14 +671,50 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
         )
 
-        async with graph.iter(
-            start_node,
-            state=state,
-            deps=graph_deps,
-            span=use_span(run_span, end_on_exit=True) if run_span.is_recording() else None,
-            infer_name=False,
-        ) as graph_run:
-            yield AgentRun(graph_run)
+        try:
+            async with graph.iter(
+                start_node,
+                state=state,
+                deps=graph_deps,
+                span=use_span(run_span) if run_span.is_recording() else None,
+                infer_name=False,
+            ) as graph_run:
+                agent_run = AgentRun(graph_run)
+                yield agent_run
+                if (final_result := agent_run.result) is not None and run_span.is_recording():
+                    run_span.set_attribute(
+                        'final_result',
+                        (
+                            final_result.output
+                            if isinstance(final_result.output, str)
+                            else json.dumps(InstrumentedModel.serialize_any(final_result.output))
+                        ),
+                    )
+        finally:
+            try:
+                if run_span.is_recording():
+                    run_span.set_attributes(
+                        {
+                            **usage.opentelemetry_attributes(),
+                            'all_messages_events': json.dumps(
+                                [
+                                    InstrumentedModel.event_to_dict(e)
+                                    for e in InstrumentedModel.messages_to_otel_events(state.message_history)
+                                ]
+                            ),
+                            'logfire.json_schema': json.dumps(
+                                {
+                                    'type': 'object',
+                                    'properties': {
+                                        'all_messages_events': {'type': 'array'},
+                                        'final_result': {'type': 'object'},
+                                    },
+                                }
+                            ),
+                        }
+                    )
+            finally:
+                run_span.end()
 
     @overload
     def run_sync(

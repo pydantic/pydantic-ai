@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-import json
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -24,7 +23,6 @@ from . import (
     result,
     usage as _usage,
 )
-from .models.instrumented import InstrumentedModel
 from .result import OutputDataT, ToolOutput
 from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, Tool, ToolDefinition
@@ -498,38 +496,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         final_result: result.FinalResult[NodeRunEndT],
         tool_responses: list[_messages.ModelRequestPart],
     ) -> End[result.FinalResult[NodeRunEndT]]:
-        run_span = ctx.deps.run_span
-        usage = ctx.state.usage
         messages = ctx.state.message_history
 
         # For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if tool_responses:
             messages.append(_messages.ModelRequest(parts=tool_responses))
-
-        run_span.set_attributes(
-            {
-                **usage.opentelemetry_attributes(),
-                'all_messages_events': json.dumps(
-                    [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)]
-                ),
-                'final_result': final_result.output
-                if isinstance(final_result.output, str)
-                else json.dumps(InstrumentedModel.serialize_any(final_result.output)),
-            }
-        )
-        run_span.set_attributes(
-            {
-                'logfire.json_schema': json.dumps(
-                    {
-                        'type': 'object',
-                        'properties': {
-                            'all_messages_events': {'type': 'array'},
-                            'final_result': {'type': 'object'},
-                        },
-                    }
-                ),
-            }
-        )
 
         return End(final_result)
 
