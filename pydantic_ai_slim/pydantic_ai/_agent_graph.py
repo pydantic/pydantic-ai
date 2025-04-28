@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from dataclasses import field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
-from opentelemetry.trace import Span, Tracer
+from opentelemetry.trace import Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_graph import BaseNode, Graph, GraphRunContext
@@ -93,7 +93,6 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
     mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
 
-    run_span: Span
     tracer: Tracer
 
 
