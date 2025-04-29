@@ -725,7 +725,7 @@ async def _tool_from_mcp_server(
     for server in ctx.deps.mcp_servers:
         tools = await server.list_tools()
         if tool_name in {tool.name for tool in tools}:
-            return Tool(name=tool_name, function=run_tool, takes_ctx=True)
+            return Tool(name=tool_name, function=run_tool, takes_ctx=True, max_retries=ctx.deps.max_result_retries)
     return None
 
 
