@@ -146,6 +146,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _max_result_retries: int = dataclasses.field(repr=False)
     _override_deps: _utils.Option[AgentDepsT] = dataclasses.field(default=None, repr=False)
     _override_model: _utils.Option[models.Model] = dataclasses.field(default=None, repr=False)
+    _override_tools: _utils.Option[dict[str, Tool[AgentDepsT]]] = dataclasses.field(default=None, repr=False)
 
     @overload
     def __init__(
@@ -616,7 +617,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         # TODO: Instead of this, copy the function tools to ensure they don't share current_retry state between agent
         #  runs. Requires some changes to `Tool` to make them copyable though.
-        for v in self._function_tools.values():
+        for v in self._get_tools().values():
             v.current_retry = 0
 
         model_settings = merge_model_settings(self.model_settings, model_settings)
@@ -656,7 +657,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             end_strategy=self.end_strategy,
             output_schema=output_schema,
             output_validators=output_validators,
-            function_tools=self._function_tools,
+            function_tools=self._get_tools(),
             mcp_servers=self._mcp_servers,
             tracer=tracer,
             get_instructions=get_instructions,
@@ -1028,8 +1029,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
+        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent dependencies and model.
+        """Context manager to temporarily override agent dependencies, tools, and model.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
@@ -1037,6 +1039,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         Args:
             deps: The dependencies to use instead of the dependencies passed to the agent run.
             model: The model to use instead of the model passed to the agent run.
+            tools: The tools to use instead of the tools passed to the agent run.
         """
         if _utils.is_set(deps):
             override_deps_before = self._override_deps
@@ -1050,6 +1053,17 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         else:
             override_model_before = _utils.UNSET
 
+        if _utils.is_set(tools):
+            override_tools_before = self._override_tools
+            self._override_tools = _utils.Some({})
+            for tool in tools:
+                if isinstance(tool, Tool):
+                    self._register_tool_abstract(self._override_tools.value, tool)
+                else:
+                    self._register_tool_abstract(self._override_tools.value, Tool(tool))
+        else:
+            override_tools_before = _utils.UNSET
+
         try:
             yield
         finally:
@@ -1057,6 +1071,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 self._override_deps = override_deps_before
             if _utils.is_set(override_model_before):
                 self._override_model = override_model_before
+            if _utils.is_set(override_tools_before):
+                self._override_tools = override_tools_before
 
     @overload
     def instructions(
@@ -1507,18 +1523,22 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._register_tool(tool)
 
     def _register_tool(self, tool: Tool[AgentDepsT]) -> None:
-        """Private utility to register a tool instance."""
+        """Private utility to register a tool instance to the _function_tools registry."""
+        self._register_tool_abstract(self._function_tools, tool)
+
+    def _register_tool_abstract(self, tool_registry: dict[str, Tool[AgentDepsT]], tool: Tool[AgentDepsT]) -> None:
+        """Private utility to register a tool instance to any registry."""
         if tool.max_retries is None:
             # noinspection PyTypeChecker
             tool = dataclasses.replace(tool, max_retries=self._default_retries)
 
-        if tool.name in self._function_tools:
+        if tool.name in tool_registry:
             raise exceptions.UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
 
         if self._output_schema and tool.name in self._output_schema.tools:
             raise exceptions.UserError(f'Tool name conflicts with result schema name: {tool.name!r}')
 
-        self._function_tools[tool.name] = tool
+        tool_registry[tool.name] = tool
 
     def _get_model(self, model: models.Model | models.KnownModelName | str | None) -> models.Model:
         """Create a model configured for this agent.
@@ -1569,6 +1589,22 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             return some_deps.value
         else:
             return deps
+
+    def _get_tools(self: Agent[T, OutputDataT]) -> dict[str, Tool[AgentDepsT]]:
+        """Get tools for a run.
+
+        If we've overridden tools via `_override_tools`, use that, otherwise use the tools defined on the agent.
+
+        Args:
+            tools: tools to use for this run, required if `tools` was not set when creating the agent.
+
+        Returns:
+            The tools to use for this run.
+        """
+        if some_tools := self._override_tools:
+            return some_tools.value
+        else:
+            return self._function_tools
 
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.

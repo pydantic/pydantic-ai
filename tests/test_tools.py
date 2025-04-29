@@ -954,3 +954,87 @@ def test_tool_parameters_with_attribute_docstrings():
             'strict': None,
         }
     )
+
+
+def test_tool_override():
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def tool1() -> str:
+        return 'original 1'
+
+    @agent.tool_plain
+    def tool2() -> str:
+        return 'original 2'
+
+    def overridden_tool1() -> str:
+        return 'overridden 1'
+
+    def overridden_tool2() -> str:
+        return 'overridden 2'
+
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot('{"tool1":"original 1","tool2":"original 2"}')
+
+    with agent.override(tools=[overridden_tool1]):
+        result = agent.run_sync('foobar')
+        assert result.output == snapshot('{"overridden_tool1":"overridden 1"}')
+
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot('{"tool1":"original 1","tool2":"original 2"}')
+
+    with agent.override(tools=[overridden_tool1, overridden_tool2]):
+        result = agent.run_sync('foobar')
+        assert result.output == snapshot('{"overridden_tool1":"overridden 1","overridden_tool2":"overridden 2"}')
+
+        with agent.override(tools=[overridden_tool2]):
+            result = agent.run_sync('foobar')
+            assert result.output == snapshot('{"overridden_tool2":"overridden 2"}')
+
+        result = agent.run_sync('foobar')
+        assert result.output == snapshot('{"overridden_tool1":"overridden 1","overridden_tool2":"overridden 2"}')
+
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot('{"tool1":"original 1","tool2":"original 2"}')
+
+
+def test_tool_override_with_ctx():
+    agent = Agent(TestModel(), deps_type=int)
+
+    @agent.tool
+    def tool1(ctx: RunContext[int], x: int) -> str:
+        return f'original 1 {ctx.deps}'
+
+    @agent.tool
+    def tool2(ctx: RunContext[int], x: int) -> str:
+        return f'original 2 {ctx.deps}'
+
+    def overridden_tool1(ctx: RunContext[int], x: int) -> str:
+        return f'overridden 1 {ctx.deps}'
+
+    def overridden_tool2(ctx: RunContext[int], x: int) -> str:
+        return f'overridden 2 {ctx.deps}'
+
+    result = agent.run_sync('foobar', deps=1)
+    assert result.output == snapshot('{"tool1":"original 1 1","tool2":"original 2 1"}')
+
+    with agent.override(tools=[overridden_tool1]):
+        result = agent.run_sync('foobar', deps=2)
+        assert result.output == snapshot('{"overridden_tool1":"overridden 1 2"}')
+
+    result = agent.run_sync('foobar', deps=3)
+    assert result.output == snapshot('{"tool1":"original 1 3","tool2":"original 2 3"}')
+
+    with agent.override(tools=[overridden_tool1, overridden_tool2]):
+        result = agent.run_sync('foobar', deps=4)
+        assert result.output == snapshot('{"overridden_tool1":"overridden 1 4","overridden_tool2":"overridden 2 4"}')
+
+        with agent.override(tools=[overridden_tool2]):
+            result = agent.run_sync('foobar', deps=5)
+            assert result.output == snapshot('{"overridden_tool2":"overridden 2 5"}')
+
+        result = agent.run_sync('foobar', deps=6)
+        assert result.output == snapshot('{"overridden_tool1":"overridden 1 6","overridden_tool2":"overridden 2 6"}')
+
+    result = agent.run_sync('foobar', deps=7)
+    assert result.output == snapshot('{"tool1":"original 1 7","tool2":"original 2 7"}')
