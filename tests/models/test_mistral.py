@@ -1738,6 +1738,63 @@ def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: 
     assert result == expected, f'{desc} — expected {expected}, got {result}'
 
 
+@pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, mistral_api_key: str, image_content: BinaryContent
+):
+    m = MistralModel('pixtral-12b-latest', provider=MistralProvider(api_key=mistral_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool? Call the tool.'])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool? Call the tool.'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='7y9B4SNod')],
+                model_name='pixtral-12b-latest',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1.',
+                        tool_call_id='7y9B4SNod',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The image shows a kiwi fruit that has been cut in half. Kiwis are known for their bright green flesh with tiny black seeds and a sweet, tangy flavor. They are also rich in vitamin C and fiber.'
+                    )
+                ],
+                model_name='pixtral-12b-latest',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
 async def test_image_url_input(allow_model_requests: None):
     c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
     mock_client = MockMistralAI.create_mock(c)

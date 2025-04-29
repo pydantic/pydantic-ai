@@ -253,6 +253,9 @@ class BinaryContent:
 
 UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
 
+# Ideally this would be a Union of types, but Python 3.9 requires it to be a string, and strings don't work with `isinstance``.
+MultiModalContentTypes = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
+
 
 def _document_format(media_type: str) -> DocumentFormat:
     if media_type == 'application/pdf':
@@ -327,11 +330,18 @@ class UserPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_event(self) -> Event:
+        content: str | list[dict[str, Any] | str]
         if isinstance(self.content, str):
             content = self.content
         else:
-            # TODO figure out what to record for images and audio
-            content = [part if isinstance(part, str) else {'kind': part.kind} for part in self.content]
+            content = []
+            for part in self.content:
+                if isinstance(part, str):
+                    content.append(part)
+                elif isinstance(part, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
+                    content.append({'kind': part.kind, 'url': part.url})
+                else:
+                    content.append({'kind': part.kind})
         return Event('gen_ai.user.message', body={'content': content, 'role': 'user'})
 
 

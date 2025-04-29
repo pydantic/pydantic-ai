@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.gemini import (
@@ -960,6 +961,67 @@ async def test_safety_settings_safe(
 
 
 @pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
+) -> None:
+    m = GeminiModel('gemini-2.5-pro-preview-03-25', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+I need to use the `get_image` tool to see the image first.
+
+"""
+                    ),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
+                ],
+                model_name='gemini-2.5-pro-preview-03-25',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The image shows a kiwi fruit, sliced in half.')],
+                model_name='gemini-2.5-pro-preview-03-25',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
 async def test_image_as_binary_content_input(
     allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
 ) -> None:
@@ -979,6 +1041,43 @@ async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) 
 
     result = await agent.run(['What is the name of this fruit?', image_url])
     assert result.output == snapshot("This is not a fruit; it's a pipe organ console.")
+
+
+@pytest.mark.vcr()
+async def test_video_as_binary_content_input(
+    allow_model_requests: None, gemini_api_key: str, video_content: BinaryContent
+) -> None:
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+
+    result = await agent.run(['Explain me this video', video_content])
+    assert result.output.strip() == snapshot(
+        "That's a picture of a small, portable monitor attached to a camera, likely used for filming. The monitor displays a scene of a canyon or similar rocky landscape.  This suggests the camera is being used to film this landscape. The camera itself is mounted on a tripod, indicating a stable and likely professional setup.  The background is out of focus, but shows the same canyon as seen on the monitor. This makes it clear that the image shows the camera's viewfinder or recording output, rather than an unrelated display."
+    )
+
+
+@pytest.mark.vcr()
+async def test_video_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+
+    video_url = VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4')
+
+    result = await agent.run(['Explain me this video', video_url])
+    assert result.output.strip() == snapshot(
+        """That's a lovely picture!  It shows a picturesque outdoor cafe or restaurant situated in a narrow, whitewashed alleyway.
+
+
+Here's a breakdown of what we see:
+
+* **Location:** The cafe is nestled between two white buildings, typical of Greek island architecture (possibly Mykonos or a similar island, judging by the style).  The alleyway opens up to a view of the Aegean Sea, which is visible in the background. The sea appears somewhat choppy.
+
+* **Setting:** The cafe has several wooden tables and chairs set out along the alley. The tables are simple and seem to be made of light-colored wood. There are cushions on a built-in bench along one wall providing seating. Small potted plants are on some tables, adding to the ambiance. The cobblestone ground in the alley adds to the charming, traditional feel.
+
+* **Atmosphere:** The overall feel is relaxed and serene, despite the somewhat windy conditions indicated by the sea. The bright white buildings and the blue sea create a classic Mediterranean vibe. The picture evokes a sense of calmness and escape.
+
+In short, the image depicts an idyllic scene of a charming seaside cafe in a picturesque Greek island setting."""
+    )
 
 
 @pytest.mark.vcr()

@@ -2,14 +2,13 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-import json
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
-from opentelemetry.trace import Span, Tracer
+from opentelemetry.trace import Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_graph import BaseNode, Graph, GraphRunContext
@@ -24,7 +23,6 @@ from . import (
     result,
     usage as _usage,
 )
-from .models.instrumented import InstrumentedModel
 from .result import OutputDataT, ToolOutput
 from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, Tool, ToolDefinition
@@ -95,7 +93,6 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
     mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
 
-    run_span: Span
     tracer: Tracer
 
 
@@ -498,38 +495,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         final_result: result.FinalResult[NodeRunEndT],
         tool_responses: list[_messages.ModelRequestPart],
     ) -> End[result.FinalResult[NodeRunEndT]]:
-        run_span = ctx.deps.run_span
-        usage = ctx.state.usage
         messages = ctx.state.message_history
 
         # For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if tool_responses:
             messages.append(_messages.ModelRequest(parts=tool_responses))
-
-        run_span.set_attributes(
-            {
-                **usage.opentelemetry_attributes(),
-                'all_messages_events': json.dumps(
-                    [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)]
-                ),
-                'final_result': final_result.output
-                if isinstance(final_result.output, str)
-                else json.dumps(InstrumentedModel.serialize_any(final_result.output)),
-            }
-        )
-        run_span.set_attributes(
-            {
-                'logfire.json_schema': json.dumps(
-                    {
-                        'type': 'object',
-                        'properties': {
-                            'all_messages_events': {'type': 'array'},
-                            'final_result': {'type': 'object'},
-                        },
-                    }
-                ),
-            }
-        )
 
         return End(final_result)
 
@@ -576,7 +546,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     )
 
 
-async def process_function_tools(
+async def process_function_tools(  # noqa C901
     tool_calls: list[_messages.ToolCallPart],
     output_tool_name: str | None,
     output_tool_call_id: str | None,
@@ -662,6 +632,8 @@ async def process_function_tools(
     if not calls_to_run:
         return
 
+    user_parts: list[_messages.UserPromptPart] = []
+
     # Run all tool tasks in parallel
     results_by_index: dict[int, _messages.ModelRequestPart] = {}
     with ctx.deps.tracer.start_as_current_span(
@@ -675,6 +647,9 @@ async def process_function_tools(
             asyncio.create_task(tool.run(call, run_context, ctx.deps.tracer), name=call.tool_name)
             for tool, call in calls_to_run
         ]
+
+        file_index = 1
+
         pending = tasks
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
@@ -682,7 +657,22 @@ async def process_function_tools(
                 index = tasks.index(task)
                 result = task.result()
                 yield _messages.FunctionToolResultEvent(result, tool_call_id=call_index_to_event_id[index])
-                if isinstance(result, (_messages.ToolReturnPart, _messages.RetryPromptPart)):
+
+                if isinstance(result, _messages.RetryPromptPart):
+                    results_by_index[index] = result
+                elif isinstance(result, _messages.ToolReturnPart):
+                    if isinstance(result.content, _messages.MultiModalContentTypes):
+                        user_parts.append(
+                            _messages.UserPromptPart(
+                                content=[f'This is file {file_index}:', result.content],
+                                timestamp=result.timestamp,
+                                part_kind='user-prompt',
+                            )
+                        )
+
+                        result.content = f'See file {file_index}.'
+                        file_index += 1
+
                     results_by_index[index] = result
                 else:
                     assert_never(result)
@@ -691,6 +681,8 @@ async def process_function_tools(
     # This is mostly just to simplify testing
     for k in sorted(results_by_index):
         output_parts.append(results_by_index[k])
+
+    output_parts.extend(user_parts)
 
 
 async def _tool_from_mcp_server(

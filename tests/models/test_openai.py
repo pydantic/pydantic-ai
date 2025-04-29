@@ -16,7 +16,9 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -645,6 +647,81 @@ async def test_image_url_input(allow_model_requests: None):
 
 
 @pytest.mark.vcr()
+async def test_openai_audio_url_input(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o-audio-preview', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['Hello', AudioUrl(url='https://cdn.openai.com/API/docs/audio/alloy.wav')])
+    assert result.output == snapshot(
+        'Yes, the phenomenon of the sun rising in the east and setting in the west is due to the rotation of the Earth. The Earth rotates on its axis from west to east, making the sun appear to rise on the eastern horizon and set in the west. This is a daily occurrence and has been a fundamental aspect of human observation and timekeeping throughout history.'
+    )
+
+
+@pytest.mark.vcr()
+async def test_document_url_input(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert result.output == snapshot('The document contains the text "Dummy PDF file" on its single page.')
+
+
+@pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_UW4lGJ6K4GuC52hnC3dIwAjM')],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1.',
+                        tool_call_id='call_UW4lGJ6K4GuC52hnC3dIwAjM',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The fruit in the image is a kiwi.')],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
 async def test_image_as_binary_content_input(
     allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
 ):
@@ -664,6 +741,17 @@ async def test_audio_as_binary_content_input(
 
     result = await agent.run(['Whose name is mentioned in the audio?', audio_content])
     assert result.output == snapshot('The name mentioned in the audio is Marcelo.')
+
+
+@pytest.mark.vcr()
+async def test_document_as_binary_content_input(
+    allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What is the main content on this document?', document_content])
+    assert result.output == snapshot('The main content of the document is "Dummy PDF file."')
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
