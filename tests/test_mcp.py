@@ -530,7 +530,8 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                         ToolReturnPart(
                             tool_name='get_multiple_items',
                             content=[
-                                'This is a string\nAnother string',
+                                'This is a string',
+                                'Another string',
                                 {'foo': 'bar', 'baz': 123},
                                 'See file 1c8566',
                             ],

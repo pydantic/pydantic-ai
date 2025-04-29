@@ -102,52 +102,15 @@ class MCPServer(ABC):
         """
         result = await self._client.call_tool(tool_name, arguments)
 
-        text_parts: list[str] = []
-        json_parts: list[dict[str, Any] | list[Any]] = []
-        binary_parts: list[BinaryContent] = []
-
-        for part in result.content:
-            # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
-
-            if isinstance(part, TextContent):
-                text = part.text
-                if text.startswith(('[', '{')):
-                    try:
-                        json_parts.append(json.loads(text))
-                        continue
-                    except ValueError:
-                        pass
-                text_parts.append(text)
-            elif isinstance(part, ImageContent):
-                binary_parts.append(BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType))
-            elif isinstance(part, EmbeddedResource):
-                resource = part.resource
-                if isinstance(resource, TextResourceContents):
-                    text_parts.append(resource.text)
-                elif isinstance(resource, BlobResourceContents):
-                    binary_parts.append(
-                        BinaryContent(
-                            data=base64.b64decode(resource.blob),
-                            media_type=resource.mimeType or 'application/octet-stream',
-                        )
-                    )
-            else:
-                assert_never(part)
-
-        text = '\n'.join(text_parts)
+        content = [self._map_tool_result_part(part) for part in result.content]
 
         if result.isError:
-            raise ModelRetry(text or 'Unknown error')
+            text = '\n'.join(str(part) for part in content)
+            raise ModelRetry(text)
 
-        parts: list[str | BinaryContent | dict[str, Any] | list[Any]] = []
-        if text:
-            parts.append(text)
-        parts.extend(json_parts)
-        parts.extend(binary_parts)
-
-        if len(parts) == 1:
-            return parts[0]
-        return parts
+        if len(content) == 1:
+            return content[0]
+        return content
 
     async def __aenter__(self) -> Self:
         self._exit_stack = AsyncExitStack()
@@ -167,6 +130,35 @@ class MCPServer(ABC):
     ) -> bool | None:
         await self._exit_stack.aclose()
         self.is_running = False
+
+    def _map_tool_result_part(
+        self, part: TextContent | ImageContent | EmbeddedResource
+    ) -> str | BinaryContent | dict[str, Any] | list[Any]:
+        # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
+
+        if isinstance(part, TextContent):
+            text = part.text
+            if text.startswith(('[', '{')):
+                try:
+                    return json.loads(text)
+                except ValueError:
+                    pass
+            return text
+        elif isinstance(part, ImageContent):
+            return BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
+        elif isinstance(part, EmbeddedResource):
+            resource = part.resource
+            if isinstance(resource, TextResourceContents):
+                return resource.text
+            elif isinstance(resource, BlobResourceContents):
+                return BinaryContent(
+                    data=base64.b64decode(resource.blob),
+                    media_type=resource.mimeType or 'application/octet-stream',
+                )
+            else:
+                assert_never(resource)
+        else:
+            assert_never(part)
 
 
 @dataclass

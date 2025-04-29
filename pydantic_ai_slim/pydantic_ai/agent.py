@@ -658,6 +658,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_validators=output_validators,
             function_tools=self._function_tools,
             mcp_servers=self._mcp_servers,
+            default_retries=self._default_retries,
             tracer=tracer,
             get_instructions=get_instructions,
         )
