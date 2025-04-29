@@ -6,6 +6,8 @@ translation so you can request all models with the same API.
 These methods are thin wrappers around [`Model`][pydantic_ai.models.Model] implementations.
 """
 
+from __future__ import annotations as _annotations
+
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -133,7 +135,7 @@ async def model_request_stream(
 
     This method is roughly equivalent to [`Agent.run_stream`][pydantic_ai.Agent.run_stream].
 
-    ```py title="model_request_stream_example.py"
+    ```py {title="model_request_stream_example.py"}
 
     from pydantic_ai.low_level import model_request_stream
     from pydantic_ai.messages import ModelRequest
@@ -142,31 +144,31 @@ async def model_request_stream(
     async def main():
         messages = [ModelRequest.user_text_prompt('Who was Albert Einstein?')]
         async with model_request_stream( 'openai:gpt-4.1-mini', messages) as stream:
+            chunks = []
             async for chunk in stream:
-                print(chunk)
-                '''
+                chunks.append(chunk)
+            print(chunks)
+            '''
+            [
                 PartStartEvent(
                     index=0,
                     part=TextPart(content='Albert Einstein was ', part_kind='text'),
                     event_kind='part_start',
-                )
-                '''
-                '''
+                ),
                 PartDeltaEvent(
                     index=0,
                     delta=TextPartDelta(
                         content_delta='a German-born theoretical ', part_delta_kind='text'
                     ),
                     event_kind='part_delta',
-                )
-                '''
-                '''
+                ),
                 PartDeltaEvent(
                     index=0,
                     delta=TextPartDelta(content_delta='physicist.', part_delta_kind='text'),
                     event_kind='part_delta',
-                )
-                '''
+                ),
+            ]
+            '''
     ```
 
     Args:
