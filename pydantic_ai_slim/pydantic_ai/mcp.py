@@ -96,6 +96,9 @@ class MCPServer(ABC):
 
         Returns:
             The result of the tool call.
+
+        Raises:
+            ModelRetry: If the tool call fails.
         """
         result = await self._client.call_tool(tool_name, arguments)
 
@@ -131,27 +134,20 @@ class MCPServer(ABC):
             else:
                 assert_never(part)
 
+        text = '\n'.join(text_parts)
+
         if result.isError:
-            raise ModelRetry('\n'.join(text_parts) or 'Unknown error')
+            raise ModelRetry(text or 'Unknown error')
 
-        if text_parts and not binary_parts and not json_parts:
-            return '\n'.join(text_parts)
+        parts: list[str | BinaryContent | dict[str, Any] | list[Any]] = []
+        if text:
+            parts.append(text)
+        parts.extend(json_parts)
+        parts.extend(binary_parts)
 
-        if json_parts and not text_parts and not binary_parts:
-            if len(json_parts) == 1:
-                return json_parts[0]
-            return json_parts
-
-        if binary_parts and not text_parts and not json_parts:
-            if len(binary_parts) == 1:
-                return binary_parts[0]
-            return binary_parts
-
-        return [
-            *text_parts,
-            *json_parts,
-            *binary_parts,
-        ]
+        if len(parts) == 1:
+            return parts[0]
+        return parts
 
     async def __aenter__(self) -> Self:
         self._exit_stack = AsyncExitStack()

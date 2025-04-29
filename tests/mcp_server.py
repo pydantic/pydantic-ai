@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP, Image
-from mcp.types import BlobResourceContents, EmbeddedResource
+from mcp.types import BlobResourceContents, EmbeddedResource, TextResourceContents
 
 mcp = FastMCP('PydanticAI MCP Server')
 log_level = 'unset'
@@ -44,6 +44,17 @@ async def get_image_resource() -> EmbeddedResource:
             uri='resource://kiwi.png',  # type: ignore
             blob=base64.b64encode(data).decode('utf-8'),
             mimeType='image/png',
+        ),
+    )
+
+
+@mcp.tool()
+async def get_product_name() -> EmbeddedResource:
+    return EmbeddedResource(
+        type='resource',
+        resource=TextResourceContents(
+            uri='resource://product_name.txt',  # type: ignore
+            text='PydanticAI',
         ),
     )
 

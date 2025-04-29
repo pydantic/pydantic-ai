@@ -44,7 +44,7 @@ async def test_stdio_server():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == 9
+        assert len(tools) == 10
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
@@ -58,7 +58,7 @@ async def test_stdio_server_with_cwd():
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == 9
+        assert len(tools) == 10
 
 
 def test_sse_server():
@@ -140,8 +140,8 @@ async def test_log_level_unset():
     assert server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == 9
-        assert tools[8].name == 'get_log_level'
+        assert len(tools) == 10
+        assert tools[9].name == 'get_log_level'
 
         result = await server.call_tool('get_log_level', {})
         assert result == snapshot('unset')
@@ -199,6 +199,49 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                             content='The weather in Mexico City is currently sunny with a temperature of 26 degrees Celsius.'
                         )
                     ],
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                ),
+            ]
+        )
+
+
+@pytest.mark.vcr()
+async def test_tool_returning_text_resource(allow_model_requests: None, agent: Agent):
+    async with agent.run_mcp_servers():
+        result = await agent.run('Get me the product name')
+        assert result.output == snapshot('The product name is "PydanticAI".')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Get me the product name',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_product_name', args='{}', tool_call_id='call_LaiWltzI39sdquflqeuF0EyE'
+                        )
+                    ],
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_product_name',
+                            content='PydanticAI',
+                            tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The product name is "PydanticAI".')],
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -487,8 +530,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                         ToolReturnPart(
                             tool_name='get_multiple_items',
                             content=[
-                                'This is a string',
-                                'Another string',
+                                'This is a string\nAnother string',
                                 {'foo': 'bar', 'baz': 123},
                                 'See file 1c8566',
                             ],

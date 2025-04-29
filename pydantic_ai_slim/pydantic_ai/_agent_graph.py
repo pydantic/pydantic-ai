@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import hashlib
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -546,6 +547,13 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     )
 
 
+def multi_modal_content_identifier(identifier: str | bytes) -> str:
+    """Generate stable identifier for multi-modal content to help LLM in finding a specific file in tool call responses."""
+    if isinstance(identifier, str):
+        identifier = identifier.encode('utf-8')
+    return hashlib.sha1(identifier).hexdigest()[:6]
+
+
 async def process_function_tools(  # noqa C901
     tool_calls: list[_messages.ToolCallPart],
     output_tool_name: str | None,
@@ -671,7 +679,11 @@ async def process_function_tools(  # noqa C901
                     processed_contents: list[Any] = []
                     for content in contents:
                         if isinstance(content, _messages.MultiModalContentTypes):
-                            identifier = content.identifier
+                            if isinstance(content, _messages.BinaryContent):
+                                identifier = multi_modal_content_identifier(content.data)
+                            else:
+                                identifier = multi_modal_content_identifier(content.url)
+
                             user_parts.append(
                                 _messages.UserPromptPart(
                                     content=[f'This is file {identifier}:', content],
