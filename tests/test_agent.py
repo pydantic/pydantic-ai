@@ -1697,7 +1697,7 @@ def test_binary_content_all_messages_json():
             {
                 'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text'}],
                 'model_name': 'test',
-                'request_id': None,
+                'vendor_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
             },

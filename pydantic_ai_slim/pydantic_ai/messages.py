@@ -566,8 +566,8 @@ class ModelResponse:
     kind: Literal['response'] = 'response'
     """Message type identifier, this is available on all parts as a discriminator."""
 
-    request_id: str | None = None
-    """Request ID as specified by the model provider."""
+    vendor_id: str | None = None
+    """Vendor ID as specified by the model provider. This can be used to track the specific request to the model."""
 
     def otel_events(self) -> list[Event]:
         """Return OpenTelemetry events for the response."""
