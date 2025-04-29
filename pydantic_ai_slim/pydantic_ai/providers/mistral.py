@@ -44,6 +44,7 @@ class MistralProvider(Provider[Mistral]):
         *,
         api_key: str | None = None,
         mistral_client: Mistral | None = None,
+        base_url: str | None = None,
         http_client: AsyncHTTPClient | None = None,
     ) -> None:
         """Create a new Mistral provider.
@@ -67,7 +68,7 @@ class MistralProvider(Provider[Mistral]):
                     'to use the Mistral provider.'
                 )
             elif http_client is not None:
-                self._client = Mistral(api_key=api_key, async_client=http_client)
+                self._client = Mistral(api_key=api_key, async_client=http_client, server_url=base_url)
             else:
                 http_client = cached_async_http_client(provider='mistral')
-                self._client = Mistral(api_key=api_key, async_client=http_client)
+                self._client = Mistral(api_key=api_key, async_client=http_client, server_url=base_url)
