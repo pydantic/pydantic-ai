@@ -691,7 +691,7 @@ async def test_image_as_binary_content_tool_response(
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_UW4lGJ6K4GuC52hnC3dIwAjM')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_Btn0GIzGr4ugNlLmkQghQUMY')],
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
             ),
@@ -699,13 +699,13 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1.',
-                        tool_call_id='call_UW4lGJ6K4GuC52hnC3dIwAjM',
+                        content='See file 1c8566',
+                        tool_call_id='call_Btn0GIzGr4ugNlLmkQghQUMY',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            'This is file 1:',
+                            'This is file 1c8566:',
                             image_content,
                         ],
                         timestamp=IsDatetime(),
@@ -713,7 +713,7 @@ async def test_image_as_binary_content_tool_response(
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='The fruit in the image is a kiwi.')],
+                parts=[TextPart(content='The image shows a kiwi fruit.')],
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
             ),

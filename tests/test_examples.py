@@ -24,8 +24,6 @@ from pydantic_ai import ModelHTTPError
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
-    DocumentUrl,
-    ImageUrl,
     ModelMessage,
     ModelResponse,
     RetryPromptPart,
@@ -402,11 +400,10 @@ tool_responses: dict[tuple[str, str], str] = {
 async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover  # noqa: C901
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
-        if isinstance(m.content, list) and m.content[0] == 'This is file 1:':
-            if isinstance(m.content[1], ImageUrl):
-                return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
-            elif isinstance(m.content[1], DocumentUrl):
-                return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
+        if isinstance(m.content, list) and m.content[0] == 'This is file d9a13f:':
+            return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
+        elif isinstance(m.content, list) and m.content[0] == 'This is file c6720d:':
+            return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
 
         assert isinstance(m.content, str)
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):

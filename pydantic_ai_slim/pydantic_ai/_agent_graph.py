@@ -648,8 +648,6 @@ async def process_function_tools(  # noqa C901
             for tool, call in calls_to_run
         ]
 
-        file_index = 1
-
         pending = tasks
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
@@ -661,17 +659,34 @@ async def process_function_tools(  # noqa C901
                 if isinstance(result, _messages.RetryPromptPart):
                     results_by_index[index] = result
                 elif isinstance(result, _messages.ToolReturnPart):
-                    if isinstance(result.content, _messages.MultiModalContentTypes):
-                        user_parts.append(
-                            _messages.UserPromptPart(
-                                content=[f'This is file {file_index}:', result.content],
-                                timestamp=result.timestamp,
-                                part_kind='user-prompt',
-                            )
-                        )
+                    contents: list[Any]
+                    single_content: bool
+                    if isinstance(result.content, list):
+                        contents = result.content  # type: ignore
+                        single_content = False
+                    else:
+                        contents = [result.content]
+                        single_content = True
 
-                        result.content = f'See file {file_index}.'
-                        file_index += 1
+                    processed_contents: list[Any] = []
+                    for content in contents:
+                        if isinstance(content, _messages.MultiModalContentTypes):
+                            identifier = content.identifier
+                            user_parts.append(
+                                _messages.UserPromptPart(
+                                    content=[f'This is file {identifier}:', content],
+                                    timestamp=result.timestamp,
+                                    part_kind='user-prompt',
+                                )
+                            )
+                            processed_contents.append(f'See file {identifier}')
+                        else:
+                            processed_contents.append(content)
+
+                    if single_content:
+                        result.content = processed_contents[0]
+                    else:
+                        result.content = processed_contents
 
                     results_by_index[index] = result
                 else:

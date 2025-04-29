@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import hashlib
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
@@ -44,6 +45,12 @@ DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', '
 VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
 
 
+def _multi_modal_content_identifier(identifier: str | bytes) -> str:
+    if isinstance(identifier, str):
+        identifier = identifier.encode('utf-8')
+    return hashlib.sha1(identifier).hexdigest()[:6]
+
+
 @dataclass
 class SystemPromptPart:
     """A system prompt, generally written by the application developer.
@@ -79,6 +86,10 @@ class VideoUrl:
 
     kind: Literal['video-url'] = 'video-url'
     """Type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def identifier(self) -> str:
+        return _multi_modal_content_identifier(self.url)
 
     @property
     def media_type(self) -> VideoMediaType:  # pragma: no cover
@@ -122,6 +133,10 @@ class AudioUrl:
     """Type identifier, this is available on all parts as a discriminator."""
 
     @property
+    def identifier(self) -> str:
+        return _multi_modal_content_identifier(self.url)
+
+    @property
     def media_type(self) -> AudioMediaType:
         """Return the media type of the audio file, based on the url."""
         if self.url.endswith('.mp3'):
@@ -141,6 +156,10 @@ class ImageUrl:
 
     kind: Literal['image-url'] = 'image-url'
     """Type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def identifier(self) -> str:
+        return _multi_modal_content_identifier(self.url)
 
     @property
     def media_type(self) -> ImageMediaType:
@@ -176,6 +195,10 @@ class DocumentUrl:
     """Type identifier, this is available on all parts as a discriminator."""
 
     @property
+    def identifier(self) -> str:
+        return _multi_modal_content_identifier(self.url)
+
+    @property
     def media_type(self) -> str:
         """Return the media type of the document, based on the url."""
         type_, _ = guess_type(self.url)
@@ -204,6 +227,10 @@ class BinaryContent:
 
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def identifier(self) -> str:
+        return _multi_modal_content_identifier(self.data)
 
     @property
     def is_audio(self) -> bool:
