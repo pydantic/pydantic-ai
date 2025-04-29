@@ -1055,12 +1055,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         if _utils.is_set(tools):
             override_tools_before = self._override_tools
-            self._override_tools = _utils.Some({})
+            new_override_tools: dict[str, Tool[AgentDepsT]] = {}
             for tool in tools:
                 if isinstance(tool, Tool):
-                    self._register_tool_abstract(self._override_tools.value, tool)
+                    self._register_tool_generic(new_override_tools, tool)
                 else:
-                    self._register_tool_abstract(self._override_tools.value, Tool(tool))
+                    self._register_tool_generic(new_override_tools, Tool(tool))
+            self._override_tools = _utils.Some(new_override_tools)
         else:
             override_tools_before = _utils.UNSET
 
@@ -1524,9 +1525,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     def _register_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Private utility to register a tool instance to the _function_tools registry."""
-        self._register_tool_abstract(self._function_tools, tool)
+        self._register_tool_generic(self._function_tools, tool)
 
-    def _register_tool_abstract(self, tool_registry: dict[str, Tool[AgentDepsT]], tool: Tool[AgentDepsT]) -> None:
+    def _register_tool_generic(self, tool_registry: dict[str, Tool[AgentDepsT]], tool: Tool[AgentDepsT]) -> None:
         """Private utility to register a tool instance to any registry."""
         if tool.max_retries is None:
             # noinspection PyTypeChecker

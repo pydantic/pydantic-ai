@@ -956,7 +956,7 @@ def test_tool_parameters_with_attribute_docstrings():
     )
 
 
-def test_tool_override():
+def test_tool_override_with_functions():
     agent = Agent(TestModel())
 
     @agent.tool_plain
@@ -993,6 +993,51 @@ def test_tool_override():
 
         result = agent.run_sync('foobar')
         assert result.output == snapshot('{"overridden_tool1":"overridden 1","overridden_tool2":"overridden 2"}')
+
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot('{"tool1":"original 1","tool2":"original 2"}')
+
+
+def test_tool_override_with_tools():
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def tool1() -> str:
+        return 'original 1'
+
+    @agent.tool_plain
+    def tool2() -> str:
+        return 'original 2'
+
+    def overridden_tool1_fn() -> str:
+        return 'overridden 1'
+
+    def overridden_tool2_fn() -> str:
+        return 'overridden 2'
+
+    overridden_tool1 = Tool(overridden_tool1_fn, name='tool1')
+    overridden_tool2 = Tool(overridden_tool2_fn, name='tool2')
+
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot('{"tool1":"original 1","tool2":"original 2"}')
+
+    with agent.override(tools=[overridden_tool1]):
+        result = agent.run_sync('foobar')
+        assert result.output == snapshot('{"tool1":"overridden 1"}')
+
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot('{"tool1":"original 1","tool2":"original 2"}')
+
+    with agent.override(tools=[overridden_tool1, overridden_tool2]):
+        result = agent.run_sync('foobar')
+        assert result.output == snapshot('{"tool1":"overridden 1","tool2":"overridden 2"}')
+
+        with agent.override(tools=[overridden_tool2]):
+            result = agent.run_sync('foobar')
+            assert result.output == snapshot('{"tool2":"overridden 2"}')
+
+        result = agent.run_sync('foobar')
+        assert result.output == snapshot('{"tool1":"overridden 1","tool2":"overridden 2"}')
 
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"tool1":"original 1","tool2":"original 2"}')
