@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import functools
 import typing
-from collections.abc import AsyncIterator, Iterable, Mapping
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from itertools import count
 from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast, overload
 
 import anyio
@@ -369,13 +370,14 @@ class BedrockConverseModel(Model):
         """Just maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`."""
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
+        document_count: Iterator[int] = count(1)
         for m in messages:
             if isinstance(m, ModelRequest):
                 for part in m.parts:
                     if isinstance(part, SystemPromptPart):
                         system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
-                        bedrock_messages.extend(await self._map_user_prompt(part))
+                        bedrock_messages.extend(await self._map_user_prompt(part, document_count))
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
                         bedrock_messages.append(
@@ -430,20 +432,18 @@ class BedrockConverseModel(Model):
         return system_prompt, bedrock_messages
 
     @staticmethod
-    async def _map_user_prompt(part: UserPromptPart) -> list[MessageUnionTypeDef]:
+    async def _map_user_prompt(part: UserPromptPart, document_count: Iterator[int]) -> list[MessageUnionTypeDef]:
         content: list[ContentBlockUnionTypeDef] = []
         if isinstance(part.content, str):
             content.append({'text': part.content})
         else:
-            document_count = 0
             for item in part.content:
                 if isinstance(item, str):
                     content.append({'text': item})
                 elif isinstance(item, BinaryContent):
                     format = item.format
                     if item.is_document:
-                        document_count += 1
-                        name = f'Document {document_count}'
+                        name = f'Document {next(document_count)}'
                         assert format in ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
                         content.append({'document': {'name': name, 'format': format, 'source': {'bytes': item.data}}})
                     elif item.is_image:
@@ -464,8 +464,7 @@ class BedrockConverseModel(Model):
                         content.append({'image': image})
 
                     elif item.kind == 'document-url':
-                        document_count += 1
-                        name = f'Document {document_count}'
+                        name = f'Document {next(document_count)}'
                         data = response.content
                         content.append({'document': {'name': name, 'format': item.format, 'source': {'bytes': data}}})
 

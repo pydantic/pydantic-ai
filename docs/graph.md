@@ -197,7 +197,7 @@ display(Image(fives_graph.mermaid_image(start_node=DivisibleBy5)))
 
 The "state" concept in `pydantic-graph` provides an optional way to access and mutate an object (often a `dataclass` or Pydantic model) as nodes run in a graph. If you think of Graphs as a production line, then your state is the engine being passed along the line and built up by each node as the graph is run.
 
-In the future, we intend to extend `pydantic-graph` to provide state persistence with the state recorded after each node is run, see [#695](https://github.com/pydantic/pydantic-ai/issues/695).
+`pydantic-graph` provides state persistence, with the state recorded after each node is run. (See [State Persistence](#state-persistence).)
 
 Here's an example of a graph which represents a vending machine where the user may insert coins and select a product to purchase.
 
@@ -411,7 +411,7 @@ class WriteEmail(BaseNode[State]):
             prompt,
             message_history=ctx.state.write_agent_messages,
         )
-        ctx.state.write_agent_messages += result.all_messages()
+        ctx.state.write_agent_messages += result.new_messages()
         return Feedback(result.output)
 
 
@@ -681,7 +681,7 @@ Instead of running the entire graph in a single process invocation, we run the g
                 'Ask a simple question with a single correct answer.',
                 message_history=ctx.state.ask_agent_messages,
             )
-            ctx.state.ask_agent_messages += result.all_messages()
+            ctx.state.ask_agent_messages += result.new_messages()
             ctx.state.question = result.output
             return Answer(result.output)
 
@@ -722,7 +722,7 @@ Instead of running the entire graph in a single process invocation, we run the g
                 format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
                 message_history=ctx.state.evaluate_agent_messages,
             )
-            ctx.state.evaluate_agent_messages += result.all_messages()
+            ctx.state.evaluate_agent_messages += result.new_messages()
             if result.output.correct:
                 return End(result.output.comment)
             else:

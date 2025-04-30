@@ -128,7 +128,7 @@ jobs:
   test:
     name: test on ${{ matrix.python-version }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -240,24 +240,11 @@ jobs:
         with:
           deno-version: v2.x
 
-      - run: |
-          deno fmt
-          deno lint
-          deno check src
-        working-directory: mcp-run-python
+      - run: make lint-js
 
       - run: uv run --package mcp-run-python pytest mcp-run-python -v
 
-      # check warmup works
-      - name: warmup
-        run: |
-          deno run \
-            -N \
-            -R=node_modules \
-            -W=node_modules \
-            --node-modules-dir=auto \
-            src/main.ts \
-            warmup
+      - run: deno task dev warmup
         working-directory: mcp-run-python
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks

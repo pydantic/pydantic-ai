@@ -4,6 +4,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from functools import cached_property
 from typing import Annotated, Any, Callable, Literal, Union, cast
 
@@ -15,7 +16,9 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -175,6 +178,7 @@ async def test_request_simple_success(allow_model_requests: None):
             'model': 'gpt-4o',
             'n': 1,
             'extra_headers': {'User-Agent': IsStr(regex=r'pydantic-ai\/.*')},
+            'extra_body': None,
         },
         {
             'messages': [
@@ -185,6 +189,7 @@ async def test_request_simple_success(allow_model_requests: None):
             'model': 'gpt-4o',
             'n': 1,
             'extra_headers': {'User-Agent': IsStr(regex=r'pydantic-ai\/.*')},
+            'extra_body': None,
         },
     ]
 
@@ -558,6 +563,7 @@ async def test_system_prompt_role(
             'model': 'gpt-4o',
             'n': 1,
             'extra_headers': {'User-Agent': IsStr(regex=r'pydantic-ai\/.*')},
+            'extra_body': None,
         }
     ]
 
@@ -634,7 +640,136 @@ async def test_image_url_input(allow_model_requests: None):
                 ],
                 'n': 1,
                 'extra_headers': {'User-Agent': IsStr(regex=r'pydantic-ai\/.*')},
+                'extra_body': None,
             }
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_openai_audio_url_input(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o-audio-preview', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['Hello', AudioUrl(url='https://cdn.openai.com/API/docs/audio/alloy.wav')])
+    assert result.output == snapshot(
+        'Yes, the phenomenon of the sun rising in the east and setting in the west is due to the rotation of the Earth. The Earth rotates on its axis from west to east, making the sun appear to rise on the eastern horizon and set in the west. This is a daily occurrence and has been a fundamental aspect of human observation and timekeeping throughout history.'
+    )
+
+
+@pytest.mark.vcr()
+async def test_document_url_input(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+    result = await agent.run(['What is the main content on this document?', document_url])
+    assert result.output == snapshot('The document contains the text "Dummy PDF file" on its single page.')
+
+
+@pytest.mark.vcr()
+async def test_image_url_tool_response(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> ImageUrl:
+        return ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg')
+
+    result = await agent.run(['What food is in the image you can get from the get_image tool?'])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What food is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG')],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file bd38f5',
+                        tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file bd38f5:',
+                            ImageUrl(
+                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                            ),
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The image shows a potato.')],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_Btn0GIzGr4ugNlLmkQghQUMY')],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1c8566',
+                        tool_call_id='call_Btn0GIzGr4ugNlLmkQghQUMY',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1c8566:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The image shows a kiwi fruit.')],
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
         ]
     )
 
@@ -659,6 +794,17 @@ async def test_audio_as_binary_content_input(
 
     result = await agent.run(['Whose name is mentioned in the audio?', audio_content])
     assert result.output == snapshot('The name mentioned in the audio is Marcelo.')
+
+
+@pytest.mark.vcr()
+async def test_document_as_binary_content_input(
+    allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What is the main content on this document?', document_content])
+    assert result.output == snapshot('The main content of the document is "Dummy PDF file."')
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
@@ -730,9 +876,15 @@ class MyDefaultDc:
     x: int = 1
 
 
+class MyEnum(Enum):
+    a = 'a'
+    b = 'b'
+
+
 @dataclass
 class MyRecursiveDc:
     field: MyRecursiveDc | None
+    my_enum: MyEnum = Field(description='my enum')
 
 
 @dataclass
@@ -826,9 +978,13 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                             },
                             'type': 'object',
                         },
+                        'MyEnum': {'enum': ['a', 'b'], 'type': 'string'},
                         'MyRecursiveDc': {
-                            'properties': {'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]}},
-                            'required': ['field'],
+                            'properties': {
+                                'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]},
+                                'my_enum': {'description': 'my enum', 'anyOf': [{'$ref': '#/$defs/MyEnum'}]},
+                            },
+                            'required': ['field', 'my_enum'],
                             'type': 'object',
                         },
                     },
@@ -857,11 +1013,15 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                             'additionalProperties': False,
                             'required': ['field'],
                         },
+                        'MyEnum': {'enum': ['a', 'b'], 'type': 'string'},
                         'MyRecursiveDc': {
-                            'properties': {'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]}},
+                            'properties': {
+                                'field': {'anyOf': [{'$ref': '#/$defs/MyRecursiveDc'}, {'type': 'null'}]},
+                                'my_enum': {'description': 'my enum', 'anyOf': [{'$ref': '#/$defs/MyEnum'}]},
+                            },
                             'type': 'object',
                             'additionalProperties': False,
-                            'required': ['field'],
+                            'required': ['field', 'my_enum'],
                         },
                     },
                     'additionalProperties': False,
@@ -998,7 +1158,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         }
                     },
                     'additionalProperties': False,
-                    'properties': {'x': {'oneOf': [{'type': 'integer'}, {'$ref': '#/$defs/MyDefaultDc'}]}},
+                    'properties': {'x': {'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/MyDefaultDc'}]}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -1079,12 +1239,15 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                        'x': {
+                            'prefixItems': [{'type': 'integer'}],
+                            'type': 'array',
+                            'description': 'minItems=1, maxItems=1',
+                        },
                         'y': {
-                            'maxItems': 1,
-                            'minItems': 1,
                             'prefixItems': [{'type': 'string'}],
                             'type': 'array',
+                            'description': 'minItems=1, maxItems=1',
                         },
                     },
                     'required': ['x', 'y'],
@@ -1160,28 +1323,46 @@ def test_strict_schema():
                 'MyModel': {
                     'additionalProperties': False,
                     'properties': {
-                        'my_discriminated_union': {'oneOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
+                        'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
                         'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                         'my_patterns': {
                             'additionalProperties': False,
-                            'patternProperties': {'^my-pattern$': {'type': 'string'}},
+                            'description': "patternProperties={'^my-pattern$': {'type': 'string'}}",
                             'type': 'object',
                             'properties': {},
                             'required': [],
                         },
-                        'my_recursive': {'anyOf': [{'$ref': '#/$defs/MyModel'}, {'type': 'null'}]},
+                        'my_recursive': {'anyOf': [{'$ref': '#'}, {'type': 'null'}]},
                         'my_tuple': {
-                            'maxItems': 1,
-                            'minItems': 1,
                             'prefixItems': [{'type': 'integer'}],
                             'type': 'array',
+                            'description': 'minItems=1, maxItems=1',
                         },
                     },
                     'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
                     'type': 'object',
                 },
             },
-            '$ref': '#/$defs/MyModel',
+            'properties': {
+                'my_recursive': {'anyOf': [{'$ref': '#'}, {'type': 'null'}]},
+                'my_patterns': {
+                    'type': 'object',
+                    'description': "patternProperties={'^my-pattern$': {'type': 'string'}}",
+                    'additionalProperties': False,
+                    'properties': {},
+                    'required': [],
+                },
+                'my_tuple': {
+                    'prefixItems': [{'type': 'integer'}],
+                    'type': 'array',
+                    'description': 'minItems=1, maxItems=1',
+                },
+                'my_list': {'items': {'type': 'number'}, 'type': 'array'},
+                'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
+            },
+            'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
+            'type': 'object',
+            'additionalProperties': False,
         }
     )
 
