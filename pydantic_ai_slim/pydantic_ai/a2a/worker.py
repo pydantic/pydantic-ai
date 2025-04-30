@@ -12,9 +12,45 @@ from .schema import TaskIdParams, TaskSendParams
 from .storage import Storage
 
 
+class WorkerClient(ABC):
+    """A client for the worker."""
+
+    @abstractmethod
+    async def send_run_task(self, params: TaskSendParams) -> None:
+        """Send a task to be executed by the worker."""
+        raise NotImplementedError('send_run_task is not implemented yet.')
+
+    @abstractmethod
+    async def send_cancel_task(self, params: TaskIdParams) -> None:
+        """Cancel a task."""
+        raise NotImplementedError('send_cancel_task is not implemented yet.')
+
+
+class WorkerServer(ABC):
+    """A server for the worker."""
+
+    @abstractmethod
+    async def run_task(self, params: TaskSendParams) -> None:
+        """Run a task."""
+        raise NotImplementedError('run_task is not implemented yet.')
+
+    @abstractmethod
+    async def cancel_task(self, params: TaskIdParams) -> None:
+        """Cancel a task."""
+        raise NotImplementedError('cancel_task is not implemented yet.')
+
+
 @dataclass
-class Worker(ABC):
-    """In charge of executing tasks."""
+class Worker(WorkerClient, WorkerServer, ABC):
+    """The worker class is in charge of scheduling and running tasks.
+
+    The HTTP server is in charge of scheduling tasks, but you can have a remote worker
+    that is in charge of running the tasks.
+
+    The simple implementation is the `InMemoryWorker`, which is the worker that
+    runs the tasks in the same process as the HTTP server. That said, this class can be
+    extended to support remote workers.
+    """
 
     storage: Storage
     """The storage to save and load tasks."""
@@ -27,12 +63,6 @@ class Worker(ABC):
 
     @abstractmethod
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any): ...
-
-    @abstractmethod
-    async def run_task(self, params: TaskSendParams) -> None: ...
-
-    @abstractmethod
-    async def cancel_task(self, params: TaskIdParams) -> None: ...
 
 
 class InMemoryWorker(Worker):
@@ -55,6 +85,7 @@ class InMemoryWorker(Worker):
         return self
 
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any):
+        self._task_group.cancel_scope.cancel()
         await self.aexit_stack.__aexit__(exc_type, exc_value, traceback)
 
     async def _run_task_operations(self):
@@ -73,6 +104,12 @@ class InMemoryWorker(Worker):
 
     async def cancel_task(self, params: TaskIdParams) -> None:
         await self._write_stream.send(CancelTask(operation='cancel', params=params))
+
+    async def send_run_task(self, params: TaskSendParams) -> None:
+        await self.run_task(params)
+
+    async def send_cancel_task(self, params: TaskIdParams) -> None:
+        await self.cancel_task(params)
 
 
 OperationT = TypeVar('OperationT')

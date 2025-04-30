@@ -31,7 +31,7 @@ class InMemoryStorage(Storage):
     def __init__(self):
         self.tasks: dict[str, Task] = {}
 
-    async def load_task(self, task_id: str, history_length: int | None = None) -> Task:
+    async def load_task(self, task_id: str, history_length: int | None = None) -> Task | None:
         """Load a task from memory.
 
         Args:
@@ -41,6 +41,9 @@ class InMemoryStorage(Storage):
         Returns:
             The task.
         """
+        if task_id not in self.tasks:
+            return None
+
         task = self.tasks[task_id]
         if history_length and 'history' in task:
             task['history'] = task['history'][-history_length:]

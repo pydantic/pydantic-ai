@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -11,16 +12,22 @@ from starlette.responses import Response
 from starlette.routing import Route
 from starlette.types import ExceptionHandler, Lifespan, Receive, Scope, Send
 
-from pydantic_ai import Agent
-from pydantic_ai.a2a.scheduler import InMemoryScheduler, Scheduler
-from pydantic_ai.a2a.worker import InMemoryWorker
+from pydantic_ai.agent import Agent
 
+from .runner import AgentRunner
 from .schema import A2ARequest, A2AResponse, AgentCard, Provider, Skill, agent_card_ta
 from .storage import InMemoryStorage, Storage
 from .task_manager import TaskManager
+from .worker import InMemoryWorker, Worker
 
 a2a_request_ta: TypeAdapter[A2ARequest] = TypeAdapter(A2ARequest)
 a2a_response_ta: TypeAdapter[A2AResponse] = TypeAdapter(A2AResponse)
+
+
+@asynccontextmanager
+async def _default_lifespan(app: FastA2A) -> AsyncIterator[None]:
+    async with app.task_manager:
+        yield
 
 
 class FastA2A(Starlette):
@@ -28,12 +35,11 @@ class FastA2A(Starlette):
 
     def __init__(
         self,
-        # TODO(Marcelo): Again, this seems odd. If the agent is on the runner, why is it here?
-        agent: Agent,
         *,
-        storage: Storage | None = None,
-        scheduler: Scheduler | None = None,
+        storage: Storage,
+        worker: Worker,
         # Agent card
+        name: str | None = None,
         url: str = 'http://localhost:8000',
         version: str = '1.0.0',
         description: str | None = None,
@@ -44,7 +50,7 @@ class FastA2A(Starlette):
         routes: Sequence[Route] | None = None,
         middleware: Sequence[Middleware] | None = None,
         exception_handlers: dict[Any, ExceptionHandler] | None = None,
-        lifespan: Lifespan[FastA2A] | None = None,
+        lifespan: Lifespan[FastA2A] = _default_lifespan,
     ):
         super().__init__(
             debug=debug,
@@ -54,10 +60,7 @@ class FastA2A(Starlette):
             lifespan=lifespan,
         )
 
-        self.agent = agent
-        assert self.agent.name is not None, 'The agent needs to have a name to create an A2A server.'
-        self.name = self.agent.name
-
+        self.name = name or 'Agent'
         self.url = url
         self.version = version
         self.description = description
@@ -67,25 +70,57 @@ class FastA2A(Starlette):
         self.default_input_modes = ['application/json']
         self.default_output_modes = ['application/json']
 
-        # TODO(Marcelo): I find it a bit weird that we need to pass the agent like this. It seems something is odd
-        # with the current design. I'm not that happy.
-        storage = storage or InMemoryStorage()
-        if scheduler is None:
-            from .runner import AgentRunner
-
-            worker = InMemoryWorker(runner=AgentRunner(agent=self.agent), storage=storage)
-            scheduler = InMemoryScheduler(worker=worker)
-        self.task_manager = TaskManager(scheduler=scheduler, storage=storage)
+        self.task_manager = TaskManager(worker=worker, storage=storage)
 
         # Setup
         self._agent_card_json_schema: bytes | None = None
-        self.router.add_route('/.well-known/agent.json', self.agent_card_endpoint, methods=['HEAD', 'GET', 'OPTIONS'])
-        self.router.add_route('/', self.agent_run_endpoint, methods=['POST'])
+        self.router.add_route('/.well-known/agent.json', self._agent_card_endpoint, methods=['HEAD', 'GET', 'OPTIONS'])
+        self.router.add_route('/', self._agent_run_endpoint, methods=['POST'])
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         await super().__call__(scope, receive, send)
 
-    async def agent_card_endpoint(self, request: Request) -> Response:
+    @classmethod
+    def from_agent(
+        cls,
+        agent: Agent,
+        *,
+        storage: Storage | None = None,
+        worker: Worker | None = None,
+        # Agent card
+        name: str | None = None,
+        url: str = 'http://localhost:8000',
+        version: str = '1.0.0',
+        description: str | None = None,
+        provider: Provider | None = None,
+        skills: list[Skill] | None = None,
+        # Starlette
+        debug: bool = False,
+        routes: Sequence[Route] | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        exception_handlers: dict[Any, ExceptionHandler] | None = None,
+        lifespan: Lifespan[FastA2A] = _default_lifespan,
+    ) -> FastA2A:
+        """Create a FastA2A server from an agent."""
+        storage = storage or InMemoryStorage()
+        worker = worker or InMemoryWorker(runner=AgentRunner(agent=agent), storage=storage)
+        return cls(
+            storage=storage,
+            worker=worker,
+            name=name or agent.name,
+            url=url,
+            version=version,
+            description=description,
+            provider=provider,
+            skills=skills,
+            debug=debug,
+            routes=routes,
+            middleware=middleware,
+            exception_handlers=exception_handlers,
+            lifespan=lifespan,
+        )
+
+    async def _agent_card_endpoint(self, request: Request) -> Response:
         if self._agent_card_json_schema is None:
             agent_card = AgentCard(
                 name=self.name,
@@ -102,7 +137,7 @@ class FastA2A(Starlette):
             self._agent_card_json_schema = agent_card_ta.dump_json(agent_card)
         return Response(content=self._agent_card_json_schema, media_type='application/json')
 
-    async def agent_run_endpoint(self, request: Request) -> Response:
+    async def _agent_run_endpoint(self, request: Request) -> Response:
         """This is the main endpoint for the A2A server.
 
         Although the specification allows freedom of choice and implementation, I'm pretty sure about some decisions.

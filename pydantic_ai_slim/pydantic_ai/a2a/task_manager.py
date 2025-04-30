@@ -28,20 +28,10 @@ Architecture:
           v                            v
   +------------------+         +----------------+
   |                  |         |                |
-  |    Scheduler     |         |    Storage     |
-  | (queues & plans) |         | (persistence)  |
+  |   TaskExecutor   |<------->|    Storage     |
+  | (queues & exec.) |         | (persistence)  |
   |                  |         |                |
   +------------------+         +----------------+
-          .                           ^
-          . Forwards Tasks            |
-          .                           |
-          v                           |
-  +------------------+                |
-  |                  |                |
-  |      Worker      |<---------------+
-  | (executes tasks) |
-  |                  |
-  +------------------+
           ^
           |
           | Delegates Execution
@@ -73,7 +63,6 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai.a2a.scheduler import Scheduler
 from pydantic_ai.a2a.schema import (
     CancelTaskRequest,
     CancelTaskResponse,
@@ -91,19 +80,20 @@ from pydantic_ai.a2a.schema import (
     TaskNotFoundError,
 )
 from pydantic_ai.a2a.storage import Storage
+from pydantic_ai.a2a.worker import Worker
 
 
 @dataclass
 class TaskManager:
     """A task manager responsible for managing tasks."""
 
-    scheduler: Scheduler
+    worker: Worker
     storage: Storage
 
     async def __aenter__(self):
         self.aexit_stack = AsyncExitStack()
         await self.aexit_stack.__aenter__()
-        await self.aexit_stack.enter_async_context(self.scheduler)
+        await self.aexit_stack.enter_async_context(self.worker)
 
         return self
 
@@ -120,7 +110,7 @@ class TaskManager:
             session_id = request['params'].get('session_id', str(uuid.uuid4()))
             task = await self.storage.submit_task(task_id, session_id)
 
-        await self.scheduler.schedule_task(request['params'])
+        await self.worker.send_run_task(request['params'])
         return SendTaskResponse(jsonrpc='2.0', id=request_id, result=task)
 
     async def get_task(self, request: GetTaskRequest) -> GetTaskResponse:
@@ -140,7 +130,7 @@ class TaskManager:
         return GetTaskResponse(jsonrpc='2.0', id=request['id'], result=task)
 
     async def cancel_task(self, request: CancelTaskRequest) -> CancelTaskResponse:
-        await self.scheduler.cancel_task(request['params'])
+        await self.worker.send_cancel_task(request['params'])
         task = await self.storage.load_task(request['params']['id'])
         if task is None:
             return CancelTaskResponse(
