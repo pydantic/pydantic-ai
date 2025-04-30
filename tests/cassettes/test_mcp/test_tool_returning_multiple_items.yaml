@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '345'
+      - '1787'
       content-type:
       - application/json
       host:
@@ -16,9 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content:
-        - text: What fruit is in the image you can get from the get_image tool?
-          type: text
+      - content: Get me multiple items and summarize in one sentence
         role: user
       model: gpt-4o
       n: 1
@@ -26,10 +24,77 @@ interactions:
       tool_choice: auto
       tools:
       - function:
+          description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
+            \       Temperature in Fahrenheit\n    "
+          name: celsius_to_fahrenheit
+          parameters:
+            properties:
+              celsius:
+                type: number
+            required:
+            - celsius
+            type: object
+        type: function
+      - function:
+          description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
+            forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+          name: get_weather_forecast
+          parameters:
+            properties:
+              location:
+                type: string
+            required:
+            - location
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
           description: ''
           name: get_image
           parameters:
-            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_dict
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_error
+          parameters:
+            properties:
+              value:
+                type: boolean
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_none
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_multiple_items
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+          name: get_log_level
+          parameters:
             properties: {}
             type: object
         type: function
@@ -43,13 +108,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1059'
+      - '1070'
       content-type:
       - application/json
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '692'
+      - '584'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -69,27 +134,27 @@ interactions:
           tool_calls:
           - function:
               arguments: '{}'
-              name: get_image
-            id: call_Btn0GIzGr4ugNlLmkQghQUMY
+              name: get_multiple_items
+            id: call_kL0TvjEVQBDGZrn1Zv7iNYOW
             type: function
-      created: 1745958093
-      id: chatcmpl-BRlkLhPc87BdohVobEJJCGq3rUAG2
+      created: 1745958357
+      id: chatcmpl-BRlobKLgm6vf79c9O8sloZaYx3coC
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_a6889ffe71
+      system_fingerprint: fp_f5bdcc3276
       usage:
-        completion_tokens: 11
+        completion_tokens: 12
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 46
+        prompt_tokens: 195
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 57
+        total_tokens: 207
     status:
       code: 200
       message: OK
@@ -102,31 +167,29 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2780198'
+      - '2781725'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=EpcGLqU8RuoLFAZOt_Bi8DHaVEt5chHMcgru5qoJieM-1745958093-1.0.1.1-ejmpMyCSLBEHnXpucF3c8SXHHtzAgXbox0jrgpCQDJFVrBTXH.vDo4C8XLddPER8ygvJZfMEFai4n7FaBbMO5x0MlrP33Jp5linf3jX0Io8;
-        _cfuvid=irrxu0xSHuHXJdR3t87638x1.xN9BoFc44CDscpJazQ-1745958093590-0.0.1.1-604800000
+      - __cf_bm=Pgo60uY6lxicdwc2QiJzr_oUvp1FNGIHvcRoDbWV54w-1745958357-1.0.1.1-UUY52BPmflpm8In0YV1mln2lx9mbVW74NGvX1.4c5skndAB2BqMVWjX4lSMeoFhPRSWj0QzAslbb3IOyQmAYfg0r4YVaP129niJGmBIOBH4;
+        _cfuvid=KZ8cJg6U12ZI6wJ0UZ_zqf_NVcH8PcNw1niSXOG2W4g-1745958357550-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
     parsed_body:
       messages:
-      - content:
-        - text: What fruit is in the image you can get from the get_image tool?
-          type: text
+      - content: Get me multiple items and summarize in one sentence
         role: user
       - role: assistant
         tool_calls:
         - function:
             arguments: '{}'
-            name: get_image
-          id: call_Btn0GIzGr4ugNlLmkQghQUMY
+            name: get_multiple_items
+          id: call_kL0TvjEVQBDGZrn1Zv7iNYOW
           type: function
-      - content: See file 1c8566
+      - content: '["This is a string","Another string",{"foo":"bar","baz":123},"See file 1c8566"]'
         role: tool
-        tool_call_id: call_Btn0GIzGr4ugNlLmkQghQUMY
+        tool_call_id: call_kL0TvjEVQBDGZrn1Zv7iNYOW
       - content:
         - text: 'This is file 1c8566:'
           type: text
@@ -140,10 +203,77 @@ interactions:
       tool_choice: auto
       tools:
       - function:
+          description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
+            \       Temperature in Fahrenheit\n    "
+          name: celsius_to_fahrenheit
+          parameters:
+            properties:
+              celsius:
+                type: number
+            required:
+            - celsius
+            type: object
+        type: function
+      - function:
+          description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
+            forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+          name: get_weather_forecast
+          parameters:
+            properties:
+              location:
+                type: string
+            required:
+            - location
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
           description: ''
           name: get_image
           parameters:
-            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_dict
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_error
+          parameters:
+            properties:
+              value:
+                type: boolean
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_none
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_multiple_items
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+          name: get_log_level
+          parameters:
             properties: {}
             type: object
         type: function
@@ -157,13 +287,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '834'
+      - '903'
       content-type:
       - application/json
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '2944'
+      - '3261'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -177,27 +307,27 @@ interactions:
         logprobs: null
         message:
           annotations: []
-          content: The image shows a kiwi fruit.
+          content: The data includes two strings, a dictionary with a key-value pair, and an image of a sliced kiwi.
           refusal: null
           role: assistant
-      created: 1745958096
-      id: chatcmpl-BRlkORPA5rXMV3uzcOcgK4eQFKCVW
+      created: 1745958360
+      id: chatcmpl-BRloepWR5NJpTgSqFBGTSPeM1SWm8
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_90122d973c
+      system_fingerprint: fp_55d88aaf2f
       usage:
-        completion_tokens: 9
+        completion_tokens: 24
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 1185
+        prompt_tokens: 1355
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 1194
+        total_tokens: 1379
     status:
       code: 200
       message: OK

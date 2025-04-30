@@ -999,13 +999,13 @@ I need to use the `get_image` tool to see the image first.
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1.',
+                        content='See file 1c8566',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            'This is file 1:',
+                            'This is file 1c8566:',
                             image_content,
                         ],
                         timestamp=IsDatetime(),

@@ -531,47 +531,23 @@ async def test_image_as_binary_content_tool_response(
     async def get_image() -> BinaryContent:
         return image_content
 
-    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
+    result = await agent.run(
+        ['What fruit is in the image you can get from the get_image tool (without any arguments)?']
+    )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content=['What fruit is in the image you can get from the get_image tool?'],
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='get_image',
-                        args='{"image_url": "https://example.com/fruit.jpg"}',
-                        tool_call_id='call_057m',
-                    )
-                ],
-                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
-                timestamp=IsDatetime(),
-            ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
                         content=[
-                            {
-                                'type': 'extra_forbidden',
-                                'loc': ('image_url',),
-                                'msg': 'Extra inputs are not permitted',
-                                'input': 'https://example.com/fruit.jpg',
-                            }
+                            'What fruit is in the image you can get from the get_image tool (without any arguments)?'
                         ],
-                        tool_name='get_image',
-                        tool_call_id='call_057m',
                         timestamp=IsDatetime(),
                     )
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_d2sm')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_wkpd')],
                 model_name='meta-llama/llama-4-scout-17b-16e-instruct',
                 timestamp=IsDatetime(),
             ),
@@ -579,13 +555,13 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1.',
-                        tool_call_id='call_d2sm',
+                        content='See file 1c8566',
+                        tool_call_id='call_wkpd',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            'This is file 1:',
+                            'This is file 1c8566:',
                             image_content,
                         ],
                         timestamp=IsDatetime(),
