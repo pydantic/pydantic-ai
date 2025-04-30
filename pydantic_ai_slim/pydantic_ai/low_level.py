@@ -13,7 +13,10 @@ from contextlib import asynccontextmanager
 
 from pydantic_graph._utils import get_event_loop as _get_event_loop
 
-from . import messages, models, settings, usage
+from . import agent, messages, models, settings, usage
+from .models import instrumented as instrumented_models
+
+__all__ = 'model_request', 'model_request_sync', 'model_request_stream'
 
 
 async def model_request(
@@ -22,6 +25,7 @@ async def model_request(
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
 ) -> tuple[messages.ModelResponse, usage.Usage]:
     """Make a non-streamed request to a model.
 
@@ -63,11 +67,13 @@ async def model_request(
         messages: Messages to send to the model
         model_settings: optional model settings
         model_request_parameters: optional model request parameters
+        instrument: Whether to instrument the request with OpenTelemetry/logfire, if `None` the value from
+            [`logfire.instrument_pydantic_ai`][logfire.instrument_pydantic_ai] is used.
 
     Returns:
         The model response and token usage associated with the request.
     """
-    model_instance = models.infer_model(model)
+    model_instance = _prepare_model(model, instrument)
     return await model_instance.request(
         messages,
         model_settings,
@@ -81,6 +87,7 @@ def model_request_sync(
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
 ) -> tuple[messages.ModelResponse, usage.Usage]:
     """Make a Synchronous, non-streamed request to a model.
 
@@ -114,12 +121,20 @@ def model_request_sync(
         messages: Messages to send to the model
         model_settings: optional model settings
         model_request_parameters: optional model request parameters
+        instrument: Whether to instrument the request with OpenTelemetry/logfire, if `None` the value from
+            [`logfire.instrument_pydantic_ai`][logfire.instrument_pydantic_ai] is used.
 
     Returns:
         The model response and token usage associated with the request.
     """
     return _get_event_loop().run_until_complete(
-        model_request(model, messages, model_settings=model_settings, model_request_parameters=model_request_parameters)
+        model_request(
+            model,
+            messages,
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
+            instrument=instrument,
+        )
     )
 
 
@@ -130,6 +145,7 @@ async def model_request_stream(
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
 ) -> AsyncIterator[models.StreamedResponse]:
     """Make a streamed request to a model.
 
@@ -176,11 +192,13 @@ async def model_request_stream(
         messages: Messages to send to the model
         model_settings: optional model settings
         model_request_parameters: optional model request parameters
+        instrument: Whether to instrument the request with OpenTelemetry/logfire, if `None` the value from
+            [`logfire.instrument_pydantic_ai`][logfire.instrument_pydantic_ai] is used.
 
     Returns:
         A [stream response][pydantic_ai.models.StreamedResponse] async context manager.
     """
-    model_instance = models.infer_model(model)
+    model_instance = _prepare_model(model, instrument)
     stream_cxt_mgr = model_instance.request_stream(
         messages,
         model_settings,
@@ -188,3 +206,15 @@ async def model_request_stream(
     )
     async with stream_cxt_mgr as streamed_response:
         yield streamed_response
+
+
+def _prepare_model(
+    model: models.Model | models.KnownModelName | str,
+    instrument: instrumented_models.InstrumentationSettings | bool | None,
+) -> models.Model:
+    model_instance = models.infer_model(model)
+
+    if instrument is None:
+        instrument = agent.Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
+
+    return instrumented_models.instrument_model(model_instance, instrument)
