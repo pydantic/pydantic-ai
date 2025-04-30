@@ -68,7 +68,7 @@ async def model_request(
         model_settings: optional model settings
         model_request_parameters: optional model request parameters
         instrument: Whether to instrument the request with OpenTelemetry/logfire, if `None` the value from
-            [`logfire.instrument_pydantic_ai`][logfire.instrument_pydantic_ai] is used.
+            [`logfire.instrument_pydantic_ai`][logfire.Logfire.instrument_pydantic_ai] is used.
 
     Returns:
         The model response and token usage associated with the request.
@@ -122,7 +122,7 @@ def model_request_sync(
         model_settings: optional model settings
         model_request_parameters: optional model request parameters
         instrument: Whether to instrument the request with OpenTelemetry/logfire, if `None` the value from
-            [`logfire.instrument_pydantic_ai`][logfire.instrument_pydantic_ai] is used.
+            [`logfire.instrument_pydantic_ai`][logfire.Logfire.instrument_pydantic_ai] is used.
 
     Returns:
         The model response and token usage associated with the request.
@@ -147,7 +147,7 @@ async def model_request_stream(
     model_request_parameters: models.ModelRequestParameters | None = None,
     instrument: instrumented_models.InstrumentationSettings | bool | None = None,
 ) -> AsyncIterator[models.StreamedResponse]:
-    """Make a streamed request to a model.
+    """Make a streamed async request to a model.
 
     This method is roughly equivalent to [`Agent.run_stream`][pydantic_ai.Agent.run_stream].
 
@@ -193,7 +193,7 @@ async def model_request_stream(
         model_settings: optional model settings
         model_request_parameters: optional model request parameters
         instrument: Whether to instrument the request with OpenTelemetry/logfire, if `None` the value from
-            [`logfire.instrument_pydantic_ai`][logfire.instrument_pydantic_ai] is used.
+            [`logfire.instrument_pydantic_ai`][logfire.Logfire.instrument_pydantic_ai] is used.
 
     Returns:
         A [stream response][pydantic_ai.models.StreamedResponse] async context manager.
