@@ -28,7 +28,7 @@ Architecture:
           v                            v
   +------------------+         +----------------+
   |                  |         |                |
-  |   TaskExecutor   |<------->|    Storage     |
+  |      Worker      |<------->|    Storage     |
   | (queues & exec.) |         | (persistence)  |
   |                  |         |                |
   +------------------+         +----------------+

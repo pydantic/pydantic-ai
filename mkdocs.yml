@@ -43,6 +43,7 @@ nav:
           - mcp/client.md
           - mcp/server.md
           - mcp/run-python.md
+      - A2A: a2a.md
       - cli.md
   - Examples:
       - examples/index.md
@@ -243,7 +244,6 @@ plugins:
           - cli.md
           - logfire.md
           - examples/*.md
-
 
 hooks:
   - "docs/.hooks/main.py"
