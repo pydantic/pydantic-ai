@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, Callable
 
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp.types import JSONRPCMessage, LoggingLevel
@@ -15,10 +15,11 @@ from typing_extensions import Self
 from pydantic_ai.tools import ToolDefinition
 
 try:
+    from mcp import types as mcp_types
     from mcp.client.session import ClientSession
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
-    from mcp.types import CallToolResult
+    from mcp.shared.context import RequestContext
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `mcp` package to use the MCP server, '
@@ -26,6 +27,11 @@ except ImportError as _import_error:
     ) from _import_error
 
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP'
+
+OptionalSamplingFunction = Callable[
+    [RequestContext['ClientSession', Any], mcp_types.CreateMessageRequestParams],
+    Awaitable[mcp_types.CreateMessageResult | mcp_types.ErrorData | None],
+]
 
 
 class MCPServer(ABC):
@@ -55,7 +61,21 @@ class MCPServer(ABC):
     @abstractmethod
     def _get_log_level(self) -> LoggingLevel | None:
         """Get the log level for the MCP server."""
+
+    @abstractmethod
+    def _custom_sampling_callback(self) -> OptionalSamplingFunction | None:
+        """Maybe get a sampling callback function for this server definition."""
         raise NotImplementedError('MCP Server subclasses must implement this method.')
+
+    async def _sampling_callback(
+        self, context: RequestContext[ClientSession, Any], params: mcp_types.CreateMessageRequestParams
+    ) -> mcp_types.CreateMessageResult | mcp_types.ErrorData:
+        """MCP sampling callback."""
+        if custom_sampling_callback := self._custom_sampling_callback():
+            if result := await custom_sampling_callback(context, params):
+                return result
+
+        raise NotImplementedError('MCP Sampling not yet implemented, except for custom sampling callbacks')
 
     async def list_tools(self) -> list[ToolDefinition]:
         """Retrieve tools that are currently active on the server.
@@ -74,7 +94,7 @@ class MCPServer(ABC):
             for tool in tools.tools
         ]
 
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> CallToolResult:
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> mcp_types.CallToolResult:
         """Call a tool on the server.
 
         Args:
@@ -90,7 +110,9 @@ class MCPServer(ABC):
         self._exit_stack = AsyncExitStack()
 
         self._read_stream, self._write_stream = await self._exit_stack.enter_async_context(self.client_streams())
-        client = ClientSession(read_stream=self._read_stream, write_stream=self._write_stream)
+        client = ClientSession(
+            read_stream=self._read_stream, write_stream=self._write_stream, sampling_callback=self._sampling_callback
+        )
         self._client = await self._exit_stack.enter_async_context(client)
 
         await self._client.initialize()
@@ -168,6 +190,9 @@ class MCPServerStdio(MCPServer):
     cwd: str | Path | None = None
     """The working directory to use when spawning the process."""
 
+    custom_sampling_callback: OptionalSamplingFunction | None = None
+    """Optional callback function for sampling."""
+
     @asynccontextmanager
     async def client_streams(
         self,
@@ -180,6 +205,9 @@ class MCPServerStdio(MCPServer):
 
     def _get_log_level(self) -> LoggingLevel | None:
         return self.log_level
+
+    def _custom_sampling_callback(self) -> OptionalSamplingFunction | None:
+        return self.custom_sampling_callback
 
 
 @dataclass
@@ -248,6 +276,9 @@ class MCPServerHTTP(MCPServer):
     If `None`, no log level will be set.
     """
 
+    custom_sampling_callback: OptionalSamplingFunction | None = None
+    """Optional callback function for sampling."""
+
     @asynccontextmanager
     async def client_streams(
         self,
@@ -261,3 +292,6 @@ class MCPServerHTTP(MCPServer):
 
     def _get_log_level(self) -> LoggingLevel | None:
         return self.log_level
+
+    def _custom_sampling_callback(self) -> OptionalSamplingFunction | None:
+        return self.custom_sampling_callback

@@ -19,9 +19,9 @@ pytestmark = pytest.mark.anyio
 DENO_ARGS = [
     'run',
     '-N',
+    '--node-modules-dir=auto',
     '-R=mcp-run-python/node_modules',
     '-W=mcp-run-python/node_modules',
-    '--node-modules-dir=auto',
     'mcp-run-python/src/main.ts',
 ]
 
@@ -147,7 +147,6 @@ Traceback (most recent call last):
     print(unknown)
           ^^^^^^^
 NameError: name 'unknown' is not defined
-
 </error>\
 """),
             id='undefined-variable',

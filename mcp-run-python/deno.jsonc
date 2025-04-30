@@ -32,7 +32,7 @@
       "src/*.ts",
       "src/prepareEnvCode.ts", // required to override gitignore
       "README.md",
-      "deno.json"
+      "deno.jsonc"
     ]
   }
 }
