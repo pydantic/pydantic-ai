@@ -69,4 +69,4 @@ async def test_azure_provider_call(allow_model_requests: None):
     agent = Agent(model)
 
     result = await agent.run('What is the capital of France?')
-    assert result.data == snapshot('The capital of France is **Paris**.')
+    assert result.output == snapshot('The capital of France is **Paris**.')

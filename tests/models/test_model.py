@@ -11,6 +11,7 @@ TEST_CASES = [
     ('OPENAI_API_KEY', 'openai:gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIModel'),
     ('OPENAI_API_KEY', 'gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIModel'),
     ('OPENAI_API_KEY', 'o1', 'o1', 'openai', 'openai', 'OpenAIModel'),
+    ('AZURE_OPENAI_API_KEY', 'azure:gpt-3.5-turbo', 'gpt-3.5-turbo', 'azure', 'azure', 'OpenAIModel'),
     ('GEMINI_API_KEY', 'google-gla:gemini-1.5-flash', 'gemini-1.5-flash', 'google-gla', 'gemini', 'GeminiModel'),
     ('GEMINI_API_KEY', 'gemini-1.5-flash', 'gemini-1.5-flash', 'google-gla', 'gemini', 'GeminiModel'),
     (
@@ -97,7 +98,7 @@ def test_infer_model(
     try:
         model_module = import_module(f'pydantic_ai.models.{module_name}')
         expected_model = getattr(model_module, model_class_name)
-        m = infer_model(model_name)  # pyright: ignore[reportArgumentType]
+        m = infer_model(model_name)
     except ImportError:
         pytest.skip(f'{model_name} dependencies not installed')
 
@@ -111,4 +112,4 @@ def test_infer_model(
 
 def test_infer_str_unknown():
     with pytest.raises(UserError, match='Unknown model: foobar'):
-        infer_model('foobar')  # pyright: ignore[reportArgumentType]
+        infer_model('foobar')

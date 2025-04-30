@@ -2,7 +2,7 @@ Information about whales — an example of streamed structured response validati
 
 Demonstrates:
 
-* [streaming structured responses](../results.md#streaming-structured-responses)
+* [streaming structured output](../output.md#streaming-structured-output)
 
 This script streams structured responses from GPT-4 about whales, validates the data
 and displays it as a dynamic table using [`rich`](https://github.com/Textualize/rich) as the data is received.

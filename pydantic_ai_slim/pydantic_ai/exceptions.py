@@ -3,9 +3,9 @@ from __future__ import annotations as _annotations
 import json
 import sys
 
-if sys.version_info < (3, 11):
+if sys.version_info < (3, 11):  # pragma: no cover
     from exceptiongroup import ExceptionGroup
-else:
+else:  # pragma: no cover
     ExceptionGroup = ExceptionGroup
 
 __all__ = (

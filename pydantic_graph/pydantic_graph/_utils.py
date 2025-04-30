@@ -1,15 +1,57 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-import sys
 import types
-from collections.abc import Coroutine
 from functools import partial
-from typing import Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
-from typing_extensions import ParamSpec, TypeIs, get_args, get_origin
+from logfire_api import LogfireSpan
+from typing_extensions import ParamSpec, TypeAlias, TypeIs, get_args, get_origin
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
+
+if TYPE_CHECKING:
+    from opentelemetry.trace import Span
+
+
+AbstractSpan: TypeAlias = 'LogfireSpan | Span'
+
+try:
+    from opentelemetry.trace import Span, set_span_in_context
+    from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+    TRACEPARENT_PROPAGATOR = TraceContextTextMapPropagator()
+    TRACEPARENT_NAME = 'traceparent'
+    assert TRACEPARENT_NAME in TRACEPARENT_PROPAGATOR.fields
+
+    # Logic taken from logfire.experimental.annotations
+    def get_traceparent(span: AbstractSpan) -> str | None:
+        """Get a string representing the span context to use for annotating spans."""
+        real_span: Span
+        if isinstance(span, Span):
+            real_span = span
+        else:
+            real_span = span._span
+            assert real_span
+        context = set_span_in_context(real_span)
+        carrier: dict[str, Any] = {}
+        TRACEPARENT_PROPAGATOR.inject(carrier, context)
+        return carrier.get(TRACEPARENT_NAME, '')
+
+except ImportError:  # pragma: no cover
+
+    def get_traceparent(span: AbstractSpan) -> str | None:
+        # Opentelemetry wasn't installed, so we can't get the traceparent
+        return None
+
+
+def get_event_loop():
+    try:
+        event_loop = asyncio.get_event_loop()
+    except RuntimeError:
+        event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(event_loop)
+    return event_loop
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
@@ -93,15 +135,3 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         return await asyncio.get_running_loop().run_in_executor(None, partial(func, *args, **kwargs))
     else:
         return await asyncio.get_running_loop().run_in_executor(None, func, *args)  # type: ignore
-
-
-def run_until_complete(coro: Coroutine[None, None, _R]) -> _R:
-    if sys.version_info < (3, 11):
-        try:
-            loop = asyncio.new_event_loop()
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
-    else:
-        with asyncio.runners.Runner(loop_factory=asyncio.new_event_loop) as runner:
-            return runner.run(coro)

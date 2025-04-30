@@ -37,6 +37,9 @@ class WrapperModel(Model):
         async with self.wrapped.request_stream(messages, model_settings, model_request_parameters) as response_stream:
             yield response_stream
 
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        return self.wrapped.customize_request_parameters(model_request_parameters)
+
     @property
     def model_name(self) -> str:
         return self.wrapped.model_name

@@ -1,5 +1,7 @@
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
+from pathlib import Path
+
 import pytest
 from dirty_equals import IsInstance
 from inline_snapshot import snapshot
@@ -29,7 +31,7 @@ async def test_stdio_server():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == 1
+        assert len(tools) == 2
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
@@ -38,9 +40,33 @@ async def test_stdio_server():
         assert result.content == snapshot([TextContent(type='text', text='32.0')])
 
 
+async def test_stdio_server_with_cwd():
+    test_dir = Path(__file__).parent
+    server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
+    async with server:
+        tools = await server.list_tools()
+        assert len(tools) == 2
+
+
 def test_sse_server():
     sse_server = MCPServerHTTP(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
+    assert sse_server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
+
+
+def test_sse_server_with_header_and_timeout():
+    sse_server = MCPServerHTTP(
+        url='http://localhost:8000/sse',
+        headers={'my-custom-header': 'my-header-value'},
+        timeout=10,
+        sse_read_timeout=100,
+        log_level='info',
+    )
+    assert sse_server.url == 'http://localhost:8000/sse'
+    assert sse_server.headers is not None and sse_server.headers['my-custom-header'] == 'my-header-value'
+    assert sse_server.timeout == 10
+    assert sse_server.sse_read_timeout == 100
+    assert sse_server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_agent_with_stdio_server(allow_model_requests: None, openai_api_key: str):
@@ -49,7 +75,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, openai_api_ke
     agent = Agent(model, mcp_servers=[server])
     async with agent.run_mcp_servers():
         result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
-        assert result.data == snapshot('0 degrees Celsius is 32.0 degrees Fahrenheit.')
+        assert result.output == snapshot('0 degrees Celsius is 32.0 degrees Fahrenheit.')
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -91,3 +117,23 @@ async def test_agent_with_server_not_running(openai_api_key: str):
     agent = Agent(model, mcp_servers=[server])
     with pytest.raises(UserError, match='MCP server is not running'):
         await agent.run('What is 0 degrees Celsius in Fahrenheit?')
+
+
+async def test_log_level_unset():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    assert server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
+    async with server:
+        tools = await server.list_tools()
+        assert len(tools) == 2
+        assert tools[1].name == 'get_log_level'
+
+        result = await server.call_tool('get_log_level', {})
+        assert result.content == snapshot([TextContent(type='text', text='unset')])
+
+
+async def test_log_level_set():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
+    assert server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
+    async with server:
+        result = await server.call_tool('get_log_level', {})
+        assert result.content == snapshot([TextContent(type='text', text='info')])

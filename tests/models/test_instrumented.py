@@ -12,6 +12,10 @@ from opentelemetry._events import NoOpEventLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
 
 from pydantic_ai.messages import (
+    AudioUrl,
+    BinaryContent,
+    DocumentUrl,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -25,6 +29,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -133,8 +138,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
         model_settings=ModelSettings(temperature=1),
         model_request_parameters=ModelRequestParameters(
             function_tools=[],
-            allow_text_result=True,
-            result_tools=[],
+            allow_text_output=True,
+            output_tools=[],
         ),
     )
 
@@ -152,7 +157,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
                     'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
@@ -329,8 +334,8 @@ async def test_instrumented_model_not_recording():
         model_settings=ModelSettings(temperature=1),
         model_request_parameters=ModelRequestParameters(
             function_tools=[],
-            allow_text_result=True,
-            result_tools=[],
+            allow_text_output=True,
+            output_tools=[],
         ),
     )
 
@@ -351,8 +356,8 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
         model_settings=ModelSettings(temperature=1),
         model_request_parameters=ModelRequestParameters(
             function_tools=[],
-            allow_text_result=True,
-            result_tools=[],
+            allow_text_output=True,
+            output_tools=[],
         ),
     ) as response_stream:
         assert [event async for event in response_stream] == snapshot(
@@ -376,7 +381,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
                     'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
@@ -439,8 +444,8 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
             model_settings=ModelSettings(temperature=1),
             model_request_parameters=ModelRequestParameters(
                 function_tools=[],
-                allow_text_result=True,
-                result_tools=[],
+                allow_text_output=True,
+                output_tools=[],
             ),
         ) as response_stream:
             async for event in response_stream:
@@ -461,7 +466,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
                     'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
@@ -546,8 +551,8 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
         model_settings=ModelSettings(temperature=1),
         model_request_parameters=ModelRequestParameters(
             function_tools=[],
-            allow_text_result=True,
-            result_tools=[],
+            allow_text_output=True,
+            output_tools=[],
         ),
     )
 
@@ -565,7 +570,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_result": true, "result_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -692,3 +697,125 @@ def test_messages_to_otel_events_serialization_errors():
             'event.name': 'gen_ai.tool.message',
         },
     ]
+
+
+def test_messages_to_otel_events_instructions():
+    messages = [
+        ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
+        ModelResponse(parts=[TextPart('text1')]),
+    ]
+    assert [
+        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
+    ] == snapshot(
+        [
+            {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
+            {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+        ]
+    )
+
+
+def test_messages_to_otel_events_instructions_multiple_messages():
+    messages = [
+        ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
+        ModelResponse(parts=[TextPart('text1')]),
+        ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')]),
+    ]
+    assert [
+        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
+    ] == snapshot(
+        [
+            {'content': 'instructions2', 'role': 'system', 'event.name': 'gen_ai.system.message'},
+            {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {'content': 'user_prompt2', 'role': 'user', 'gen_ai.message.index': 2, 'event.name': 'gen_ai.user.message'},
+        ]
+    )
+
+
+def test_messages_to_otel_events_image_url(document_content: BinaryContent):
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt', ImageUrl('https://example.com/image.png')])]),
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt2', AudioUrl('https://example.com/audio.mp3')])]),
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt3', DocumentUrl('https://example.com/document.pdf')])]),
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt4', VideoUrl('https://example.com/video.mp4')])]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'user_prompt5',
+                        ImageUrl('https://example.com/image2.png'),
+                        AudioUrl('https://example.com/audio2.mp3'),
+                        DocumentUrl('https://example.com/document2.pdf'),
+                        VideoUrl('https://example.com/video2.mp4'),
+                    ]
+                )
+            ]
+        ),
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
+        ModelResponse(parts=[TextPart('text1')]),
+    ]
+    assert [
+        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
+    ] == snapshot(
+        [
+            {
+                'content': ['user_prompt', {'kind': 'image-url', 'url': 'https://example.com/image.png'}],
+                'role': 'user',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'content': ['user_prompt2', {'kind': 'audio-url', 'url': 'https://example.com/audio.mp3'}],
+                'role': 'user',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'content': ['user_prompt3', {'kind': 'document-url', 'url': 'https://example.com/document.pdf'}],
+                'role': 'user',
+                'gen_ai.message.index': 2,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'content': ['user_prompt4', {'kind': 'video-url', 'url': 'https://example.com/video.mp4'}],
+                'role': 'user',
+                'gen_ai.message.index': 3,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'content': [
+                    'user_prompt5',
+                    {'kind': 'image-url', 'url': 'https://example.com/image2.png'},
+                    {'kind': 'audio-url', 'url': 'https://example.com/audio2.mp3'},
+                    {'kind': 'document-url', 'url': 'https://example.com/document2.pdf'},
+                    {'kind': 'video-url', 'url': 'https://example.com/video2.mp4'},
+                ],
+                'role': 'user',
+                'gen_ai.message.index': 4,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'content': ['user_prompt6', {'kind': 'binary'}],
+                'role': 'user',
+                'gen_ai.message.index': 5,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'gen_ai.message.index': 6,
+                'event.name': 'gen_ai.assistant.message',
+            },
+        ]
+    )

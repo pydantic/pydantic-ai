@@ -1,0 +1,158 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '277'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: I want to know my chinese zodiac. I am 20 years old.
+        role: user
+      tools:
+        function_declarations:
+        - description: ''
+          name: get_chinese_zodiac
+          parameters:
+            properties:
+              age:
+                type: integer
+            required:
+            - age
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '733'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=432
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: 5.287883271064077e-06
+        content:
+          parts:
+          - functionCall:
+              args:
+                age: 20
+              name: get_chinese_zodiac
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      usageMetadata:
+        candidatesTokenCount: 7
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 7
+        promptTokenCount: 24
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 24
+        totalTokenCount: 31
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '483'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: I want to know my chinese zodiac. I am 20 years old.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              age: 20
+            name: get_chinese_zodiac
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_chinese_zodiac
+            response:
+              return_value: Dragon
+        role: user
+      tools:
+        function_declarations:
+        - description: ''
+          name: get_chinese_zodiac
+          parameters:
+            properties:
+              age:
+                type: integer
+            required:
+            - age
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '636'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=418
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -2.039197300161634e-06
+        content:
+          parts:
+          - text: |
+              Your Chinese zodiac is Dragon.
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      usageMetadata:
+        candidatesTokenCount: 7
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 7
+        promptTokenCount: 41
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 41
+        totalTokenCount: 48
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -4,11 +4,12 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from types import TracebackType
 from typing import Any
 
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from mcp.types import JSONRPCMessage
+from mcp.types import JSONRPCMessage, LoggingLevel
 from typing_extensions import Self
 
 from pydantic_ai.tools import ToolDefinition
@@ -51,6 +52,11 @@ class MCPServer(ABC):
         raise NotImplementedError('MCP Server subclasses must implement this method.')
         yield
 
+    @abstractmethod
+    def _get_log_level(self) -> LoggingLevel | None:
+        """Get the log level for the MCP server."""
+        raise NotImplementedError('MCP Server subclasses must implement this method.')
+
     async def list_tools(self) -> list[ToolDefinition]:
         """Retrieve tools that are currently active on the server.
 
@@ -88,6 +94,8 @@ class MCPServer(ABC):
         self._client = await self._exit_stack.enter_async_context(client)
 
         await self._client.initialize()
+        if log_level := self._get_log_level():
+            await self._client.set_logging_level(log_level)
         self.is_running = True
         return self
 
@@ -114,7 +122,18 @@ class MCPServerStdio(MCPServer):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerStdio
 
-    server = MCPServerStdio('npx', ['-y', '@pydantic/mcp-run-python', 'stdio'])  # (1)!
+    server = MCPServerStdio(  # (1)!
+        'deno',
+        args=[
+            'run',
+            '-N',
+            '-R=node_modules',
+            '-W=node_modules',
+            '--node-modules-dir=auto',
+            'jsr:@pydantic/mcp-run-python',
+            'stdio',
+        ]
+    )
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
@@ -138,6 +157,16 @@ class MCPServerStdio(MCPServer):
     By default the subprocess will not inherit any environment variables from the parent process.
     If you want to inherit the environment variables from the parent process, use `env=os.environ`.
     """
+    log_level: LoggingLevel | None = None
+    """The log level to set when connecting to the server, if any.
+
+    See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
+
+    If `None`, no log level will be set.
+    """
+
+    cwd: str | Path | None = None
+    """The working directory to use when spawning the process."""
 
     @asynccontextmanager
     async def client_streams(
@@ -145,9 +174,12 @@ class MCPServerStdio(MCPServer):
     ) -> AsyncIterator[
         tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
     ]:
-        server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env)
+        server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
         async with stdio_client(server=server) as (read_stream, write_stream):
             yield read_stream, write_stream
+
+    def _get_log_level(self) -> LoggingLevel | None:
+        return self.log_level
 
 
 @dataclass
@@ -177,8 +209,7 @@ class MCPServerHTTP(MCPServer):
             ...
     ```
 
-    1. E.g. you might be connecting to a server run with `npx @pydantic/mcp-run-python sse`,
-      see [MCP Run Python](../mcp/run-python.md) for more information.
+    1. E.g. you might be connecting to a server run with [`mcp-run-python`](../mcp/run-python.md).
     2. This will connect to a server running on `localhost:3001`.
     """
 
@@ -188,11 +219,45 @@ class MCPServerHTTP(MCPServer):
     For example for a server running locally, this might be `http://localhost:3001/sse`.
     """
 
+    headers: dict[str, Any] | None = None
+    """Optional HTTP headers to be sent with each request to the SSE endpoint.
+
+    These headers will be passed directly to the underlying `httpx.AsyncClient`.
+    Useful for authentication, custom headers, or other HTTP-specific configurations.
+    """
+
+    timeout: float = 5
+    """Initial connection timeout in seconds for establishing the SSE connection.
+
+    This timeout applies to the initial connection setup and handshake.
+    If the connection cannot be established within this time, the operation will fail.
+    """
+
+    sse_read_timeout: float = 60 * 5
+    """Maximum time in seconds to wait for new SSE messages before timing out.
+
+    This timeout applies to the long-lived SSE connection after it's established.
+    If no new messages are received within this time, the connection will be considered stale
+    and may be closed. Defaults to 5 minutes (300 seconds).
+    """
+    log_level: LoggingLevel | None = None
+    """The log level to set when connecting to the server, if any.
+
+    See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
+
+    If `None`, no log level will be set.
+    """
+
     @asynccontextmanager
     async def client_streams(
         self,
     ) -> AsyncIterator[
         tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
     ]:  # pragma: no cover
-        async with sse_client(url=self.url) as (read_stream, write_stream):
+        async with sse_client(
+            url=self.url, headers=self.headers, timeout=self.timeout, sse_read_timeout=self.sse_read_timeout
+        ) as (read_stream, write_stream):
             yield read_stream, write_stream
+
+    def _get_log_level(self) -> LoggingLevel | None:
+        return self.log_level
