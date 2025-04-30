@@ -1,9 +1,16 @@
+from contextlib import contextmanager
 from datetime import timezone
 
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai.low_level import model_request, model_request_stream, model_request_sync
+from pydantic_ai import Agent
+from pydantic_ai.low_level import (
+    _prepare_model,  # pyright: ignore[reportPrivateUsage]
+    model_request,
+    model_request_stream,
+    model_request_sync,
+)
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -14,6 +21,8 @@ from pydantic_ai.messages import (
     ToolCallPart,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.instrumented import InstrumentedModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import Usage
 
@@ -77,3 +86,30 @@ async def test_model_request_stream():
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='calls)')),
         ]
     )
+
+
+@contextmanager
+def set_instrument_default(value: bool):
+    """Context manager to temporarily set the default instrumentation value."""
+    initial_value = Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
+    try:
+        Agent._instrument_default = value  # pyright: ignore[reportPrivateUsage]
+        yield
+    finally:
+        Agent._instrument_default = initial_value  # pyright: ignore[reportPrivateUsage]
+
+
+def test_prepare_model():
+    with set_instrument_default(False):
+        model = _prepare_model('test', None)
+        assert isinstance(model, TestModel)
+
+        model = _prepare_model('test', True)
+        assert isinstance(model, InstrumentedModel)
+
+    with set_instrument_default(True):
+        model = _prepare_model('test', None)
+        assert isinstance(model, InstrumentedModel)
+
+        model = _prepare_model('test', False)
+        assert isinstance(model, TestModel)

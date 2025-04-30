@@ -28,7 +28,7 @@ from . import (
     result,
     usage as _usage,
 )
-from .models.instrumented import InstrumentationSettings, InstrumentedModel
+from .models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from .result import FinalResult, OutputDataT, StreamedRunResult, ToolOutput
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -1558,13 +1558,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if instrument is None:
             instrument = self._instrument_default
 
-        if instrument and not isinstance(model_, InstrumentedModel):
-            if instrument is True:
-                instrument = InstrumentationSettings()
-
-            model_ = InstrumentedModel(model_, instrument)
-
-        return model_
+        return instrument_model(model_, instrument)
 
     def _get_deps(self: Agent[T, OutputDataT], deps: T) -> T:
         """Get deps for a run.
