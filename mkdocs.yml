@@ -43,7 +43,10 @@ nav:
           - mcp/client.md
           - mcp/server.md
           - mcp/run-python.md
-      - A2A: a2a.md
+      - A2A:
+          - a2a/index.md
+          - a2a/fasta2a.md
+          - a2a/testing.md
       - cli.md
   - Examples:
       - examples/index.md

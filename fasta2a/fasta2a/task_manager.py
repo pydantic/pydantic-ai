@@ -63,7 +63,7 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai.a2a.schema import (
+from .schema import (
     CancelTaskRequest,
     CancelTaskResponse,
     GetTaskPushNotificationRequest,
@@ -79,8 +79,8 @@ from pydantic_ai.a2a.schema import (
     SetTaskPushNotificationResponse,
     TaskNotFoundError,
 )
-from pydantic_ai.a2a.storage import Storage
-from pydantic_ai.a2a.worker import Worker
+from .storage import Storage
+from .worker import Worker
 
 
 @dataclass

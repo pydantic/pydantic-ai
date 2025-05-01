@@ -18,6 +18,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "fasta2a",
     "mcp-run-python",
     "pydantic-ai",
     "pydantic-ai-examples",
@@ -943,6 +944,27 @@ sdist = { url = "https://files.pythonhosted.org/packages/91/50/a9d80c47ff289c611
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7b/8f/c4d9bafc34ad7ad5d8dc16dd1347ee0e507a52c3adb6bfa8887e1c6a26ba/executing-2.2.0-py2.py3-none-any.whl", hash = "sha256:11387150cad388d62750327a53d3339fad4888b39a6fe233c3afbb54ecffd3aa", size = 26702 },
 ]
+
+[[package]]
+name = "fasta2a"
+source = { editable = "fasta2a" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "starlette" },
+]
+
+[package.optional-dependencies]
+logfire = [
+    { name = "logfire" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
+    { name = "pydantic", specifier = ">=2.10" },
+    { name = "starlette", specifier = ">0.29.0" },
+]
+provides-extras = ["logfire"]
 
 [[package]]
 name = "fastapi"
@@ -2836,7 +2858,7 @@ lint = [
 requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.11.0" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "bedrock", "cli", "cohere", "evals", "groq", "mcp", "mistral", "openai", "vertexai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["a2a", "anthropic", "bedrock", "cli", "cohere", "evals", "groq", "mcp", "mistral", "openai", "vertexai"], editable = "pydantic_ai_slim" },
 ]
 provides-extras = ["examples", "logfire"]
 

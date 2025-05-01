@@ -22,8 +22,9 @@ from pydantic_ai.messages import (
 from .schema import Message, Part, TaskSendParams, TextPart as A2ATextPart
 
 if TYPE_CHECKING:
-    from pydantic_ai.a2a.worker import TaskContext
     from pydantic_ai.agent import Agent
+
+    from .worker import TaskContext
 
 
 class Runner(ABC):

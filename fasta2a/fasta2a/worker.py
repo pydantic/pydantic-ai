@@ -7,9 +7,12 @@ import anyio
 from pydantic import Discriminator
 from typing_extensions import TypedDict
 
+from ._otel import instrument_create_memory_object_stream
 from .runner import Runner
 from .schema import TaskIdParams, TaskSendParams
 from .storage import Storage
+
+instrument_create_memory_object_stream()
 
 
 class WorkerClient(ABC):
@@ -90,8 +93,6 @@ class InMemoryWorker(Worker):
 
     async def _run_task_operations(self):
         async for task_operation in self._read_stream:
-            # TODO(Marcelo): Build the TaskContext to pass to the runner. The object can have a
-            # `save_task` or `save_artifact` or `save_task_history` method.
             if task_operation['operation'] == 'run':
                 self._task_group.start_soon(self._handle_run_task, task_operation['params'])
 
@@ -100,10 +101,10 @@ class InMemoryWorker(Worker):
         await self.runner.run(task_context)
 
     async def run_task(self, params: TaskSendParams) -> None:
-        await self._write_stream.send(RunTask(operation='run', params=params))
+        await self._write_stream.send(_RunTask(operation='run', params=params))
 
     async def cancel_task(self, params: TaskIdParams) -> None:
-        await self._write_stream.send(CancelTask(operation='cancel', params=params))
+        await self._write_stream.send(_CancelTask(operation='cancel', params=params))
 
     async def send_run_task(self, params: TaskSendParams) -> None:
         await self.run_task(params)
@@ -116,17 +117,17 @@ OperationT = TypeVar('OperationT')
 ParamsT = TypeVar('ParamsT')
 
 
-class TaskOperation(TypedDict, Generic[OperationT, ParamsT]):
+class _TaskOperation(TypedDict, Generic[OperationT, ParamsT]):
     """A task operation."""
 
     operation: OperationT
     params: ParamsT
 
 
-RunTask = TaskOperation[Literal['run'], TaskSendParams]
-CancelTask = TaskOperation[Literal['cancel'], TaskIdParams]
+_RunTask = _TaskOperation[Literal['run'], TaskSendParams]
+_CancelTask = _TaskOperation[Literal['cancel'], TaskIdParams]
 
-TaskOperations = Annotated[RunTask | CancelTask, Discriminator('operation')]
+TaskOperations = Annotated[_RunTask | _CancelTask, Discriminator('operation')]
 
 TaskParamsT = TypeVar('TaskParamsT')
 
