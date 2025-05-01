@@ -566,7 +566,7 @@ class ModelResponse:
     kind: Literal['response'] = 'response'
     """Message type identifier, this is available on all parts as a discriminator."""
 
-    vendor_metadata: dict[str, Any] | None = field(default_factory=dict, repr=False)
+    vendor_metadata: dict[str, Any] | None = None
     """Additional vendor-specific metadata in a serializable format.
 
     This allows storing selected vendor-specific data that isn't mapped to standard ModelResponse fields.

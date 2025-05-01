@@ -104,10 +104,10 @@ class OpenAIModelSettings(ModelSettings, total=False):
     result in faster responses and fewer tokens used on reasoning in a response.
     """
 
-    logprobs: bool
+    openai_logprobs: bool
     """Include log probabilities in the response."""
 
-    top_logprobs: int
+    openai_top_logprobs: int
     """Include log probabilities of the top n tokens in the response."""
 
     openai_user: str
@@ -289,8 +289,8 @@ class OpenAIModel(Model):
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
-                logprobs=model_settings.get('logprobs', NOT_GIVEN),
-                top_logprobs=model_settings.get('top_logprobs', NOT_GIVEN),
+                logprobs=model_settings.get('openai_logprobs', NOT_GIVEN),
+                top_logprobs=model_settings.get('openai_top_logprobs', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 extra_headers={'User-Agent': get_user_agent()},
                 extra_body=model_settings.get('extra_body'),
@@ -305,22 +305,24 @@ class OpenAIModel(Model):
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
-        vendor_metadata: dict[str, Any] = {}
+        vendor_metadata: dict[str, Any] | None = None
 
         # Add logprobs to vendor_metadata if available
         if choice.logprobs is not None and choice.logprobs.content:
             # Convert logprobs to a serializable format
-            vendor_metadata['logprobs'] = [
-                {
-                    'token': lp.token,
-                    'bytes': lp.bytes,
-                    'logprob': lp.logprob,
-                    'top_logprobs': [
-                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
-                    ],
-                }
-                for lp in choice.logprobs.content
-            ]
+            vendor_metadata = {
+                'logprobs': [
+                    {
+                        'token': lp.token,
+                        'bytes': lp.bytes,
+                        'logprob': lp.logprob,
+                        'top_logprobs': [
+                            {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                        ],
+                    }
+                    for lp in choice.logprobs.content
+                ],
+            }
 
         if choice.message.content is not None:
             items.append(TextPart(choice.message.content))
