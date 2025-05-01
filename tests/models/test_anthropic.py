@@ -613,8 +613,8 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='Let me get the image and check what fruit it contains.'),
-                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_019NraYuFG6RbdmXCoxPKmtk'),
+                    TextPart(content='Let me get the image and check what fruit is shown.'),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01VMGXdexE1Fy5xdWgoom9Te'),
                 ],
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
@@ -623,13 +623,13 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1.',
-                        tool_call_id='toolu_019NraYuFG6RbdmXCoxPKmtk',
+                        content='See file 1c8566',
+                        tool_call_id='toolu_01VMGXdexE1Fy5xdWgoom9Te',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            'This is file 1:',
+                            'This is file 1c8566:',
                             image_content,
                         ],
                         timestamp=IsDatetime(),
@@ -639,7 +639,7 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The kiwi's flesh has the typical fibrous texture radiating from the center, and you can also see the fuzzy brown skin on the exterior edge of the slice."
+                        content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The kiwi's fuzzy brown skin is visible around the edges of the slice."
                     )
                 ],
                 model_name='claude-3-5-sonnet-20241022',

@@ -1761,7 +1761,7 @@ async def test_image_as_binary_content_tool_response(
                 ]
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='7y9B4SNod')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='utZJMAZN4')],
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
             ),
@@ -1769,13 +1769,13 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 1.',
-                        tool_call_id='7y9B4SNod',
+                        content='See file 1c8566',
+                        tool_call_id='utZJMAZN4',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
                         content=[
-                            'This is file 1:',
+                            'This is file 1c8566:',
                             image_content,
                         ],
                         timestamp=IsDatetime(),
@@ -1785,7 +1785,7 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='The image shows a kiwi fruit that has been cut in half. Kiwis are known for their bright green flesh with tiny black seeds and a sweet, tangy flavor. They are also rich in vitamin C and fiber.'
+                        content='The image you\'re referring to, labeled as "file 1c8566," shows a kiwi. Kiwis are small, brown, oval-shaped fruits with a bright green flesh inside that is dotted with tiny black seeds. They have a sweet and tangy flavor and are known for being rich in vitamin C and fiber.'
                     )
                 ],
                 model_name='pixtral-12b-latest',
