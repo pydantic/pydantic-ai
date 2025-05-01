@@ -52,7 +52,7 @@ from pydantic_ai.models.mistral import MistralModel
 from pydantic_ai.providers.mistral import MistralProvider
 
 model = MistralModel(
-    'mistral-large-latest', provider=MistralProvider(api_key='your-api-key')
+    'mistral-large-latest', provider=MistralProvider(api_key='your-api-key', base_url="https://<mistral-provider-endpoint>")
 )
 agent = Agent(model)
 ...
