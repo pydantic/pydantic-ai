@@ -53,7 +53,7 @@ class MistralProvider(Provider[Mistral]):
             api_key: The API key to use for authentication, if not provided, the `MISTRAL_API_KEY` environment variable
                 will be used if available.
             mistral_client: An existing `Mistral` client to use, if provided, `api_key` and `http_client` must be `None`.
-            base_url: The base url for the Mistral requests. 
+            base_url: The base url for the Mistral requests.
             http_client: An existing async client to use for making HTTP requests.
         """
         if mistral_client is not None:
