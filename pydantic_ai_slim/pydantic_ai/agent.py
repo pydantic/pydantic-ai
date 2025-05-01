@@ -52,6 +52,14 @@ ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
 
 if TYPE_CHECKING:
+    from starlette.middleware import Middleware
+    from starlette.routing import Route
+    from starlette.types import ExceptionHandler, Lifespan
+
+    from fasta2a.applications import FastA2A
+    from fasta2a.schema import Provider, Skill
+    from fasta2a.storage import Storage
+    from fasta2a.worker import Worker
     from pydantic_ai.mcp import MCPServer
 
 
@@ -1664,6 +1672,44 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             yield
         finally:
             await exit_stack.aclose()
+
+    def to_a2a(
+        self,
+        *,
+        storage: Storage | None = None,
+        worker: Worker | None = None,
+        # Agent card
+        name: str | None = None,
+        url: str = 'http://localhost:8000',
+        version: str = '1.0.0',
+        description: str | None = None,
+        provider: Provider | None = None,
+        skills: list[Skill] | None = None,
+        # Starlette
+        debug: bool = False,
+        routes: Sequence[Route] | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        exception_handlers: dict[Any, ExceptionHandler] | None = None,
+        lifespan: Lifespan[FastA2A] | None = None,
+    ) -> FastA2A:
+        from ._a2a import agent_to_a2a
+
+        return agent_to_a2a(
+            self,
+            storage=storage,
+            worker=worker,
+            name=name,
+            url=url,
+            version=version,
+            description=description,
+            provider=provider,
+            skills=skills,
+            debug=debug,
+            routes=routes,
+            middleware=middleware,
+            exception_handlers=exception_handlers,
+            lifespan=lifespan,
+        )
 
 
 @dataclasses.dataclass(repr=False)

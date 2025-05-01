@@ -72,6 +72,8 @@ cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0"]
 mcp = ["mcp>=1.6.0; python_version >= '3.10'"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
+# A2A
+a2a = ["fasta2a=={{ version }}"]
 
 [dependency-groups]
 dev = [

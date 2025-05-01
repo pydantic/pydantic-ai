@@ -12,22 +12,13 @@ from starlette.responses import Response
 from starlette.routing import Route
 from starlette.types import ExceptionHandler, Lifespan, Receive, Scope, Send
 
-from pydantic_ai.agent import Agent
-
-from .runner import AgentRunner
 from .schema import A2ARequest, A2AResponse, AgentCard, Provider, Skill, agent_card_ta
-from .storage import InMemoryStorage, Storage
+from .storage import Storage
 from .task_manager import TaskManager
-from .worker import InMemoryWorker, Worker
+from .worker import Worker
 
 a2a_request_ta: TypeAdapter[A2ARequest] = TypeAdapter(A2ARequest)
 a2a_response_ta: TypeAdapter[A2AResponse] = TypeAdapter(A2AResponse)
-
-
-@asynccontextmanager
-async def _default_lifespan(app: FastA2A) -> AsyncIterator[None]:
-    async with app.task_manager:
-        yield
 
 
 class FastA2A(Starlette):
@@ -50,8 +41,11 @@ class FastA2A(Starlette):
         routes: Sequence[Route] | None = None,
         middleware: Sequence[Middleware] | None = None,
         exception_handlers: dict[Any, ExceptionHandler] | None = None,
-        lifespan: Lifespan[FastA2A] = _default_lifespan,
+        lifespan: Lifespan[FastA2A] | None = None,
     ):
+        if lifespan is None:
+            lifespan = _default_lifespan
+
         super().__init__(
             debug=debug,
             routes=routes,
@@ -79,46 +73,6 @@ class FastA2A(Starlette):
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         await super().__call__(scope, receive, send)
-
-    @classmethod
-    def from_agent(
-        cls,
-        agent: Agent,
-        *,
-        storage: Storage | None = None,
-        worker: Worker | None = None,
-        # Agent card
-        name: str | None = None,
-        url: str = 'http://localhost:8000',
-        version: str = '1.0.0',
-        description: str | None = None,
-        provider: Provider | None = None,
-        skills: list[Skill] | None = None,
-        # Starlette
-        debug: bool = False,
-        routes: Sequence[Route] | None = None,
-        middleware: Sequence[Middleware] | None = None,
-        exception_handlers: dict[Any, ExceptionHandler] | None = None,
-        lifespan: Lifespan[FastA2A] = _default_lifespan,
-    ) -> FastA2A:
-        """Create a FastA2A server from an agent."""
-        storage = storage or InMemoryStorage()
-        worker = worker or InMemoryWorker(runner=AgentRunner(agent=agent), storage=storage)
-        return cls(
-            storage=storage,
-            worker=worker,
-            name=name or agent.name,
-            url=url,
-            version=version,
-            description=description,
-            provider=provider,
-            skills=skills,
-            debug=debug,
-            routes=routes,
-            middleware=middleware,
-            exception_handlers=exception_handlers,
-            lifespan=lifespan,
-        )
 
     async def _agent_card_endpoint(self, request: Request) -> Response:
         if self._agent_card_json_schema is None:
@@ -162,3 +116,9 @@ class FastA2A(Starlette):
         else:
             raise NotImplementedError(f'Method {a2a_request["method"]} not implemented.')
         return Response(content=a2a_response_ta.dump_json(jsonrpc_response), media_type='application/json')
+
+
+@asynccontextmanager
+async def _default_lifespan(app: FastA2A) -> AsyncIterator[None]:
+    async with app.task_manager:
+        yield
