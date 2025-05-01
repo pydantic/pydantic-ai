@@ -409,13 +409,27 @@ def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage
     if response_usage is None:
         return usage.Usage()
 
-    request_tokens = getattr(response_usage, 'input_tokens', None)
+    # Store all integer-typed usage values in the details dict
+    response_usage_dict = response_usage.model_dump()
+    details: dict[str, int] = {}
+    for key, value in response_usage_dict.items():
+        if isinstance(value, int):
+            details[key] = value
+
+    # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence the getattr call
+    # Tokens are only counted once between input_tokens, cache_creation_input_tokens, and cache_read_input_tokens
+    # This approach maintains request_tokens as the count of all input tokens, with cached counts as details
+    request_tokens = (
+        getattr(response_usage, 'input_tokens', 0)
+        + (getattr(response_usage, 'cache_creation_input_tokens', 0) or 0)  # These can be missing, None, or int
+        + (getattr(response_usage, 'cache_read_input_tokens', 0) or 0)
+    )
 
     return usage.Usage(
-        # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence this getattr
-        request_tokens=request_tokens,
+        request_tokens=request_tokens or None,
         response_tokens=response_usage.output_tokens,
-        total_tokens=(request_tokens or 0) + response_usage.output_tokens,
+        total_tokens=request_tokens + response_usage.output_tokens,
+        details=details or None,
     )
 
 
