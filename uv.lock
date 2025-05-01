@@ -687,6 +687,23 @@ wheels = [
 ]
 
 [[package]]
+name = "cloudflare"
+version = "4.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "distro" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/14/3c/52a4246ec925bf0133d89a151a0258b40a407a576538b648c2afa210831e/cloudflare-4.1.0.tar.gz", hash = "sha256:6b9fbe994856fe942adc6a4881b7beded208034dc5c53dd683751f632e47a1ac", size = 1826873 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d4/a4/a8087940e6c4b8c518fde198e5646ba86591c0811b4e7a71750568a0cf08/cloudflare-4.1.0-py3-none-any.whl", hash = "sha256:ec6db9c04a8835440dcb475d9f0ac48771b4db724cc14bb1a5d744b73993f262", size = 4089940 },
+]
+
+[[package]]
 name = "cohere"
 version = "5.13.12"
 source = { registry = "https://pypi.org/simple" }
@@ -2917,6 +2934,9 @@ cli = [
     { name = "prompt-toolkit" },
     { name = "rich" },
 ]
+cloudflare = [
+    { name = "cloudflare" },
+]
 cohere = [
     { name = "cohere", marker = "sys_platform != 'emscripten'" },
 ]
@@ -2971,6 +2991,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.49.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.35.74" },
+    { name = "cloudflare", marker = "extra == 'cloudflare'", specifier = ">=4.1.0" },
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.13.11" },
     { name = "duckduckgo-search", marker = "extra == 'duckduckgo'", specifier = ">=7.0.0" },
     { name = "eval-type-backport", specifier = ">=0.2.0" },
@@ -2993,7 +3014,7 @@ requires-dist = [
     { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
-provides-extras = ["anthropic", "bedrock", "cli", "cohere", "duckduckgo", "evals", "groq", "logfire", "mcp", "mistral", "openai", "tavily", "vertexai"]
+provides-extras = ["anthropic", "bedrock", "cli", "cloudflare", "cohere", "duckduckgo", "evals", "groq", "logfire", "mcp", "mistral", "openai", "tavily", "vertexai"]
 
 [package.metadata.requires-dev]
 dev = [
