@@ -1692,6 +1692,24 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         exception_handlers: dict[Any, ExceptionHandler] | None = None,
         lifespan: Lifespan[FastA2A] | None = None,
     ) -> FastA2A:
+        """Convert the agent to a FastA2A application.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-4o')
+        app = agent.to_a2a()
+        ```
+
+        The `app` is an ASGI application that can be used with any ASGI server.
+
+        To run the application, you can use the following command:
+
+        ```bash
+        uvicorn app:app --host 0.0.0.0 --port 8000
+        ```
+        """
         from ._a2a import agent_to_a2a
 
         return agent_to_a2a(
