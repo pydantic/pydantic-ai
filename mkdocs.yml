@@ -208,6 +208,7 @@ plugins:
             # 3 because docs are in pages with an H2 just above them
             heading_level: 3
           import:
+            - url: https://logfire.pydantic.dev/docs/objects.inv
             - url: https://docs.python.org/3/objects.inv
             - url: https://docs.pydantic.dev/latest/objects.inv
             - url: https://dirty-equals.helpmanual.io/latest/objects.inv

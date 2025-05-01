@@ -21,6 +21,7 @@ from pydantic_ai import Agent
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
+logfire.instrument_pydantic_ai()
 
 
 class Whale(TypedDict):
@@ -38,7 +39,7 @@ class Whale(TypedDict):
     description: NotRequired[Annotated[str, Field(description='Short Description')]]
 
 
-agent = Agent('openai:gpt-4', output_type=list[Whale], instrument=True)
+agent = Agent('openai:gpt-4', output_type=list[Whale])
 
 
 async def main():

@@ -17,6 +17,7 @@ from pydantic_ai.usage import Usage, UsageLimits
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
+logfire.instrument_pydantic_ai()
 
 
 class FlightDetails(BaseModel):
@@ -49,7 +50,6 @@ search_agent = Agent[Deps, FlightDetails | NoFlightFound](
     system_prompt=(
         'Your job is to find the cheapest flight for the user on the given date. '
     ),
-    instrument=True,
 )
 
 
