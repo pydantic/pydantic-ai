@@ -617,7 +617,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         # TODO: Instead of this, copy the function tools to ensure they don't share current_retry state between agent
         #  runs. Requires some changes to `Tool` to make them copyable though.
-        for v in self._get_tools().values():
+        for v in self._get_function_tools().values():
             v.current_retry = 0
 
         model_settings = merge_model_settings(self.model_settings, model_settings)
@@ -657,7 +657,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             end_strategy=self.end_strategy,
             output_schema=output_schema,
             output_validators=output_validators,
-            function_tools=self._get_tools(),
+            function_tools=self._get_function_tools(),
             mcp_servers=self._mcp_servers,
             tracer=tracer,
             get_instructions=get_instructions,
@@ -1591,7 +1591,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         else:
             return deps
 
-    def _get_tools(self: Agent[T, OutputDataT]) -> dict[str, Tool[AgentDepsT]]:
+    def _get_function_tools(self: Agent[T, OutputDataT]) -> dict[str, Tool[AgentDepsT]]:
         """Get tools for a run.
 
         If we've overridden tools via `_override_tools`, use that, otherwise use the tools defined on the agent.
