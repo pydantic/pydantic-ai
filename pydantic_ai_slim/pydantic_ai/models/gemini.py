@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import base64
-import mimetypes
 import warnings
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -330,6 +329,7 @@ class GeminiModel(Model):
                         _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
                     )
                 elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl, VideoUrl)):
+                    media_type = item.media_type
                     client = cached_async_http_client()
                     response = await client.get(item.url, follow_redirects=True)
                     response.raise_for_status()
@@ -337,12 +337,13 @@ class GeminiModel(Model):
                     if content_type:
                         mime_type = content_type.split(';')[0]
                     else:
-                        # Fallback: Guess mime type from file extension or default
-                        mime_type, _ = mimetypes.guess_type(item.url)
-                        if not mime_type:
-                            mime_type = 'application/octet-stream'  # Default if guessing fails
+                        mime_type = media_type
+
                     inline_data = _GeminiInlineDataPart(
-                        inline_data={'data': base64.b64encode(response.content).decode('utf-8'), 'mime_type': mime_type}
+                        inline_data={
+                            'data': base64.b64encode(response.content).decode('utf-8'),
+                            'mime_type': mime_type,
+                        }
                     )
                     content.append(inline_data)
                 else:
