@@ -108,7 +108,8 @@ class TaskManager:
 
         if task is None:
             session_id = request['params'].get('session_id', str(uuid.uuid4()))
-            task = await self.storage.submit_task(task_id, session_id)
+            message = request['params']['message']
+            task = await self.storage.submit_task(task_id, session_id, message)
 
         await self.worker.send_run_task(request['params'])
         return SendTaskResponse(jsonrpc='2.0', id=request_id, result=task)

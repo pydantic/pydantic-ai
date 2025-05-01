@@ -3,11 +3,14 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from .schema import Message, Task, TaskStatus
+from .schema import Message, Task, TaskState, TaskStatus
 
 
 class Storage(ABC):
-    """A storage to retrieve and save tasks."""
+    """A storage to retrieve and save tasks.
+
+    The storage is used to update the status of a task and to save the result of a task.
+    """
 
     @abstractmethod
     async def load_task(self, task_id: str, history_length: int | None = None) -> Task | None:
@@ -17,12 +20,12 @@ class Storage(ABC):
         """
 
     @abstractmethod
-    async def submit_task(self, id: str, session_id: str) -> Task:
+    async def submit_task(self, task_id: str, session_id: str, message: Message) -> Task:
         """Submit a task to storage."""
 
     @abstractmethod
-    async def complete_task(self, task_id: str, message: Message) -> Task:
-        """Save the result of a task."""
+    async def update_task(self, task_id: str, state: TaskState, message: Message | None = None) -> Task:
+        """Update the state of a task."""
 
 
 class InMemoryStorage(Storage):
@@ -49,19 +52,22 @@ class InMemoryStorage(Storage):
             task['history'] = task['history'][-history_length:]
         return task
 
-    async def submit_task(self, id: str, session_id: str) -> Task:
-        if id in self.tasks:
-            raise ValueError(f'Task {id} already exists')
+    async def submit_task(self, task_id: str, session_id: str, message: Message) -> Task:
+        """Submit a task to storage."""
+        if task_id in self.tasks:
+            raise ValueError(f'Task {task_id} already exists')
 
         task_status = TaskStatus(state='submitted', timestamp=datetime.now().isoformat())
-        task = Task(id=id, session_id=session_id, status=task_status)
-        self.tasks[id] = task
+        task = Task(id=task_id, session_id=session_id, status=task_status, history=[message])
+        self.tasks[task_id] = task
         return task
 
-    async def complete_task(self, task_id: str, message: Message) -> Task:
-        """Save the result of a task."""
+    async def update_task(self, task_id: str, state: TaskState, message: Message | None = None) -> Task:
+        """Save the task as "working"."""
         task = self.tasks[task_id]
-        if 'history' not in task:
-            task['history'] = []
-        task['history'].append(message)
+        task['status'] = TaskStatus(state=state, timestamp=datetime.now().isoformat())
+        if message:
+            if 'history' not in task:
+                task['history'] = []
+            task['history'].append(message)
         return task

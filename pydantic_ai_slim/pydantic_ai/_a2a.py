@@ -89,6 +89,8 @@ class AgentRunner(Runner, Generic[AgentDepsT, OutputDataT]):
         assert task is not None, f'Task {task_ctx.params["id"]} not found'
         assert 'session_id' in task, 'Task must have a session_id'
 
+        await task_ctx.storage.update_task(task['id'], state='working')
+
         task_history = task.get('history', [])
         task_history.append(params['message'])
         message_history = self.build_message_history(task_history=task_history)
@@ -100,7 +102,7 @@ class AgentRunner(Runner, Generic[AgentDepsT, OutputDataT]):
         # TODO(Marcelo): This is in case of image/video/audio/file - which we don't support on the agent yet.
         # artifacts = self.build_artifacts(result.output)
 
-        await task_ctx.storage.complete_task(task['id'], message=agent_message)
+        await task_ctx.storage.update_task(task['id'], state='completed', message=agent_message)
 
     def build_agent_message(self, result: Any) -> Message:
         # TODO(Marcelo): We need to send the json schema of the result on the metadata of the message.
