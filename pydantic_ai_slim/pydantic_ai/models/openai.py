@@ -444,7 +444,11 @@ class OpenAIModel(Model):
                     response = await client.get(item.url)
                     response.raise_for_status()
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    audio_format: Any = response.headers['content-type'].removeprefix('audio/')
+                    content_type = response.headers['content-type']
+                    if content_type:
+                        audio_format: Any = content_type.removeprefix('audio/')
+                    else:
+                        audio_format = item.media_type.removeprefix('audio/')
                     audio = InputAudio(data=base64_encoded, format=audio_format)
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
@@ -452,7 +456,11 @@ class OpenAIModel(Model):
                     response = await client.get(item.url)
                     response.raise_for_status()
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    media_type = response.headers.get('content-type').split(';')[0]
+                    content_type = response.headers.get('content-type')
+                    if content_type:
+                        media_type = content_type.split(';')[0]
+                    else:
+                        media_type = item.media_type
                     file_data = f'data:{media_type};base64,{base64_encoded}'
                     file = File(file=FileFile(file_data=file_data, filename=f'filename.{item.format}'), type='file')
                     content.append(file)
@@ -771,7 +779,11 @@ class OpenAIResponsesModel(Model):
                     response = await client.get(item.url)
                     response.raise_for_status()
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    media_type = response.headers.get('content-type').split(';')[0]
+                    content_type = response.headers.get('content-type')
+                    if content_type:
+                        media_type = content_type.split(';')[0]
+                    else:
+                        media_type = item.media_type
                     content.append(
                         responses.ResponseInputFileParam(
                             type='input_file',
