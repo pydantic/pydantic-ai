@@ -5,11 +5,9 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from itertools import chain
 from typing import Literal, Union, cast, overload
 
-from httpx import AsyncClient as AsyncHTTPClient
-from typing_extensions import assert_never, deprecated
+from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -32,7 +30,7 @@ from ..messages import (
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client, check_allow_model_requests
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, get_user_agent
 
 try:
     from groq import NOT_GIVEN, APIStatusError, AsyncGroq, AsyncStream
@@ -44,34 +42,51 @@ except ImportError as _import_error:
         'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
     ) from _import_error
 
-
-LatestGroqModelNames = Literal[
+ProductionGroqModelNames = Literal[
+    'distil-whisper-large-v3-en',
+    'gemma2-9b-it',
     'llama-3.3-70b-versatile',
-    'llama-3.3-70b-specdec',
     'llama-3.1-8b-instant',
+    'llama-guard-3-8b',
+    'llama3-70b-8192',
+    'llama3-8b-8192',
+    'whisper-large-v3',
+    'whisper-large-v3-turbo',
+]
+"""Production Groq models from <https://console.groq.com/docs/models#production-models>."""
+
+PreviewGroqModelNames = Literal[
+    'playai-tts',
+    'playai-tts-arabic',
+    'qwen-qwq-32b',
+    'mistral-saba-24b',
+    'qwen-2.5-coder-32b',
+    'qwen-2.5-32b',
+    'deepseek-r1-distill-qwen-32b',
+    'deepseek-r1-distill-llama-70b',
+    'llama-3.3-70b-specdec',
     'llama-3.2-1b-preview',
     'llama-3.2-3b-preview',
     'llama-3.2-11b-vision-preview',
     'llama-3.2-90b-vision-preview',
-    'llama3-70b-8192',
-    'llama3-8b-8192',
-    'mixtral-8x7b-32768',
-    'gemma2-9b-it',
 ]
-"""Latest Groq models."""
+"""Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
-GroqModelName = Union[str, LatestGroqModelNames]
-"""
-Possible Groq model names.
+GroqModelName = Union[str, ProductionGroqModelNames, PreviewGroqModelNames]
+"""Possible Groq model names.
 
-Since Groq supports a variety of date-stamped models, we explicitly list the latest models but
-allow any name in the type hints.
-See [the Groq docs](https://console.groq.com/docs/models) for a full list.
+Since Groq supports a variety of models and the list changes frequencly, we explicitly list the named models as of 2025-03-31
+but allow any name in the type hints.
+
+See <https://console.groq.com/docs/models> for an up to date date list of models and more details.
 """
 
 
 class GroqModelSettings(ModelSettings):
-    """Settings used for a Groq model request."""
+    """Settings used for a Groq model request.
+
+    ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
 
     # This class is a placeholder for any future groq-specific settings
 
@@ -90,35 +105,7 @@ class GroqModel(Model):
     _model_name: GroqModelName = field(repr=False)
     _system: str = field(default='groq', repr=False)
 
-    @overload
-    def __init__(
-        self,
-        model_name: GroqModelName,
-        *,
-        provider: Literal['groq'] | Provider[AsyncGroq] = 'groq',
-    ) -> None: ...
-
-    @deprecated('Use the `provider` parameter instead of `api_key`, `groq_client`, and `http_client`.')
-    @overload
-    def __init__(
-        self,
-        model_name: GroqModelName,
-        *,
-        provider: None = None,
-        api_key: str | None = None,
-        groq_client: AsyncGroq | None = None,
-        http_client: AsyncHTTPClient | None = None,
-    ) -> None: ...
-
-    def __init__(
-        self,
-        model_name: GroqModelName,
-        *,
-        provider: Literal['groq'] | Provider[AsyncGroq] | None = None,
-        api_key: str | None = None,
-        groq_client: AsyncGroq | None = None,
-        http_client: AsyncHTTPClient | None = None,
-    ):
+    def __init__(self, model_name: GroqModelName, *, provider: Literal['groq'] | Provider[AsyncGroq] = 'groq'):
         """Initialize a Groq model.
 
         Args:
@@ -127,27 +114,12 @@ class GroqModel(Model):
             provider: The provider to use for authentication and API access. Can be either the string
                 'groq' or an instance of `Provider[AsyncGroq]`. If not provided, a new provider will be
                 created using the other parameters.
-            api_key: The API key to use for authentication, if not provided, the `GROQ_API_KEY` environment variable
-                will be used if available.
-            groq_client: An existing
-                [`AsyncGroq`](https://github.com/groq/groq-python?tab=readme-ov-file#async-usage)
-                client to use, if provided, `api_key` and `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         self._model_name = model_name
 
-        if provider is not None:
-            if isinstance(provider, str):
-                provider = infer_provider(provider)
-            self.client = provider.client
-        elif groq_client is not None:
-            assert http_client is None, 'Cannot provide both `groq_client` and `http_client`'
-            assert api_key is None, 'Cannot provide both `groq_client` and `api_key`'
-            self.client = groq_client
-        elif http_client is not None:
-            self.client = AsyncGroq(api_key=api_key, http_client=http_client)
-        else:
-            self.client = AsyncGroq(api_key=api_key, http_client=cached_async_http_client())
+        if isinstance(provider, str):
+            provider = infer_provider(provider)
+        self.client = provider.client
 
     @property
     def base_url(self) -> str:
@@ -220,12 +192,12 @@ class GroqModel(Model):
         # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_result:
+        elif not model_request_parameters.allow_text_output:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
 
-        groq_messages = list(chain(*(self._map_message(m) for m in messages)))
+        groq_messages = self._map_messages(messages)
 
         try:
             return await self.client.chat.completions.create(
@@ -235,6 +207,7 @@ class GroqModel(Model):
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
+                stop=model_settings.get('stop_sequences', NOT_GIVEN),
                 stream=stream,
                 max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 temperature=model_settings.get('temperature', NOT_GIVEN),
@@ -244,6 +217,8 @@ class GroqModel(Model):
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+                extra_headers={'User-Agent': get_user_agent()},
+                extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
@@ -277,39 +252,44 @@ class GroqModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
-    def _map_message(self, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
+    def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
-        if isinstance(message, ModelRequest):
-            yield from self._map_user_message(message)
-        elif isinstance(message, ModelResponse):
-            texts: list[str] = []
-            tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
-            for item in message.parts:
-                if isinstance(item, TextPart):
-                    texts.append(item.content)
-                elif isinstance(item, ToolCallPart):
-                    tool_calls.append(self._map_tool_call(item))
-                else:
-                    assert_never(item)
-            message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
-            if texts:
-                # Note: model responses from this model should only have one text item, so the following
-                # shouldn't merge multiple texts into one unless you switch models between runs:
-                message_param['content'] = '\n\n'.join(texts)
-            if tool_calls:
-                message_param['tool_calls'] = tool_calls
-            yield message_param
-        else:
-            assert_never(message)
+        groq_messages: list[chat.ChatCompletionMessageParam] = []
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                groq_messages.extend(self._map_user_message(message))
+            elif isinstance(message, ModelResponse):
+                texts: list[str] = []
+                tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
+                for item in message.parts:
+                    if isinstance(item, TextPart):
+                        texts.append(item.content)
+                    elif isinstance(item, ToolCallPart):
+                        tool_calls.append(self._map_tool_call(item))
+                    else:
+                        assert_never(item)
+                message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
+                if texts:
+                    # Note: model responses from this model should only have one text item, so the following
+                    # shouldn't merge multiple texts into one unless you switch models between runs:
+                    message_param['content'] = '\n\n'.join(texts)
+                if tool_calls:
+                    message_param['tool_calls'] = tool_calls
+                groq_messages.append(message_param)
+            else:
+                assert_never(message)
+        if instructions := self._get_instructions(messages):
+            groq_messages.insert(0, chat.ChatCompletionSystemMessageParam(role='system', content=instructions))
+        return groq_messages
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
         return chat.ChatCompletionMessageToolCallParam(
-            id=_guard_tool_call_id(t=t, model_source='Groq'),
+            id=_guard_tool_call_id(t=t),
             type='function',
             function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
         )
@@ -335,7 +315,7 @@ class GroqModel(Model):
             elif isinstance(part, ToolReturnPart):
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
-                    tool_call_id=_guard_tool_call_id(t=part, model_source='Groq'),
+                    tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
             elif isinstance(part, RetryPromptPart):
@@ -344,7 +324,7 @@ class GroqModel(Model):
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part, model_source='Groq'),
+                        tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
 

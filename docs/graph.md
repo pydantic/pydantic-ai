@@ -197,7 +197,7 @@ display(Image(fives_graph.mermaid_image(start_node=DivisibleBy5)))
 
 The "state" concept in `pydantic-graph` provides an optional way to access and mutate an object (often a `dataclass` or Pydantic model) as nodes run in a graph. If you think of Graphs as a production line, then your state is the engine being passed along the line and built up by each node as the graph is run.
 
-In the future, we intend to extend `pydantic-graph` to provide state persistence with the state recorded after each node is run, see [#695](https://github.com/pydantic/pydantic-ai/issues/695).
+`pydantic-graph` provides state persistence, with the state recorded after each node is run. (See [State Persistence](#state-persistence).)
 
 Here's an example of a graph which represents a vending machine where the user may insert coins and select a product to purchase.
 
@@ -352,7 +352,6 @@ stateDiagram-v2
   Feedback --> [*]
 ```
 
-
 ```python {title="genai_email_feedback.py" py="3.10"}
 from __future__ import annotations as _annotations
 
@@ -360,8 +359,7 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel, EmailStr
 
-from pydantic_ai import Agent
-from pydantic_ai.format_as_xml import format_as_xml
+from pydantic_ai import Agent, format_as_xml
 from pydantic_ai.messages import ModelMessage
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext
 
@@ -387,7 +385,7 @@ class State:
 
 email_writer_agent = Agent(
     'google-vertex:gemini-1.5-pro',
-    result_type=Email,
+    output_type=Email,
     system_prompt='Write a welcome email to our tech blog.',
 )
 
@@ -413,8 +411,8 @@ class WriteEmail(BaseNode[State]):
             prompt,
             message_history=ctx.state.write_agent_messages,
         )
-        ctx.state.write_agent_messages += result.all_messages()
-        return Feedback(result.data)
+        ctx.state.write_agent_messages += result.new_messages()
+        return Feedback(result.output)
 
 
 class EmailRequiresWrite(BaseModel):
@@ -427,7 +425,7 @@ class EmailOk(BaseModel):
 
 feedback_agent = Agent[None, EmailRequiresWrite | EmailOk](
     'openai:gpt-4o',
-    result_type=EmailRequiresWrite | EmailOk,  # type: ignore
+    output_type=EmailRequiresWrite | EmailOk,  # type: ignore
     system_prompt=(
         'Review the email and provide feedback, email must reference the users specific interests.'
     ),
@@ -444,8 +442,8 @@ class Feedback(BaseNode[State, None, Email]):
     ) -> WriteEmail | End[Email]:
         prompt = format_as_xml({'user': ctx.state.user, 'email': self.email})
         result = await feedback_agent.run(prompt)
-        if isinstance(result.data, EmailRequiresWrite):
-            return WriteEmail(email_feedback=result.data.feedback)
+        if isinstance(result.output, EmailRequiresWrite):
+            return WriteEmail(email_feedback=result.output.feedback)
         else:
             return End(self.email)
 
@@ -510,14 +508,15 @@ async def main():
             #> Node: CountDown()
             #> Node: CountDown()
             #> Node: CountDown()
+            #> Node: CountDown()
             #> Node: End(data=0)
-    print('Final result:', run.result.output)  # (3)!
-    #> Final result: 0
+    print('Final output:', run.result.output)  # (3)!
+    #> Final output: 0
 ```
 
 1. `Graph.iter(...)` returns a [`GraphRun`][pydantic_graph.graph.GraphRun].
 2. Here, we step through each node as it is executed.
-3. Once the graph returns an [`End`][pydantic_graph.nodes.End], the loop ends, and `run.final_result` becomes a [`GraphRunResult`][pydantic_graph.graph.GraphRunResult] containing the final outcome (`0` here).
+3. Once the graph returns an [`End`][pydantic_graph.nodes.End], the loop ends, and `run.result` becomes a [`GraphRunResult`][pydantic_graph.graph.GraphRunResult] containing the final outcome (`0` here).
 
 ### Using `GraphRun.next(node)` manually
 
@@ -560,7 +559,7 @@ async def main():
 
 1. We start by grabbing the first node that will be run in the agent's graph.
 2. The agent run is finished once an `End` node has been produced; instances of `End` cannot be passed to `next`.
-3. If the user decides to stop early, we break out of the loop. The graph run won't have a real final result in that case (`run.final_result` remains `None`).
+3. If the user decides to stop early, we break out of the loop. The graph run won't have a real final result in that case (`run.result` remains `None`).
 4. At each step, we call `await run.next(node)` to run it and get the next node (or an `End`).
 5. Because we did not continue the run until it finished, the `result` is not set.
 6. The run's history is still populated with the steps we executed so far.
@@ -662,11 +661,10 @@ Instead of running the entire graph in a single process invocation, we run the g
         GraphRunContext,
     )
 
-    from pydantic_ai import Agent
-    from pydantic_ai.format_as_xml import format_as_xml
+    from pydantic_ai import Agent, format_as_xml
     from pydantic_ai.messages import ModelMessage
 
-    ask_agent = Agent('openai:gpt-4o', result_type=str, instrument=True)
+    ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
 
 
     @dataclass
@@ -683,9 +681,9 @@ Instead of running the entire graph in a single process invocation, we run the g
                 'Ask a simple question with a single correct answer.',
                 message_history=ctx.state.ask_agent_messages,
             )
-            ctx.state.ask_agent_messages += result.all_messages()
-            ctx.state.question = result.data
-            return Answer(result.data)
+            ctx.state.ask_agent_messages += result.new_messages()
+            ctx.state.question = result.output
+            return Answer(result.output)
 
 
     @dataclass
@@ -706,7 +704,7 @@ Instead of running the entire graph in a single process invocation, we run the g
 
     evaluate_agent = Agent(
         'openai:gpt-4o',
-        result_type=EvaluationResult,
+        output_type=EvaluationResult,
         system_prompt='Given a question and answer, evaluate if the answer is correct.',
     )
 
@@ -724,11 +722,11 @@ Instead of running the entire graph in a single process invocation, we run the g
                 format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
                 message_history=ctx.state.evaluate_agent_messages,
             )
-            ctx.state.evaluate_agent_messages += result.all_messages()
-            if result.data.correct:
-                return End(result.data.comment)
+            ctx.state.evaluate_agent_messages += result.new_messages()
+            if result.output.correct:
+                return End(result.output.comment)
             else:
-                return Reprimand(result.data.comment)
+                return Reprimand(result.output.comment)
 
 
     @dataclass
@@ -760,7 +758,7 @@ from ai_q_and_a_graph import Ask, question_graph, Evaluate, QuestionState, Answe
 
 
 async def main():
-    answer: str | None = sys.argv[2] if len(sys.argv) > 2 else None  # (1)!
+    answer: str | None = sys.argv[1] if len(sys.argv) > 1 else None  # (1)!
     persistence = FileStatePersistence(Path('question_graph.json'))  # (2)!
     persistence.set_graph_types(question_graph)  # (3)!
 
@@ -797,7 +795,7 @@ async def main():
 8. To demonstrate the state persistence, we call [`load_all`][pydantic_graph.persistence.BaseStatePersistence.load_all] to get all the snapshots from the persistence instance. This will return a list of [`Snapshot`][pydantic_graph.persistence.Snapshot] objects.
 9. If the node is an `Answer` object, we print the question and break out of the loop to end the process and wait for user input.
 
-_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main(answer))` to run `main`)_
+_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
 
 For a complete example of this graph, see the [question graph example](examples/question-graph.md).
 
@@ -814,7 +812,7 @@ import asyncio
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, FullStatePersistence, Graph, GraphRunContext
 
 
 @dataclass
@@ -858,11 +856,11 @@ fives_graph = Graph(nodes=[DivisibleBy5, Increment])
 async def main():
     with ProcessPoolExecutor() as executor:
         deps = GraphDeps(executor)
-        result = await fives_graph.run(DivisibleBy5(3), deps=deps)
+        result = await fives_graph.run(DivisibleBy5(3), deps=deps, persistence=FullStatePersistence())
     print(result.output)
     #> 5
     # the full history is quite verbose (see below), so we'll just print the summary
-    print([item.data_snapshot() for item in result.history])
+    print([item.node for item in result.persistence.history])
     """
     [
         DivisibleBy5(foo=3),

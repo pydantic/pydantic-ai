@@ -1,0 +1,120 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '217'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: Give me the best news about LLMs from the last 24 hours. Be short.
+        role: user
+      instructions: ''
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: web_search_preview
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3210'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '2843'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1743506361
+      error: null
+      id: resp_67ebcbb93728819197f923ff16e98bce04f5055a2a33abc3
+      incomplete_details: null
+      instructions: ''
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - id: ws_67ebcbb9ab4481918bebf63b66dbb67c04f5055a2a33abc3
+        status: completed
+        type: web_search_call
+      - content:
+        - annotations:
+          - end_index: 571
+            start_index: 404
+            title: OpenAI plans to release open-weight language model in coming months
+            type: url_citation
+            url: https://www.reuters.com/technology/artificial-intelligence/openai-plans-release-open-weight-language-model-coming-months-2025-03-31/?utm_source=openai
+          - end_index: 846
+            start_index: 625
+            title: OpenAI plans to release open-weight language model in coming months
+            type: url_citation
+            url: https://www.reuters.com/technology/artificial-intelligence/openai-plans-release-open-weight-language-model-coming-months-2025-03-31/?utm_source=openai
+          text: "In the past 24 hours, OpenAI announced plans to release its first open-weight language model with reasoning
+            capabilities since GPT-2. This model will allow developers to fine-tune it for specific applications without needing
+            the original training data. To gather feedback and refine the model, OpenAI will host developer events starting
+            in San Francisco and expanding to Europe and Asia-Pacific regions. ([reuters.com](https://www.reuters.com/technology/artificial-intelligence/openai-plans-release-open-weight-language-model-coming-months-2025-03-31/?utm_source=openai))\n\n\n##
+            OpenAI to Release Open-Weight Language Model:\n- [OpenAI plans to release open-weight language model in coming
+            months](https://www.reuters.com/technology/artificial-intelligence/openai-plans-release-open-weight-language-model-coming-months-2025-03-31/?utm_source=openai) "
+          type: output_text
+        id: msg_67ebcbbaf988819192d44919020b82e704f5055a2a33abc3
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        generate_summary: null
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search_preview
+        user_location:
+          city: null
+          country: US
+          region: null
+          timezone: null
+          type: approximate
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 320
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 200
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 520
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

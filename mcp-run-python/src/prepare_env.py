@@ -6,7 +6,6 @@ Mostly taken from https://github.com/pydantic/pydantic.run/blob/main/src/fronten
 from __future__ import annotations as _annotations
 
 import importlib
-import importlib.util
 import logging
 import re
 import sys
@@ -69,7 +68,7 @@ async def prepare_env(files: list[File]) -> Success | Error:
             except Exception:
                 with open(logs_filename) as f:
                     logs = f.read()
-                return Error(message=f'{logs}\n{traceback.format_exc()}')
+                return Error(message=f'{logs} {traceback.format_exc()}')
 
     return Success(dependencies=dependencies)
 

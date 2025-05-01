@@ -52,6 +52,10 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .deepseek import DeepSeekProvider
 
         return DeepSeekProvider()
+    elif provider == 'azure':
+        from .azure import AzureProvider
+
+        return AzureProvider()
     elif provider == 'google-vertex':
         from .google_vertex import GoogleVertexProvider
 
@@ -77,5 +81,9 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .mistral import MistralProvider
 
         return MistralProvider()
+    elif provider == 'cohere':
+        from .cohere import CohereProvider
+
+        return CohereProvider()
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')

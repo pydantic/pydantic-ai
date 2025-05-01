@@ -2,10 +2,12 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import inspect
+import json
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
+from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
@@ -46,7 +48,7 @@ class RunContext(Generic[AgentDepsT]):
     """The model used in this run."""
     usage: Usage
     """LLM usage associated with the run."""
-    prompt: str | Sequence[_messages.UserContent]
+    prompt: str | Sequence[_messages.UserContent] | None
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""
@@ -147,8 +149,8 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
     def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
         s = super().typed_dict_schema(schema)
         total = schema.get('total')
-        if total is not None:
-            s['additionalProperties'] = not total
+        if 'additionalProperties' not in s and (total is True or total is None):
+            s['additionalProperties'] = False
         return s
 
     def _named_required_fields_schema(self, named_required_fields: Sequence[tuple[str, bool, Any]]) -> JsonSchemaValue:
@@ -171,12 +173,18 @@ class Tool(Generic[AgentDepsT]):
     prepare: ToolPrepareFunc[AgentDepsT] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
+    strict: bool | None
     _is_async: bool = field(init=False)
     _single_arg_name: str | None = field(init=False)
     _positional_fields: list[str] = field(init=False)
     _var_positional_field: str | None = field(init=False)
     _validator: SchemaValidator = field(init=False, repr=False)
-    _parameters_json_schema: ObjectJsonSchema = field(init=False)
+    _base_parameters_json_schema: ObjectJsonSchema = field(init=False)
+    """
+    The base JSON schema for the tool's parameters.
+
+    This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
+    """
 
     # TODO: Move this state off the Tool class, which is otherwise stateless.
     #   This should be tracked inside a specific agent run, not the tool.
@@ -194,6 +202,7 @@ class Tool(Generic[AgentDepsT]):
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
     ):
         """Create a new tool instance.
 
@@ -244,6 +253,8 @@ class Tool(Generic[AgentDepsT]):
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
+            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
         if takes_ctx is None:
             takes_ctx = _pydantic.takes_ctx(function)
@@ -259,12 +270,13 @@ class Tool(Generic[AgentDepsT]):
         self.prepare = prepare
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
+        self.strict = strict
         self._is_async = inspect.iscoroutinefunction(self.function)
         self._single_arg_name = f['single_arg_name']
         self._positional_fields = f['positional_fields']
         self._var_positional_field = f['var_positional_field']
         self._validator = f['validator']
-        self._parameters_json_schema = f['json_schema']
+        self._base_parameters_json_schema = f['json_schema']
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
@@ -278,7 +290,8 @@ class Tool(Generic[AgentDepsT]):
         tool_def = ToolDefinition(
             name=self.name,
             description=self.description,
-            parameters_json_schema=self._parameters_json_schema,
+            parameters_json_schema=self._base_parameters_json_schema,
+            strict=self.strict,
         )
         if self.prepare is not None:
             return await self.prepare(ctx, tool_def)
@@ -286,12 +299,41 @@ class Tool(Generic[AgentDepsT]):
             return tool_def
 
     async def run(
+        self, message: _messages.ToolCallPart, run_context: RunContext[AgentDepsT], tracer: Tracer
+    ) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
+        """Run the tool function asynchronously.
+
+        This method wraps `_run` in an OpenTelemetry span.
+
+        See <https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/#execute-tool-span>.
+        """
+        span_attributes = {
+            'gen_ai.tool.name': self.name,
+            # NOTE: this means `gen_ai.tool.call.id` will be included even if it was generated by pydantic-ai
+            'gen_ai.tool.call.id': message.tool_call_id,
+            'tool_arguments': message.args_as_json_str(),
+            'logfire.msg': f'running tool: {self.name}',
+            # add the JSON schema so these attributes are formatted nicely in Logfire
+            'logfire.json_schema': json.dumps(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'tool_arguments': {'type': 'object'},
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
+                }
+            ),
+        }
+        with tracer.start_as_current_span('running tool', attributes=span_attributes):
+            return await self._run(message, run_context)
+
+    async def _run(
         self, message: _messages.ToolCallPart, run_context: RunContext[AgentDepsT]
     ) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
-        """Run the tool function asynchronously."""
         try:
             if isinstance(message.args, str):
-                args_dict = self._validator.validate_json(message.args)
+                args_dict = self._validator.validate_json(message.args or '{}')
             else:
                 args_dict = self._validator.validate_python(message.args)
         except ValidationError as e:
@@ -369,7 +411,7 @@ With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `ext
 class ToolDefinition:
     """Definition of a tool passed to a model.
 
-    This is used for both function tools result tools.
+    This is used for both function tools and output tools.
     """
 
     name: str
@@ -382,7 +424,19 @@ class ToolDefinition:
     """The JSON schema for the tool's parameters."""
 
     outer_typed_dict_key: str | None = None
-    """The key in the outer [TypedDict] that wraps a result tool.
+    """The key in the outer [TypedDict] that wraps an output tool.
 
-    This will only be set for result tools which don't have an `object` JSON schema.
+    This will only be set for output tools which don't have an `object` JSON schema.
+    """
+
+    strict: bool | None = None
+    """Whether to enforce (vendor-specific) strict JSON schema validation for tool calls.
+
+    Setting this to `True` while using a supported model generally imposes some restrictions on the tool's JSON schema
+    in exchange for guaranteeing the API responses strictly match that schema.
+
+    When `False`, the model may be free to generate other properties or types (depending on the vendor).
+    When `None` (the default), the value will be inferred based on the compatibility of the parameters_json_schema.
+
+    Note: this is currently only supported by OpenAI models.
     """

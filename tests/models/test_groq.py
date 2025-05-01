@@ -29,7 +29,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import Usage
 
-from ..conftest import IsNow, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -128,14 +128,14 @@ async def test_request_simple_success(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('hello')
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(Usage(requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(Usage(requests=1))
     assert result.all_messages() == snapshot(
         [
@@ -165,7 +165,7 @@ async def test_request_simple_usage(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('Hello')
-    assert result.data == 'world'
+    assert result.output == 'world'
 
 
 async def test_request_structured_response(allow_model_requests: None):
@@ -184,10 +184,10 @@ async def test_request_structured_response(allow_model_requests: None):
     )
     mock_client = MockGroq.create_mock(c)
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m, result_type=list[int])
+    agent = Agent(m, output_type=list[int])
 
     result = await agent.run('Hello')
-    assert result.data == [1, 2, 123]
+    assert result.output == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -268,7 +268,7 @@ async def test_request_tool_call(allow_model_requests: None):
             raise ModelRetry('Wrong location, please try again')
 
     result = await agent.run('Hello')
-    assert result.data == 'final response'
+    assert result.output == 'final response'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -412,7 +412,7 @@ async def test_stream_structured(allow_model_requests: None):
     )
     mock_client = MockGroq.create_mock_stream(stream)
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m, result_type=MyTypedDict)
+    agent = Agent(m, output_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
@@ -435,6 +435,7 @@ async def test_stream_structured(allow_model_requests: None):
                     ToolCallPart(
                         tool_name='final_result',
                         args='{"first": "One", "second": "Two"}',
+                        tool_call_id=IsStr(),
                     )
                 ],
                 model_name='llama-3.3-70b-versatile',
@@ -445,6 +446,7 @@ async def test_stream_structured(allow_model_requests: None):
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
+                        tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ]
@@ -463,7 +465,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
     )
     mock_client = MockGroq.create_mock_stream(stream)
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m, result_type=MyTypedDict)
+    agent = Agent(m, output_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
@@ -483,7 +485,7 @@ async def test_no_content(allow_model_requests: None):
     stream = chunk([ChoiceDelta()]), chunk([ChoiceDelta()])
     mock_client = MockGroq.create_mock_stream(stream)
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m, result_type=MyTypedDict)
+    agent = Agent(m, output_type=MyTypedDict)
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream(''):
@@ -504,7 +506,7 @@ async def test_no_delta(allow_model_requests: None):
 
 @pytest.mark.vcr()
 async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('llama-3.2-11b-vision-preview', provider=GroqProvider(api_key=groq_api_key))
+    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m)
 
     result = await agent.run(
@@ -513,20 +515,66 @@ async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.data == snapshot("""\
-The image you provided appears to be a potato. It is a root vegetable that belongs to the nightshade family. Potatoes are a popular and versatile crop, widely cultivated and consumed around the world.
+    assert result.output == snapshot(
+        'The fruit depicted in the image is a potato. Although commonly mistaken as a vegetable, potatoes are technically fruits because they are the edible, ripened ovary of a flower, containing seeds. However, in culinary and everyday contexts, potatoes are often referred to as a vegetable due to their savory flavor and uses in dishes. The botanical classification of a potato as a fruit comes from its origin as the tuberous part of the Solanum tuberosum plant, which produces flowers and subsequently the potato as a fruit that grows underground.'
+    )
 
-**Characteristics and Uses:**
 
-Potatoes are known for their starchy, slightly sweet flavor and soft, white interior. They come in various shapes, sizes, and colors including white, yellow, red, and purple. Some popular types of potatoes include:
+@pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
+):
+    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m)
 
-* Russet potatoes (also known as Idaho potatoes)
-* Red potatoes
-* Yukon gold potatoes
-* Sweet potatoes
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
 
-Potatoes are a versatile food that can be prepared in many different ways, such as baked, mashed, boiled, fried, or used in soups and stews. They are an excellent source of dietary fiber, potassium, and several key vitamins and minerals.\
-""")
+    result = await agent.run(
+        ['What fruit is in the image you can get from the get_image tool (without any arguments)?']
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'What fruit is in the image you can get from the get_image tool (without any arguments)?'
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_wkpd')],
+                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1c8566',
+                        tool_call_id='call_wkpd',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1c8566:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The fruit in the image is a kiwi.')],
+                model_name='meta-llama/llama-4-scout-17b-16e-instruct',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
 
 
 @pytest.mark.parametrize('media_type', ['audio/wav', 'audio/mpeg'])
@@ -546,12 +594,12 @@ async def test_audio_as_binary_content_input(allow_model_requests: None, media_t
 async def test_image_as_binary_content_input(
     allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
 ) -> None:
-    m = GroqModel('llama-3.2-11b-vision-preview', provider=GroqProvider(api_key=groq_api_key))
+    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m)
 
     result = await agent.run(['What is the name of this fruit?', image_content])
-    assert result.data == snapshot(
-        "This is a kiwi, also known as a Chinese gooseberry. It's a small, green fruit with a hairy, brown skin and a bright green, juicy flesh inside. Kiwis are native to China and are often eaten raw, either on their own or added to salads, smoothies, and desserts. They're also a good source of vitamin C, vitamin K, and other nutrients."
+    assert result.output == snapshot(
+        'The fruit depicted in the image is a kiwi. The image shows a cross-section of a kiwi, revealing its characteristic green flesh and black seeds arranged in a radial pattern around a central white area. The fuzzy brown skin is visible on the edge of the slice.'
     )
 
 
@@ -584,3 +632,24 @@ async def test_init_with_provider_string():
         model = GroqModel('llama3-8b-8192', provider='groq')
         assert model.model_name == 'llama3-8b-8192'
         assert model.client is not None
+
+
+@pytest.mark.vcr()
+async def test_groq_model_instructions(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.')
+
+    result = await agent.run('What is the capital of France?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The capital of France is Paris.')],
+                model_name='llama-3.3-70b-versatile',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )

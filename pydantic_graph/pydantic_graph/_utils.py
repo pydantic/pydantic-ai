@@ -3,11 +3,46 @@ from __future__ import annotations as _annotations
 import asyncio
 import types
 from functools import partial
-from typing import Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
-from typing_extensions import ParamSpec, TypeIs, get_args, get_origin
+from logfire_api import LogfireSpan
+from typing_extensions import ParamSpec, TypeAlias, TypeIs, get_args, get_origin
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
+
+if TYPE_CHECKING:
+    from opentelemetry.trace import Span
+
+
+AbstractSpan: TypeAlias = 'LogfireSpan | Span'
+
+try:
+    from opentelemetry.trace import Span, set_span_in_context
+    from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+    TRACEPARENT_PROPAGATOR = TraceContextTextMapPropagator()
+    TRACEPARENT_NAME = 'traceparent'
+    assert TRACEPARENT_NAME in TRACEPARENT_PROPAGATOR.fields
+
+    # Logic taken from logfire.experimental.annotations
+    def get_traceparent(span: AbstractSpan) -> str | None:
+        """Get a string representing the span context to use for annotating spans."""
+        real_span: Span
+        if isinstance(span, Span):
+            real_span = span
+        else:
+            real_span = span._span
+            assert real_span
+        context = set_span_in_context(real_span)
+        carrier: dict[str, Any] = {}
+        TRACEPARENT_PROPAGATOR.inject(carrier, context)
+        return carrier.get(TRACEPARENT_NAME, '')
+
+except ImportError:  # pragma: no cover
+
+    def get_traceparent(span: AbstractSpan) -> str | None:
+        # Opentelemetry wasn't installed, so we can't get the traceparent
+        return None
 
 
 def get_event_loop():

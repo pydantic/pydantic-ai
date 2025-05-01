@@ -5,7 +5,6 @@ from collections.abc import AsyncIterator
 from datetime import timezone
 
 import pytest
-from dirty_equals import IsJson
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelHTTPError
@@ -50,7 +49,7 @@ def test_first_successful() -> None:
     fallback_model = FallbackModel(success_model, failure_model)
     agent = Agent(model=fallback_model)
     result = agent.run_sync('hello')
-    assert result.data == snapshot('success')
+    assert result.output == snapshot('success')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -71,7 +70,7 @@ def test_first_failed() -> None:
     fallback_model = FallbackModel(failure_model, success_model)
     agent = Agent(model=fallback_model)
     result = agent.run_sync('hello')
-    assert result.data == snapshot('success')
+    assert result.output == snapshot('success')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -96,7 +95,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, success_model)
     agent = Agent(model=fallback_model, instrument=True)
     result = agent.run_sync('hello')
-    assert result.data == snapshot('success')
+    assert result.output == snapshot('success')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -117,50 +116,23 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
     assert capfire.exporter.exported_spans_as_dict() == snapshot(
         [
             {
-                'name': 'preparing model request params',
+                'name': 'chat function:success_response:',
                 'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
                 'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'start_time': 2000000000,
                 'end_time': 3000000000,
                 'attributes': {
-                    'run_step': 1,
-                    'logfire.span_type': 'span',
-                    'logfire.msg': 'preparing model request params',
-                },
-            },
-            {
-                'name': 'chat function:success_response:',
-                'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
-                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
-                'start_time': 4000000000,
-                'end_time': 5000000000,
-                'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:success_response:',
-                    'gen_ai.usage.input_tokens': 51,
-                    'gen_ai.usage.output_tokens': 1,
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:success_response:',
+                    'gen_ai.usage.input_tokens': 51,
+                    'gen_ai.usage.output_tokens': 1,
                     'gen_ai.response.model': 'function:success_response:',
-                    'events': IsJson(
-                        [
-                            {
-                                'content': 'hello',
-                                'role': 'user',
-                                'gen_ai.system': 'function',
-                                'gen_ai.message.index': 0,
-                                'event.name': 'gen_ai.user.message',
-                            },
-                            {
-                                'index': 0,
-                                'message': {'role': 'assistant', 'content': 'success'},
-                                'gen_ai.system': 'function',
-                                'event.name': 'gen_ai.choice',
-                            },
-                        ]
-                    ),
-                    'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}}}',
+                    'events': '[{"content": "hello", "role": "user", "gen_ai.system": "function", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}, {"index": 0, "message": {"role": "assistant", "content": "success"}, "gen_ai.system": "function", "event.name": "gen_ai.choice"}]',
+                    'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}, "model_request_parameters": {"type": "object"}}}',
                 },
             },
             {
@@ -168,7 +140,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 6000000000,
+                'end_time': 4000000000,
                 'attributes': {
                     'model_name': 'fallback:function:failure_response:,function:success_response:',
                     'agent_name': 'agent',
@@ -214,25 +186,14 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
     assert capfire.exporter.exported_spans_as_dict() == snapshot(
         [
             {
-                'name': 'preparing model request params',
+                'name': 'chat function::success_response_stream',
                 'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
                 'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'start_time': 2000000000,
                 'end_time': 3000000000,
                 'attributes': {
-                    'run_step': 1,
-                    'logfire.span_type': 'span',
-                    'logfire.msg': 'preparing model request params',
-                },
-            },
-            {
-                'name': 'chat function::success_response_stream',
-                'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
-                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
-                'start_time': 4000000000,
-                'end_time': 5000000000,
-                'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
                     'gen_ai.system': 'function',
@@ -241,7 +202,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.usage.output_tokens': 2,
                     'gen_ai.response.model': 'function::success_response_stream',
                     'events': '[{"content": "input", "role": "user", "gen_ai.system": "function", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}, {"index": 0, "message": {"role": "assistant", "content": "hello world"}, "gen_ai.system": "function", "event.name": "gen_ai.choice"}]',
-                    'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}}}',
+                    'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}, "model_request_parameters": {"type": "object"}}}',
                 },
             },
             {
@@ -249,12 +210,16 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 6000000000,
+                'end_time': 4000000000,
                 'attributes': {
                     'model_name': 'fallback:function::failure_response_stream,function::success_response_stream',
                     'agent_name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
+                    'gen_ai.usage.input_tokens': 50,
+                    'gen_ai.usage.output_tokens': 2,
+                    'all_messages_events': '[{"content": "input", "role": "user", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}, {"role": "assistant", "content": "hello world", "gen_ai.message.index": 1, "event.name": "gen_ai.assistant.message"}]',
+                    'logfire.json_schema': '{"type": "object", "properties": {"all_messages_events": {"type": "array"}, "final_result": {"type": "object"}}}',
                 },
             },
         ]
@@ -273,6 +238,82 @@ def test_all_failed() -> None:
     assert exceptions[0].status_code == 500
     assert exceptions[0].model_name == 'test-function-model'
     assert exceptions[0].body == {'error': 'test error'}
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
+    fallback_model = FallbackModel(failure_model, failure_model)
+    agent = Agent(model=fallback_model, instrument=True)
+    with pytest.raises(ExceptionGroup) as exc_info:
+        agent.run_sync('hello')
+    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
+    exceptions = exc_info.value.exceptions
+    assert len(exceptions) == 2
+    assert isinstance(exceptions[0], ModelHTTPError)
+    assert exceptions[0].status_code == 500
+    assert exceptions[0].model_name == 'test-function-model'
+    assert exceptions[0].body == {'error': 'test error'}
+    assert capfire.exporter.exported_spans_as_dict() == snapshot(
+        [
+            {
+                'name': 'chat fallback:function:failure_response:,function:failure_response:',
+                'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
+                'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'start_time': 2000000000,
+                'end_time': 4000000000,
+                'attributes': {
+                    'gen_ai.operation.name': 'chat',
+                    'gen_ai.system': 'fallback:function,function',
+                    'gen_ai.request.model': 'fallback:function:failure_response:,function:failure_response:',
+                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
+                    'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
+                    'logfire.span_type': 'span',
+                    'logfire.msg': 'chat fallback:function:failure_response:,function:failure_response:',
+                    'logfire.level_num': 17,
+                },
+                'events': [
+                    {
+                        'name': 'exception',
+                        'timestamp': 3000000000,
+                        'attributes': {
+                            'exception.type': 'pydantic_ai.exceptions.FallbackExceptionGroup',
+                            'exception.message': 'All models from FallbackModel failed (2 sub-exceptions)',
+                            'exception.stacktrace': '+------------------------------------',
+                            'exception.escaped': 'False',
+                        },
+                    }
+                ],
+            },
+            {
+                'name': 'agent run',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': 1000000000,
+                'end_time': 6000000000,
+                'attributes': {
+                    'model_name': 'fallback:function:failure_response:,function:failure_response:',
+                    'agent_name': 'agent',
+                    'logfire.msg': 'agent run',
+                    'logfire.span_type': 'span',
+                    'all_messages_events': '[{"content": "hello", "role": "user", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}]',
+                    'logfire.json_schema': '{"type": "object", "properties": {"all_messages_events": {"type": "array"}, "final_result": {"type": "object"}}}',
+                    'logfire.level_num': 17,
+                },
+                'events': [
+                    {
+                        'name': 'exception',
+                        'timestamp': 5000000000,
+                        'attributes': {
+                            'exception.type': 'pydantic_ai.exceptions.FallbackExceptionGroup',
+                            'exception.message': 'All models from FallbackModel failed (2 sub-exceptions)',
+                            'exception.stacktrace': '+------------------------------------',
+                            'exception.escaped': 'False',
+                        },
+                    }
+                ],
+            },
+        ]
+    )
 
 
 async def success_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
@@ -380,4 +421,4 @@ async def test_fallback_condition_tuple() -> None:
     agent = Agent(model=fallback_model)
 
     response = await agent.run('hello')
-    assert response.data == 'success'
+    assert response.output == 'success'

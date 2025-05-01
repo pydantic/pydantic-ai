@@ -8,10 +8,22 @@
 .pre-commit: ## Check that pre-commit is installed
 	@pre-commit -V || echo 'Please install pre-commit: https://pre-commit.com/'
 
+.PHONY: .deno
+.deno: ## Check that deno is installed
+	@deno --version > /dev/null 2>&1 || (printf "\033[0;31m✖ Error: deno is not installed, but is needed for mcp-run-python\033[0m\n    Please install deno: https://docs.deno.com/runtime/getting_started/installation/\n" && exit 1)
+
 .PHONY: install
-install: .uv .pre-commit ## Install the package, dependencies, and pre-commit for local development
+install: .uv .pre-commit .deno ## Install the package, dependencies, and pre-commit for local development
 	uv sync --frozen --all-extras --all-packages --group lint --group docs
 	pre-commit install --install-hooks
+
+.PHONY: install-all-python
+install-all-python: ## Install and synchronize an interpreter for every python version
+	UV_PROJECT_ENVIRONMENT=.venv39 uv sync --python 3.9 --frozen --all-extras --all-packages --group lint --group docs
+	UV_PROJECT_ENVIRONMENT=.venv310 uv sync --python 3.10 --frozen --all-extras --all-packages --group lint --group docs
+	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --all-packages --group lint --group docs
+	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --all-packages --group lint --group docs
+	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --all-packages --group lint --group docs
 
 .PHONY: sync
 sync: .uv ## Update local packages and uv.lock
@@ -29,7 +41,7 @@ lint: ## Lint the code
 
 .PHONY: lint-js
 lint-js: ## Lint JS and TS code
-	cd mcp-run-python && npm run lint
+	cd mcp-run-python && deno task lint-format
 
 .PHONY: typecheck-pyright
 typecheck-pyright:
@@ -68,7 +80,7 @@ testcov: test ## Run tests and generate a coverage report
 
 .PHONY: test-mrp
 test-mrp: ## Build and  tests of mcp-run-python
-	cd mcp-run-python && npm run prepare
+	cd mcp-run-python && deno task build
 	uv run --package mcp-run-python pytest mcp-run-python -v
 
 .PHONY: update-examples

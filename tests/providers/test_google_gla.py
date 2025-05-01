@@ -1,19 +1,43 @@
-import os
 import re
-from unittest.mock import patch
 
 import pytest
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 
+from ..conftest import TestEnv
 
-def test_google_gla_provider_need_api_key() -> None:
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(
-            ValueError,
-            match=re.escape(
-                'Set the `GEMINI_API_KEY` environment variable or pass it via `GoogleGLAProvider(api_key=...)`'
-                'to use the Google GLA provider.'
-            ),
-        ):
-            GoogleGLAProvider()
+
+def test_api_key_arg(env: TestEnv):
+    env.set('GEMINI_API_KEY', 'via-env-var')
+    provider = GoogleGLAProvider(api_key='via-arg')
+    assert provider.client.headers['x-goog-api-key'] == 'via-arg'
+    assert provider.client.base_url == 'https://generativelanguage.googleapis.com/v1beta/models/'
+
+
+def test_api_key_env_var(env: TestEnv):
+    env.set('GEMINI_API_KEY', 'via-env-var')
+    provider = GoogleGLAProvider()
+    assert 'x-goog-api-key' in dict(provider.client.headers)
+
+
+def test_api_key_not_set(env: TestEnv):
+    env.remove('GEMINI_API_KEY')
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Set the `GEMINI_API_KEY` environment variable or pass it via `GoogleGLAProvider(api_key=...)`'
+        ),
+    ):
+        GoogleGLAProvider()
+
+
+def test_api_key_empty(env: TestEnv):
+    env.set('GEMINI_API_KEY', '')
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Set the `GEMINI_API_KEY` environment variable or pass it via `GoogleGLAProvider(api_key=...)`'
+        ),
+    ):
+        GoogleGLAProvider()

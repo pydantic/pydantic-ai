@@ -7,7 +7,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 from urllib.parse import urlparse
 
-from opentelemetry._events import Event, EventLogger, EventLoggerProvider, get_event_logger_provider
+from opentelemetry._events import (
+    Event,  # pyright: ignore[reportPrivateImportUsage]
+    EventLogger,  # pyright: ignore[reportPrivateImportUsage]
+    EventLoggerProvider,  # pyright: ignore[reportPrivateImportUsage]
+    get_event_logger_provider,  # pyright: ignore[reportPrivateImportUsage]
+)
 from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
@@ -118,7 +123,7 @@ class InstrumentedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelResponse, Usage]:
-        with self._instrument(messages, model_settings) as finish:
+        with self._instrument(messages, model_settings, model_request_parameters) as finish:
             response, usage = await super().request(messages, model_settings, model_request_parameters)
             finish(response, usage)
             return response, usage
@@ -130,7 +135,7 @@ class InstrumentedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[StreamedResponse]:
-        with self._instrument(messages, model_settings) as finish:
+        with self._instrument(messages, model_settings, model_request_parameters) as finish:
             response_stream: StreamedResponse | None = None
             try:
                 async with super().request_stream(
@@ -146,6 +151,7 @@ class InstrumentedModel(WrapperModel):
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> Iterator[Callable[[ModelResponse, Usage], None]]:
         operation = 'chat'
         span_name = f'{operation} {self.model_name}'
@@ -155,6 +161,13 @@ class InstrumentedModel(WrapperModel):
         attributes: dict[str, AttributeValue] = {
             'gen_ai.operation.name': operation,
             **self.model_attributes(self.wrapped),
+            'model_request_parameters': json.dumps(InstrumentedModel.serialize_any(model_request_parameters)),
+            'logfire.json_schema': json.dumps(
+                {
+                    'type': 'object',
+                    'properties': {'model_request_parameters': {'type': 'object'}},
+                }
+            ),
         }
 
         if model_settings:
@@ -207,7 +220,10 @@ class InstrumentedModel(WrapperModel):
                     'logfire.json_schema': json.dumps(
                         {
                             'type': 'object',
-                            'properties': {attr_name: {'type': 'array'}},
+                            'properties': {
+                                attr_name: {'type': 'array'},
+                                'model_request_parameters': {'type': 'object'},
+                            },
                         }
                     ),
                 }
@@ -244,10 +260,12 @@ class InstrumentedModel(WrapperModel):
 
     @staticmethod
     def messages_to_otel_events(messages: list[ModelMessage]) -> list[Event]:
-        result: list[Event] = []
+        events: list[Event] = []
+        last_model_request: ModelRequest | None = None
         for message_index, message in enumerate(messages):
             message_events: list[Event] = []
             if isinstance(message, ModelRequest):
+                last_model_request = message
                 for part in message.parts:
                     if hasattr(part, 'otel_event'):
                         message_events.append(part.otel_event())
@@ -258,10 +276,14 @@ class InstrumentedModel(WrapperModel):
                     'gen_ai.message.index': message_index,
                     **(event.attributes or {}),
                 }
-            result.extend(message_events)
-        for event in result:
+            events.extend(message_events)
+        if last_model_request and last_model_request.instructions:
+            events.insert(
+                0, Event('gen_ai.system.message', body={'content': last_model_request.instructions, 'role': 'system'})
+            )
+        for event in events:
             event.body = InstrumentedModel.serialize_any(event.body)
-        return result
+        return events
 
     @staticmethod
     def serialize_any(value: Any) -> str:
