@@ -426,7 +426,7 @@ def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage
     )
 
     return usage.Usage(
-        request_tokens=request_tokens,
+        request_tokens=request_tokens or None,
         response_tokens=response_usage.output_tokens,
         total_tokens=request_tokens + response_usage.output_tokens,
         details=details or None,
