@@ -42,7 +42,7 @@ AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 class RunContext(Generic[AgentDepsT]):
     """Information about the current call."""
 
-    deps: AgentDepsT
+    deps: AgentDepsT | None
     """Dependencies for the agent."""
     model: models.Model
     """The model used in this run."""

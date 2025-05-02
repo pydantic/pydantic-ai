@@ -76,7 +76,7 @@ class GraphAgentState:
 class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     """Dependencies/config passed to the agent graph."""
 
-    user_deps: DepsT
+    user_deps: DepsT | None
 
     prompt: str | Sequence[_messages.UserContent] | None
     new_message_index: int
