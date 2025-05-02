@@ -8,6 +8,7 @@ These methods are thin wrappers around [`Model`][pydantic_ai.models.Model] imple
 
 from __future__ import annotations as _annotations
 
+import dataclasses
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -16,7 +17,16 @@ from pydantic_graph._utils import get_event_loop as _get_event_loop
 from . import agent, messages, models, settings, usage
 from .models import instrumented as instrumented_models
 
-__all__ = 'model_request', 'model_request_sync', 'model_request_stream'
+__all__ = 'LowLevelModelResponse', 'model_request', 'model_request_sync', 'model_request_stream'
+
+
+@dataclasses.dataclass
+class LowLevelModelResponse(messages.ModelResponse):
+    """Subclass of [`ModelResponse`][pydantic_ai.messages.ModelResponse] that includes usage information."""
+
+    # the default_factor is required here to passify dataclasses since `ModelResponse` has fields with defaults :-(
+    usage: usage.Usage = dataclasses.field(default_factory=usage.Usage)
+    """Usage information for the request."""
 
 
 async def model_request(
@@ -26,10 +36,8 @@ async def model_request(
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
     instrument: instrumented_models.InstrumentationSettings | bool | None = None,
-) -> tuple[messages.ModelResponse, usage.Usage]:
+) -> LowLevelModelResponse:
     """Make a non-streamed request to a model.
-
-    This method is roughly equivalent to [`Agent.run`][pydantic_ai.Agent.run].
 
     ```py title="model_request_example.py"
     from pydantic_ai.low_level import model_request
@@ -37,23 +45,24 @@ async def model_request(
 
 
     async def main():
-        model_response, request_usage = await model_request(
+        model_response = await model_request(
             'anthropic:claude-3-5-haiku-latest',
             [ModelRequest.user_text_prompt('What is the capital of France?')]  # (1)!
         )
         print(model_response)
         '''
-        ModelResponse(
+        LowLevelModelResponse(
             parts=[TextPart(content='Paris', part_kind='text')],
             model_name='claude-3-5-haiku-latest',
             timestamp=datetime.datetime(...),
             kind='response',
-        )
-        '''
-        print(request_usage)
-        '''
-        Usage(
-            requests=0, request_tokens=56, response_tokens=1, total_tokens=57, details=None
+            usage=Usage(
+                requests=1,
+                request_tokens=56,
+                response_tokens=1,
+                total_tokens=57,
+                details=None,
+            ),
         )
         '''
     ```
@@ -74,10 +83,17 @@ async def model_request(
         The model response and token usage associated with the request.
     """
     model_instance = _prepare_model(model, instrument)
-    return await model_instance.request(
+    model_response, usage = await model_instance.request(
         messages,
         model_settings,
-        model_request_parameters or models.ModelRequestParameters(),
+        model_instance.customize_request_parameters(model_request_parameters or models.ModelRequestParameters()),
+    )
+    usage.requests += 1
+    return LowLevelModelResponse(
+        parts=model_response.parts,
+        model_name=model_response.model_name,
+        timestamp=model_response.timestamp,
+        usage=usage,
     )
 
 
@@ -88,30 +104,30 @@ def model_request_sync(
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
     instrument: instrumented_models.InstrumentationSettings | bool | None = None,
-) -> tuple[messages.ModelResponse, usage.Usage]:
+) -> LowLevelModelResponse:
     """Make a Synchronous, non-streamed request to a model.
 
     This is a convenience method that wraps [`model_request`][pydantic_ai.low_level.model_request] with
     `loop.run_until_complete(...)`. You therefore can't use this method inside async code or if there's an active event loop.
 
-    This method is roughly equivalent to [`Agent.run_sync`][pydantic_ai.Agent.run_sync].
-
-
     ```py title="model_request_sync_example.py"
     from pydantic_ai.low_level import model_request_sync
     from pydantic_ai.messages import ModelRequest
 
-    model_response, _ = model_request_sync(
+    model_response = model_request_sync(
         'anthropic:claude-3-5-haiku-latest',
         [ModelRequest.user_text_prompt('What is the capital of France?')]
     )
     print(model_response)
     '''
-    ModelResponse(
+    LowLevelModelResponse(
         parts=[TextPart(content='Paris', part_kind='text')],
         model_name='claude-3-5-haiku-latest',
         timestamp=datetime.datetime(...),
         kind='response',
+        usage=Usage(
+            requests=1, request_tokens=56, response_tokens=1, total_tokens=57, details=None
+        ),
     )
     '''
     ```
@@ -148,8 +164,6 @@ async def model_request_stream(
     instrument: instrumented_models.InstrumentationSettings | bool | None = None,
 ) -> AsyncIterator[models.StreamedResponse]:
     """Make a streamed async request to a model.
-
-    This method is roughly equivalent to [`Agent.run_stream`][pydantic_ai.Agent.run_stream].
 
     ```py {title="model_request_stream_example.py"}
 
@@ -202,7 +216,7 @@ async def model_request_stream(
     stream_cxt_mgr = model_instance.request_stream(
         messages,
         model_settings,
-        model_request_parameters or models.ModelRequestParameters(),
+        model_instance.customize_request_parameters(model_request_parameters or models.ModelRequestParameters()),
     )
     async with stream_cxt_mgr as streamed_response:
         yield streamed_response
