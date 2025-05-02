@@ -133,7 +133,7 @@ This allows you to use multiple servers that might have overlapping tool names w
 
 ### Example with HTTP Server
 
-```python
+```python {title="mcp_tool_prefix_http_client.py" py="3.10"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerHTTP
 
@@ -156,7 +156,7 @@ agent = Agent('openai:gpt-4o', mcp_servers=[weather_server, calculator_server])
 
 ### Example with Stdio Server
 
-```python
+```python {title="mcp_tool_prefix_stdio_client.py" py="3.10"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
