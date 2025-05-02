@@ -44,6 +44,7 @@ class BedrockProvider(Provider[BaseClient]):
         aws_access_key_id: str | None = None,
         aws_secret_access_key: str | None = None,
         aws_session_token: str | None = None,
+        profile_name: str | None = None,
         aws_read_timeout: float | None = None,
         aws_connect_timeout: float | None = None,
     ) -> None: ...
@@ -56,6 +57,7 @@ class BedrockProvider(Provider[BaseClient]):
         aws_access_key_id: str | None = None,
         aws_secret_access_key: str | None = None,
         aws_session_token: str | None = None,
+        profile_name: str | None = None,
         aws_read_timeout: float | None = None,
         aws_connect_timeout: float | None = None,
     ) -> None:
@@ -67,6 +69,7 @@ class BedrockProvider(Provider[BaseClient]):
             aws_access_key_id: The AWS access key ID.
             aws_secret_access_key: The AWS secret access key.
             aws_session_token: The AWS session token.
+            profile_name: The AWS profile name.
             aws_read_timeout: The read timeout for Bedrock client.
             aws_connect_timeout: The connect timeout for Bedrock client.
         """
@@ -76,12 +79,15 @@ class BedrockProvider(Provider[BaseClient]):
             try:
                 read_timeout = aws_read_timeout or float(os.getenv('AWS_READ_TIMEOUT', 300))
                 connect_timeout = aws_connect_timeout or float(os.getenv('AWS_CONNECT_TIMEOUT', 60))
-                self._client = boto3.client(  # type: ignore[reportUnknownMemberType]
-                    'bedrock-runtime',
+                session = boto3.Session(
                     aws_access_key_id=aws_access_key_id,
                     aws_secret_access_key=aws_secret_access_key,
                     aws_session_token=aws_session_token,
                     region_name=region_name,
+                    profile_name=profile_name,
+                )
+                self._client = session.client(  # type: ignore[reportUnknownMemberType]
+                    'bedrock-runtime',
                     config=Config(read_timeout=read_timeout, connect_timeout=connect_timeout),
                 )
             except NoRegionError as exc:  # pragma: no cover
