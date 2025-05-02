@@ -1049,7 +1049,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             override_model_before = self._override_model
             self._override_model = _utils.Some(models.infer_model(model))
         else:
-            model
             override_model_before = _utils.UNSET
 
         try:
