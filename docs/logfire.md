@@ -109,6 +109,7 @@ To observer raw HTTP requests made to model providers, you can use `logfire`'s [
 
     ```py {title="with_logfire_instrument_httpx.py" hl_lines="6"}
     import logfire
+
     from pydantic_ai import Agent
 
     logfire.configure()
@@ -117,7 +118,7 @@ To observer raw HTTP requests made to model providers, you can use `logfire`'s [
     agent = Agent('openai:gpt-4o')
     result = agent.run_sync('What is the capital of France?')
     print(result.output)
-    # > The capital of France is Paris.
+    #> Paris
     ```
 
     1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] more details, `capture_all=True` means both headers and body are captured for both the request and response.
@@ -128,6 +129,7 @@ To observer raw HTTP requests made to model providers, you can use `logfire`'s [
 
     ```py {title="without_logfire_instrument_httpx.py"}
     import logfire
+
     from pydantic_ai import Agent
 
     logfire.configure()
@@ -136,7 +138,7 @@ To observer raw HTTP requests made to model providers, you can use `logfire`'s [
     agent = Agent('openai:gpt-4o')
     result = agent.run_sync('What is the capital of France?')
     print(result.output)
-    # > The capital of France is Paris.
+    #> Paris
     ```
 
     ![Logfire without HTTPX instrumentation](img/logfire-without-httpx.png)
@@ -163,9 +165,11 @@ docker run --rm -it -p 4318:4318 --name otel-tui ymtdzzz/otel-tui:latest
 
 then run,
 
-```py {title="otel_tui.py" hl_lines="5 6"}
+```python {title="otel_tui.py" hl_lines="5 6" test="skip"}
 import os
+
 import logfire
+
 from pydantic_ai import Agent
 
 os.environ['OTEL_EXPORTER_OTLP_ENDPOINT'] = 'http://localhost:4318'  # (1)!
@@ -176,7 +180,7 @@ logfire.instrument_httpx(capture_all=True)
 agent = Agent('openai:gpt-4o')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
-# > The capital of France is Paris.
+#> Paris
 ```
 
 1. Set the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable to the URL of your OpenTelemetry backend. If you're using a backend that requires authentication, you may need to set [other environment variables](https://opentelemetry.io/docs/languages/sdk-configuration/otlp-exporter/). Of course, these can also be set outside the process with `export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`.
@@ -207,7 +211,7 @@ uv run \
   raw_otel.py
 ```
 
-```python title="raw_otel.py"
+```python {title="raw_otel.py" test="skip"}
 import os
 
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -227,7 +231,7 @@ Agent.instrument_all(InstrumentationSettings(tracer_provider=tracer_provider))
 agent = Agent('openai:gpt-4o')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
-# > The capital of France is Paris.
+#> Paris
 ```
 
 ## Data format
@@ -235,14 +239,17 @@ print(result.output)
 PydanticAI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), with one caveat. The semantic conventions specify that messages should be captured as individual events (logs) that are children of the request span. By default, PydanticAI instead collects these events into a JSON array which is set as a single large attribute called `events` on the request span. To change this, use [`InstrumentationSettings(event_mode='logs')`][pydantic_ai.agent.InstrumentationSettings].
 
 ```python {title="instrumentation_settings_event_mode.py"}
-from pydantic_ai import Agent
-from pydantic_ai.agent import InstrumentationSettings
 import logfire
 
-instrumentation_settings = InstrumentationSettings(event_mode='logs')
+from pydantic_ai import Agent
+from pydantic_ai.agent import InstrumentationSettings
 
 logfire.configure()
-logfire.instrument_pydantic_ai(instrumentation_settings)
+Agent.instrument_all(InstrumentationSettings(event_mode='logs'))
+agent = Agent('openai:gpt-4o')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> Paris
 ```
 
 For now, this won't look as good in the Logfire UI, but we're working on it.
