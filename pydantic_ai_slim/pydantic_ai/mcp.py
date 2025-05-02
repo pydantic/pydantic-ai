@@ -46,6 +46,13 @@ class MCPServer(ABC):
     """
 
     is_running: bool = False
+    tool_prefix: str = ''
+    """A prefix to add to all tools that are registered with the server.
+
+    If not empty, will include a trailing underscore(`_`).
+
+    e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
+    """
 
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[JSONRPCMessage | Exception]
@@ -57,7 +64,10 @@ class MCPServer(ABC):
     async def client_streams(
         self,
     ) -> AsyncIterator[
-        tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
+        tuple[
+            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
+            MemoryObjectSendStream[JSONRPCMessage],
+        ]
     ]:
         """Create the streams for the MCP server."""
         raise NotImplementedError('MCP Server subclasses must implement this method.')
@@ -67,6 +77,14 @@ class MCPServer(ABC):
     def _get_log_level(self) -> LoggingLevel | None:
         """Get the log level for the MCP server."""
         raise NotImplementedError('MCP Server subclasses must implement this method.')
+
+    def get_prefixed_tool_name(self, tool_name: str) -> str:
+        """Get the tool name with prefix if `tool_prefix` is set."""
+        return f'{self.tool_prefix}_{tool_name}' if self.tool_prefix else tool_name
+
+    def get_tool_name(self, tool_name: str) -> str:
+        """Get original tool name without prefix for calling tools."""
+        return tool_name.removeprefix(f'{self.tool_prefix}_') if self.tool_prefix else tool_name
 
     async def list_tools(self) -> list[ToolDefinition]:
         """Retrieve tools that are currently active on the server.
@@ -78,7 +96,7 @@ class MCPServer(ABC):
         tools = await self._client.list_tools()
         return [
             ToolDefinition(
-                name=tool.name,
+                name=self.get_prefixed_tool_name(tool.name),
                 description=tool.description or '',
                 parameters_json_schema=tool.inputSchema,
             )
@@ -100,7 +118,7 @@ class MCPServer(ABC):
         Raises:
             ModelRetry: If the tool call fails.
         """
-        result = await self._client.call_tool(tool_name, arguments)
+        result = await self._client.call_tool(self.get_tool_name(tool_name), arguments)
 
         content = [self._map_tool_result_part(part) for part in result.content]
 
@@ -126,7 +144,10 @@ class MCPServer(ABC):
         return self
 
     async def __aexit__(
-        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
     ) -> bool | None:
         await self._exit_stack.aclose()
         self.is_running = False
@@ -223,11 +244,22 @@ class MCPServerStdio(MCPServer):
     cwd: str | Path | None = None
     """The working directory to use when spawning the process."""
 
+    tool_prefix: str = ''
+    """A prefix to add to all tools that are registered with the server.
+
+    If not empty, will include a trailing underscore(`_`).
+
+    e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
+    """
+
     @asynccontextmanager
     async def client_streams(
         self,
     ) -> AsyncIterator[
-        tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
+        tuple[
+            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
+            MemoryObjectSendStream[JSONRPCMessage],
+        ]
     ]:
         server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
         async with stdio_client(server=server) as (read_stream, write_stream):
@@ -303,14 +335,28 @@ class MCPServerHTTP(MCPServer):
     If `None`, no log level will be set.
     """
 
+    tool_prefix: str = ''
+    """A prefix to add to all tools that are registered with the server.
+
+    If not empty, will include a trailing underscore(`_`).
+
+    e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
+    """
+
     @asynccontextmanager
     async def client_streams(
         self,
     ) -> AsyncIterator[
-        tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
+        tuple[
+            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
+            MemoryObjectSendStream[JSONRPCMessage],
+        ]
     ]:  # pragma: no cover
         async with sse_client(
-            url=self.url, headers=self.headers, timeout=self.timeout, sse_read_timeout=self.sse_read_timeout
+            url=self.url,
+            headers=self.headers,
+            timeout=self.timeout,
+            sse_read_timeout=self.sse_read_timeout,
         ) as (read_stream, write_stream):
             yield read_stream, write_stream
 

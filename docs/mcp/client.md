@@ -118,3 +118,70 @@ async def main():
 ```
 
 1. See [MCP Run Python](run-python.md) for more information.
+
+## Using Tool Prefixes to Avoid Naming Conflicts
+
+When connecting to multiple MCP servers that might provide tools with the same name, you can use the `tool_prefix` parameter to avoid naming conflicts. This parameter adds a prefix to all tool names from a specific server.
+
+### How It Works
+
+- If `tool_prefix` is set, all tools from that server will be prefixed with `{tool_prefix}_`
+- When listing tools, the prefixed names are shown to the model
+- When calling tools, the prefix is automatically removed before sending the request to the server
+
+This allows you to use multiple servers that might have overlapping tool names without conflicts.
+
+### Example with HTTP Server
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerHTTP
+
+# Create two servers with different prefixes
+weather_server = MCPServerHTTP(
+    url='http://localhost:3001/sse',
+    tool_prefix='weather'  # Tools will be prefixed with 'weather_'
+)
+
+calculator_server = MCPServerHTTP(
+    url='http://localhost:3002/sse',
+    tool_prefix='calc'  # Tools will be prefixed with 'calc_'
+)
+
+# Both servers might have a tool named 'get_data', but they'll be exposed as:
+# - 'weather_get_data'
+# - 'calc_get_data'
+agent = Agent('openai:gpt-4o', mcp_servers=[weather_server, calculator_server])
+```
+
+### Example with Stdio Server
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+
+python_server = MCPServerStdio(
+    'deno',
+    args=[
+        'run',
+        '-N',
+        'jsr:@pydantic/mcp-run-python',
+        'stdio',
+    ],
+    tool_prefix='py'  # Tools will be prefixed with 'py_'
+)
+
+js_server = MCPServerStdio(
+    'node',
+    args=[
+        'run',
+        'mcp-js-server.js',
+        'stdio',
+    ],
+    tool_prefix='js'  # Tools will be prefixed with 'js_'
+)
+
+agent = Agent('openai:gpt-4o', mcp_servers=[python_server, js_server])
+```
+
+When the model interacts with these servers, it will see the prefixed tool names, but the prefixes will be automatically handled when making tool calls.

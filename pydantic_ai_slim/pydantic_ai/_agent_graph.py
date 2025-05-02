@@ -218,21 +218,26 @@ async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
-    function_tool_defs: list[ToolDefinition] = []
+    function_tool_defs: dict[str, ToolDefinition] = {}
 
     run_context = build_run_context(ctx)
 
     async def add_tool(tool: Tool[DepsT]) -> None:
         ctx = run_context.replace_with(retry=tool.current_retry, tool_name=tool.name)
         if tool_def := await tool.prepare_tool_def(ctx):
-            function_tool_defs.append(tool_def)
+            # Agent._register_tool already check conflict names.
+            function_tool_defs[tool_def.name] = tool_def
 
     async def add_mcp_server_tools(server: MCPServer) -> None:
         if not server.is_running:
             raise exceptions.UserError(f'MCP server is not running: {server}')
         tool_defs = await server.list_tools()
-        # TODO(Marcelo): We should check if the tool names are unique. If not, we should raise an error.
-        function_tool_defs.extend(tool_defs)
+        for tool_def in tool_defs:
+            if tool_def.name in function_tool_defs:
+                raise exceptions.UserError(
+                    f"MCP Server {server}'s tool name conflicts with existing tool: {tool_def.name!r}. Consider using `tool_prefix` to avoid name conflicts."
+                )
+            function_tool_defs[tool_def.name] = tool_def
 
     await asyncio.gather(
         *map(add_tool, ctx.deps.function_tools.values()),
@@ -241,7 +246,7 @@ async def _prepare_request_parameters(
 
     output_schema = ctx.deps.output_schema
     return models.ModelRequestParameters(
-        function_tools=function_tool_defs,
+        function_tools=list(function_tool_defs.values()),
         allow_text_output=allow_text_output(output_schema),
         output_tools=output_schema.tool_defs() if output_schema is not None else [],
     )

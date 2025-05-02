@@ -53,6 +53,13 @@ async def test_stdio_server():
         assert result == snapshot('32.0')
 
 
+async def test_stdio_server_with_tool_prefix():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
+    async with server:
+        tools = await server.list_tools()
+        assert all(tool.name.startswith('foo_') for tool in tools)
+
+
 async def test_stdio_server_with_cwd():
     test_dir = Path(__file__).parent
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
@@ -125,6 +132,35 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                 ),
             ]
         )
+
+
+async def test_agent_with_conflict_tool_name(agent: Agent):
+    @agent.tool_plain
+    def get_none() -> None:
+        """Return nothing"""
+        return None
+
+    async with agent.run_mcp_servers():
+        with pytest.raises(UserError, match='tool name conflicts with existing tool'):
+            await agent.run('Get me a conflict')
+
+
+async def test_agent_with_prefix_tool_name(openai_api_key: str):
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
+    model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model,
+        mcp_servers=[server],
+    )
+
+    @agent.tool_plain
+    def get_none() -> None:
+        """Return nothing"""
+        return None
+
+    async with agent.run_mcp_servers():
+        with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
+            await agent.run('No conflict')
 
 
 async def test_agent_with_server_not_running(openai_api_key: str):
@@ -224,7 +260,9 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_product_name', args='{}', tool_call_id='call_LaiWltzI39sdquflqeuF0EyE'
+                            tool_name='get_product_name',
+                            args='{}',
+                            tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
                         )
                     ],
                     model_name='gpt-4o-2024-08-06',
@@ -269,7 +307,9 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_image_resource', args='{}', tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt'
+                            tool_name='get_image_resource',
+                            args='{}',
+                            tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                         )
                     ],
                     model_name='gpt-4o-2024-08-06',
@@ -322,7 +362,11 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_Q7xG8CCG0dyevVfUS0ubsDdN')
+                        ToolCallPart(
+                            tool_name='get_image',
+                            args='{}',
+                            tool_call_id='call_Q7xG8CCG0dyevVfUS0ubsDdN',
+                        )
                     ],
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
@@ -369,7 +413,13 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     ]
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='get_dict', args='{}', tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x')],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_dict',
+                            args='{}',
+                            tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x',
+                        )
+                    ],
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -412,7 +462,9 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_error', args='{"value":false}', tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc'
+                            tool_name='get_error',
+                            args='{"value":false}',
+                            tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc',
                         )
                     ],
                     model_name='gpt-4o-2024-08-06',
@@ -431,7 +483,9 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_error', args='{"value":true}', tool_call_id='call_4xGyvdghYKHN8x19KWkRtA5N'
+                            tool_name='get_error',
+                            args='{"value":true}',
+                            tool_call_id='call_4xGyvdghYKHN8x19KWkRtA5N',
                         )
                     ],
                     model_name='gpt-4o-2024-08-06',
@@ -476,7 +530,13 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     ]
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='get_none', args='{}', tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC')],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_none',
+                            args='{}',
+                            tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC',
+                        )
+                    ],
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -519,7 +579,9 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_multiple_items', args='{}', tool_call_id='call_kL0TvjEVQBDGZrn1Zv7iNYOW'
+                            tool_name='get_multiple_items',
+                            args='{}',
+                            tool_call_id='call_kL0TvjEVQBDGZrn1Zv7iNYOW',
                         )
                     ],
                     model_name='gpt-4o-2024-08-06',
