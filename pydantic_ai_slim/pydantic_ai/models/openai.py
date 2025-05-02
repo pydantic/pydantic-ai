@@ -11,6 +11,7 @@ from typing import Any, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
+from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -28,6 +29,7 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -60,6 +62,7 @@ try:
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
+    from openai.types.responses.response_reasoning_item_param import Summary
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 except ImportError as _import_error:
@@ -124,6 +127,9 @@ class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
     """
 
     openai_reasoning_generate_summary: Literal['detailed', 'concise']
+    """Deprecated alias for `openai_reasoning_summary`."""
+
+    openai_reasoning_summary: Literal['detailed', 'concise']
     """A summary of the reasoning performed by the model.
 
     This can be useful for debugging and understanding the model's reasoning process.
@@ -297,8 +303,11 @@ class OpenAIModel(Model):
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+        # The `reasoning_content` is only present in DeepSeek models.
+        if reasoning_content := getattr(choice.message, 'reasoning_content', None):
+            items.append(ThinkingPart(content=reasoning_content))
         if choice.message.content is not None:
-            items.append(TextPart(choice.message.content))
+            items.extend(split_content_into_text_and_thinking(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
@@ -336,6 +345,8 @@ class OpenAIModel(Model):
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         texts.append(item.content)
+                    elif isinstance(item, ThinkingPart):
+                        texts.append(f'<think>\n{item.content}\n</think>')
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     else:
@@ -550,7 +561,12 @@ class OpenAIResponsesModel(Model):
         items: list[ModelResponsePart] = []
         items.append(TextPart(response.output_text))
         for item in response.output:
-            if item.type == 'function_call':
+            if item.type == 'reasoning':
+                for summary in item.summary:
+                    # NOTE: We use the same id for all summaries because we can merge them on the round trip.
+                    # The providers don't force the signature to be unique.
+                    items.append(ThinkingPart(content=summary.text, signature=item.id))
+            elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
         return ModelResponse(items, model_name=response.model, timestamp=timestamp)
 
@@ -635,11 +651,22 @@ class OpenAIResponsesModel(Model):
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
+        reasoning_summary = model_settings.get('openai_reasoning_summary', None)
         reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
 
-        if reasoning_effort is None and reasoning_generate_summary is None:
+        if reasoning_summary and reasoning_generate_summary:  # pragma: no cover
+            raise ValueError('`openai_reasoning_summary` and `openai_reasoning_generate_summary` cannot both be set.')
+
+        if reasoning_generate_summary is not None:  # pragma: no cover
+            warnings.warn(
+                '`openai_reasoning_generate_summary` is deprecated, use `openai_reasoning_summary` instead',
+                DeprecationWarning,
+            )
+            reasoning_summary = reasoning_generate_summary
+
+        if reasoning_effort is None and reasoning_summary is None:
             return NOT_GIVEN
-        return Reasoning(effort=reasoning_effort, generate_summary=reasoning_generate_summary)
+        return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
@@ -658,7 +685,7 @@ class OpenAIResponsesModel(Model):
             'strict': f.strict or False,
         }
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage]
     ) -> tuple[str | NotGiven, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
@@ -695,13 +722,33 @@ class OpenAIResponsesModel(Model):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
+                last_thinking_part_idx: int | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
+                    elif isinstance(item, ThinkingPart):
+                        assert item.signature is not None, 'If this is triggered, please create an issue.'
+                        if last_thinking_part_idx is not None:
+                            reasoning_item = cast(responses.ResponseReasoningItemParam, openai_messages[last_thinking_part_idx])  # fmt: skip
+                            if item.signature == reasoning_item['id']:
+                                assert isinstance(reasoning_item['summary'], list)
+                                reasoning_item['summary'].append(Summary(text=item.content, type='summary_text'))
+                                continue
+                        last_thinking_part_idx = len(openai_messages)
+                        openai_messages.append(
+                            responses.ResponseReasoningItemParam(
+                                id=item.signature,
+                                summary=[Summary(text=item.content, type='summary_text')],
+                                type='reasoning',
+                            )
+                        )
                     else:
                         assert_never(item)
+                from rich.pretty import pprint
+
+                pprint(openai_messages)
             else:
                 assert_never(message)
         instructions = self._get_instructions(messages) or NOT_GIVEN
@@ -839,6 +886,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
+            from rich.pretty import pprint
+
+            pprint(chunk)
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
 
@@ -879,12 +929,39 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         vendor_part_id=chunk.item.id,
                         tool_name=chunk.item.name,
                         args=chunk.item.arguments,
-                        tool_call_id=chunk.item.id,
+                        tool_call_id=chunk.item.call_id,
                     )
+                elif isinstance(chunk.item, responses.ResponseReasoningItem):
+                    content = chunk.item.summary[0].text if chunk.item.summary else ''
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id=chunk.item.id,
+                        content=content,
+                        signature=chunk.item.id,
+                    )
+                elif isinstance(chunk.item, responses.ResponseOutputMessage):
+                    pass
+                else:
+                    raise RuntimeError(f'Unexpected item type: {type(chunk.item)}')
 
             elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
                 # NOTE: We only need this if the tool call deltas don't include the final info.
                 pass
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryTextDoneEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=chunk.item_id,
+                    content=chunk.delta,
+                    signature=chunk.item_id,
+                )
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 yield self._parts_manager.handle_text_delta(vendor_part_id=chunk.content_index, content=chunk.delta)

@@ -300,6 +300,6 @@ def test_max_items():
 )
 def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | BinaryContent):
     agent = Agent()
-    result = agent.run_sync('x', model=TestModel(custom_output_text='custom'))
+    result = agent.run_sync(['x', content], model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=51, response_tokens=1, total_tokens=52))

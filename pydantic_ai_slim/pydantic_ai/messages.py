@@ -490,6 +490,24 @@ class TextPart:
 
 
 @dataclass
+class ThinkingPart:
+    """A thinking response from a model."""
+
+    content: str
+    """The thinking content of the response."""
+
+    signature: str | None = None
+    """The signature of the thinking."""
+
+    part_kind: Literal['thinking'] = 'thinking'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def has_content(self) -> bool:
+        """Return `True` if the thinking content is non-empty."""
+        return bool(self.content)
+
+
+@dataclass
 class ToolCallPart:
     """A tool call from a model."""
 
@@ -543,7 +561,7 @@ class ToolCallPart:
             return bool(self.args)
 
 
-ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discriminator('part_kind')]
+ModelResponsePart = Annotated[Union[TextPart, ToolCallPart, ThinkingPart], pydantic.Discriminator('part_kind')]
 """A message part returned by a model."""
 
 
@@ -631,6 +649,54 @@ class TextPartDelta:
         if not isinstance(part, TextPart):
             raise ValueError('Cannot apply TextPartDeltas to non-TextParts')
         return replace(part, content=part.content + self.content_delta)
+
+
+@dataclass
+class ThinkingPartDelta:
+    """A partial update (delta) for a `ThinkingPart` to append new thinking content."""
+
+    content_delta: str | None = None
+    """The incremental thinking content to add to the existing `ThinkingPart` content."""
+
+    signature_delta: str | None = None
+    """Optional signature delta.
+
+    Note this is never treated as a delta — it can replace None.
+    """
+
+    part_delta_kind: Literal['thinking'] = 'thinking'
+    """Part delta type identifier, used as a discriminator."""
+
+    @overload
+    def apply(self, part: ModelResponsePart) -> ThinkingPart: ...
+
+    @overload
+    def apply(self, part: ModelResponsePart | ThinkingPartDelta) -> ThinkingPart | ThinkingPartDelta: ...
+
+    def apply(self, part: ModelResponsePart | ThinkingPartDelta) -> ThinkingPart | ThinkingPartDelta:
+        """Apply this thinking delta to an existing `ThinkingPart`.
+
+        Args:
+            part: The existing model response part, which must be a `ThinkingPart`.
+
+        Returns:
+            A new `ThinkingPart` with updated thinking content.
+
+        Raises:
+            ValueError: If `part` is not a `ThinkingPart`.
+        """
+        if isinstance(part, ThinkingPart):
+            return replace(part, content=part.content + self.content_delta if self.content_delta else None)
+        elif isinstance(part, ThinkingPartDelta):
+            if self.content_delta is None and self.signature_delta is None:
+                raise ValueError('Cannot apply ThinkingPartDelta with no content or signature')
+            if self.signature_delta is not None:
+                return replace(part, signature_delta=self.signature_delta)
+            if self.content_delta is not None:
+                return replace(part, content_delta=self.content_delta)
+        raise ValueError(
+            f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
+        )
 
 
 @dataclass
@@ -748,7 +814,9 @@ class ToolCallPartDelta:
         return part
 
 
-ModelResponsePartDelta = Annotated[Union[TextPartDelta, ToolCallPartDelta], pydantic.Discriminator('part_delta_kind')]
+ModelResponsePartDelta = Annotated[
+    Union[TextPartDelta, ThinkingPartDelta, ToolCallPartDelta], pydantic.Discriminator('part_delta_kind')
+]
 """A partial update (delta) for any model response part."""
 
 

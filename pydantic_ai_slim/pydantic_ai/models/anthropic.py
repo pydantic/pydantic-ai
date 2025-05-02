@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import io
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -58,9 +60,15 @@ try:
         RawMessageStartEvent,
         RawMessageStopEvent,
         RawMessageStreamEvent,
+        RedactedThinkingBlock,
+        SignatureDelta,
         TextBlock,
         TextBlockParam,
         TextDelta,
+        ThinkingBlock,
+        ThinkingBlockParam,
+        ThinkingConfigParam,
+        ThinkingDelta,
         ToolChoiceParam,
         ToolParam,
         ToolResultBlockParam,
@@ -90,7 +98,7 @@ See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models)
 """
 
 
-class AnthropicModelSettings(ModelSettings):
+class AnthropicModelSettings(ModelSettings, total=False):
     """Settings used for an Anthropic model request.
 
     ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -99,7 +107,14 @@ class AnthropicModelSettings(ModelSettings):
     anthropic_metadata: MetadataParam
     """An object describing metadata about the request.
 
-    Contains `user_id`, an external identifier for the user who is associated with the request."""
+    Contains `user_id`, an external identifier for the user who is associated with the request.
+    """
+
+    anthropic_thinking: ThinkingConfigParam
+    """Determine whether the model should generate a thinking block.
+
+    See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking) for more information.
+    """
 
 
 @dataclass(init=False)
@@ -222,13 +237,14 @@ class AnthropicModel(Model):
 
         try:
             return await self.client.messages.create(
-                max_tokens=model_settings.get('max_tokens', 1024),
+                max_tokens=model_settings.get('max_tokens', 2048),
                 system=system_prompt or NOT_GIVEN,
                 messages=anthropic_messages,
                 model=self._model_name,
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
                 stream=stream,
+                thinking=model_settings.get('anthropic_thinking', NOT_GIVEN),
                 stop_sequences=model_settings.get('stop_sequences', NOT_GIVEN),
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
@@ -248,6 +264,14 @@ class AnthropicModel(Model):
         for item in response.content:
             if isinstance(item, TextBlock):
                 items.append(TextPart(content=item.text))
+            elif isinstance(item, RedactedThinkingBlock):  # pragma: no cover
+                warnings.warn(
+                    'PydanticAI currently does not handle redacted thinking blocks. '
+                    'If you have a suggestion on how we should handle them, please open an issue.',
+                    UserWarning,
+                )
+            elif isinstance(item, ThinkingBlock):
+                items.append(ThinkingPart(content=item.thinking, signature=item.signature))
             else:
                 assert isinstance(item, ToolUseBlock), 'unexpected item type'
                 items.append(
@@ -314,10 +338,17 @@ class AnthropicModel(Model):
                         user_content_params.append(retry_param)
                 anthropic_messages.append(MessageParam(role='user', content=user_content_params))
             elif isinstance(m, ModelResponse):
-                assistant_content_params: list[TextBlockParam | ToolUseBlockParam] = []
+                assistant_content_params: list[TextBlockParam | ToolUseBlockParam | ThinkingBlockParam] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
                         assistant_content_params.append(TextBlockParam(text=response_part.content, type='text'))
+                    elif isinstance(response_part, ThinkingPart):
+                        assert response_part.signature is not None, 'Thinking part must have a signature'
+                        assistant_content_params.append(
+                            ThinkingBlockParam(
+                                thinking=response_part.content, signature=response_part.signature, type='thinking'
+                            )
+                        )
                     else:
                         tool_use_block_param = ToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),
@@ -448,6 +479,12 @@ class AnthropicStreamedResponse(StreamedResponse):
                 current_block = event.content_block
                 if isinstance(current_block, TextBlock) and current_block.text:
                     yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=current_block.text)
+                elif isinstance(current_block, ThinkingBlock):
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='thinking',
+                        content=current_block.thinking,
+                        signature=current_block.signature,
+                    )
                 elif isinstance(current_block, ToolUseBlock):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=current_block.id,
@@ -461,6 +498,14 @@ class AnthropicStreamedResponse(StreamedResponse):
             elif isinstance(event, RawContentBlockDeltaEvent):
                 if isinstance(event.delta, TextDelta):
                     yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=event.delta.text)
+                elif isinstance(event.delta, ThinkingDelta):
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='thinking', content=event.delta.thinking
+                    )
+                elif isinstance(event.delta, SignatureDelta):
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='thinking', signature=event.delta.signature
+                    )
                 elif (
                     current_block and event.delta.type == 'input_json_delta' and isinstance(current_block, ToolUseBlock)
                 ):
