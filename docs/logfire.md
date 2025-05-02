@@ -165,7 +165,7 @@ docker run --rm -it -p 4318:4318 --name otel-tui ymtdzzz/otel-tui:latest
 
 then run,
 
-```python {title="otel_tui.py" hl_lines="5 6" test="skip"}
+```python {title="otel_tui.py" hl_lines="7 8" test="skip"}
 import os
 
 import logfire
