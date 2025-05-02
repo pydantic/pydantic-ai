@@ -98,34 +98,48 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
 
 ### Monitoring HTTP Requests
 
-To observer raw HTTP requests made to model providers, you can use `logfire`'s [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) since all provider SDKs use the [HTTPX](https://www.python-httpx.org/) internally.
+!!! tip ""F**k you, show me the prompt.""
+    As per Hamel Husain's influential 2024 blog post ["Fuck You, Show Me The Prompt."](https://hamel.dev/blog/posts/prompt/)
+    (bare with the capitalization, the point is valid), it's often useful to be able to view the raw HTTP requests and responses made to model providers.
 
-```py {title="instrument_httpx.py" hl_lines="5"}
-import logfire
-from pydantic_ai import Agent
+To observer raw HTTP requests made to model providers, you can use `logfire`'s [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) since all provider SDKs use the [HTTPX](https://www.python-httpx.org/) library internally.
 
-logfire.configure()
-logfire.instrument_pydantic_ai()
-logfire.instrument_httpx(capture_all=True)  # (1)!
 
-agent = Agent('openai:gpt-4o')
-result = agent.run_sync('What is the capital of France?')
-print(result.output)
-# > The capital of France is Paris.
-```
+=== "With HTTP instrumentation"
 
-1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] more details, `capture_all=True` means both headers and body are captured for both the request and response.
+    ```py {title="with_logfire_instrument_httpx.py" hl_lines="6"}
+    import logfire
+    from pydantic_ai import Agent
 
-=== "With `httpx` instrumentation"
+    logfire.configure()
+    logfire.instrument_pydantic_ai()
+    logfire.instrument_httpx(capture_all=True)  # (1)!
+    agent = Agent('openai:gpt-4o')
+    result = agent.run_sync('What is the capital of France?')
+    print(result.output)
+    # > The capital of France is Paris.
+    ```
+
+    1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] more details, `capture_all=True` means both headers and body are captured for both the request and response.
 
     ![Logfire with HTTPX instrumentation](img/logfire-with-httpx.png)
 
-=== "Without `httpx` instrumentation"
+=== "Without HTTP instrumentation"
+
+    ```py {title="without_logfire_instrument_httpx.py"}
+    import logfire
+    from pydantic_ai import Agent
+
+    logfire.configure()
+    logfire.instrument_pydantic_ai()
+
+    agent = Agent('openai:gpt-4o')
+    result = agent.run_sync('What is the capital of France?')
+    print(result.output)
+    # > The capital of France is Paris.
+    ```
 
     ![Logfire without HTTPX instrumentation](img/logfire-without-httpx.png)
-
-!!! tip
-    `httpx` instrumentation might be of particular utility if you're using a custom `httpx` client in your model in order to get insights into your custom requests.
 
 ## Using OpenTelemetry
 
@@ -143,7 +157,7 @@ Here's an example of configuring the logfire library to send data to the excelle
 
 Run `otel-tui` with docker (see [the otel-tui readme](https://github.com/ymtdzzz/otel-tui) for more instructions):
 
-```bash
+```txt title="Terminal"
 docker run --rm -it -p 4318:4318 --name otel-tui ymtdzzz/otel-tui:latest
 ```
 
@@ -185,7 +199,7 @@ You can also emit OpenTelemetry data from PydanticAI without using logfire at al
 
 To do this, you'll need to install and configure the OpenTelemetry packages you need. To run the following examples, use
 
-```
+```txt title="Terminal"
 uv run \
   --with 'pydantic-ai-slim[openai]' \
   --with opentelemetry-sdk \
