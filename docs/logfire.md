@@ -15,7 +15,7 @@ LLM Observability tools that just let you understand how your model is performin
 
 ## Pydantic Logfire
 
-[Pydantic Logfire](https://pydantic.dev/logfire) is an observability platform developed by the team who created and maintain Pydantic and PydanticAI. Logfire aims to let you understand your entire application: Gen AI, classic predictive AI, HTTP traffic, database queries and everything else a modern application needs.
+[Pydantic Logfire](https://pydantic.dev/logfire) is an observability platform developed by the team who created and maintain Pydantic and PydanticAI. Logfire aims to let you understand your entire application: Gen AI, classic predictive AI, HTTP traffic, database queries and everything else a modern application needs, all using OpenTelemetry.
 
 !!! tip "Pydantic Logfire is a commercial product"
     Logfire is a commercially supported, hosted platform with an extremely generous and perpetual [free tier](https://pydantic.dev/pricing/).
@@ -31,7 +31,7 @@ A trace is generated for the agent run, and spans are emitted for each model req
 
 ## Using Logfire
 
-To use logfire, you'll need a logfire [account](https://logfire.pydantic.dev), and logfire installed:
+To use logfire, you'll need a logfire [account](https://logfire.pydantic.dev), and the logfire Python SDK installed:
 
 ```bash
 pip/uv-add "pydantic-ai[logfire]"
@@ -102,6 +102,7 @@ To observer raw HTTP requests made to model providers, you can use `logfire`'s [
 
 ```py {title="instrument_httpx.py" hl_lines="5"}
 import logfire
+from pydantic_ai import Agent
 
 logfire.configure()
 logfire.instrument_pydantic_ai()
@@ -114,8 +115,6 @@ print(result.output)
 ```
 
 1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] more details, `capture_all=True` means both headers and body are captured for both the request and response.
-
-1. Capture all of headers, request body, and response body.
 
 === "With `httpx` instrumentation"
 
@@ -130,7 +129,92 @@ print(result.output)
 
 ## Using OpenTelemetry
 
-PydanticAI's instrumentation uses [OpenTelemetry](https://opentelemetry.io/), which Logfire is based on. You can use the Logfire SDK completely freely and follow the [Alternative backends](https://logfire.pydantic.dev/docs/how-to-guides/alternative-backends/) guide to send the data to any OpenTelemetry collector, such as a self-hosted Jaeger instance. Or you can skip Logfire entirely and use the OpenTelemetry Python SDK directly.
+PydanticAI's instrumentation uses [OpenTelemetry](https://opentelemetry.io/), which Logfire is based on.
+
+This means you can debug and monitor PydanticAI with any OpenTelemetry backend.
+
+PydanticAI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), so while we think you'll have the best experience using the Logfire platform :wink:, you should get the best experience possible with other platforms.
+
+### Logfire with an alternative OTel backend
+
+You can use the Logfire SDK completely freely and send the data to any OpenTelemetry backend.
+
+Here's an example of configuring the logfire library to send data to the excellent [otel-tui](https://github.com/ymtdzzz/otel-tui) — an open source terminal based OTel backend and viewer (no association with Pydantic).
+
+Run `otel-tui` with docker (see [the otel-tui readme](https://github.com/ymtdzzz/otel-tui) for more instructions):
+
+```bash
+docker run --rm -it -p 4318:4318 --name otel-tui ymtdzzz/otel-tui:latest
+```
+
+then run,
+
+```py {title="otel_tui.py" hl_lines="5 6"}
+import os
+import logfire
+from pydantic_ai import Agent
+
+os.environ['OTEL_EXPORTER_OTLP_ENDPOINT'] = 'http://localhost:4318'  # (1)!
+logfire.configure(send_to_logfire=False)  # (2)!
+logfire.instrument_pydantic_ai()
+logfire.instrument_httpx(capture_all=True)
+
+agent = Agent('openai:gpt-4o')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+# > The capital of France is Paris.
+```
+
+1. Set the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable to the URL of your OpenTelemetry backend. If you're using a backend that requires authentication, you may need to set [other environment variables](https://opentelemetry.io/docs/languages/sdk-configuration/otlp-exporter/). Of course, these can also be set outside the process with `export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`.
+2. We [configure][logfire.configure] logfire to disable sending data to the logfire otel backend itself.
+
+Running the above code will send tracing data to otel-tui, which will display like this:
+
+![otel tui simple](img/otel-tui-simple.png)
+
+Running the [weather agent](examples/weather-agent.md) example connected to otel-tui shows how it can be used to visualise a more complex trace:
+
+![otel tui weather agent](img/otel-tui-weather.png)
+
+For more information on using the logfire SDK to send data to alternative backends, see
+[the logfire documentation](https://logfire.pydantic.dev/docs/how-to-guides/alternative-backends/).
+
+### OTel without logfire
+
+You can also emit OpenTelemetry data from PydanticAI without using logfire at all.
+
+To do this, you'll need to install and configure the OpenTelemetry packages you need. To run the following examples, use
+
+```
+uv run \
+  --with 'pydantic-ai-slim[openai]' \
+  --with opentelemetry-sdk \
+  --with opentelemetry-exporter-otlp \
+  raw_otel.py
+```
+
+```python title="raw_otel.py"
+import os
+
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+from pydantic_ai.agent import Agent
+from pydantic_ai.models.instrumented import InstrumentationSettings
+
+os.environ['OTEL_EXPORTER_OTLP_ENDPOINT'] = 'http://localhost:4318'
+exporter = OTLPSpanExporter()
+span_processor = BatchSpanProcessor(exporter)
+tracer_provider = TracerProvider()
+tracer_provider.add_span_processor(span_processor)
+
+Agent.instrument_all(InstrumentationSettings(tracer_provider=tracer_provider))
+agent = Agent('openai:gpt-4o')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+# > The capital of France is Paris.
+```
 
 ## Data format
 
