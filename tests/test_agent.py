@@ -1699,7 +1699,7 @@ def test_binary_content_all_messages_json():
                 'model_name': 'test',
                 'timestamp': IsStr(),
                 'kind': 'response',
-                'vendor_metadata': None,
+                'vendor_details': None,
             },
         ]
     )

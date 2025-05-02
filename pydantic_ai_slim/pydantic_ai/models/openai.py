@@ -305,12 +305,12 @@ class OpenAIModel(Model):
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
-        vendor_metadata: dict[str, Any] | None = None
+        vendor_details: dict[str, Any] | None = None
 
-        # Add logprobs to vendor_metadata if available
+        # Add logprobs to vendor_details if available
         if choice.logprobs is not None and choice.logprobs.content:
             # Convert logprobs to a serializable format
-            vendor_metadata = {
+            vendor_details = {
                 'logprobs': [
                     {
                         'token': lp.token,
@@ -329,7 +329,7 @@ class OpenAIModel(Model):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
-        return ModelResponse(items, model_name=response.model, timestamp=timestamp, vendor_metadata=vendor_metadata)
+        return ModelResponse(items, model_name=response.model, timestamp=timestamp, vendor_details=vendor_details)
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
