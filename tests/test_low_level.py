@@ -6,6 +6,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.low_level import (
+    LowLevelModelResponse,
     _prepare_model,  # pyright: ignore[reportPrivateUsage]
     model_request,
     model_request_stream,
@@ -13,7 +14,6 @@ from pydantic_ai.low_level import (
 )
 from pydantic_ai.messages import (
     ModelRequest,
-    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
     TextPart,
@@ -32,19 +32,19 @@ pytestmark = pytest.mark.anyio
 
 
 async def test_model_request():
-    model_response, request_usage = await model_request('test', [ModelRequest.user_text_prompt('x')])
+    model_response = await model_request('test', [ModelRequest.user_text_prompt('x')])
     assert model_response == snapshot(
-        ModelResponse(
+        LowLevelModelResponse(
             parts=[TextPart(content='success (no tool calls)')],
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
         )
     )
-    assert request_usage == snapshot(Usage(request_tokens=51, response_tokens=4, total_tokens=55))
 
 
 async def test_model_request_tool_call():
-    model_response, request_usage = await model_request(
+    model_response = await model_request(
         'test',
         [ModelRequest.user_text_prompt('x')],
         model_request_parameters=ModelRequestParameters(
@@ -53,25 +53,25 @@ async def test_model_request_tool_call():
         ),
     )
     assert model_response == snapshot(
-        ModelResponse(
+        LowLevelModelResponse(
             parts=[ToolCallPart(tool_name='tool_name', args='a', tool_call_id=IsStr(regex='pyd_ai_.*'))],
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            usage=Usage(requests=1, request_tokens=51, response_tokens=2, total_tokens=53),
         )
     )
-    assert request_usage == snapshot(Usage(request_tokens=51, response_tokens=2, total_tokens=53))
 
 
 def test_model_request_sync():
-    model_response, request_usage = model_request_sync('test', [ModelRequest.user_text_prompt('x')])
+    model_response = model_request_sync('test', [ModelRequest.user_text_prompt('x')])
     assert model_response == snapshot(
-        ModelResponse(
+        LowLevelModelResponse(
             parts=[TextPart(content='success (no tool calls)')],
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
         )
     )
-    assert request_usage == snapshot(Usage(request_tokens=51, response_tokens=4, total_tokens=55))
 
 
 async def test_model_request_stream():

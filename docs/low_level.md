@@ -19,18 +19,20 @@ from pydantic_ai.low_level import model_request_sync
 from pydantic_ai.messages import ModelRequest
 
 # Make a synchronous request to the model
-model_response, usage_info = model_request_sync(
+model_response = model_request_sync(
     'anthropic:claude-3-5-haiku-latest',
     [ModelRequest.user_text_prompt('What is the capital of France?')]
 )
 
 print(model_response.parts[0].content)
 #> Paris
-print(usage_info)
+print(model_response.usage)
 """
-Usage(requests=0, request_tokens=56, response_tokens=1, total_tokens=57, details=None)
+Usage(requests=1, request_tokens=56, response_tokens=1, total_tokens=57, details=None)
 """
 ```
+
+_(This example is complete, it can be run "as is")_
 
 ## Advanced Example with Tool Calling
 
@@ -58,7 +60,7 @@ class Divide(BaseModel):
 
 async def main():
     # Make a request to the model with tool access
-    model_response, cost = await model_request(
+    model_response = await model_request(
         'openai:gpt-4.1-nano',
         [ModelRequest.user_text_prompt('What is 123 / 456?')],
         model_request_parameters=ModelRequestParameters(
@@ -74,7 +76,7 @@ async def main():
     )
     print(model_response)
     """
-    ModelResponse(
+    LowLevelModelResponse(
         parts=[
             ToolCallPart(
                 tool_name='divide',
@@ -86,15 +88,18 @@ async def main():
         model_name='gpt-4.1-nano',
         timestamp=datetime.datetime(...),
         kind='response',
-    )
-    """
-    print(cost)
-    """
-    Usage(
-        requests=0, request_tokens=55, response_tokens=7, total_tokens=62, details=None
+        usage=Usage(
+            requests=1,
+            request_tokens=55,
+            response_tokens=7,
+            total_tokens=62,
+            details=None,
+        ),
     )
     """
 ```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ## When to Use Low-Level API vs Agent
 
@@ -120,17 +125,15 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 
 # Make a synchronous request to the model
-model_response, usage_info = model_request_sync(
+model_response = model_request_sync(
     'anthropic:claude-3-5-haiku-latest',
     [ModelRequest.user_text_prompt('What is the capital of France?')]
 )
 
 print(model_response.parts[0].content)
 #> Paris
-print(usage_info)
-"""
-Usage(requests=0, request_tokens=56, response_tokens=1, total_tokens=57, details=None)
-"""
 ```
+
+_(This example is complete, it can be run "as is")_
 
 See [Debugging and Monitoring](logfire.md) for more details.
