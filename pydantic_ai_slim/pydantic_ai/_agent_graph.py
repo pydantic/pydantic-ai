@@ -235,7 +235,7 @@ async def _prepare_request_parameters(
         for tool_def in tool_defs:
             if tool_def.name in function_tool_defs:
                 raise exceptions.UserError(
-                    f"MCP Server {server}'s tool name conflicts with existing tool: {tool_def.name!r}. Consider using `tool_prefix` to avoid name conflicts."
+                    f"MCP Server '{server}' defines a tool whose name conflicts with existing tool: {tool_def.name!r}. Consider using `tool_prefix` to avoid name conflicts."
                 )
             function_tool_defs[tool_def.name] = tool_def
 
