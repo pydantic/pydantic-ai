@@ -525,11 +525,11 @@ def test_repeat_tool():
         return tool_def
 
     @agent.tool_plain(prepare=change_tool_name)
-    def foo(x: int, y: str) -> str:
+    def foo(x: int, y: str) -> str:  # pragma: no cover
         return f'{x} {y}'
 
     @agent.tool_plain
-    def bar(x: int, y: str) -> str:
+    def bar(x: int, y: str) -> str:  # pragma: no cover
         return f'{x} {y}'
 
     with pytest.raises(UserError, match=r"Tool .* defines a tool whose name conflicts with existing tool: 'bar'."):

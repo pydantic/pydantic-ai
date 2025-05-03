@@ -137,7 +137,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
 
 async def test_agent_with_conflict_tool_name(agent: Agent):
     @agent.tool_plain
-    def get_none() -> None:
+    def get_none() -> None:  # pragma: no cover
         """Return nothing"""
         return None
 
@@ -160,7 +160,7 @@ async def test_agent_with_prefix_tool_name(openai_api_key: str):
     )
 
     @agent.tool_plain
-    def get_none() -> None:
+    def get_none() -> None:  # pragma: no cover
         """Return nothing"""
         return None
 
