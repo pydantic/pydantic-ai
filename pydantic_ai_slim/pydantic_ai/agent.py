@@ -29,7 +29,7 @@ from . import (
     usage as _usage,
 )
 from .models.instrumented import InstrumentationSettings, InstrumentedModel
-from .result import FinalResult, OutputDataT, StreamedRunResult, ToolOutput
+from .result import FinalResult, OutputDataT, StreamedRunResult, StructuredOutput, ToolOutput
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDepsT,
@@ -118,7 +118,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     be merged with this value, with the runtime argument taking priority.
     """
 
-    output_type: type[OutputDataT] | ToolOutput[OutputDataT]
+    output_type: type[OutputDataT] | ToolOutput[OutputDataT] | StructuredOutput[OutputDataT]
     """
     The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`.
     """
@@ -152,7 +152,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        output_type: type[OutputDataT] | ToolOutput[OutputDataT] = str,
+        output_type: type[OutputDataT] | ToolOutput[OutputDataT] | StructuredOutput[OutputDataT] = str,
         instructions: str
         | _system_prompt.SystemPromptFunc[AgentDepsT]
         | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
@@ -202,7 +202,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        # TODO change this back to `output_type: type[OutputDataT] | ToolOutput[OutputDataT] = str,` when we remove the overloads
+        # TODO change this back to `output_type: type[OutputDataT] | ToolOutput[OutputDataT] | StructuredOutput[OutputDataT] = str,` when we remove the overloads
         output_type: Any = str,
         instructions: str
         | _system_prompt.SystemPromptFunc[AgentDepsT]
@@ -310,6 +310,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._instructions_functions = []
         if isinstance(instructions, (str, Callable)):
             instructions = [instructions]
+        # TODO: Add OutputSchema to the instructions in JSON mode
         for instruction in instructions or []:
             if isinstance(instruction, str):
                 self._instructions += instruction + '\n'
@@ -357,7 +358,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT],
+        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | StructuredOutput[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -387,7 +388,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None = None,
+        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | StructuredOutput[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -459,7 +460,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None = None,
+        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | StructuredOutput[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -491,7 +492,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None = None,
+        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | StructuredOutput[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -664,8 +665,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
-            instructions=self._instructions,
-            instructions_functions=self._instructions_functions,
             system_prompts=self._system_prompts,
             system_prompt_functions=self._system_prompt_functions,
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
@@ -736,7 +735,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None,
+        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | StructuredOutput[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -766,7 +765,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None = None,
+        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | StructuredOutput[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -849,7 +848,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent],
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT],
+        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | StructuredOutput[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -880,7 +879,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None = None,
+        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | StructuredOutput[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -965,6 +964,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                     elif isinstance(new_part, _messages.ToolCallPart) and output_schema:
                                         for call, _ in output_schema.find_tool([new_part]):
                                             return FinalResult(s, call.tool_name, call.tool_call_id)
+                                    elif isinstance(new_part, _messages.StructuredOutputPart) and output_schema:
+                                        return FinalResult(s, None, None)
                             return None
 
                         final_result_details = await stream_to_final(streamed_response)
@@ -1598,7 +1599,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         raise AttributeError('The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.')
 
     def _prepare_output_schema(
-        self, output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None
+        self, output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | StructuredOutput[RunOutputDataT] | None
     ) -> _output.OutputSchema[RunOutputDataT] | None:
         if output_type is not None:
             if self._output_validators:
