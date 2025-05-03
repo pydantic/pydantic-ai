@@ -17,7 +17,7 @@ from .usage import Usage, UsageLimits
 if TYPE_CHECKING:
     from . import _output
 
-__all__ = 'OutputDataT', 'OutputDataT_inv', 'ToolOutput', 'OutputValidatorFunc'
+__all__ = 'OutputDataT', 'OutputDataT_inv', 'ToolOutput', 'StructuredOutput', 'OutputValidatorFunc'
 
 
 T = TypeVar('T')
@@ -57,7 +57,7 @@ DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 
 @dataclass(init=False)
 class ToolOutput(Generic[OutputDataT]):
-    """Marker class to use tools for structured outputs, and customize the tool."""
+    """Marker class to use tools for outputs, and customize the tool."""
 
     output_type: type[OutputDataT]
     # TODO: Add `output_call` support, for calling a function to get the output
@@ -92,6 +92,29 @@ class ToolOutput(Generic[OutputDataT]):
         #         if type_ is None:
         #             raise ValueError('Unable to determine type_ from call signature; please provide it explicitly')
         # self.output_call = call
+
+
+@dataclass(init=False)
+class StructuredOutput(Generic[OutputDataT]):
+    """Marker class to use structured output for outputs."""
+
+    output_type: type[OutputDataT]
+    name: str | None
+    description: str | None
+    strict: bool | None
+
+    def __init__(
+        self,
+        *,
+        type_: type[OutputDataT],
+        name: str | None = None,
+        description: str | None = None,
+        strict: bool | None = None,
+    ):
+        self.output_type = type_
+        self.name = name
+        self.description = description
+        self.strict = strict
 
 
 @dataclass
@@ -157,6 +180,15 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             for validator in self._output_validators:
                 result_data = await validator.validate(result_data, call, self._run_ctx)
             return result_data
+        elif (
+            self._output_schema is not None
+            and len(message.parts) > 0
+            and isinstance(message.parts[0], _messages.StructuredOutputPart)
+        ):
+            result_data = self._output_schema.validate(message.parts[0].content)
+            for validator in self._output_validators:
+                result_data = await validator.validate(result_data, None, self._run_ctx)
+            return result_data
         else:
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
             for validator in self._output_validators:
@@ -192,6 +224,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                                 return _messages.FinalResultEvent(
                                     tool_name=call.tool_name, tool_call_id=call.tool_call_id
                                 )
+                    elif isinstance(new_part, _messages.StructuredOutputPart):
+                        if output_schema:
+                            return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
                     elif allow_text_output:
                         assert_type(e, _messages.PartStartEvent)
                         return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
@@ -470,6 +505,15 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
             for validator in self._output_validators:
                 result_data = await validator.validate(result_data, call, self._run_ctx)
+            return result_data
+        elif (
+            self._output_schema is not None
+            and len(message.parts) > 0
+            and isinstance(message.parts[0], _messages.StructuredOutputPart)
+        ):
+            result_data = self._output_schema.validate(message.parts[0].content)
+            for validator in self._output_validators:
+                result_data = await validator.validate(result_data, None, self._run_ctx)
             return result_data
         else:
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))

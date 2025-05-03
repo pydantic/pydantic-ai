@@ -24,6 +24,7 @@ from ..settings import ModelSettings
 from ..usage import Usage
 
 if TYPE_CHECKING:
+    from .._output import OutputObjectDefinition
     from ..tools import ToolDefinition
 
 
@@ -265,8 +266,11 @@ class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition]
-    allow_text_output: bool
+
+    preferred_output_mode: Literal['tool', 'structured'] | None
+    allow_text_output: bool  # TODO: How to handle with structured output?
     output_tools: list[ToolDefinition]
+    output_object: OutputObjectDefinition | None
 
 
 class Model(ABC):

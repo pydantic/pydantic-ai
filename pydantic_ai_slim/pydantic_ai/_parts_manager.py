@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
     ModelResponseStreamEvent,
     PartDeltaEvent,
     PartStartEvent,
+    StructuredOutputPartDelta,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -57,12 +58,12 @@ class ModelResponsePartsManager:
     """Maps a vendor's "part" ID (if provided) to the index in `_parts` where that part resides."""
 
     def get_parts(self) -> list[ModelResponsePart]:
-        """Return only model response parts that are complete (i.e., not ToolCallPartDelta's).
+        """Return only model response parts that are complete (i.e., not ToolCallPartDelta's or StructuredOutputPartDelta's).
 
         Returns:
-            A list of ModelResponsePart objects. ToolCallPartDelta objects are excluded.
+            A list of ModelResponsePart objects. ToolCallPartDelta and StructuredOutputPartDelta objects are excluded.
         """
-        return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
+        return [p for p in self._parts if not isinstance(p, (ToolCallPartDelta, StructuredOutputPartDelta))]
 
     def handle_text_delta(
         self,
@@ -90,6 +91,8 @@ class ModelResponsePartsManager:
                 not a TextPart.
         """
         existing_text_part_and_index: tuple[TextPart, int] | None = None
+
+        # TODO: Parse out structured output or manual JSON, with a separate message?
 
         if vendor_part_id is None:
             # If the vendor_part_id is None, check if the latest part is a TextPart to update
