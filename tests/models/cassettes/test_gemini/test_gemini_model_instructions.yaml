@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '169'
+      - '216'
       content-type:
       - application/json
       host:
@@ -19,10 +19,12 @@ interactions:
       - parts:
         - text: What is the capital of France?
         role: user
-      system_instruction:
+      generationConfig: {}
+      systemInstruction:
         parts:
         - text: You are a helpful assistant.
         role: user
+      tools: []
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
   response:
     headers:
@@ -33,7 +35,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=415
+      - gfet4t7; dur=390
       transfer-encoding:
       - chunked
       vary:
@@ -42,7 +44,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.0008098740363493562
+      - avgLogprobs: -0.0009273276082240045
         content:
           parts:
           - text: |

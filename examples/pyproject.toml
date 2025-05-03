@@ -42,7 +42,7 @@ requires-python = ">=3.9"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic]=={{ version }}",
+    "pydantic-ai-slim[openai,gemini,groq,anthropic]=={{ version }}",
     "pydantic-evals=={{ version }}",
     "asyncpg>=0.30.0",
     "fastapi>=0.115.4",

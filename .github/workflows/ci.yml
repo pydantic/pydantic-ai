@@ -108,7 +108,7 @@ jobs:
           uv run
           --package pydantic-ai-slim
           --extra openai
-          --extra vertexai
+          --extra gemini
           --extra groq
           --extra anthropic
           --extra mistral

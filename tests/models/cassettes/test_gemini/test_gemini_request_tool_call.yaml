@@ -1,0 +1,178 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '321'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the location of Potatoland and New York?
+        role: user
+      generationConfig: {}
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_location
+          parameters:
+            properties:
+              loc_name:
+                type: STRING
+            required:
+            - loc_name
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '936'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1115
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -7.2435359470546246e-06
+        content:
+          parts:
+          - functionCall:
+              args:
+                loc_name: Potatoland
+              name: get_location
+          - functionCall:
+              args:
+                loc_name: New York
+              name: get_location
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash-exp
+      usageMetadata:
+        candidatesTokenCount: 17
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 17
+        promptTokenCount: 23
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 23
+        totalTokenCount: 40
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1018'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the location of Potatoland and New York?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              loc_name: Potatoland
+            id: pyd_ai_d269810efcdd463183eca3e2d901036c
+            name: get_location
+        - functionCall:
+            args:
+              loc_name: New York
+            id: pyd_ai_88ab47d2424e46efb34449166d6ceb53
+            name: get_location
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_d269810efcdd463183eca3e2d901036c
+            name: get_location
+            response:
+              call_error: |-
+                Wrong location, only allowed locations are London and New York
+
+                Fix the errors and try again.
+        - functionResponse:
+            id: pyd_ai_88ab47d2424e46efb34449166d6ceb53
+            name: get_location
+            response:
+              return_value: '{"lat": 41, "lng": -74}'
+        role: user
+      generationConfig: {}
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_location
+          parameters:
+            properties:
+              loc_name:
+                type: STRING
+            required:
+            - loc_name
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '702'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=779
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.0055272152711605205
+        content:
+          parts:
+          - text: 'Potatoland is not a valid location. The location of New York is {"lat": 41, "lng": -74}.'
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash-exp
+      usageMetadata:
+        candidatesTokenCount: 29
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 29
+        promptTokenCount: 85
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 85
+        totalTokenCount: 114
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -139,12 +139,7 @@ def test_docs_examples(  # noqa: C901
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
         pytest.skip('both running code and lint skipped')
 
-    if opt_title == 'sql_app_evals.py':
-        os.chdir(tmp_path)
-        examples = [{'request': f'sql prompt {i}', 'sql': f'SELECT {i}'} for i in range(15)]
-        with (tmp_path / 'examples.json').open('w') as f:
-            json.dump(examples, f)
-    elif opt_title in {
+    if opt_title in {
         'ai_q_and_a_run.py',
         'count_down_from_persistence.py',
         'generate_dataset_example.py',

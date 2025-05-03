@@ -1,0 +1,133 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '311'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the location of San Francisco?
+        role: user
+      generationConfig: {}
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_location
+          parameters:
+            properties:
+              loc_name:
+                type: STRING
+            required:
+            - loc_name
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_location\",\"args\":
+        {\"loc_name\": \"San Francisco\"}}}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\":
+        19,\"candidatesTokenCount\": 8,\"totalTokenCount\": 27,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        19}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 8}]},\"modelVersion\": \"gemini-2.0-flash-exp\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=569
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '659'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the location of San Francisco?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              loc_name: San Francisco
+            id: pyd_ai_6c5fa78914494fa999ae4a15f02ddeec
+            name: get_location
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_6c5fa78914494fa999ae4a15f02ddeec
+            name: get_location
+            response:
+              return_value: Location for San Francisco
+        role: user
+      generationConfig: {}
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_location
+          parameters:
+            properties:
+              loc_name:
+                type: STRING
+            required:
+            - loc_name
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The\"}],\"role\": \"model\"}}],\"usageMetadata\":
+        {\"promptTokenCount\": 83,\"totalTokenCount\": 83,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        83}]},\"modelVersion\": \"gemini-2.0-flash-exp\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\":
+        \" location of San Francisco is Location for San Francisco.\"}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\":
+        {\"promptTokenCount\": 37,\"candidatesTokenCount\": 11,\"totalTokenCount\": 48,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 37}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 11}]},\"modelVersion\":
+        \"gemini-2.0-flash-exp\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=568
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+version: 1

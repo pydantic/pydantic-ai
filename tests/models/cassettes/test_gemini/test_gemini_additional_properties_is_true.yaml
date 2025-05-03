@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '264'
+      - '309'
       content-type:
       - application/json
       host:
@@ -19,28 +19,29 @@ interactions:
       - parts:
         - text: What is the temperature in Tokyo?
         role: user
+      generationConfig: {}
       tools:
-        function_declarations:
+      - functionDeclarations:
         - description: ''
           name: get_temperature
           parameters:
             properties:
               location:
-                type: object
+                type: OBJECT
             required:
             - location
-            type: object
+            type: OBJECT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '741'
+      - '723'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=534
+      - gfet4t7; dur=466
       transfer-encoding:
       - chunked
       vary:
@@ -49,24 +50,24 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.15060695580073766
+      - avgLogprobs: -0.18565839987534744
         content:
           parts:
           - text: |
-              I need a location dictionary to use the `get_temperature` function.  I cannot provide the temperature in Tokyo without more information.
+              I need a location dictionary to use the `get_temperature` function.  I am missing information to answer your question.
           role: model
         finishReason: STOP
       modelVersion: gemini-1.5-flash
       usageMetadata:
-        candidatesTokenCount: 28
+        candidatesTokenCount: 26
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 28
+          tokenCount: 26
         promptTokenCount: 12
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 12
-        totalTokenCount: 40
+        totalTokenCount: 38
     status:
       code: 200
       message: OK

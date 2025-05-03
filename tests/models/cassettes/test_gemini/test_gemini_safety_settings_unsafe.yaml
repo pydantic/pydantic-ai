@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '324'
+      - '301'
       content-type:
       - application/json
       host:
@@ -17,33 +17,24 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: What is the temperature in Tokyo?
+        - text: I support Martians Soccer Club and I think Jupiterians Football Club sucks! Write a ironic phrase about them.
         role: user
       generationConfig: {}
-      tools:
-      - functionDeclarations:
-        - name: get_temperature
-          parameters:
-            properties:
-              city:
-                type: STRING
-              country:
-                type: STRING
-            required:
-            - city
-            - country
-            type: OBJECT
+      safetySettings:
+      - category: HARM_CATEGORY_HARASSMENT
+        threshold: BLOCK_LOW_AND_ABOVE
+      tools: []
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '729'
+      - '817'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=467
+      - gfet4t7; dur=402
       transfer-encoding:
       - chunked
       vary:
@@ -52,24 +43,25 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.20079084237416586
-        content:
-          parts:
-          - text: |
-              The available tools lack the ability to access real-time temperature information.  Therefore, I cannot answer your question.
-          role: model
-        finishReason: STOP
+      - content: {}
+        finishReason: SAFETY
+        safetyRatings:
+        - category: HARM_CATEGORY_HATE_SPEECH
+          probability: NEGLIGIBLE
+        - category: HARM_CATEGORY_DANGEROUS_CONTENT
+          probability: NEGLIGIBLE
+        - blocked: true
+          category: HARM_CATEGORY_HARASSMENT
+          probability: LOW
+        - category: HARM_CATEGORY_SEXUALLY_EXPLICIT
+          probability: NEGLIGIBLE
       modelVersion: gemini-1.5-flash
       usageMetadata:
-        candidatesTokenCount: 24
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 24
-        promptTokenCount: 14
+        promptTokenCount: 22
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 14
-        totalTokenCount: 38
+          tokenCount: 22
+        totalTokenCount: 22
     status:
       code: 200
       message: OK

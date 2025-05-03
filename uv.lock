@@ -1134,6 +1134,24 @@ wheels = [
 ]
 
 [[package]]
+name = "google-genai"
+version = "1.9.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "google-auth" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "requests" },
+    { name = "typing-extensions" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/17/b9/fae20a998946f811d81b14b4e2da41d0d7779c3e63dedf4538c16832fa56/google_genai-1.9.0.tar.gz", hash = "sha256:eda833dcef2e3b9a05bff96ff4e0066740988199bcee0b2480cfce9909b18a26", size = 151602 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/12/3a5a11589a0b967b371c773d35cc54c75f2f44259d3d767b826d708b6377/google_genai-1.9.0-py3-none-any.whl", hash = "sha256:2140f72e6e5b89d8105fa70ae551c699b5e39492ca5f95053e1f7e99ecbdbd35", size = 149646 },
+]
+
+[[package]]
 name = "googleapis-common-protos"
 version = "1.68.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2802,7 +2820,7 @@ wheels = [
 name = "pydantic-ai"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "evals", "groq", "mcp", "mistral", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "evals", "gemini", "groq", "mcp", "mistral", "openai"] },
 ]
 
 [package.optional-dependencies]
@@ -2836,7 +2854,7 @@ lint = [
 requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.11.0" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "bedrock", "cli", "cohere", "evals", "groq", "mcp", "mistral", "openai", "vertexai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "bedrock", "cli", "cohere", "evals", "gemini", "groq", "mcp", "mistral", "openai"], editable = "pydantic_ai_slim" },
 ]
 provides-extras = ["examples", "logfire"]
 
@@ -2869,7 +2887,7 @@ dependencies = [
     { name = "gradio", marker = "python_full_version >= '3.10'" },
     { name = "logfire", extra = ["asyncpg", "fastapi", "sqlite3"] },
     { name = "mcp", extra = ["cli"], marker = "python_full_version >= '3.10'" },
-    { name = "pydantic-ai-slim", extra = ["anthropic", "groq", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "gemini", "groq", "openai"] },
     { name = "pydantic-evals" },
     { name = "python-multipart" },
     { name = "rich" },
@@ -2884,7 +2902,7 @@ requires-dist = [
     { name = "gradio", marker = "python_full_version >= '3.10'", specifier = ">=5.9.0" },
     { name = "logfire", extras = ["asyncpg", "fastapi", "sqlite3"], specifier = ">=2.6" },
     { name = "mcp", extras = ["cli"], marker = "python_full_version >= '3.10'", specifier = ">=1.4.1" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "groq", "openai", "vertexai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "gemini", "groq", "openai"], editable = "pydantic_ai_slim" },
     { name = "pydantic-evals", editable = "pydantic_evals" },
     { name = "python-multipart", specifier = ">=0.0.17" },
     { name = "rich", specifier = ">=13.9.2" },
@@ -2926,6 +2944,9 @@ duckduckgo = [
 evals = [
     { name = "pydantic-evals" },
 ]
+gemini = [
+    { name = "google-genai" },
+]
 groq = [
     { name = "groq" },
 ]
@@ -2943,10 +2964,6 @@ openai = [
 ]
 tavily = [
     { name = "tavily-python" },
-]
-vertexai = [
-    { name = "google-auth" },
-    { name = "requests" },
 ]
 
 [package.dev-dependencies]
@@ -2975,7 +2992,7 @@ requires-dist = [
     { name = "duckduckgo-search", marker = "extra == 'duckduckgo'", specifier = ">=7.0.0" },
     { name = "eval-type-backport", specifier = ">=0.2.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
-    { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
+    { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=1.9.0" },
     { name = "griffe", specifier = ">=1.3.2" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.15.0" },
     { name = "httpx", specifier = ">=0.27" },
@@ -2988,12 +3005,11 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-evals", marker = "extra == 'evals'", editable = "pydantic_evals" },
     { name = "pydantic-graph", editable = "pydantic_graph" },
-    { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.2" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13" },
     { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
-provides-extras = ["anthropic", "bedrock", "cli", "cohere", "duckduckgo", "evals", "groq", "logfire", "mcp", "mistral", "openai", "tavily", "vertexai"]
+provides-extras = ["anthropic", "bedrock", "cli", "cohere", "duckduckgo", "evals", "gemini", "groq", "logfire", "mcp", "mistral", "openai", "tavily"]
 
 [package.metadata.requires-dev]
 dev = [

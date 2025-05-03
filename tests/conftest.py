@@ -333,9 +333,9 @@ def model(
             return CohereModel('command-r-plus', provider=CohereProvider(api_key=co_api_key))
         elif request.param == 'gemini':
             from pydantic_ai.models.gemini import GeminiModel
-            from pydantic_ai.providers.google_gla import GoogleGLAProvider
+            from pydantic_ai.providers.google import GoogleProvider
 
-            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+            return GeminiModel('gemini-1.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
         elif request.param == 'bedrock':
             from pydantic_ai.models.bedrock import BedrockConverseModel
 

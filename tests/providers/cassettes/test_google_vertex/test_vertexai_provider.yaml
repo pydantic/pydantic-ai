@@ -21,7 +21,7 @@ interactions:
       cache-control:
       - no-cache, no-store, max-age=0, must-revalidate
       content-length:
-      - '1419'
+      - '1420'
       content-type:
       - application/json; charset=utf-8
       expires:
@@ -37,8 +37,9 @@ interactions:
     parsed_body:
       access_token: scrubbed
       expires_in: 3599
-      id_token: eyJhbGciOiJSUzI1NiIsImtpZCI6IjgyMWYzYmM2NmYwNzUxZjc4NDA2MDY3OTliMWFkZjllOWZiNjBkZmIiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJhdWQiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJzdWIiOiIxMDY1Njg0NzQzMTU3NzkyMTI1NTkiLCJoZCI6InB5ZGFudGljLmRldiIsImVtYWlsIjoibWFyY2Vsb0BweWRhbnRpYy5kZXYiLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiYXRfaGFzaCI6ImlyckNRNE00c0Z0Z2dfS2hRTVNjekEiLCJpYXQiOjE3NDM0MTM3NzcsImV4cCI6MTc0MzQxNzM3N30.BAvb4TlcIoYcQODNLFqwtUQoSNJJbpAR0lk2OyFxXK9rSZ7m1e1_Dp1O4ApxPUS7f_NX34eSCuDJN2IXgh8VBv4k3IhI7CbMydYeqXuwlbgOOp1Z0farGEKneU1M7TvdngigAJ9wT-2LHjKd_GEcGau-CUvzXpcT1IOnNNyXGVqtuGmEfcw5jjPkKJNECUheeNHE3zeImatTstOLuKmI1ZK-etl41l3poSNuQkZkrbQ80Vst8BdT-b1tnJnXP1KGATBIamDy99OOiB9a7a9m_ikXYEyN91yR76DYot3hpDPlOX0H9hF-BOSqoOtlSS2TMBkMvFiiYWjID1e_9VlNUg
-      scope: https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email openid https://www.googleapis.com/auth/sqlservice.login
+      id_token: eyJhbGciOiJSUzI1NiIsImtpZCI6IjIzZjdhMzU4Mzc5NmY5NzEyOWU1NDE4ZjliMjEzNmZjYzBhOTY0NjIiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJhdWQiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJzdWIiOiIxMDY1Njg0NzQzMTU3NzkyMTI1NTkiLCJoZCI6InB5ZGFudGljLmRldiIsImVtYWlsIjoibWFyY2Vsb0BweWRhbnRpYy5kZXYiLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiYXRfaGFzaCI6IjhVRVFUMHpCenN0OV9qcW5haFBSa2ciLCJpYXQiOjE3NDU5MDk1ODQsImV4cCI6MTc0NTkxMzE4NH0.V_w1bKjD2r8xEqEJ0CdTLh0bnmulUJJFhArTdkHOVuTG3CZN7bOG1zDkLBpnSxt75SkQO1w4xde1EUFdu3oL5kGNS-TLPfS4PYF7sVaO3u_0bAdYgKr-vU7Eur_f-F3f_Goj809Kc6iSkgW2jsi7ogBS-A8fvVD1AeBXqLRPXXjclX1tl0sYinrBYbZi0wDAwUk6azYFHx7G7jmpJeT7AY8O_5fp4exHsx_QDg5BnuqUsf__GAUActGUEGnbmf--B-6Rhq1qeHSFiLQ1u6aj4pKEXjp1tBUsNMCKR7OkF6kH9pRvZzMkwnDF2VB79OyHIIEJ6vYk0jyPgOfiCpKJCA
+      scope: https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/sqlservice.login https://www.googleapis.com/auth/userinfo.email
+        openid
       token_type: Bearer
     status:
       code: 200
@@ -52,24 +53,25 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '82'
+      - '111'
       content-type:
       - application/json
       host:
-      - us-central1-aiplatform.googleapis.com
+      - aiplatform.googleapis.com
     method: POST
     parsed_body:
       contents:
       - parts:
         - text: What is the capital of France?
         role: user
-    uri: https://us-central1-aiplatform.googleapis.com/v1/projects/pydantic-ai/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent
+      generationConfig: {}
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.5-pro-exp-03-25:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '759'
+      - '794'
       content-type:
       - application/json; charset=UTF-8
       transfer-encoding:
@@ -80,26 +82,26 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.02161086102326711
+      - avgLogprobs: -0.4355073869228363
         content:
           parts:
-          - text: |
-              The capital of France is **Paris**.
+          - text: The capital of France is **Paris**.
           role: model
         finishReason: STOP
-      createTime: '2025-03-31T09:36:18.248148Z'
-      modelVersion: gemini-2.0-flash
-      responseId: EmLqZ9SSD-yOm9IP2bHc6Ag
+      createTime: '2025-04-29T06:53:05.430852Z'
+      modelVersion: gemini-2.5-pro-exp-03-25
+      responseId: UXcQaISmGqLq-eQP9InkgQk
       usageMetadata:
-        candidatesTokenCount: 9
+        candidatesTokenCount: 8
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 9
+          tokenCount: 8
         promptTokenCount: 7
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 7
-        totalTokenCount: 16
+        thoughtsTokenCount: 92
+        totalTokenCount: 107
         trafficType: ON_DEMAND
     status:
       code: 200

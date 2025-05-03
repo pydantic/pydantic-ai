@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '324'
+      - '202'
       content-type:
       - application/json
       host:
@@ -17,33 +17,26 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: What is the temperature in Tokyo?
+        - text: Hello!
         role: user
-      generationConfig: {}
-      tools:
-      - functionDeclarations:
-        - name: get_temperature
-          parameters:
-            properties:
-              city:
-                type: STRING
-              country:
-                type: STRING
-            required:
-            - city
-            - country
-            type: OBJECT
+      generationConfig:
+        frequencyPenalty: 0.4
+        maxOutputTokens: 1
+        presencePenalty: 0.3
+        temperature: 0.1
+        topP: 0.2
+      tools: []
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '729'
+      - '612'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=467
+      - gfet4t7; dur=308
       transfer-encoding:
       - chunked
       vary:
@@ -52,24 +45,23 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.20079084237416586
+      - avgLogprobs: -9.655528629082255e-06
         content:
           parts:
-          - text: |
-              The available tools lack the ability to access real-time temperature information.  Therefore, I cannot answer your question.
+          - text: Hello
           role: model
-        finishReason: STOP
+        finishReason: MAX_TOKENS
       modelVersion: gemini-1.5-flash
       usageMetadata:
-        candidatesTokenCount: 24
+        candidatesTokenCount: 1
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 24
-        promptTokenCount: 14
+          tokenCount: 1
+        promptTokenCount: 2
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 14
-        totalTokenCount: 38
+          tokenCount: 2
+        totalTokenCount: 3
     status:
       code: 200
       message: OK

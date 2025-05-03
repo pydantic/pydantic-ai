@@ -384,7 +384,7 @@ class State:
 
 
 email_writer_agent = Agent(
-    'google-vertex:gemini-1.5-pro',
+    'openai:gpt-4.1',
     output_type=Email,
     system_prompt='Write a welcome email to our tech blog.',
 )
