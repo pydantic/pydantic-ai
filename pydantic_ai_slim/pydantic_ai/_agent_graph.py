@@ -225,7 +225,11 @@ async def _prepare_request_parameters(
     async def add_tool(tool: Tool[DepsT]) -> None:
         ctx = run_context.replace_with(retry=tool.current_retry, tool_name=tool.name)
         if tool_def := await tool.prepare_tool_def(ctx):
-            # Agent._register_tool already check conflict names.
+            # prepare_tool_def may change tool_def.name
+            if tool_def.name in function_tool_defs:
+                raise exceptions.UserError(
+                    f"Tool '{tool}' defines a tool whose name conflicts with existing tool: {tool_def.name!r}."
+                )
             function_tool_defs[tool_def.name] = tool_def
 
     async def add_mcp_server_tools(server: MCPServer) -> None:

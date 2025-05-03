@@ -46,7 +46,7 @@ class MCPServer(ABC):
     """
 
     is_running: bool = False
-    tool_prefix: str = ''
+    tool_prefix: str | None = None
     """A prefix to add to all tools that are registered with the server.
 
     If not empty, will include a trailing underscore(`_`).
@@ -82,7 +82,7 @@ class MCPServer(ABC):
         """Get the tool name with prefix if `tool_prefix` is set."""
         return f'{self.tool_prefix}_{tool_name}' if self.tool_prefix else tool_name
 
-    def get_tool_name(self, tool_name: str) -> str:
+    def get_unprefixed_tool_name(self, tool_name: str) -> str:
         """Get original tool name without prefix for calling tools."""
         return tool_name.removeprefix(f'{self.tool_prefix}_') if self.tool_prefix else tool_name
 
@@ -118,7 +118,7 @@ class MCPServer(ABC):
         Raises:
             ModelRetry: If the tool call fails.
         """
-        result = await self._client.call_tool(self.get_tool_name(tool_name), arguments)
+        result = await self._client.call_tool(self.get_unprefixed_tool_name(tool_name), arguments)
 
         content = [self._map_tool_result_part(part) for part in result.content]
 
@@ -244,7 +244,7 @@ class MCPServerStdio(MCPServer):
     cwd: str | Path | None = None
     """The working directory to use when spawning the process."""
 
-    tool_prefix: str = ''
+    tool_prefix: str | None = None
     """A prefix to add to all tools that are registered with the server.
 
     If not empty, will include a trailing underscore(`_`).
@@ -335,7 +335,7 @@ class MCPServerHTTP(MCPServer):
     If `None`, no log level will be set.
     """
 
-    tool_prefix: str = ''
+    tool_prefix: str | None = None
     """A prefix to add to all tools that are registered with the server.
 
     If not empty, will include a trailing underscore(`_`).
