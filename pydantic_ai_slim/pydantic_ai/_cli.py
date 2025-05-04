@@ -69,21 +69,26 @@ Markdown.elements.update(
 )
 
 
-cli_agent = Agent()
+def default_cli_agent() -> Agent:
+    cli_agent = Agent()
+
+    @cli_agent.system_prompt
+    def cli_system_prompt() -> str:
+        now_utc = datetime.now(timezone.utc)
+        tzinfo = now_utc.astimezone().tzinfo
+        tzname = tzinfo.tzname(now_utc) if tzinfo else ''
+        return f"""\
+    Help the user by responding to their request, the output should be concise and always written in markdown.
+    The current date and time is {datetime.now()} {tzname}.
+    The user is running {sys.platform}."""
+
+    return cli_agent
 
 
-@cli_agent.system_prompt
-def cli_system_prompt() -> str:
-    now_utc = datetime.now(timezone.utc)
-    tzinfo = now_utc.astimezone().tzinfo
-    tzname = tzinfo.tzname(now_utc) if tzinfo else ''
-    return f"""\
-Help the user by responding to their request, the output should be concise and always written in markdown.
-The current date and time is {datetime.now()} {tzname}.
-The user is running {sys.platform}."""
+def cli(args_list: Sequence[str] | None = None, cli_agent: Agent | None = None) -> int:
+    if cli_agent is None:
+        cli_agent = default_cli_agent()
 
-
-def cli(args_list: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog='pai',
         description=f"""\

@@ -1665,6 +1665,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         finally:
             await exit_stack.aclose()
 
+    def run_cli(self) -> None:
+        """Run the agent in a CLI loop."""
+        from pydantic_ai._cli import cli
+
+        cli(cli_agent=self)
+
 
 @dataclasses.dataclass(repr=False)
 class AgentRun(Generic[AgentDepsT, OutputDataT]):
