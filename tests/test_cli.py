@@ -21,7 +21,7 @@ with try_import() as imports_successful:
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
-    from pydantic_ai._cli import cli, cli_agent, handle_slash_command
+    from pydantic_ai._cli import cli, default_cli_agent, handle_slash_command
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
 
@@ -96,6 +96,7 @@ def test_list_models(capfd: CaptureFixture[str]):
 
 def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
+    cli_agent = default_cli_agent()
     with cli_agent.override(model=TestModel(custom_output_text='# result\n\n```py\nx = 1\n```')):
         assert cli(['hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
@@ -105,6 +106,7 @@ def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
 
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
+    cli_agent = default_cli_agent()
     with create_pipe_input() as inp:
         inp.send_text('\n')
         inp.send_text('hello\n')
@@ -188,24 +190,4 @@ def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     cli(['--code-theme=dark'])
     mock_run_chat.assert_awaited_once_with(
         IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai'
-    )
-
-
-def test_agent_run_cli(mocker: MockerFixture, env: TestEnv):
-    """Test the new run_cli() method on Agent class."""
-    env.set('OPENAI_API_KEY', 'test')
-    mock_cli = mocker.patch('pydantic_ai._cli.cli')
-    agent = Agent()
-    agent.run_cli()
-    mock_cli.assert_called_once_with(cli_agent=agent)
-
-
-def test_cli_with_custom_agent(mocker: MockerFixture, env: TestEnv):
-    """Test passing a custom agent to cli()."""
-    env.set('OPENAI_API_KEY', 'test')
-    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    custom_agent = Agent()
-    cli(cli_agent=custom_agent)
-    mock_run_chat.assert_awaited_once_with(
-        IsInstance(PromptSession), True, custom_agent, IsInstance(Console), 'monokai'
     )
