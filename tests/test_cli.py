@@ -189,3 +189,23 @@ def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     mock_run_chat.assert_awaited_once_with(
         IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai'
     )
+
+
+def test_agent_run_cli(mocker: MockerFixture, env: TestEnv):
+    """Test the new run_cli() method on Agent class."""
+    env.set('OPENAI_API_KEY', 'test')
+    mock_cli = mocker.patch('pydantic_ai._cli.cli')
+    agent = Agent()
+    agent.run_cli()
+    mock_cli.assert_called_once_with(cli_agent=agent)
+
+
+def test_cli_with_custom_agent(mocker: MockerFixture, env: TestEnv):
+    """Test passing a custom agent to cli()."""
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+    custom_agent = Agent()
+    cli(cli_agent=custom_agent)
+    mock_run_chat.assert_awaited_once_with(
+        IsInstance(PromptSession), True, custom_agent, IsInstance(Console), 'monokai'
+    )
