@@ -191,7 +191,7 @@ def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     )
 
 
-def test_cli_agent_run_cli(mocker: MockerFixture, env: TestEnv):
+def test_agent_run_cli(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli_agent.run_cli()
