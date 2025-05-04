@@ -1900,8 +1900,3 @@ def test_agent_run_result_serialization() -> None:
     # Check that we can load the data back
     deserialized_result = adapter.validate_json(serialized_data)
     assert deserialized_result == result
-
-
-def test_agent_run_cli() -> None:
-    agent = Agent()
-    agent.run_cli()

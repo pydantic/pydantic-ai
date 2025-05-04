@@ -52,7 +52,6 @@ dependencies = [
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 examples = ["pydantic-ai-examples=={{ version }}"]
 logfire = ["logfire>=3.11.0"]
-cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
