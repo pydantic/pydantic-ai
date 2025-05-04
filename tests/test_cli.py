@@ -192,5 +192,4 @@ def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
 
 
 def test_cli_agent_run_cli():
-    agent = Agent()
-    agent.run_cli()
+    cli_agent.run_cli()
