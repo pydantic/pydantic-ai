@@ -189,3 +189,8 @@ def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     mock_run_chat.assert_awaited_once_with(
         IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai'
     )
+
+
+def test_cli_agent_run_cli():
+    agent = Agent()
+    agent.run_cli()
