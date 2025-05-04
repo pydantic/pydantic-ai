@@ -1666,13 +1666,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             await exit_stack.aclose()
 
     def run_cli(self: Agent[None, str]) -> None:
-        """Run the agent in a CLI loop.
-
-        This method can only be called on agents with string output type.
-        """
+        """Run the agent in a CLI loop."""
         from pydantic_ai._cli import cli
 
-        cli(cli_agent=self)
+        cli(agent=self)
 
 
 @dataclasses.dataclass(repr=False)

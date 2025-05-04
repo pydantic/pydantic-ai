@@ -156,7 +156,6 @@ reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingModuleSource = false
-reportUnusedFunction = false
 include = [
     "pydantic_ai_slim",
     "pydantic_evals",

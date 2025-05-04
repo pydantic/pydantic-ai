@@ -69,26 +69,21 @@ Markdown.elements.update(
 )
 
 
-def default_cli_agent() -> Agent:
-    cli_agent = Agent()
-
-    @cli_agent.system_prompt
-    def cli_system_prompt() -> str:
-        now_utc = datetime.now(timezone.utc)
-        tzinfo = now_utc.astimezone().tzinfo
-        tzname = tzinfo.tzname(now_utc) if tzinfo else ''
-        return f"""\
-    Help the user by responding to their request, the output should be concise and always written in markdown.
-    The current date and time is {datetime.now()} {tzname}.
-    The user is running {sys.platform}."""
-
-    return cli_agent
+cli_agent = Agent()
 
 
-def cli(args_list: Sequence[str] | None = None, cli_agent: Agent | None = None) -> int:
-    if cli_agent is None:
-        cli_agent = default_cli_agent()
+@cli_agent.system_prompt
+def cli_system_prompt() -> str:
+    now_utc = datetime.now(timezone.utc)
+    tzinfo = now_utc.astimezone().tzinfo
+    tzname = tzinfo.tzname(now_utc) if tzinfo else ''
+    return f"""\
+Help the user by responding to their request, the output should be concise and always written in markdown.
+The current date and time is {datetime.now()} {tzname}.
+The user is running {sys.platform}."""
 
+
+def cli(args_list: Sequence[str] | None = None, agent: Agent[None, str] = cli_agent) -> int:
     parser = argparse.ArgumentParser(
         prog='pai',
         description=f"""\
@@ -145,7 +140,7 @@ Special prompt:
         return 0
 
     try:
-        cli_agent.model = infer_model(args.model)
+        agent.model = infer_model(args.model)
     except UserError as e:
         console.print(f'Error initializing [magenta]{args.model}[/magenta]:\n[red]{e}[/red]')
         return 1
@@ -160,7 +155,7 @@ Special prompt:
 
     if prompt := cast(str, args.prompt):
         try:
-            asyncio.run(ask_agent(cli_agent, prompt, stream, console, code_theme))
+            asyncio.run(ask_agent(agent, prompt, stream, console, code_theme))
         except KeyboardInterrupt:
             pass
         return 0
@@ -169,7 +164,7 @@ Special prompt:
     # doing this instead of `PromptSession[Any](history=` allows mocking of PromptSession in tests
     session: PromptSession[Any] = PromptSession(history=FileHistory(str(history)))
     try:
-        return asyncio.run(run_chat(session, stream, cli_agent, console, code_theme))
+        return asyncio.run(run_chat(session, stream, agent, console, code_theme))
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 

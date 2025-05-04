@@ -21,7 +21,7 @@ with try_import() as imports_successful:
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
-    from pydantic_ai._cli import cli, default_cli_agent, handle_slash_command
+    from pydantic_ai._cli import cli, cli_agent, handle_slash_command
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
 
@@ -96,7 +96,6 @@ def test_list_models(capfd: CaptureFixture[str]):
 
 def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
-    cli_agent = default_cli_agent()
     with cli_agent.override(model=TestModel(custom_output_text='# result\n\n```py\nx = 1\n```')):
         assert cli(['hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
@@ -106,7 +105,6 @@ def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
 
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
-    cli_agent = default_cli_agent()
     with create_pipe_input() as inp:
         inp.send_text('\n')
         inp.send_text('hello\n')

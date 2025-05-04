@@ -1902,7 +1902,6 @@ def test_agent_run_result_serialization() -> None:
     assert deserialized_result == result
 
 
-def test_agent_run_cli():
-    """Test passing a custom agent to cli()."""
+def test_agent_run_cli() -> None:
     agent = Agent()
     agent.run_cli()
