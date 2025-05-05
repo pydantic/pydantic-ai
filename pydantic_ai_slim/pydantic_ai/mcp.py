@@ -268,6 +268,9 @@ class MCPServerStdio(MCPServer):
     def _get_log_level(self) -> LoggingLevel | None:
         return self.log_level
 
+    def __repr__(self) -> str:
+        return f'MCPServerStdio(command={self.command!r}, args={self.args!r}, tool_prefix={self.tool_prefix!r})'
+
 
 @dataclass
 class MCPServerHTTP(MCPServer):
@@ -362,3 +365,6 @@ class MCPServerHTTP(MCPServer):
 
     def _get_log_level(self) -> LoggingLevel | None:
         return self.log_level
+
+    def __repr__(self) -> str:
+        return f'MCPServerHTTP(url={self.url!r}, tool_prefix={self.tool_prefix!r})'
