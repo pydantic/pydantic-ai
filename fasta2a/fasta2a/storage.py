@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from .schema import Message, Task, TaskState, TaskStatus
+from .schema import Artifact, Message, Task, TaskState, TaskStatus
 
 
 class Storage(ABC):
@@ -24,7 +24,13 @@ class Storage(ABC):
         """Submit a task to storage."""
 
     @abstractmethod
-    async def update_task(self, task_id: str, state: TaskState, message: Message | None = None) -> Task:
+    async def update_task(
+        self,
+        task_id: str,
+        state: TaskState,
+        message: Message | None = None,
+        artifacts: list[Artifact] | None = None,
+    ) -> Task:
         """Update the state of a task."""
 
 
@@ -62,7 +68,13 @@ class InMemoryStorage(Storage):
         self.tasks[task_id] = task
         return task
 
-    async def update_task(self, task_id: str, state: TaskState, message: Message | None = None) -> Task:
+    async def update_task(
+        self,
+        task_id: str,
+        state: TaskState,
+        message: Message | None = None,
+        artifacts: list[Artifact] | None = None,
+    ) -> Task:
         """Save the task as "working"."""
         task = self.tasks[task_id]
         task['status'] = TaskStatus(state=state, timestamp=datetime.now().isoformat())

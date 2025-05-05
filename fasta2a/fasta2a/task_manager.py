@@ -60,7 +60,7 @@ The flow:
 
 import uuid
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .schema import (
@@ -90,15 +90,24 @@ class TaskManager:
     worker: Worker
     storage: Storage
 
+    _aexit_stack: AsyncExitStack | None = field(default=None, init=False)
+
     async def __aenter__(self):
-        self.aexit_stack = AsyncExitStack()
-        await self.aexit_stack.__aenter__()
-        await self.aexit_stack.enter_async_context(self.worker)
+        self._aexit_stack = AsyncExitStack()
+        await self._aexit_stack.__aenter__()
+        await self._aexit_stack.enter_async_context(self.worker)
 
         return self
 
+    @property
+    def is_running(self) -> bool:
+        return self._aexit_stack is not None
+
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any):
-        await self.aexit_stack.__aexit__(exc_type, exc_value, traceback)
+        if self._aexit_stack is None:
+            raise RuntimeError('TaskManager was not properly initialized.')
+        await self._aexit_stack.__aexit__(exc_type, exc_value, traceback)
+        self._aexit_stack = None
 
     async def send_task(self, request: SendTaskRequest) -> SendTaskResponse:
         """Send a task to the worker."""

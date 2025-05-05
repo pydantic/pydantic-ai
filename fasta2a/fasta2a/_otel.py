@@ -8,8 +8,6 @@ from typing import Any, Generic, TypeVar
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
-# TODO(Marcelo): We need to move this logic to Logfire.
-
 try:
     from opentelemetry import context as otel_context
     from opentelemetry.trace import INVALID_SPAN, Span, get_current_span, set_span_in_context

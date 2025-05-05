@@ -72,6 +72,8 @@ class FastA2A(Starlette):
         self.router.add_route('/', self._agent_run_endpoint, methods=['POST'])
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope['type'] == 'http' and not self.task_manager.is_running:
+            raise RuntimeError('TaskManager was not properly initialized.')
         await super().__call__(scope, receive, send)
 
     async def _agent_card_endpoint(self, request: Request) -> Response:

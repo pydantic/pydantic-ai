@@ -225,6 +225,18 @@ wheels = [
 ]
 
 [[package]]
+name = "asgi-lifespan"
+version = "2.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "sniffio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6a/da/e7908b54e0f8043725a990bf625f2041ecf6bfe8eb7b19407f1c00b630f7/asgi-lifespan-2.1.0.tar.gz", hash = "sha256:5e2effaf0bfe39829cf2d64e7ecc47c7d86d676a6599f7afba378c31f5e3a308", size = 15627 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2f/f5/c36551e93acba41a59939ae6a0fb77ddb3f2e8e8caa716410c65f7341f72/asgi_lifespan-2.1.0-py3-none-any.whl", hash = "sha256:ed840706680e28428c01e14afb3875d7d76d3206f3d5b2f2294e059b5c23804f", size = 10895 },
+]
+
+[[package]]
 name = "asgiref"
 version = "3.8.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2977,6 +2989,7 @@ vertexai = [
 [package.dev-dependencies]
 dev = [
     { name = "anyio" },
+    { name = "asgi-lifespan" },
     { name = "boto3-stubs", extra = ["bedrock-runtime"] },
     { name = "coverage", extra = ["toml"] },
     { name = "devtools" },
@@ -3024,6 +3037,7 @@ provides-extras = ["a2a", "anthropic", "bedrock", "cli", "cohere", "duckduckgo",
 [package.metadata.requires-dev]
 dev = [
     { name = "anyio", specifier = ">=4.5.0" },
+    { name = "asgi-lifespan", specifier = ">=2.1.0" },
     { name = "boto3-stubs", extras = ["bedrock-runtime"] },
     { name = "coverage", extras = ["toml"], specifier = ">=7.6.2" },
     { name = "devtools", specifier = ">=0.12.2" },

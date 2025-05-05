@@ -4,15 +4,15 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Generic, Literal, Self, TypeVar
 
 import anyio
+from opentelemetry.trace import Span, get_current_span, get_tracer, use_span
 from pydantic import Discriminator
 from typing_extensions import TypedDict
 
-from ._otel import instrument_create_memory_object_stream
 from .runner import Runner
 from .schema import TaskIdParams, TaskSendParams
 from .storage import Storage
 
-instrument_create_memory_object_stream()
+tracer = get_tracer(__name__)
 
 
 class WorkerClient(ABC):
@@ -93,18 +93,22 @@ class InMemoryWorker(Worker):
 
     async def _run_task_operations(self):
         async for task_operation in self._read_stream:
-            if task_operation['operation'] == 'run':
-                self._task_group.start_soon(self._handle_run_task, task_operation['params'])
+            with use_span(task_operation['_current_span']):
+                with tracer.start_as_current_span(
+                    f'{task_operation["operation"]} task', attributes={'logfire.tags': ['fasta2a']}
+                ):
+                    if task_operation['operation'] == 'run':
+                        self._task_group.start_soon(self._handle_run_task, task_operation['params'])
 
     async def _handle_run_task(self, params: TaskSendParams):
         task_context = TaskContext(storage=self.storage, params=params)
         await self.runner.run(task_context)
 
     async def run_task(self, params: TaskSendParams) -> None:
-        await self._write_stream.send(_RunTask(operation='run', params=params))
+        await self._write_stream.send(_RunTask(operation='run', params=params, _current_span=get_current_span()))
 
     async def cancel_task(self, params: TaskIdParams) -> None:
-        await self._write_stream.send(_CancelTask(operation='cancel', params=params))
+        await self._write_stream.send(_CancelTask(operation='cancel', params=params, _current_span=get_current_span()))
 
     async def send_run_task(self, params: TaskSendParams) -> None:
         await self.run_task(params)
@@ -122,6 +126,7 @@ class _TaskOperation(TypedDict, Generic[OperationT, ParamsT]):
 
     operation: OperationT
     params: ParamsT
+    _current_span: Span
 
 
 _RunTask = _TaskOperation[Literal['run'], TaskSendParams]

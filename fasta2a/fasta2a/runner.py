@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from .schema import Message, TaskSendParams
+from .schema import Artifact, Message, TaskSendParams
 
 if TYPE_CHECKING:
     from .worker import TaskContext
@@ -19,4 +19,4 @@ class Runner(ABC):
     def build_message_history(self, task_history: list[Message]) -> list[Any]: ...
 
     @abstractmethod
-    def build_agent_message(self, result: Any) -> Message: ...
+    def build_artifacts(self, result: Any) -> list[Artifact]: ...

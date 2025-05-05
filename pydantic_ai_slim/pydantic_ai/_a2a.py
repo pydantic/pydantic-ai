@@ -28,7 +28,7 @@ from .agent import Agent, AgentDepsT, OutputDataT
 try:
     from fasta2a.applications import FastA2A
     from fasta2a.runner import Runner
-    from fasta2a.schema import Message, Part, Provider, Skill, TaskSendParams, TextPart as A2ATextPart
+    from fasta2a.schema import Artifact, Message, Part, Provider, Skill, TaskSendParams, TextPart as A2ATextPart
     from fasta2a.storage import InMemoryStorage, Storage
     from fasta2a.worker import InMemoryWorker, TaskContext, Worker
 except ImportError as _import_error:
@@ -95,18 +95,18 @@ class AgentRunner(Runner, Generic[AgentDepsT, OutputDataT]):
         task_history.append(params['message'])
         message_history = self.build_message_history(task_history=task_history)
 
+        # TODO(Marcelo): We need to have a way to communicate when the task is set to `input-required`. Maybe
+        # a custom `output_type` with a `more_info_required` field, or something like that.
+
         # TODO(Marcelo): We need to make this more customizable e.g. pass deps.
         result = await self.agent.run(message_history=message_history)  # type: ignore
-        agent_message = self.build_agent_message(result.output)
 
-        # TODO(Marcelo): This is in case of image/video/audio/file - which we don't support on the agent yet.
-        # artifacts = self.build_artifacts(result.output)
+        artifacts = self.build_artifacts(result.output)
+        await task_ctx.storage.update_task(task['id'], state='completed', artifacts=artifacts)
 
-        await task_ctx.storage.update_task(task['id'], state='completed', message=agent_message)
-
-    def build_agent_message(self, result: Any) -> Message:
+    def build_artifacts(self, result: Any) -> list[Artifact]:
         # TODO(Marcelo): We need to send the json schema of the result on the metadata of the message.
-        return Message(role='agent', parts=[A2ATextPart(type='text', text=str(result))])
+        return [Artifact(name='result', index=0, parts=[A2ATextPart(type='text', text=str(result))])]
 
     def build_message_history(self, task_history: list[Message]) -> list[ModelMessage]:
         model_messages: list[ModelMessage] = []
