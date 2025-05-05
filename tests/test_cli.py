@@ -74,7 +74,7 @@ def test_invalid_model(capfd: CaptureFixture[str]):
     )
 
 
-def test_custom_agent(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
+def test_agent_flag(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
 
     # Create a dynamic module using types.ModuleType
@@ -103,6 +103,31 @@ def test_custom_agent(capfd: CaptureFixture[str], mocker: MockerFixture, env: Te
         # Verify ask_agent was called with our custom agent
         mock_ask.assert_called_once()
         assert mock_ask.call_args[0][0] is test_agent
+
+    finally:
+        # Clean up by removing the module from sys.modules
+        if 'test_module' in sys.modules:
+            del sys.modules['test_module']
+
+
+def test_agent_flag_non_agent(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+
+    # Create a dynamic module using types.ModuleType
+    import types
+
+    test_module = types.ModuleType('test_module')
+
+    # Create and add agent to the module
+    test_agent = 'Not an Agent object'
+    setattr(test_module, 'custom_agent', test_agent)
+
+    # Register the module in sys.modules
+    sys.modules['test_module'] = test_module
+
+    try:
+        assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 1
+        assert 'is not an Agent' in capfd.readouterr().out
 
     finally:
         # Clean up by removing the module from sys.modules
