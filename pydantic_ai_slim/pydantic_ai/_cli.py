@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import argparse
 import asyncio
+import importlib
 import sys
 from asyncio import CancelledError
 from collections.abc import Sequence
@@ -109,6 +110,11 @@ Special prompt:
     qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
     arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
     parser.add_argument(
+        '-a',
+        '--agent',
+        help='Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
+    )
+    parser.add_argument(
         '-l',
         '--list-models',
         action='store_true',
@@ -138,6 +144,23 @@ Special prompt:
         for model in qualified_model_names:
             console.print(f'  {model}', highlight=False)
         return 0
+
+    # Load custom agent if specified
+    if args.agent:
+        try:
+            module_path, variable_name = args.agent.split(':')
+            module = importlib.import_module(module_path)
+            agent = getattr(module, variable_name)
+            if not isinstance(agent, Agent):
+                console.print(f'[red]Error: {args.agent} is not an Agent instance[/red]')
+                return 1
+            console.print(f'[green]Using custom agent:[/green] [magenta]{args.agent}[/magenta]', highlight=False)
+        except ValueError:
+            console.print('[red]Error: Agent must be specified in "module:variable" format[/red]')
+            return 1
+        except (ImportError, AttributeError) as e:
+            console.print(f'[red]Error loading agent {args.agent}: {e}[/red]')
+            return 1
 
     try:
         agent.model = infer_model(args.model)
