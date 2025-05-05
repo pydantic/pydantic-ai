@@ -264,6 +264,9 @@ class OpenAIModel(Model):
         openai_messages = await self._map_messages(messages)
 
         try:
+            extra_headers = {'User-Agent': get_user_agent()}
+            if model_settings.get('extra_headers') is not None:
+                extra_headers.update(model_settings['extra_headers'])
             return await self.client.chat.completions.create(
                 model=self._model_name,
                 messages=openai_messages,
@@ -284,7 +287,7 @@ class OpenAIModel(Model):
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
-                extra_headers={'User-Agent': get_user_agent()},
+                extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
@@ -610,6 +613,9 @@ class OpenAIResponsesModel(Model):
         reasoning = self._get_reasoning(model_settings)
 
         try:
+            extra_headers = {'User-Agent': get_user_agent()}
+            if model_settings.get('extra_headers') is not None:
+                extra_headers.update(model_settings['extra_headers'])
             return await self.client.responses.create(
                 input=openai_messages,
                 model=self._model_name,
@@ -625,7 +631,7 @@ class OpenAIResponsesModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
-                extra_headers={'User-Agent': get_user_agent()},
+                extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:

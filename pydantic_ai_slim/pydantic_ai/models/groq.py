@@ -200,6 +200,9 @@ class GroqModel(Model):
         groq_messages = self._map_messages(messages)
 
         try:
+            extra_headers = {'User-Agent': get_user_agent()}
+            if model_settings.get('extra_headers') is not None:
+                extra_headers.update(model_settings['extra_headers'])
             return await self.client.chat.completions.create(
                 model=str(self._model_name),
                 messages=groq_messages,
@@ -217,7 +220,7 @@ class GroqModel(Model):
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
-                extra_headers={'User-Agent': get_user_agent()},
+                extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
