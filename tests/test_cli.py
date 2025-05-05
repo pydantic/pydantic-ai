@@ -40,7 +40,7 @@ def test_cli_help(capfd: CaptureFixture[str]):
 
     assert capfd.readouterr().out.splitlines() == snapshot(
         [
-            'usage: pai [-h] [-m [MODEL]] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]',
+            'usage: pai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]',
             '',
             IsStr(),
             '',
@@ -56,6 +56,8 @@ def test_cli_help(capfd: CaptureFixture[str]):
             '  -h, --help            show this help message and exit',
             '  -m [MODEL], --model [MODEL]',
             '                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o". Defaults to "openai:gpt-4o".',
+            '  -a AGENT, --agent AGENT',
+            '                        Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
             '  -l, --list-models     List all available models and exit',
             '  -t [CODE_THEME], --code-theme [CODE_THEME]',
             '                        Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "monokai".',
