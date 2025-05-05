@@ -158,9 +158,6 @@ Special prompt:
         except ValueError:
             console.print('[red]Error: Agent must be specified in "module:variable" format[/red]')
             return 1
-        except (ImportError, AttributeError) as e:
-            console.print(f'[red]Error loading agent {args.agent}: {e}[/red]')
-            return 1
 
     try:
         agent.model = infer_model(args.model)
