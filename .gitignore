@@ -17,4 +17,4 @@ examples/pydantic_ai_examples/.chat_app_messages.sqlite
 /docs-site/.wrangler/
 /CLAUDE.md
 node_modules/
-.idea
+.idea/
