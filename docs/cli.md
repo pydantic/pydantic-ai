@@ -85,7 +85,7 @@ You can directly launch CLI mode directly from an `Agent` instance using `Agent.
 from pydantic_ai import Agent
 
 my_agent = Agent()
-my_agent.model = "openai:gpt-4"
+my_agent.model = 'openai:gpt-4'
 
 # Start CLI loop with this agent
 my_agent.run_cli()
