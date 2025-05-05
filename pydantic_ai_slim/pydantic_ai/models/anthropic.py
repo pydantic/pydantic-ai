@@ -222,7 +222,7 @@ class AnthropicModel(Model):
 
         try:
             extra_headers = {'User-Agent': get_user_agent()}
-            if model_settings.get('extra_headers') is not None:
+            if 'extra_headers' in model_settings:
                 extra_headers.update(model_settings['extra_headers'])
             return await self.client.messages.create(
                 max_tokens=model_settings.get('max_tokens', 1024),
