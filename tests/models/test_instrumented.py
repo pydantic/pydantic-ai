@@ -70,19 +70,17 @@ class MyModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
-        return (
-            ModelResponse(
-                parts=[
-                    TextPart('text1'),
-                    ToolCallPart('tool1', 'args1', 'tool_call_1'),
-                    ToolCallPart('tool2', {'args2': 3}, 'tool_call_2'),
-                    TextPart('text2'),
-                    {},  # test unexpected parts  # type: ignore
-                ],
-                model_name='my_model_123',
-            ),
-            Usage(request_tokens=100, response_tokens=200),
+    ) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                TextPart('text1'),
+                ToolCallPart('tool1', 'args1', 'tool_call_1'),
+                ToolCallPart('tool2', {'args2': 3}, 'tool_call_2'),
+                TextPart('text2'),
+                {},  # test unexpected parts  # type: ignore
+            ],
+            usage=Usage(request_tokens=100, response_tokens=200),
+            model_name='my_model_123',
         )
 
     @asynccontextmanager
@@ -127,11 +125,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 {},  # test unexpected parts  # type: ignore
             ]
         ),
-        ModelResponse(
-            parts=[
-                TextPart('text3'),
-            ]
-        ),
+        ModelResponse(parts=[TextPart('text3')], usage=Usage()),
     ]
     await model.request(
         messages,
@@ -540,11 +534,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                 {},  # test unexpected parts  # type: ignore
             ]
         ),
-        ModelResponse(
-            parts=[
-                TextPart('text3'),
-            ]
-        ),
+        ModelResponse(parts=[TextPart('text3')], usage=Usage()),
     ]
     await model.request(
         messages,
@@ -681,7 +671,7 @@ def test_messages_to_otel_events_serialization_errors():
             raise ValueError('error!')
 
     messages = [
-        ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()}, tool_call_id='tool_call_id')]),
+        ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()}, tool_call_id='tool_call_id')], usage=Usage()),
         ModelRequest(parts=[ToolReturnPart('tool', Bar(), tool_call_id='return_tool_call_id')]),
     ]
 
@@ -702,7 +692,7 @@ def test_messages_to_otel_events_serialization_errors():
 def test_messages_to_otel_events_instructions():
     messages = [
         ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
-        ModelResponse(parts=[TextPart('text1')]),
+        ModelResponse(parts=[TextPart('text1')], usage=Usage()),
     ]
     assert [
         InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
@@ -723,7 +713,7 @@ def test_messages_to_otel_events_instructions():
 def test_messages_to_otel_events_instructions_multiple_messages():
     messages = [
         ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
-        ModelResponse(parts=[TextPart('text1')]),
+        ModelResponse(parts=[TextPart('text1')], usage=Usage()),
         ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')]),
     ]
     assert [
@@ -763,7 +753,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
             ]
         ),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
-        ModelResponse(parts=[TextPart('text1')]),
+        ModelResponse(parts=[TextPart('text1')], usage=Usage()),
     ]
     assert [
         InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)

@@ -86,11 +86,12 @@ class TestModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
+    ) -> ModelResponse:
         self.last_model_request_parameters = model_request_parameters
         model_response = self._request(messages, model_settings, model_request_parameters)
-        usage = _estimate_usage([*messages, model_response])
-        return model_response, usage
+        model_response.usage = _estimate_usage([*messages, model_response])
+        model_response.usage.requests = 1
+        return model_response
 
     @asynccontextmanager
     async def request_stream(
@@ -165,6 +166,7 @@ class TestModel(Model):
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(
                 parts=[ToolCallPart(name, self.gen_tool_args(args)) for name, args in tool_calls],
+                usage=Usage(),
                 model_name=self._model_name,
             )
 
@@ -194,7 +196,7 @@ class TestModel(Model):
                             if tool.name in new_retry_names
                         ]
                     )
-                return ModelResponse(parts=retry_parts, model_name=self._model_name)
+                return ModelResponse(parts=retry_parts, usage=Usage(), model_name=self._model_name)
 
         if isinstance(output_wrapper, _WrappedTextOutput):
             if (response_text := output_wrapper.value) is None:
@@ -207,23 +209,31 @@ class TestModel(Model):
                                 output[part.tool_name] = part.content
                 if output:
                     return ModelResponse(
-                        parts=[TextPart(pydantic_core.to_json(output).decode())], model_name=self._model_name
+                        parts=[TextPart(pydantic_core.to_json(output).decode())],
+                        usage=Usage(),
+                        model_name=self._model_name,
                     )
                 else:
-                    return ModelResponse(parts=[TextPart('success (no tool calls)')], model_name=self._model_name)
+                    return ModelResponse(
+                        parts=[TextPart('success (no tool calls)')], usage=Usage(), model_name=self._model_name
+                    )
             else:
-                return ModelResponse(parts=[TextPart(response_text)], model_name=self._model_name)
+                return ModelResponse(parts=[TextPart(response_text)], usage=Usage(), model_name=self._model_name)
         else:
             assert output_tools, 'No output tools provided'
             custom_output_args = output_wrapper.value
             output_tool = output_tools[self.seed % len(output_tools)]
             if custom_output_args is not None:
                 return ModelResponse(
-                    parts=[ToolCallPart(output_tool.name, custom_output_args)], model_name=self._model_name
+                    parts=[ToolCallPart(output_tool.name, custom_output_args)],
+                    usage=Usage(),
+                    model_name=self._model_name,
                 )
             else:
                 response_args = self.gen_tool_args(output_tool)
-                return ModelResponse(parts=[ToolCallPart(output_tool.name, response_args)], model_name=self._model_name)
+                return ModelResponse(
+                    parts=[ToolCallPart(output_tool.name, response_args)], model_name=self._model_name, usage=Usage()
+                )
 
 
 @dataclass

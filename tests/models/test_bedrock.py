@@ -75,6 +75,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                         content="Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=7, response_tokens=30, total_tokens=37),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -132,6 +133,7 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
                         tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
                     ),
                 ],
+                usage=Usage(requests=1, request_tokens=551, response_tokens=132, total_tokens=683),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -156,6 +158,7 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
                         tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                     ),
                 ],
+                usage=Usage(requests=1, request_tokens=685, response_tokens=166, total_tokens=851),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -255,6 +258,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
                     ),
                 ],
+                usage=Usage(requests=1, request_tokens=417, response_tokens=69, total_tokens=486),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -278,6 +282,7 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
 """
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=509, response_tokens=108, total_tokens=617),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -544,6 +549,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                         content='The capital of France is Paris. Paris is not only the political and economic hub of the country but also a major center for culture, fashion, art, and tourism. It is renowned for its rich history, iconic landmarks such as the Eiffel Tower, Notre-Dame Cathedral, and the Louvre Museum, as well as its influence on global culture and cuisine.'
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=13, response_tokens=71, total_tokens=84),
                 model_name='us.amazon.nova-pro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -572,9 +578,9 @@ async def test_bedrock_multiple_documents_in_history(
         'What is in the documents?',
         message_history=[
             ModelRequest(parts=[UserPromptPart(content=['Here is a PDF document: ', document_content])]),
-            ModelResponse(parts=[TextPart(content='foo bar')]),
+            ModelResponse(parts=[TextPart(content='foo bar')], usage=Usage()),
             ModelRequest(parts=[UserPromptPart(content=['Here is another PDF document: ', document_content])]),
-            ModelResponse(parts=[TextPart(content='foo bar 2')]),
+            ModelResponse(parts=[TextPart(content='foo bar 2')], usage=Usage()),
         ],
     )
 

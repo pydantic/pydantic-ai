@@ -13,6 +13,7 @@ Here's a minimal example:
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import FunctionModel, AgentInfo
+from pydantic_ai.usage import Usage
 
 my_agent = Agent('openai:gpt-4o')
 
@@ -42,7 +43,7 @@ async def model_function(
         function_tools=[], allow_text_output=True, output_tools=[], model_settings=None
     )
     """
-    return ModelResponse(parts=[TextPart('hello world')])
+    return ModelResponse(parts=[TextPart('hello world')], usage=Usage())
 
 
 async def test_my_agent():

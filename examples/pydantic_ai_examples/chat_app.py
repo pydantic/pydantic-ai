@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
+from pydantic_ai.usage import Usage
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -129,7 +130,9 @@ async def post_chat(
             async for text in result.stream(debounce_by=0.01):
                 # text here is a `str` and the frontend wants
                 # JSON encoded ModelResponse, so we create one
-                m = ModelResponse(parts=[TextPart(text)], timestamp=result.timestamp())
+                m = ModelResponse(
+                    parts=[TextPart(text)], usage=Usage(), timestamp=result.timestamp()
+                )
                 yield json.dumps(to_chat_message(m)).encode('utf-8') + b'\n'
 
         # add new messages (e.g. the user prompt and the agent response in this case) to the database

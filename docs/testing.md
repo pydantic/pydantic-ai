@@ -97,6 +97,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     ModelRequest,
 )
+from pydantic_ai.usage import Usage
 
 from fake_database import DatabaseConn
 from weather_app import run_weather_forecast, weather_agent
@@ -140,6 +141,13 @@ async def test_forecast():
                     tool_call_id=IsStr(),
                 )
             ],
+            usage=Usage(
+                requests=1,
+                request_tokens=71,
+                response_tokens=7,
+                total_tokens=78,
+                details=None,
+            ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
         ),
@@ -159,6 +167,13 @@ async def test_forecast():
                     content='{"weather_forecast":"Sunny with a chance of rain"}',
                 )
             ],
+            usage=Usage(
+                requests=1,
+                request_tokens=77,
+                response_tokens=16,
+                total_tokens=93,
+                details=None,
+            ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
         ),
@@ -195,6 +210,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import Usage
 
 from fake_database import DatabaseConn
 from weather_app import run_weather_forecast, weather_agent
@@ -212,12 +228,12 @@ def call_weather_forecast(  # (1)!
         m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
         assert m is not None
         args = {'location': 'London', 'forecast_date': m.group()}  # (2)!
-        return ModelResponse(parts=[ToolCallPart('weather_forecast', args)])
+        return ModelResponse(parts=[ToolCallPart('weather_forecast', args)], usage=Usage())
     else:
         # second call, return the forecast
         msg = messages[-1].parts[0]
         assert msg.part_kind == 'tool-return'
-        return ModelResponse(parts=[TextPart(f'The forecast is: {msg.content}')])
+        return ModelResponse(parts=[TextPart(f'The forecast is: {msg.content}')], usage=Usage())
 
 
 async def test_forecast_future():
@@ -258,3 +274,4 @@ async def test_forecast(override_weather_agent: None):
     ...
     # test code here
 ```
+x

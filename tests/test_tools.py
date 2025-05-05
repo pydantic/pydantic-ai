@@ -16,6 +16,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import Usage
 
 
 def test_tool_no_ctx():
@@ -77,9 +78,9 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
 async def get_json_schema(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(info.function_tools) == 1:
         r = info.function_tools[0]
-        return ModelResponse(parts=[TextPart(pydantic_core.to_json(r).decode())])
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(r).decode())], usage=Usage())
     else:
-        return ModelResponse(parts=[TextPart(pydantic_core.to_json(info.function_tools).decode())])
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(info.function_tools).decode())], usage=Usage())
 
 
 @pytest.mark.parametrize('docstring_format', ['google', 'auto'])
@@ -691,9 +692,9 @@ def test_dynamic_tool_use_messages():
     async def repeat_call_foobar(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if info.function_tools:
             tool = info.function_tools[0]
-            return ModelResponse(parts=[ToolCallPart(tool.name, {'x': 42, 'y': 'a'})])
+            return ModelResponse(parts=[ToolCallPart(tool.name, {'x': 42, 'y': 'a'})], usage=Usage())
         else:
-            return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[TextPart('done')], usage=Usage())
 
     agent = Agent(FunctionModel(repeat_call_foobar), deps_type=int)
 
@@ -838,10 +839,11 @@ def test_call_tool_without_unrequired_parameters(set_event_loop: None):
                     ToolCallPart(tool_name='my_tool_plain', args={'b': 17}),
                     ToolCallPart(tool_name='my_tool_plain', args={'a': 4, 'b': 17}),
                     ToolCallPart(tool_name='no_args_tool', args=''),
-                ]
+                ],
+                usage=Usage(),
             )
         else:
-            return ModelResponse(parts=[TextPart('finished')])
+            return ModelResponse(parts=[TextPart('finished')], usage=Usage())
 
     agent = Agent(FunctionModel(call_tools_first))
 

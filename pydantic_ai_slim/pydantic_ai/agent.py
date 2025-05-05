@@ -551,6 +551,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 CallToolsNode(
                     model_response=ModelResponse(
                         parts=[TextPart(content='Paris', part_kind='text')],
+                        usage=Usage(
+                            requests=1,
+                            request_tokens=56,
+                            response_tokens=1,
+                            total_tokens=57,
+                            details=None,
+                        ),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
                         kind='response',
@@ -1715,6 +1722,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='Paris', part_kind='text')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=56,
+                        response_tokens=1,
+                        total_tokens=57,
+                        details=None,
+                    ),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                     kind='response',
@@ -1853,6 +1867,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     CallToolsNode(
                         model_response=ModelResponse(
                             parts=[TextPart(content='Paris', part_kind='text')],
+                            usage=Usage(
+                                requests=1,
+                                request_tokens=56,
+                                response_tokens=1,
+                                total_tokens=57,
+                                details=None,
+                            ),
                             model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
                             kind='response',

@@ -23,7 +23,6 @@ from ..messages import (
     ModelResponse,
 )
 from ..settings import ModelSettings
-from ..usage import Usage
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
@@ -122,11 +121,11 @@ class InstrumentedModel(WrapperModel):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
+    ) -> ModelResponse:
         with self._instrument(messages, model_settings, model_request_parameters) as finish:
-            response, usage = await super().request(messages, model_settings, model_request_parameters)
-            finish(response, usage)
-            return response, usage
+            response = await super().request(messages, model_settings, model_request_parameters)
+            finish(response)
+            return response
 
     @asynccontextmanager
     async def request_stream(
@@ -144,7 +143,7 @@ class InstrumentedModel(WrapperModel):
                     yield response_stream
             finally:
                 if response_stream:
-                    finish(response_stream.get(), response_stream.usage())
+                    finish(response_stream.get())
 
     @contextmanager
     def _instrument(
@@ -152,7 +151,7 @@ class InstrumentedModel(WrapperModel):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> Iterator[Callable[[ModelResponse, Usage], None]]:
+    ) -> Iterator[Callable[[ModelResponse], None]]:
         operation = 'chat'
         span_name = f'{operation} {self.model_name}'
         # TODO Missing attributes:
@@ -177,7 +176,7 @@ class InstrumentedModel(WrapperModel):
 
         with self.settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
 
-            def finish(response: ModelResponse, usage: Usage):
+            def finish(response: ModelResponse):
                 if not span.is_recording():
                     return
 
@@ -193,7 +192,7 @@ class InstrumentedModel(WrapperModel):
                             },
                         )
                     )
-                new_attributes: dict[str, AttributeValue] = usage.opentelemetry_attributes()  # type: ignore
+                new_attributes: dict[str, AttributeValue] = response.usage.opentelemetry_attributes()  # pyright: ignore[reportAssignmentType]
                 attributes.update(getattr(span, 'attributes', {}))
                 request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
                 new_attributes['gen_ai.response.model'] = response.model_name or request_model

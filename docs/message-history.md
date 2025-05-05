@@ -64,6 +64,13 @@ print(result.all_messages())
                 part_kind='text',
             )
         ],
+        usage=Usage(
+            requests=1,
+            request_tokens=60,
+            response_tokens=12,
+            total_tokens=72,
+            details=None,
+        ),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
         kind='response',
@@ -142,6 +149,13 @@ async def main():
                         part_kind='text',
                     )
                 ],
+                usage=Usage(
+                    requests=0,
+                    request_tokens=50,
+                    response_tokens=12,
+                    total_tokens=62,
+                    details=None,
+                ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
@@ -201,6 +215,13 @@ print(result2.all_messages())
                 part_kind='text',
             )
         ],
+        usage=Usage(
+            requests=1,
+            request_tokens=60,
+            response_tokens=12,
+            total_tokens=72,
+            details=None,
+        ),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
         kind='response',
@@ -223,6 +244,13 @@ print(result2.all_messages())
                 part_kind='text',
             )
         ],
+        usage=Usage(
+            requests=1,
+            request_tokens=61,
+            response_tokens=26,
+            total_tokens=87,
+            details=None,
+        ),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
         kind='response',
@@ -329,6 +357,13 @@ print(result2.all_messages())
                 part_kind='text',
             )
         ],
+        usage=Usage(
+            requests=1,
+            request_tokens=60,
+            response_tokens=12,
+            total_tokens=72,
+            details=None,
+        ),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
         kind='response',
@@ -351,6 +386,13 @@ print(result2.all_messages())
                 part_kind='text',
             )
         ],
+        usage=Usage(
+            requests=1,
+            request_tokens=61,
+            response_tokens=26,
+            total_tokens=87,
+            details=None,
+        ),
         model_name='gemini-1.5-pro',
         timestamp=datetime.datetime(...),
         kind='response',

@@ -96,6 +96,13 @@ print(dice_result.all_messages())
                 part_kind='tool-call',
             )
         ],
+        usage=Usage(
+            requests=0,
+            request_tokens=90,
+            response_tokens=2,
+            total_tokens=92,
+            details=None,
+        ),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
         kind='response',
@@ -122,6 +129,13 @@ print(dice_result.all_messages())
                 part_kind='tool-call',
             )
         ],
+        usage=Usage(
+            requests=0,
+            request_tokens=91,
+            response_tokens=4,
+            total_tokens=95,
+            details=None,
+        ),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
         kind='response',
@@ -146,6 +160,13 @@ print(dice_result.all_messages())
                 part_kind='text',
             )
         ],
+        usage=Usage(
+            requests=0,
+            request_tokens=92,
+            response_tokens=12,
+            total_tokens=104,
+            details=None,
+        ),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
         kind='response',
@@ -325,6 +346,7 @@ To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import Usage
 
 agent = Agent()
 
@@ -362,7 +384,7 @@ def print_schema(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse
         'type': 'object',
     }
     """
-    return ModelResponse(parts=[TextPart('foobar')])
+    return ModelResponse(parts=[TextPart('foobar')], usage=Usage())
 
 
 agent.run_sync('hello', model=FunctionModel(print_schema))

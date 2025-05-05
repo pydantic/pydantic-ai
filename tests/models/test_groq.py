@@ -142,12 +142,14 @@ async def test_request_simple_success(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -199,6 +201,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
             ),
@@ -285,6 +288,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -306,6 +310,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=3, response_tokens=2, total_tokens=6),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -321,6 +326,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -438,6 +444,7 @@ async def test_stream_structured(allow_model_requests: None):
                         tool_call_id=IsStr(),
                     )
                 ],
+                usage=Usage(),
                 model_name='llama-3.3-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -556,6 +563,7 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_wkpd')],
+                usage=Usage(requests=1, request_tokens=192, response_tokens=8, total_tokens=200),
                 model_name='meta-llama/llama-4-scout-17b-16e-instruct',
                 timestamp=IsDatetime(),
             ),
@@ -578,6 +586,7 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[TextPart(content='The fruit in the image is a kiwi.')],
+                usage=Usage(requests=1, request_tokens=2552, response_tokens=11, total_tokens=2563),
                 model_name='meta-llama/llama-4-scout-17b-16e-instruct',
                 timestamp=IsDatetime(),
             ),
@@ -656,6 +665,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
+                usage=Usage(requests=1, request_tokens=48, response_tokens=8, total_tokens=56),
                 model_name='llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
             ),

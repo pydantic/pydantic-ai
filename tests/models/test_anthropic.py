@@ -169,12 +169,26 @@ async def test_sync_request_text_response(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=5,
+                    response_tokens=10,
+                    total_tokens=15,
+                    details={'input_tokens': 5, 'output_tokens': 10},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=5,
+                    response_tokens=10,
+                    total_tokens=15,
+                    details={'input_tokens': 5, 'output_tokens': 10},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -258,6 +272,13 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=3,
+                    response_tokens=5,
+                    total_tokens=8,
+                    details={'input_tokens': 3, 'output_tokens': 5},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -320,6 +341,13 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=2,
+                    response_tokens=1,
+                    total_tokens=3,
+                    details={'input_tokens': 2, 'output_tokens': 1},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -341,6 +369,13 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=3,
+                    response_tokens=2,
+                    total_tokens=5,
+                    details={'input_tokens': 3, 'output_tokens': 2},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -356,6 +391,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=3,
+                    response_tokens=5,
+                    total_tokens=8,
+                    details={'input_tokens': 3, 'output_tokens': 5},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -692,6 +734,18 @@ async def test_image_as_binary_content_tool_response(
                     TextPart(content='Let me get the image and check what fruit is shown.'),
                     ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01VMGXdexE1Fy5xdWgoom9Te'),
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=372,
+                    response_tokens=49,
+                    total_tokens=421,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 372,
+                        'output_tokens': 49,
+                    },
+                ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
             ),
@@ -718,6 +772,18 @@ async def test_image_as_binary_content_tool_response(
                         content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The kiwi's fuzzy brown skin is visible around the edges of the slice."
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=2025,
+                    response_tokens=57,
+                    total_tokens=2082,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 2025,
+                        'output_tokens': 57,
+                    },
+                ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
             ),
@@ -838,6 +904,18 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=20,
+                    response_tokens=10,
+                    total_tokens=30,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 20,
+                        'output_tokens': 10,
+                    },
+                ),
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
             ),
