@@ -135,6 +135,11 @@ def test_agent_flag_non_agent(capfd: CaptureFixture[str], mocker: MockerFixture,
             del sys.modules['test_module']
 
 
+def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
+    assert cli(['--agent', 'bad_path', 'hello']) == 1
+    assert 'Agent must be specified in "module:variable" format' in capfd.readouterr().out
+
+
 def test_list_models(capfd: CaptureFixture[str]):
     assert cli(['--list-models']) == 0
     output = capfd.readouterr().out.splitlines()
