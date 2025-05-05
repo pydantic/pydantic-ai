@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 import typing
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -380,20 +380,43 @@ class BedrockConverseModel(Model):
                         bedrock_messages.extend(await self._map_user_prompt(part, document_count))
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
-                        bedrock_messages.append(
-                            {
-                                'role': 'user',
-                                'content': [
-                                    {
-                                        'toolResult': {
-                                            'toolUseId': part.tool_call_id,
-                                            'content': [{'text': part.model_response_str()}],
-                                            'status': 'success',
-                                        }
+                        # Check if the last user message in the list is a user message with a tool result.
+                        msg_content: (
+                            Sequence[ContentBlockUnionTypeDef] | list[ContentBlockOutputTypeDef]
+                        )  # Necessary for msg_content.append() below to be valid.
+                        if (
+                            len(bedrock_messages) > 0
+                            and bedrock_messages[-1].get('role') == 'user'
+                            and isinstance(msg_content := bedrock_messages[-1].get('content'), list)
+                            and len(msg_content) > 0
+                            and 'toolResult' in msg_content[-1]
+                        ):
+                            # We have multiple tool results so collect them in a single user response.
+                            # We want to avoid having multiple user messages with tool results because it confuses the model.
+                            msg_content.append(
+                                {
+                                    'toolResult': {
+                                        'toolUseId': part.tool_call_id,
+                                        'content': [{'text': part.model_response_str()}],
+                                        'status': 'success',
                                     }
-                                ],
-                            }
-                        )
+                                }
+                            )
+                        else:
+                            bedrock_messages.append(
+                                {
+                                    'role': 'user',
+                                    'content': [
+                                        {
+                                            'toolResult': {
+                                                'toolUseId': part.tool_call_id,
+                                                'content': [{'text': part.model_response_str()}],
+                                                'status': 'success',
+                                            }
+                                        }
+                                    ],
+                                }
+                            )
                     elif isinstance(part, RetryPromptPart):
                         # TODO(Marcelo): We need to add a test here.
                         if part.tool_name is None:  # pragma: no cover
