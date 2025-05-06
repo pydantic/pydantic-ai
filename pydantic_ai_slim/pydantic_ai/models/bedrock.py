@@ -376,47 +376,33 @@ class BedrockConverseModel(Model):
         document_count: Iterator[int] = count(1)
         for message in messages:
             if isinstance(message, ModelRequest):
-                parts = message.parts
-                partsCount = 0
-                numParts = len(parts)
-                while partsCount < numParts:
-                    part = parts[partsCount]
+                for part in message.parts:
                     if isinstance(part, SystemPromptPart):
                         system_prompt.append({'text': part.content})
-                        partsCount += 1
                     elif isinstance(part, UserPromptPart):
                         bedrock_messages.extend(await self._map_user_prompt(part, document_count))
-                        partsCount += 1
                     elif isinstance(part, ToolReturnPart):
-                        # Group consecutive ToolReturnParts
-                        tool_results: list[dict[str, typing.Any]] = []
-                        while partsCount < numParts and isinstance(parts[partsCount], ToolReturnPart):
-                            tr_part = typing.cast(ToolReturnPart, parts[partsCount])
-                            tool_results.append(
-                                {
-                                    'toolResult': {
-                                        'toolUseId': tr_part.tool_call_id,
-                                        'content': [{'text': tr_part.model_response_str()}],
-                                        'status': 'success',
-                                    }
-                                }
-                            )
-                            partsCount += 1
+                        assert part.tool_call_id is not None
                         bedrock_messages.append(
-                            cast(
-                                'MessageUnionTypeDef',
-                                {
-                                    'role': 'user',
-                                    'content': tool_results,
-                                },
-                            )
+                            {
+                                'role': 'user',
+                                'content': [
+                                    {
+                                        'toolResult': {
+                                            'toolUseId': part.tool_call_id,
+                                            'content': [{'text': part.model_response_str()}],
+                                            'status': 'success',
+                                        }
+                                    }
+                                ],
+                            }
                         )
                     elif isinstance(part, RetryPromptPart):
                         # TODO(Marcelo): We need to add a test here.
                         if part.tool_name is None:  # pragma: no cover
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
                         else:
-                            assert hasattr(part, 'tool_call_id')
+                            assert part.tool_call_id is not None
                             bedrock_messages.append(
                                 {
                                     'role': 'user',
@@ -431,9 +417,6 @@ class BedrockConverseModel(Model):
                                     ],
                                 }
                             )
-                        partsCount += 1
-                    else:
-                        partsCount += 1
             elif isinstance(message, ModelResponse):
                 content: list[ContentBlockOutputTypeDef] = []
                 for item in message.parts:
@@ -446,10 +429,26 @@ class BedrockConverseModel(Model):
             else:
                 assert_never(message)
 
+        # Merge together sequential user messages.
+        processed_messages: list[MessageUnionTypeDef] = []
+        last_message: dict[str, Any] | None = None
+        for current_message in bedrock_messages:
+            if (
+                last_message is None
+                or current_message['role'] != last_message['role']
+                or current_message['role'] != 'user'
+            ):  # Remove the "user" test to also allow merging sequential "assistant" messages
+                processed_messages.append(current_message)
+                last_message = cast(dict[str, Any], current_message)
+            else:
+                last_content = list(last_message['content'])
+                last_content.extend(current_message['content'])
+                last_message['content'] = last_content
+
         if instructions := self._get_instructions(messages):
             system_prompt.insert(0, {'text': instructions})
 
-        return system_prompt, bedrock_messages
+        return system_prompt, processed_messages
 
     @staticmethod
     async def _map_user_prompt(part: UserPromptPart, document_count: Iterator[int]) -> list[MessageUnionTypeDef]:

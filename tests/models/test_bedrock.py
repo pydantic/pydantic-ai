@@ -604,14 +604,16 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
     )
     # Call the mapping function directly
     _, bedrock_messages = await model._map_messages([req])  # type: ignore[reportPrivateUsage]
-    # There should be one user message with 3 tool results
-    assert len(bedrock_messages) == 1
-    user_msg = bedrock_messages[0]
-    assert user_msg['role'] == 'user'
-    assert isinstance(user_msg['content'], list)
-    assert len(user_msg['content']) == 3
-    for idx, tool_result in enumerate(user_msg['content'], 1):
-        assert 'toolResult' in tool_result
-        assert tool_result['toolResult'].get('toolUseId') == f'id{idx}'
-        assert tool_result['toolResult'].get('content')[0].get('text') == f'result{idx}'
-        assert tool_result['toolResult'].get('status') == 'success'
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'text': 'result1'}], 'status': 'success'}},
+                    {'toolResult': {'toolUseId': 'id2', 'content': [{'text': 'result2'}], 'status': 'success'}},
+                    {'toolResult': {'toolUseId': 'id3', 'content': [{'text': 'result3'}], 'status': 'success'}},
+                ],
+            }
+        ]
+    )
