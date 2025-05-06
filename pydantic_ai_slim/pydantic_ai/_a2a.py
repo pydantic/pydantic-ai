@@ -2,11 +2,12 @@ from __future__ import annotations, annotations as _annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Generic, assert_never
+from typing import Any, Generic
 
 from starlette.middleware import Middleware
 from starlette.routing import Route
 from starlette.types import ExceptionHandler, Lifespan
+from typing_extensions import assert_never
 
 from pydantic_ai.messages import (
     AudioUrl,

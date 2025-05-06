@@ -18,8 +18,8 @@ from pydantic_ai.agent import Agent
 agent = Agent('anthropic:claude-3-5-sonnet-latest', name='My A2A Agent')
 app = FastA2A.from_agent(
     agent,
-    url="http://localhost:8000",
-    description="A helpful agent that can assist with various tasks"
+    url='http://localhost:8000',
+    description='A helpful agent that can assist with various tasks'
 )
 ```
 
