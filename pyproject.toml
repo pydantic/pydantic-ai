@@ -189,6 +189,7 @@ testpaths = "tests"
 xfail_strict = true
 filterwarnings = [
     "error",
+    "ignore::PendingDeprecationWarning:starlette",
     # boto3
     "ignore::DeprecationWarning:botocore.*",
     "ignore::RuntimeWarning:pydantic_ai.mcp",
