@@ -3,7 +3,6 @@ import pytest
 from asgi_lifespan import LifespanManager
 from inline_snapshot import snapshot
 
-from fasta2a.schema import Message, TextPart
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -12,6 +11,7 @@ from .conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from fasta2a.client import A2AClient
+    from fasta2a.schema import Message, TextPart
 
 
 pytestmark = [

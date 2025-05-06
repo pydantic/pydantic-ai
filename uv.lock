@@ -961,6 +961,7 @@ wheels = [
 name = "fasta2a"
 source = { editable = "fasta2a" }
 dependencies = [
+    { name = "opentelemetry-api" },
     { name = "pydantic" },
     { name = "starlette" },
 ]
@@ -973,6 +974,7 @@ logfire = [
 [package.metadata]
 requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
+    { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "starlette", specifier = ">0.29.0" },
 ]
