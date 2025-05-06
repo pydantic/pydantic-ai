@@ -4,7 +4,6 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
-from pydantic import TypeAdapter
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -12,13 +11,10 @@ from starlette.responses import Response
 from starlette.routing import Route
 from starlette.types import ExceptionHandler, Lifespan, Receive, Scope, Send
 
-from .schema import A2ARequest, A2AResponse, AgentCard, Provider, Skill, agent_card_ta
+from .schema import AgentCard, Provider, Skill, a2a_request_ta, a2a_response_ta, agent_card_ta
 from .storage import Storage
 from .task_manager import TaskManager
 from .worker import Worker
-
-a2a_request_ta: TypeAdapter[A2ARequest] = TypeAdapter(A2ARequest)
-a2a_response_ta: TypeAdapter[A2AResponse] = TypeAdapter(A2AResponse)
 
 
 class FastA2A(Starlette):
@@ -117,7 +113,9 @@ class FastA2A(Starlette):
             jsonrpc_response = await self.task_manager.cancel_task(a2a_request)
         else:
             raise NotImplementedError(f'Method {a2a_request["method"]} not implemented.')
-        return Response(content=a2a_response_ta.dump_json(jsonrpc_response), media_type='application/json')
+        return Response(
+            content=a2a_response_ta.dump_json(jsonrpc_response, by_alias=True), media_type='application/json'
+        )
 
 
 @asynccontextmanager

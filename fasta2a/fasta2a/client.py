@@ -14,6 +14,7 @@ from .schema import (
     SendTaskRequest,
     SendTaskResponse,
     TaskSendParams,
+    a2a_request_ta,
 )
 
 send_task_response_ta = pydantic.TypeAdapter(SendTaskResponse)
@@ -46,13 +47,15 @@ class A2AClient:
             task['metadata'] = metadata
 
         payload = SendTaskRequest(jsonrpc='2.0', id=None, method='tasks/send', params=task)
-        response = await self.http_client.post('/', json=payload)
+        content = a2a_request_ta.dump_json(payload, by_alias=True)
+        response = await self.http_client.post('/', content=content, headers={'Content-Type': 'application/json'})
         self._raise_for_status(response)
         return send_task_response_ta.validate_json(response.content)
 
     async def get_task(self, task_id: str) -> GetTaskResponse:
         payload = GetTaskRequest(jsonrpc='2.0', id=None, method='tasks/get', params={'id': task_id})
-        response = await self.http_client.post('/', json=payload)
+        content = a2a_request_ta.dump_json(payload, by_alias=True)
+        response = await self.http_client.post('/', content=content, headers={'Content-Type': 'application/json'})
         self._raise_for_status(response)
         return get_task_response_ta.validate_json(response.content)
 

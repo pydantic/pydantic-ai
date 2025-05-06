@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 from typing import Annotated, Any, Generic, Literal, TypeVar, Union
 
 import pydantic
-from pydantic import Discriminator
+from pydantic import Discriminator, TypeAdapter
 from pydantic.alias_generators import to_camel
 from typing_extensions import NotRequired, TypeAlias, TypedDict
 
@@ -243,6 +243,7 @@ class TextPart(_BasePart):
     """The text of the part."""
 
 
+@pydantic.with_config(config={'alias_generator': to_camel})
 class FilePart(_BasePart):
     """A part that contains a file."""
 
@@ -253,6 +254,7 @@ class FilePart(_BasePart):
     """The file of the part."""
 
 
+@pydantic.with_config(config={'alias_generator': to_camel})
 class _BaseFile(_BasePart):
     """A base class for all file types."""
 
@@ -294,7 +296,7 @@ class DataPart(_BasePart):
     """The data of the part."""
 
 
-Part: TypeAlias = Annotated[Union[TextPart, FilePart, DataPart], pydantic.Field(discriminator='type')]
+Part = Annotated[Union[TextPart, FilePart, DataPart], pydantic.Field(discriminator='type')]
 """A fully formed piece of content exchanged between a client and a remote agent as part of a Message or an Artifact.
 
 Each Part has its own content type and metadata.
@@ -560,3 +562,7 @@ A2AResponse: TypeAlias = Union[
     GetTaskPushNotificationResponse,
 ]
 """A JSON RPC response from the A2A server."""
+
+
+a2a_request_ta: TypeAdapter[A2ARequest] = TypeAdapter(A2ARequest)
+a2a_response_ta: TypeAdapter[A2AResponse] = TypeAdapter(A2AResponse)
