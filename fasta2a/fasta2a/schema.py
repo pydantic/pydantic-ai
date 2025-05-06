@@ -509,7 +509,7 @@ SendTaskResponse = JSONRPCResponse[Task, JSONRPCError[Any, Any]]
 SendTaskStreamingRequest = JSONRPCRequest[Literal['tasks/sendSubscribe'], TaskSendParams]
 """A JSON RPC request to send a task and receive updates."""
 
-SendTaskStreamingResponse = JSONRPCResponse[TaskStatusUpdateEvent | TaskArtifactUpdateEvent, InternalError]
+SendTaskStreamingResponse = JSONRPCResponse['TaskStatusUpdateEvent | TaskArtifactUpdateEvent', InternalError]
 """A JSON RPC response to send a task and receive updates."""
 
 GetTaskRequest = JSONRPCRequest[Literal['tasks/get'], TaskQueryParams]
@@ -521,7 +521,7 @@ GetTaskResponse = JSONRPCResponse[Task, TaskNotFoundError]
 CancelTaskRequest = JSONRPCRequest[Literal['tasks/cancel'], TaskIdParams]
 """A JSON RPC request to cancel a task."""
 
-CancelTaskResponse = JSONRPCResponse[Task, TaskNotCancelableError | TaskNotFoundError]
+CancelTaskResponse = JSONRPCResponse[Task, 'TaskNotCancelableError | TaskNotFoundError']
 """A JSON RPC response to cancel a task."""
 
 SetTaskPushNotificationRequest = JSONRPCRequest[Literal['tasks/pushNotification/set'], TaskPushNotificationConfig]
@@ -540,23 +540,10 @@ ResubscribeTaskRequest = JSONRPCRequest[Literal['tasks/resubscribe'], TaskIdPara
 """A JSON RPC request to resubscribe to a task."""
 
 A2ARequest = Annotated[
-    (
-        SendTaskRequest
-        | GetTaskRequest
-        | CancelTaskRequest
-        | SetTaskPushNotificationRequest
-        | GetTaskPushNotificationRequest
-        | ResubscribeTaskRequest
-    ),
+    'SendTaskRequest | GetTaskRequest | CancelTaskRequest | SetTaskPushNotificationRequest | GetTaskPushNotificationRequest | ResubscribeTaskRequest',
     Discriminator('method'),
 ]
 """A JSON RPC request to the A2A server."""
 
-A2AResponse = (
-    SendTaskResponse
-    | GetTaskResponse
-    | CancelTaskResponse
-    | SetTaskPushNotificationResponse
-    | GetTaskPushNotificationResponse
-)
+A2AResponse: TypeAlias = 'SendTaskResponse | GetTaskResponse | CancelTaskResponse | SetTaskPushNotificationResponse | GetTaskPushNotificationResponse'
 """A JSON RPC response from the A2A server."""

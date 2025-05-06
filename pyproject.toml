@@ -189,6 +189,7 @@ testpaths = "tests"
 xfail_strict = true
 filterwarnings = [
     "error",
+    # Issue with python-multipart - we don't want to bump the minimum version of starlette.
     "ignore::PendingDeprecationWarning:starlette",
     # boto3
     "ignore::DeprecationWarning:botocore.*",
