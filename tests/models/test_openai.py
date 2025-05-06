@@ -19,7 +19,6 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     DocumentUrl,
-    FileUrl,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -775,22 +774,22 @@ async def test_image_as_binary_content_tool_response(
     )
 
 
-async def test_file_url_input_not_supported(allow_model_requests: None):
-    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
-    mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m)
+# async def test_file_url_input_not_supported(allow_model_requests: None):
+#     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+#     mock_client = MockOpenAI.create_mock(c)
+#     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+#     agent = Agent(m)
 
-    with pytest.raises(RuntimeError, match='Direct file Url is not supported.'):
-        await agent.run(
-            [
-                'What is the main content of this document?',
-                FileUrl(
-                    url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf',
-                    media_type='application/pdf',
-                ),
-            ]
-        )
+#     with pytest.raises(RuntimeError, match='Direct file Url is not supported.'):
+#         await agent.run(
+#             [
+#                 'What is the main content of this document?',
+#                 FileUrl(
+#                     url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf',
+#                     media_type='application/pdf',
+#                 ),
+#             ]
+#         )
 
 
 @pytest.mark.vcr()

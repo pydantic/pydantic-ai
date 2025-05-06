@@ -19,7 +19,6 @@ from ..messages import (
     AudioUrl,
     BinaryContent,
     DocumentUrl,
-    FileUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -457,8 +456,6 @@ class OpenAIModel(Model):
                     file_data = f'data:{media_type};base64,{base64_encoded}'
                     file = File(file=FileFile(file_data=file_data, filename=f'filename.{item.format}'), type='file')
                     content.append(file)
-                elif isinstance(item, FileUrl):  # pragma: no cover
-                    raise RuntimeError('Direct file Url is not supported.')
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
                 else:
@@ -782,8 +779,6 @@ class OpenAIResponsesModel(Model):
                             filename=f'filename.{item.format}',
                         )
                     )
-                elif isinstance(item, FileUrl):
-                    raise RuntimeError('Direct file Url is not supported.')
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                 else:

@@ -1,21 +1,6 @@
 import pytest
 
-from pydantic_ai.messages import BinaryContent, DocumentUrl, FileUrl, ImageUrl, VideoUrl
-
-
-def test_file_url_jpeg():
-    file_url = FileUrl(url='https://example.com/image.jpg', media_type='image/jpeg')
-    assert file_url.url == 'https://example.com/image.jpg'
-    assert file_url.media_type == 'image/jpeg'
-
-
-def test_file_url_pdf():
-    file_url = FileUrl(
-        url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf',
-        media_type='application/pdf',
-    )
-    assert file_url.url == 'https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf'
-    assert file_url.media_type == 'application/pdf'
+from pydantic_ai.messages import BinaryContent, DocumentUrl, ImageUrl, VideoUrl
 
 
 def test_image_url():

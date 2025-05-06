@@ -11,7 +11,7 @@ from .exceptions import (
     UserError,
 )
 from .format_prompt import format_as_xml
-from .messages import AudioUrl, BinaryContent, DocumentUrl, FileUrl, ImageUrl, VideoUrl
+from .messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, VideoUrl
 from .result import ToolOutput
 from .tools import RunContext, Tool
 
@@ -33,7 +33,6 @@ __all__ = (
     'UsageLimitExceeded',
     'UserError',
     # messages
-    'FileUrl',
     'ImageUrl',
     'AudioUrl',
     'VideoUrl',

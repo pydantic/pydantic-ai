@@ -71,27 +71,6 @@ class SystemPromptPart:
 
 
 @dataclass
-class FileUrl:
-    """A URL to a file. Supported only by Gemini models.
-
-    See the [Vertex AI Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata)
-    and the [GLA Gemini API docs](https://ai.google.dev/api/caching#FileData) for use cases and limitations.
-    """
-
-    url: str
-    """The URL of the file."""
-
-    media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str | None = None
-    """[IANA MIME type](https://www.iana.org/assignments/media-types/media-types.xml) of the data.
-
-    Required for the VertexAI provider, optional for the GLA provider.
-    """
-
-    kind: Literal['file-url'] = 'file-url'
-    """Type identifier, this is available on all parts as a discriminator."""
-
-
-@dataclass
 class VideoUrl:
     """A URL to an video."""
 
@@ -272,7 +251,7 @@ class BinaryContent:
         raise ValueError(f'Unknown media type: {self.media_type}')
 
 
-UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | FileUrl'
+UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
 
 # Ideally this would be a Union of types, but Python 3.9 requires it to be a string, and strings don't work with `isinstance``.
 MultiModalContentTypes = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)

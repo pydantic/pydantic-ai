@@ -18,7 +18,6 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     DocumentUrl,
-    FileUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -478,8 +477,6 @@ class BedrockConverseModel(Model):
                         content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
-                elif isinstance(item, FileUrl):
-                    raise RuntimeError('Direct file Url is not supported.')
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
