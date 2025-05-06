@@ -1,3 +1,4 @@
+import anyio
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
@@ -63,6 +64,26 @@ async def test_a2a_simple():
                         'id': IsStr(),
                         'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [{'role': 'user', 'parts': [{'type': 'text', 'text': 'Hello, world!'}]}],
+                    },
+                }
+            )
+
+            assert 'result' in response
+            task_id = response['result']['id']
+
+            await anyio.sleep(0.1)
+            task = await a2a_client.get_task(task_id)
+            assert task == snapshot(
+                {
+                    'jsonrpc': '2.0',
+                    'id': None,
+                    'result': {
+                        'id': IsStr(),
+                        'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
+                        'history': [{'role': 'user', 'parts': [{'type': 'text', 'text': 'Hello, world!'}]}],
+                        'artifacts': [
+                            {'name': 'result', 'parts': [{'type': 'text', 'text': "('foo', 'bar')"}], 'index': 0}
+                        ],
                     },
                 }
             )

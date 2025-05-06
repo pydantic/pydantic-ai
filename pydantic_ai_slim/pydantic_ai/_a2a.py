@@ -93,7 +93,6 @@ class AgentRunner(Runner, Generic[AgentDepsT, OutputDataT]):
         await task_ctx.storage.update_task(task['id'], state='working')
 
         task_history = task.get('history', [])
-        task_history.append(params['message'])
         message_history = self.build_message_history(task_history=task_history)
 
         # TODO(Marcelo): We need to have a way to communicate when the task is set to `input-required`. Maybe

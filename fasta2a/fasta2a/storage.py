@@ -84,4 +84,8 @@ class InMemoryStorage(Storage):
             if 'history' not in task:
                 task['history'] = []
             task['history'].append(message)
+        if artifacts:
+            if 'artifacts' not in task:
+                task['artifacts'] = []
+            task['artifacts'].extend(artifacts)
         return task
