@@ -1667,13 +1667,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     def run_cli(self: Agent[None, str]) -> None:
         """Run the agent in a CLI loop."""
-        from io import UnsupportedOperation
+        import io
 
         from pydantic_ai._cli import cli
 
         try:
             cli(agent=self)
-        except UnsupportedOperation:
+        except io.UnsupportedOperation:
             print('Warning: stdin is not a terminal. Interactive mode is not available.')
 
 
