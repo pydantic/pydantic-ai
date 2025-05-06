@@ -74,5 +74,5 @@ The format must be `module:variable` where:
 - `variable` is the name of the Agent instance in that module
 
 
-Additionally, you can directly launch CLI mode directly from an `Agent` instance 
+Additionally, you can directly launch CLI mode directly from an `Agent` instance
 using `Agent.run_cli()`.
