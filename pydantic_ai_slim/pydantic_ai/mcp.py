@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -9,16 +11,25 @@ from types import TracebackType
 from typing import Any
 
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from mcp.types import JSONRPCMessage, LoggingLevel
-from typing_extensions import Self
+from mcp.types import (
+    BlobResourceContents,
+    EmbeddedResource,
+    ImageContent,
+    JSONRPCMessage,
+    LoggingLevel,
+    TextContent,
+    TextResourceContents,
+)
+from typing_extensions import Self, assert_never
 
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import ToolDefinition
 
 try:
     from mcp.client.session import ClientSession
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
-    from mcp.types import CallToolResult
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `mcp` package to use the MCP server, '
@@ -74,7 +85,9 @@ class MCPServer(ABC):
             for tool in tools.tools
         ]
 
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> CallToolResult:
+    async def call_tool(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> str | BinaryContent | dict[str, Any] | list[Any] | Sequence[str | BinaryContent | dict[str, Any] | list[Any]]:
         """Call a tool on the server.
 
         Args:
@@ -83,8 +96,21 @@ class MCPServer(ABC):
 
         Returns:
             The result of the tool call.
+
+        Raises:
+            ModelRetry: If the tool call fails.
         """
-        return await self._client.call_tool(tool_name, arguments)
+        result = await self._client.call_tool(tool_name, arguments)
+
+        content = [self._map_tool_result_part(part) for part in result.content]
+
+        if result.isError:
+            text = '\n'.join(str(part) for part in content)
+            raise ModelRetry(text)
+
+        if len(content) == 1:
+            return content[0]
+        return content
 
     async def __aenter__(self) -> Self:
         self._exit_stack = AsyncExitStack()
@@ -104,6 +130,35 @@ class MCPServer(ABC):
     ) -> bool | None:
         await self._exit_stack.aclose()
         self.is_running = False
+
+    def _map_tool_result_part(
+        self, part: TextContent | ImageContent | EmbeddedResource
+    ) -> str | BinaryContent | dict[str, Any] | list[Any]:
+        # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
+
+        if isinstance(part, TextContent):
+            text = part.text
+            if text.startswith(('[', '{')):
+                try:
+                    return json.loads(text)
+                except ValueError:
+                    pass
+            return text
+        elif isinstance(part, ImageContent):
+            return BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
+        elif isinstance(part, EmbeddedResource):
+            resource = part.resource
+            if isinstance(resource, TextResourceContents):
+                return resource.text
+            elif isinstance(resource, BlobResourceContents):
+                return BinaryContent(
+                    data=base64.b64decode(resource.blob),
+                    media_type=resource.mimeType or 'application/octet-stream',
+                )
+            else:
+                assert_never(resource)
+        else:
+            assert_never(part)
 
 
 @dataclass

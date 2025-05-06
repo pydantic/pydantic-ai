@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import inspect
+import json
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
@@ -152,7 +153,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: type[OutputDataT] | ToolOutput[OutputDataT] = str,
-        instructions: str | _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
+        instructions: str
+        | _system_prompt.SystemPromptFunc[AgentDepsT]
+        | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
+        | None = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -175,7 +179,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         result_type: type[OutputDataT] = str,
-        instructions: str | _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
+        instructions: str
+        | _system_prompt.SystemPromptFunc[AgentDepsT]
+        | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
+        | None = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -197,7 +204,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         # TODO change this back to `output_type: type[OutputDataT] | ToolOutput[OutputDataT] = str,` when we remove the overloads
         output_type: Any = str,
-        instructions: str | _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
+        instructions: str
+        | _system_prompt.SystemPromptFunc[AgentDepsT]
+        | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
+        | None = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -296,10 +306,16 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         )
         self._output_validators = []
 
-        self._instructions_functions = (
-            [_system_prompt.SystemPromptRunner(instructions)] if callable(instructions) else []
-        )
-        self._instructions = instructions if isinstance(instructions, str) else None
+        self._instructions = ''
+        self._instructions_functions = []
+        if isinstance(instructions, (str, Callable)):
+            instructions = [instructions]
+        for instruction in instructions or []:
+            if isinstance(instruction, str):
+                self._instructions += instruction + '\n'
+            else:
+                self._instructions_functions.append(_system_prompt.SystemPromptRunner(instruction))
+        self._instructions = self._instructions.strip() or None
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -585,9 +601,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         )
 
         # Build the initial state
+        usage = usage or _usage.Usage()
         state = _agent_graph.GraphAgentState(
             message_history=message_history[:] if message_history else [],
-            usage=usage or _usage.Usage(),
+            usage=usage,
             retries=0,
             run_step=0,
         )
@@ -625,8 +642,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
             instructions = self._instructions or ''
             for instructions_runner in self._instructions_functions:
-                instructions += await instructions_runner.run(run_context)
-            return instructions
+                instructions += '\n' + await instructions_runner.run(run_context)
+            return instructions.strip()
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
@@ -641,7 +658,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_validators=output_validators,
             function_tools=self._function_tools,
             mcp_servers=self._mcp_servers,
-            run_span=run_span,
+            default_retries=self._default_retries,
             tracer=tracer,
             get_instructions=get_instructions,
         )
@@ -654,14 +671,51 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
         )
 
-        async with graph.iter(
-            start_node,
-            state=state,
-            deps=graph_deps,
-            span=use_span(run_span, end_on_exit=True) if run_span.is_recording() else None,
-            infer_name=False,
-        ) as graph_run:
-            yield AgentRun(graph_run)
+        try:
+            async with graph.iter(
+                start_node,
+                state=state,
+                deps=graph_deps,
+                span=use_span(run_span) if run_span.is_recording() else None,
+                infer_name=False,
+            ) as graph_run:
+                agent_run = AgentRun(graph_run)
+                yield agent_run
+                if (final_result := agent_run.result) is not None and run_span.is_recording():
+                    run_span.set_attribute(
+                        'final_result',
+                        (
+                            final_result.output
+                            if isinstance(final_result.output, str)
+                            else json.dumps(InstrumentedModel.serialize_any(final_result.output))
+                        ),
+                    )
+        finally:
+            try:
+                if run_span.is_recording():
+                    run_span.set_attributes(self._run_span_end_attributes(state, usage))
+            finally:
+                run_span.end()
+
+    def _run_span_end_attributes(self, state: _agent_graph.GraphAgentState, usage: _usage.Usage):
+        return {
+            **usage.opentelemetry_attributes(),
+            'all_messages_events': json.dumps(
+                [
+                    InstrumentedModel.event_to_dict(e)
+                    for e in InstrumentedModel.messages_to_otel_events(state.message_history)
+                ]
+            ),
+            'logfire.json_schema': json.dumps(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'all_messages_events': {'type': 'array'},
+                        'final_result': {'type': 'object'},
+                    },
+                }
+            ),
+        }
 
     @overload
     def run_sync(

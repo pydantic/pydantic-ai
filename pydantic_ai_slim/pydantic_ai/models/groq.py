@@ -82,7 +82,7 @@ See <https://console.groq.com/docs/models> for an up to date date list of models
 """
 
 
-class GroqModelSettings(ModelSettings):
+class GroqModelSettings(ModelSettings, total=False):
     """Settings used for a Groq model request.
 
     ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -200,6 +200,8 @@ class GroqModel(Model):
         groq_messages = self._map_messages(messages)
 
         try:
+            extra_headers = model_settings.get('extra_headers', {})
+            extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.chat.completions.create(
                 model=str(self._model_name),
                 messages=groq_messages,
@@ -217,7 +219,7 @@ class GroqModel(Model):
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
-                extra_headers={'User-Agent': get_user_agent()},
+                extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
