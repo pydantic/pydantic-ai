@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from typing import Annotated, Any, Generic, Literal, TypeVar
+from typing import Annotated, Any, Generic, Literal, TypeVar, Union
 
 import pydantic
 from pydantic import Discriminator
@@ -294,7 +294,7 @@ class DataPart(_BasePart):
     """The data of the part."""
 
 
-Part: TypeAlias = Annotated['TextPart | FilePart | DataPart', pydantic.Field(discriminator='type')]
+Part: TypeAlias = Annotated[Union[TextPart, FilePart, DataPart], pydantic.Field(discriminator='type')]
 """A fully formed piece of content exchanged between a client and a remote agent as part of a Message or an Artifact.
 
 Each Part has its own content type and metadata.
@@ -509,7 +509,7 @@ SendTaskResponse = JSONRPCResponse[Task, JSONRPCError[Any, Any]]
 SendTaskStreamingRequest = JSONRPCRequest[Literal['tasks/sendSubscribe'], TaskSendParams]
 """A JSON RPC request to send a task and receive updates."""
 
-SendTaskStreamingResponse = JSONRPCResponse['TaskStatusUpdateEvent | TaskArtifactUpdateEvent', InternalError]
+SendTaskStreamingResponse = JSONRPCResponse[Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent], InternalError]
 """A JSON RPC response to send a task and receive updates."""
 
 GetTaskRequest = JSONRPCRequest[Literal['tasks/get'], TaskQueryParams]
@@ -521,7 +521,7 @@ GetTaskResponse = JSONRPCResponse[Task, TaskNotFoundError]
 CancelTaskRequest = JSONRPCRequest[Literal['tasks/cancel'], TaskIdParams]
 """A JSON RPC request to cancel a task."""
 
-CancelTaskResponse = JSONRPCResponse[Task, 'TaskNotCancelableError | TaskNotFoundError']
+CancelTaskResponse = JSONRPCResponse[Task, Union[TaskNotCancelableError, TaskNotFoundError]]
 """A JSON RPC response to cancel a task."""
 
 SetTaskPushNotificationRequest = JSONRPCRequest[Literal['tasks/pushNotification/set'], TaskPushNotificationConfig]
@@ -540,10 +540,23 @@ ResubscribeTaskRequest = JSONRPCRequest[Literal['tasks/resubscribe'], TaskIdPara
 """A JSON RPC request to resubscribe to a task."""
 
 A2ARequest = Annotated[
-    'SendTaskRequest | GetTaskRequest | CancelTaskRequest | SetTaskPushNotificationRequest | GetTaskPushNotificationRequest | ResubscribeTaskRequest',
+    Union[
+        SendTaskRequest,
+        GetTaskRequest,
+        CancelTaskRequest,
+        SetTaskPushNotificationRequest,
+        GetTaskPushNotificationRequest,
+        ResubscribeTaskRequest,
+    ],
     Discriminator('method'),
 ]
 """A JSON RPC request to the A2A server."""
 
-A2AResponse: TypeAlias = 'SendTaskResponse | GetTaskResponse | CancelTaskResponse | SetTaskPushNotificationResponse | GetTaskPushNotificationResponse'
+A2AResponse: TypeAlias = Union[
+    SendTaskResponse,
+    GetTaskResponse,
+    CancelTaskResponse,
+    SetTaskPushNotificationResponse,
+    GetTaskPushNotificationResponse,
+]
 """A JSON RPC response from the A2A server."""
