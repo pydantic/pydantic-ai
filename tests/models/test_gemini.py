@@ -961,6 +961,67 @@ async def test_safety_settings_safe(
 
 
 @pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
+) -> None:
+    m = GeminiModel('gemini-2.5-pro-preview-03-25', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+I need to use the `get_image` tool to see the image first.
+
+"""
+                    ),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
+                ],
+                model_name='gemini-2.5-pro-preview-03-25',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1c8566',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1c8566:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The image shows a kiwi fruit, sliced in half.')],
+                model_name='gemini-2.5-pro-preview-03-25',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
 async def test_image_as_binary_content_input(
     allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
 ) -> None:

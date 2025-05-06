@@ -483,7 +483,20 @@ class MistralModel(Model):
                 assert_never(message)
         if instructions := self._get_instructions(messages):
             mistral_messages.insert(0, MistralSystemMessage(content=instructions))
-        return mistral_messages
+
+        # Post-process messages to insert fake assistant message after tool message if followed by user message
+        # to work around `Unexpected role 'user' after role 'tool'` error.
+        processed_messages: list[MistralMessages] = []
+        for i, current_message in enumerate(mistral_messages):
+            processed_messages.append(current_message)
+
+            if isinstance(current_message, MistralToolMessage) and i + 1 < len(mistral_messages):
+                next_message = mistral_messages[i + 1]
+                if isinstance(next_message, MistralUserMessage):
+                    # Insert a dummy assistant message
+                    processed_messages.append(MistralAssistantMessage(content=[MistralTextChunk(text='OK')]))
+
+        return processed_messages
 
     def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:
         content: str | list[MistralContentChunk]
