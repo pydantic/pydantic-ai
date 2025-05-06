@@ -2933,6 +2933,7 @@ source = { editable = "pydantic_ai_slim" }
 dependencies = [
     { name = "eval-type-backport" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
+    { name = "fasta2a" },
     { name = "griffe" },
     { name = "httpx" },
     { name = "opentelemetry-api" },
@@ -3015,6 +3016,7 @@ requires-dist = [
     { name = "duckduckgo-search", marker = "extra == 'duckduckgo'", specifier = ">=7.0.0" },
     { name = "eval-type-backport", specifier = ">=0.2.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
+    { name = "fasta2a", editable = "fasta2a" },
     { name = "fasta2a", marker = "extra == 'a2a'", editable = "fasta2a" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
     { name = "griffe", specifier = ">=1.3.2" },

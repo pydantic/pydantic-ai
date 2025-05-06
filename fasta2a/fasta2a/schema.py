@@ -2,12 +2,12 @@
 
 from __future__ import annotations as _annotations
 
-from typing import Annotated, Any, Generic, Literal, NotRequired, TypeVar
+from typing import Annotated, Any, Generic, Literal, TypeVar
 
 import pydantic
 from pydantic import Discriminator
 from pydantic.alias_generators import to_camel
-from typing_extensions import TypeAlias, TypedDict
+from typing_extensions import NotRequired, TypeAlias, TypedDict
 
 
 @pydantic.with_config(config={'alias_generator': to_camel})
