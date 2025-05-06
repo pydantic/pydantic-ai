@@ -97,7 +97,7 @@ print(dice_result.all_messages())
             )
         ],
         usage=Usage(
-            requests=0,
+            requests=1,
             request_tokens=90,
             response_tokens=2,
             total_tokens=92,
@@ -130,7 +130,7 @@ print(dice_result.all_messages())
             )
         ],
         usage=Usage(
-            requests=0,
+            requests=1,
             request_tokens=91,
             response_tokens=4,
             total_tokens=95,
@@ -161,7 +161,7 @@ print(dice_result.all_messages())
             )
         ],
         usage=Usage(
-            requests=0,
+            requests=1,
             request_tokens=92,
             response_tokens=12,
             total_tokens=104,

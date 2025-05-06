@@ -3246,16 +3246,16 @@ wheels = [
 
 [[package]]
 name = "pytest-examples"
-version = "0.0.17"
+version = "0.0.18"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "black" },
     { name = "pytest" },
     { name = "ruff" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/05/b2/555d866fc26d3ab7bc49e1be7cc982dd95b62bc33d60256506634d28fc5d/pytest_examples-0.0.17.tar.gz", hash = "sha256:3f02460c10de36646dab45825659fa4735441863af8c86388c22eb6113d038d8", size = 21211, upload-time = "2025-03-23T22:11:41.049Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/af/71/4ae972fd95f474454aa450108ee1037830e7ba11840363e981b8d48fd16a/pytest_examples-0.0.18.tar.gz", hash = "sha256:9a464f007f805b113677a15e2f8942ebb92d7d3eb5312e9a405d018478ec9801", size = 21237, upload-time = "2025-05-06T07:46:10.705Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/53/c2fc4d70d1999030b1f7bc6fe1441fa0a37a686a74a9a2109a4aa5e946ce/pytest_examples-0.0.17-py3-none-any.whl", hash = "sha256:3269b8b108e248d81edead269b2abf1cb76636bd49b7d5d3b41b194634cb10e6", size = 18168, upload-time = "2025-03-23T22:11:39.541Z" },
+    { url = "https://files.pythonhosted.org/packages/09/52/7bbfb6e987d9a8a945f22941a8da63e3529465f1b106ef0e26f5df7c780d/pytest_examples-0.0.18-py3-none-any.whl", hash = "sha256:86c195b98c4e55049a0df3a0a990ca89123b7280473ab57608eecc6c47bcfe9c", size = 18169, upload-time = "2025-05-06T07:46:09.349Z" },
 ]
 
 [[package]]
