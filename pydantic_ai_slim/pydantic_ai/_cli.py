@@ -190,6 +190,11 @@ Special prompt:
 
 
 async def run_chat(session: PromptSession[Any], stream: bool, agent: Agent, console: Console, code_theme: str) -> int:
+    # Check if we're running in a CI/CD or non-interactive environment
+    if not sys.stdin.isatty():
+        console.print('[yellow]Warning: stdin is not a terminal. Interactive mode is not available.[/yellow]')
+        return 0
+
     multiline = False
     messages: list[ModelMessage] = []
 

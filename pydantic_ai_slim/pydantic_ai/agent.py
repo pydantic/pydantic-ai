@@ -1666,7 +1666,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             await exit_stack.aclose()
 
     def run_cli(self: Agent[None, str]) -> None:
-        """Run the agent in a CLI loop."""
+        """Run the agent in a CLI loop.
+
+        The CLI requires stdin to be connected to a terminal to function properly.
+        If running in a non-interactive environment (like CI/CD pipelines), this
+        will display a warning and exit without error.
+        """
         from pydantic_ai._cli import cli
 
         cli(agent=self)
