@@ -269,7 +269,7 @@ def test_instrument_all():
 @pytest.mark.anyio
 async def test_feedback(capfire: CaptureLogfire) -> None:
     try:
-        from logfire.experimental.annotations import record_feedback  # type: ignore
+        from logfire.experimental.annotations import record_feedback
     except ImportError:
         pytest.skip('Requires recent version of logfire')
 
