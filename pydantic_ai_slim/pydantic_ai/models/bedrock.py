@@ -374,23 +374,24 @@ class BedrockConverseModel(Model):
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)
-        for m in messages:
-            if isinstance(m, ModelRequest):
-                parts = m.parts
-                i = 0
-                while i < len(parts):
-                    part = parts[i]
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                parts = message.parts
+                partsCount = 0
+                numParts = len(parts)
+                while partsCount < numParts:
+                    part = parts[partsCount]
                     if isinstance(part, SystemPromptPart):
                         system_prompt.append({'text': part.content})
-                        i += 1
+                        partsCount += 1
                     elif isinstance(part, UserPromptPart):
                         bedrock_messages.extend(await self._map_user_prompt(part, document_count))
-                        i += 1
+                        partsCount += 1
                     elif isinstance(part, ToolReturnPart):
                         # Group consecutive ToolReturnParts
                         tool_results: list[dict[str, typing.Any]] = []
-                        while i < len(parts) and isinstance(parts[i], ToolReturnPart):
-                            tr_part = typing.cast(ToolReturnPart, parts[i])
+                        while partsCount < numParts and isinstance(parts[partsCount], ToolReturnPart):
+                            tr_part = typing.cast(ToolReturnPart, parts[partsCount])
                             tool_results.append(
                                 {
                                     'toolResult': {
@@ -400,7 +401,7 @@ class BedrockConverseModel(Model):
                                     }
                                 }
                             )
-                            i += 1
+                            partsCount += 1
                         bedrock_messages.append(
                             cast(
                                 'MessageUnionTypeDef',
@@ -430,12 +431,12 @@ class BedrockConverseModel(Model):
                                     ],
                                 }
                             )
-                        i += 1
+                        partsCount += 1
                     else:
-                        i += 1
-            elif isinstance(m, ModelResponse):
+                        partsCount += 1
+            elif isinstance(message, ModelResponse):
                 content: list[ContentBlockOutputTypeDef] = []
-                for item in m.parts:
+                for item in message.parts:
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
                     else:
@@ -443,7 +444,7 @@ class BedrockConverseModel(Model):
                         content.append(self._map_tool_call(item))
                 bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
-                assert_never(m)
+                assert_never(message)
 
         if instructions := self._get_instructions(messages):
             system_prompt.insert(0, {'text': instructions})
