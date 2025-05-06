@@ -1,5 +1,7 @@
 """This module defines the Storage class, which is responsible for storing and retrieving tasks."""
 
+from __future__ import annotations as _annotations
+
 from abc import ABC, abstractmethod
 from datetime import datetime
 

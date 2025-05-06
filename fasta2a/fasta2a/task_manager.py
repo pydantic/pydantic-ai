@@ -58,6 +58,8 @@ The flow:
 11. Client queries TaskManager for results, which reads from Storage
 """
 
+from __future__ import annotations as _annotations
+
 import uuid
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field

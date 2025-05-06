@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations as _annotations
 
 import contextvars
 from collections.abc import AsyncIterable

@@ -1,3 +1,5 @@
+from __future__ import annotations as _annotations
+
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
