@@ -264,9 +264,8 @@ class OpenAIModel(Model):
         openai_messages = await self._map_messages(messages)
 
         try:
-            extra_headers = {'User-Agent': get_user_agent()}
-            if 'extra_headers' in model_settings:
-                extra_headers.update(model_settings['extra_headers'])
+            extra_headers = model_settings.get('extra_headers', {})
+            extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.chat.completions.create(
                 model=self._model_name,
                 messages=openai_messages,
@@ -613,9 +612,8 @@ class OpenAIResponsesModel(Model):
         reasoning = self._get_reasoning(model_settings)
 
         try:
-            extra_headers = {'User-Agent': get_user_agent()}
-            if 'extra_headers' in model_settings:
-                extra_headers.update(model_settings['extra_headers'])
+            extra_headers = model_settings.get('extra_headers', {})
+            extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.responses.create(
                 input=openai_messages,
                 model=self._model_name,

@@ -221,9 +221,8 @@ class AnthropicModel(Model):
         system_prompt, anthropic_messages = await self._map_message(messages)
 
         try:
-            extra_headers = {'User-Agent': get_user_agent()}
-            if 'extra_headers' in model_settings:
-                extra_headers.update(model_settings['extra_headers'])
+            extra_headers = model_settings.get('extra_headers', {})
+            extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.messages.create(
                 max_tokens=model_settings.get('max_tokens', 1024),
                 system=system_prompt or NOT_GIVEN,

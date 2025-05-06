@@ -200,9 +200,8 @@ class GroqModel(Model):
         groq_messages = self._map_messages(messages)
 
         try:
-            extra_headers = {'User-Agent': get_user_agent()}
-            if 'extra_headers' in model_settings:
-                extra_headers.update(model_settings['extra_headers'])
+            extra_headers = model_settings.get('extra_headers', {})
+            extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.chat.completions.create(
                 model=str(self._model_name),
                 messages=groq_messages,
