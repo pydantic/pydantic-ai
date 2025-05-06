@@ -134,7 +134,7 @@ class _TaskOperation(TypedDict, Generic[OperationT, ParamsT]):
 _RunTask = _TaskOperation[Literal['run'], TaskSendParams]
 _CancelTask = _TaskOperation[Literal['cancel'], TaskIdParams]
 
-TaskOperations = Annotated[_RunTask | _CancelTask, Discriminator('operation')]
+TaskOperations = Annotated['_RunTask | _CancelTask', Discriminator('operation')]
 
 TaskParamsT = TypeVar('TaskParamsT')
 
