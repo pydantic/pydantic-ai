@@ -279,7 +279,7 @@ class _URLFile(_BaseFile):
     """The URL of the file."""
 
 
-File: TypeAlias = '_BinaryFile | _URLFile'
+File: TypeAlias = Union[_BinaryFile, _URLFile]
 """A file is a binary file or a URL file."""
 
 
