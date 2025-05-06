@@ -38,9 +38,9 @@ with try_import() as imports_successful:
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
 
-if sys.version_info < (3, 11):
+if sys.version_info < (3, 11):  # pragma: no cover
     from exceptiongroup import ExceptionGroup
-else:
+else:  # pragma: no cover
     ExceptionGroup = ExceptionGroup
 
 
@@ -635,7 +635,7 @@ async def test_from_text_failure():
     }
     with pytest.raises(ExceptionGroup) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
-    if sys.version_info >= (3, 10):
+    if sys.version_info >= (3, 10):  # pragma: no cover
         assert exc_info.value == HasRepr(
             repr(
                 ExceptionGroup(
@@ -651,7 +651,7 @@ async def test_from_text_failure():
                 )
             )
         )
-    else:
+    else:  # pragma: no cover
         assert exc_info.value == HasRepr(
             repr(
                 ExceptionGroup(

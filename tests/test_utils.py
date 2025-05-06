@@ -132,7 +132,7 @@ async def test_peekable_async_stream(peek_first: bool):
 
 def test_package_versions(capsys: pytest.CaptureFixture[str]):
     if os.getenv('CI'):
-        with capsys.disabled():
+        with capsys.disabled():  # pragma: no cover
             print('\npackage versions:')
             packages = sorted((package.metadata['Name'], package.version) for package in distributions())
             for name, version in packages:

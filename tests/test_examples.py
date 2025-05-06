@@ -41,13 +41,13 @@ from .conftest import ClientWithHandler, TestEnv, try_import
 
 try:
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
-except ImportError:
+except ImportError:  # pragma: no cover
     GoogleVertexProvider = None
 
 
 try:
     import logfire
-except ImportError:
+except ImportError:  # pragma: no cover
     logfire = None
 
 
@@ -106,7 +106,7 @@ def test_docs_examples(  # noqa: C901
 
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
 
-    if sys.version_info >= (3, 10):
+    if sys.version_info >= (3, 10):  # pragma: no cover
         mocker.patch('pydantic_ai.mcp.MCPServerHTTP', return_value=MockMCPServer())
         mocker.patch('mcp.server.fastmcp.FastMCP')
 
@@ -132,7 +132,7 @@ def test_docs_examples(  # noqa: C901
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
         if sys.version_info < python_version_info:
-            pytest.skip(f'Python version {python_version} required')
+            pytest.skip(f'Python version {python_version} required')  # pragma: no cover
 
     cwd = Path.cwd()
 
@@ -230,10 +230,6 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         return '1'
     elif prompt == 'Select product':
         return 'crisps'
-    elif prompt == 'What is the capital of France?':
-        return 'Vichy'
-    elif prompt == 'what is 1 + 1?':
-        return '2'
     else:  # pragma: no cover
         raise ValueError(f'Unexpected prompt: {prompt}')
 

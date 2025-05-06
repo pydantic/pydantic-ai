@@ -17,9 +17,9 @@ from .conftest import IsStr
 
 try:
     from logfire.testing import CaptureLogfire
-except ImportError:
+except ImportError:  # pragma: no cover
     logfire_installed = False
-else:
+else:  # pragma: no cover
     logfire_installed = True
 
 
@@ -267,7 +267,7 @@ def test_instrument_all():
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
-async def test_feedback(capfire: CaptureLogfire) -> None:
+async def test_feedback(capfire: CaptureLogfire) -> None:  # pragma: no cover
     try:
         from logfire.experimental.annotations import record_feedback
     except ImportError:

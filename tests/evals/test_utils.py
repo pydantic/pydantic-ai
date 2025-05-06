@@ -10,9 +10,9 @@ from dirty_equals import HasRepr
 
 from ..conftest import try_import
 
-if sys.version_info < (3, 11):
+if sys.version_info < (3, 11):  # pragma: no cover
     from exceptiongroup import ExceptionGroup
-else:
+else:  # pragma: no cover
     ExceptionGroup = ExceptionGroup
 
 

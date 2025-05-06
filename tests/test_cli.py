@@ -33,7 +33,7 @@ def test_cli_version(capfd: CaptureFixture[str]):
 
 @pytest.mark.skipif(not os.getenv('CI', False), reason="Marcelo can't make this test pass locally")
 @pytest.mark.skipif(sys.version_info >= (3, 13), reason='slightly different output with 3.13')
-def test_cli_help(capfd: CaptureFixture[str]):
+def test_cli_help(capfd: CaptureFixture[str]):  # pragma: no cover
     with pytest.raises(SystemExit) as exc:
         cli(['--help'])
     assert exc.value.code == 0

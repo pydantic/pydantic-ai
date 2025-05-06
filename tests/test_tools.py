@@ -668,7 +668,7 @@ def test_dynamic_tool_decorator():
 def test_plain_tool_name():
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(arg: str) -> str: ...
+    def my_tool(arg: str) -> str: ...  # pragma: no cover
 
     agent.tool_plain(name='foo_tool')(my_tool)
     result = agent.run_sync('Hello')
@@ -679,7 +679,7 @@ def test_plain_tool_name():
 def test_tool_name():
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(ctx: RunContext, arg: str) -> str: ...
+    def my_tool(ctx: RunContext, arg: str) -> str: ...  # pragma: no cover
 
     agent.tool(name='foo_tool')(my_tool)
     result = agent.run_sync('Hello')
@@ -932,7 +932,7 @@ def test_tool_parameters_with_attribute_docstrings():
         """The second parameter"""
 
     @agent.tool_plain
-    def get_score(data: Data) -> int: ...
+    def get_score(data: Data) -> int: ...  # pragma: no cover
 
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)

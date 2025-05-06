@@ -86,7 +86,7 @@ def test_strict_abc_meta():
     assert 'evaluate' in str(exc_info.value)
 
 
-if TYPE_CHECKING or imports_successful():
+if TYPE_CHECKING or imports_successful():  # pragma: no cover
 
     @dataclass
     class SimpleEvaluator(Evaluator[Any, Any, Any]):
