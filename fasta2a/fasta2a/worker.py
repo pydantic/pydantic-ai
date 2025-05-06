@@ -1,12 +1,12 @@
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Annotated, Any, Generic, Literal, Self, TypeVar
+from typing import Annotated, Any, Generic, Literal, TypeVar
 
 import anyio
 from opentelemetry.trace import Span, get_current_span, get_tracer, use_span
 from pydantic import Discriminator
-from typing_extensions import TypedDict
+from typing_extensions import Self, TypedDict
 
 from .runner import Runner
 from .schema import TaskIdParams, TaskSendParams
