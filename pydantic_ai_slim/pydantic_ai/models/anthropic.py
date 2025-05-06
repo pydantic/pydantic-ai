@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import base64
 import io
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
@@ -9,7 +8,6 @@ from datetime import datetime, timezone
 from json import JSONDecodeError, loads as json_loads
 from typing import Any, Literal, Union, cast, overload
 
-from anthropic.types import DocumentBlockParam
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -33,13 +31,21 @@ from ..messages import (
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client, check_allow_model_requests
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    cached_async_http_client,
+    check_allow_model_requests,
+    get_user_agent,
+)
 
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
     from anthropic.types import (
         Base64PDFSourceParam,
         ContentBlock,
+        DocumentBlockParam,
         ImageBlockParam,
         Message as AnthropicMessage,
         MessageParam,
@@ -103,10 +109,6 @@ class AnthropicModel(Model):
     Internally, this uses the [Anthropic Python client](https://github.com/anthropics/anthropic-sdk-python) to interact with the API.
 
     Apart from `__init__`, all methods are private or match those of the base class.
-
-    !!! note
-        The `AnthropicModel` class does not yet support streaming responses.
-        We anticipate adding support for streaming responses in a near-term future release.
     """
 
     client: AsyncAnthropic = field(repr=False)
@@ -208,7 +210,7 @@ class AnthropicModel(Model):
         if not tools:
             tool_choice = None
         else:
-            if not model_request_parameters.allow_text_result:
+            if not model_request_parameters.allow_text_output:
                 tool_choice = {'type': 'any'}
             else:
                 tool_choice = {'type': 'auto'}
@@ -227,10 +229,13 @@ class AnthropicModel(Model):
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
                 stream=stream,
+                stop_sequences=model_settings.get('stop_sequences', NOT_GIVEN),
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
+                extra_headers={'User-Agent': get_user_agent()},
+                extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
@@ -269,8 +274,8 @@ class AnthropicModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
@@ -324,6 +329,8 @@ class AnthropicModel(Model):
                 anthropic_messages.append(MessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
+        if instructions := self._get_instructions(messages):
+            system_prompt = f'{instructions}\n\n{system_prompt}'
         return system_prompt, anthropic_messages
 
     @staticmethod
@@ -354,48 +361,13 @@ class AnthropicModel(Model):
                     else:
                         raise RuntimeError('Only images and PDFs are supported for binary content')
                 elif isinstance(item, ImageUrl):
-                    try:
+                    yield ImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
+                elif isinstance(item, DocumentUrl):
+                    if item.media_type == 'application/pdf':
+                        yield DocumentBlockParam(source={'url': item.url, 'type': 'url'}, type='document')
+                    elif item.media_type == 'text/plain':
                         response = await cached_async_http_client().get(item.url)
                         response.raise_for_status()
-                        yield ImageBlockParam(
-                            source={
-                                'data': io.BytesIO(response.content),
-                                'media_type': item.media_type,
-                                'type': 'base64',
-                            },
-                            type='image',
-                        )
-                    except ValueError:
-                        # Download the file if can't find the mime type.
-                        client = cached_async_http_client()
-                        response = await client.get(item.url, follow_redirects=True)
-                        response.raise_for_status()
-                        base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                        if (mime_type := response.headers['Content-Type']) in (
-                            'image/jpeg',
-                            'image/png',
-                            'image/gif',
-                            'image/webp',
-                        ):
-                            yield ImageBlockParam(
-                                source={'data': base64_encoded, 'media_type': mime_type, 'type': 'base64'},
-                                type='image',
-                            )
-                        else:  # pragma: no cover
-                            raise RuntimeError(f'Unsupported image type: {mime_type}')
-                elif isinstance(item, DocumentUrl):
-                    response = await cached_async_http_client().get(item.url)
-                    response.raise_for_status()
-                    if item.media_type == 'application/pdf':
-                        yield DocumentBlockParam(
-                            source=Base64PDFSourceParam(
-                                data=io.BytesIO(response.content),
-                                media_type=item.media_type,
-                                type='base64',
-                            ),
-                            type='document',
-                        )
-                    elif item.media_type == 'text/plain':
                         yield DocumentBlockParam(
                             source=PlainTextSourceParam(data=response.text, media_type=item.media_type, type='text'),
                             type='document',
@@ -433,13 +405,27 @@ def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage
     if response_usage is None:
         return usage.Usage()
 
-    request_tokens = getattr(response_usage, 'input_tokens', None)
+    # Store all integer-typed usage values in the details dict
+    response_usage_dict = response_usage.model_dump()
+    details: dict[str, int] = {}
+    for key, value in response_usage_dict.items():
+        if isinstance(value, int):
+            details[key] = value
+
+    # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence the getattr call
+    # Tokens are only counted once between input_tokens, cache_creation_input_tokens, and cache_read_input_tokens
+    # This approach maintains request_tokens as the count of all input tokens, with cached counts as details
+    request_tokens = (
+        getattr(response_usage, 'input_tokens', 0)
+        + (getattr(response_usage, 'cache_creation_input_tokens', 0) or 0)  # These can be missing, None, or int
+        + (getattr(response_usage, 'cache_read_input_tokens', 0) or 0)
+    )
 
     return usage.Usage(
-        # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence this getattr
-        request_tokens=request_tokens,
+        request_tokens=request_tokens or None,
         response_tokens=response_usage.output_tokens,
-        total_tokens=(request_tokens or 0) + response_usage.output_tokens,
+        total_tokens=request_tokens + response_usage.output_tokens,
+        details=details or None,
     )
 
 

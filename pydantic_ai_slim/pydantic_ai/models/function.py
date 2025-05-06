@@ -91,8 +91,8 @@ class FunctionModel(Model):
     ) -> tuple[ModelResponse, usage.Usage]:
         agent_info = AgentInfo(
             model_request_parameters.function_tools,
-            model_request_parameters.allow_text_result,
-            model_request_parameters.result_tools,
+            model_request_parameters.allow_text_output,
+            model_request_parameters.output_tools,
             model_settings,
         )
 
@@ -117,8 +117,8 @@ class FunctionModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         agent_info = AgentInfo(
             model_request_parameters.function_tools,
-            model_request_parameters.allow_text_result,
-            model_request_parameters.result_tools,
+            model_request_parameters.allow_text_output,
+            model_request_parameters.output_tools,
             model_settings,
         )
 
@@ -158,10 +158,10 @@ class AgentInfo:
     These are the tools registered via the [`tool`][pydantic_ai.Agent.tool] and
     [`tool_plain`][pydantic_ai.Agent.tool_plain] decorators.
     """
-    allow_text_result: bool
-    """Whether a plain text result is allowed."""
-    result_tools: list[ToolDefinition]
-    """The tools that can called as the final result of the run."""
+    allow_text_output: bool
+    """Whether a plain text output is allowed."""
+    output_tools: list[ToolDefinition]
+    """The tools that can called to produce the final output of the run."""
     model_settings: ModelSettings | None
     """The model settings passed to the run call."""
 

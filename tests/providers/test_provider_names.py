@@ -15,6 +15,7 @@ with try_import() as imports_successful:
     from openai import OpenAIError
 
     from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.google_gla import GoogleGLAProvider
@@ -28,6 +29,7 @@ with try_import() as imports_successful:
         ('cohere', CohereProvider, 'CO_API_KEY'),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),
+        ('azure', AzureProvider, 'AZURE_OPENAI'),
         ('google-vertex', GoogleVertexProvider, None),
         ('google-gla', GoogleGLAProvider, 'GEMINI_API_KEY'),
         ('groq', GroqProvider, 'GROQ_API_KEY'),

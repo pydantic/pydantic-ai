@@ -1,12 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from httpx import Timeout
 from typing_extensions import TypedDict
-
-if TYPE_CHECKING:
-    pass
 
 
 class ModelSettings(TypedDict, total=False):
@@ -130,6 +125,29 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * Groq
+    """
+
+    stop_sequences: list[str]
+    """Sequences that will cause the model to stop generating.
+
+    Supported by:
+
+    * OpenAI
+    * Anthropic
+    * Bedrock
+    * Mistral
+    * Groq
+    * Cohere
+    """
+
+    extra_body: object
+    """Extra body to send to the model.
+
+    Supported by:
+
+    * OpenAI
+    * Anthropic
     * Groq
     """
 

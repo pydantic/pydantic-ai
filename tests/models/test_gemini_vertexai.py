@@ -67,7 +67,7 @@ async def test_file_url_input(
         ]
     )
 
-    assert result.data == '...'
+    assert result.output == '...'
 
 
 def save_service_account(service_account_path: Path, project_id: str) -> None:

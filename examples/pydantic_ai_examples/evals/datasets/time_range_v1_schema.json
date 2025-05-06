@@ -1,0 +1,697 @@
+{
+  "$defs": {
+    "Case": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "inputs": {
+          "$ref": "#/$defs/TimeRangeInputs"
+        },
+        "metadata": {
+          "default": null,
+          "title": "Metadata",
+          "type": "null"
+        },
+        "expected_output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeRangeBuilderSuccess"
+            },
+            {
+              "$ref": "#/$defs/TimeRangeBuilderError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Output"
+        },
+        "evaluators": {
+          "default": [],
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/short_evaluator_Equals"
+              },
+              {
+                "const": "EqualsExpected",
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/short_evaluator_Contains"
+              },
+              {
+                "$ref": "#/$defs/evaluator_Contains"
+              },
+              {
+                "$ref": "#/$defs/short_evaluator_IsInstance"
+              },
+              {
+                "$ref": "#/$defs/short_evaluator_MaxDuration"
+              },
+              {
+                "$ref": "#/$defs/short_evaluator_LLMJudge"
+              },
+              {
+                "$ref": "#/$defs/evaluator_LLMJudge"
+              },
+              {
+                "$ref": "#/$defs/short_evaluator_HasMatchingSpan"
+              }
+            ]
+          },
+          "title": "Evaluators",
+          "type": "array"
+        }
+      },
+      "required": [
+        "inputs"
+      ],
+      "title": "Case",
+      "type": "object"
+    },
+    "KnownModelName": {
+      "enum": [
+        "anthropic:claude-3-7-sonnet-latest",
+        "anthropic:claude-3-5-haiku-latest",
+        "anthropic:claude-3-5-sonnet-latest",
+        "anthropic:claude-3-opus-latest",
+        "claude-3-7-sonnet-latest",
+        "claude-3-5-haiku-latest",
+        "bedrock:amazon.titan-tg1-large",
+        "bedrock:amazon.titan-text-lite-v1",
+        "bedrock:amazon.titan-text-express-v1",
+        "bedrock:us.amazon.nova-pro-v1:0",
+        "bedrock:us.amazon.nova-lite-v1:0",
+        "bedrock:us.amazon.nova-micro-v1:0",
+        "bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "bedrock:anthropic.claude-3-5-haiku-20241022-v1:0",
+        "bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0",
+        "bedrock:anthropic.claude-instant-v1",
+        "bedrock:anthropic.claude-v2:1",
+        "bedrock:anthropic.claude-v2",
+        "bedrock:anthropic.claude-3-sonnet-20240229-v1:0",
+        "bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0",
+        "bedrock:anthropic.claude-3-haiku-20240307-v1:0",
+        "bedrock:us.anthropic.claude-3-haiku-20240307-v1:0",
+        "bedrock:anthropic.claude-3-opus-20240229-v1:0",
+        "bedrock:us.anthropic.claude-3-opus-20240229-v1:0",
+        "bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "bedrock:cohere.command-text-v14",
+        "bedrock:cohere.command-r-v1:0",
+        "bedrock:cohere.command-r-plus-v1:0",
+        "bedrock:cohere.command-light-text-v14",
+        "bedrock:meta.llama3-8b-instruct-v1:0",
+        "bedrock:meta.llama3-70b-instruct-v1:0",
+        "bedrock:meta.llama3-1-8b-instruct-v1:0",
+        "bedrock:us.meta.llama3-1-8b-instruct-v1:0",
+        "bedrock:meta.llama3-1-70b-instruct-v1:0",
+        "bedrock:us.meta.llama3-1-70b-instruct-v1:0",
+        "bedrock:meta.llama3-1-405b-instruct-v1:0",
+        "bedrock:us.meta.llama3-2-11b-instruct-v1:0",
+        "bedrock:us.meta.llama3-2-90b-instruct-v1:0",
+        "bedrock:us.meta.llama3-2-1b-instruct-v1:0",
+        "bedrock:us.meta.llama3-2-3b-instruct-v1:0",
+        "bedrock:us.meta.llama3-3-70b-instruct-v1:0",
+        "bedrock:mistral.mistral-7b-instruct-v0:2",
+        "bedrock:mistral.mixtral-8x7b-instruct-v0:1",
+        "bedrock:mistral.mistral-large-2402-v1:0",
+        "bedrock:mistral.mistral-large-2407-v1:0",
+        "claude-3-5-sonnet-latest",
+        "claude-3-opus-latest",
+        "cohere:c4ai-aya-expanse-32b",
+        "cohere:c4ai-aya-expanse-8b",
+        "cohere:command",
+        "cohere:command-light",
+        "cohere:command-light-nightly",
+        "cohere:command-nightly",
+        "cohere:command-r",
+        "cohere:command-r-03-2024",
+        "cohere:command-r-08-2024",
+        "cohere:command-r-plus",
+        "cohere:command-r-plus-04-2024",
+        "cohere:command-r-plus-08-2024",
+        "cohere:command-r7b-12-2024",
+        "deepseek:deepseek-chat",
+        "deepseek:deepseek-reasoner",
+        "google-gla:gemini-1.0-pro",
+        "google-gla:gemini-1.5-flash",
+        "google-gla:gemini-1.5-flash-8b",
+        "google-gla:gemini-1.5-pro",
+        "google-gla:gemini-2.0-flash-exp",
+        "google-gla:gemini-2.0-flash-thinking-exp-01-21",
+        "google-gla:gemini-exp-1206",
+        "google-gla:gemini-2.0-flash",
+        "google-gla:gemini-2.0-flash-lite-preview-02-05",
+        "google-gla:gemini-2.0-pro-exp-02-05",
+        "google-vertex:gemini-1.0-pro",
+        "google-vertex:gemini-1.5-flash",
+        "google-vertex:gemini-1.5-flash-8b",
+        "google-vertex:gemini-1.5-pro",
+        "google-vertex:gemini-2.0-flash-exp",
+        "google-vertex:gemini-2.0-flash-thinking-exp-01-21",
+        "google-vertex:gemini-exp-1206",
+        "google-vertex:gemini-2.0-flash",
+        "google-vertex:gemini-2.0-flash-lite-preview-02-05",
+        "google-vertex:gemini-2.0-pro-exp-02-05",
+        "gpt-3.5-turbo",
+        "gpt-3.5-turbo-0125",
+        "gpt-3.5-turbo-0301",
+        "gpt-3.5-turbo-0613",
+        "gpt-3.5-turbo-1106",
+        "gpt-3.5-turbo-16k",
+        "gpt-3.5-turbo-16k-0613",
+        "gpt-4",
+        "gpt-4-0125-preview",
+        "gpt-4-0314",
+        "gpt-4-0613",
+        "gpt-4-1106-preview",
+        "gpt-4-32k",
+        "gpt-4-32k-0314",
+        "gpt-4-32k-0613",
+        "gpt-4-turbo",
+        "gpt-4-turbo-2024-04-09",
+        "gpt-4-turbo-preview",
+        "gpt-4-vision-preview",
+        "gpt-4o",
+        "gpt-4o-2024-05-13",
+        "gpt-4o-2024-08-06",
+        "gpt-4o-2024-11-20",
+        "gpt-4o-audio-preview",
+        "gpt-4o-audio-preview-2024-10-01",
+        "gpt-4o-audio-preview-2024-12-17",
+        "gpt-4o-mini",
+        "gpt-4o-mini-2024-07-18",
+        "gpt-4o-mini-audio-preview",
+        "gpt-4o-mini-audio-preview-2024-12-17",
+        "gpt-4o-mini-search-preview",
+        "gpt-4o-mini-search-preview-2025-03-11",
+        "gpt-4o-search-preview",
+        "gpt-4o-search-preview-2025-03-11",
+        "groq:distil-whisper-large-v3-en",
+        "groq:gemma2-9b-it",
+        "groq:llama-3.3-70b-versatile",
+        "groq:llama-3.1-8b-instant",
+        "groq:llama-guard-3-8b",
+        "groq:llama3-70b-8192",
+        "groq:llama3-8b-8192",
+        "groq:whisper-large-v3",
+        "groq:whisper-large-v3-turbo",
+        "groq:playai-tts",
+        "groq:playai-tts-arabic",
+        "groq:qwen-qwq-32b",
+        "groq:mistral-saba-24b",
+        "groq:qwen-2.5-coder-32b",
+        "groq:qwen-2.5-32b",
+        "groq:deepseek-r1-distill-qwen-32b",
+        "groq:deepseek-r1-distill-llama-70b",
+        "groq:llama-3.3-70b-specdec",
+        "groq:llama-3.2-1b-preview",
+        "groq:llama-3.2-3b-preview",
+        "groq:llama-3.2-11b-vision-preview",
+        "groq:llama-3.2-90b-vision-preview",
+        "mistral:codestral-latest",
+        "mistral:mistral-large-latest",
+        "mistral:mistral-moderation-latest",
+        "mistral:mistral-small-latest",
+        "o1",
+        "o1-2024-12-17",
+        "o1-mini",
+        "o1-mini-2024-09-12",
+        "o1-preview",
+        "o1-preview-2024-09-12",
+        "o3-mini",
+        "o3-mini-2025-01-31",
+        "openai:chatgpt-4o-latest",
+        "openai:gpt-3.5-turbo",
+        "openai:gpt-3.5-turbo-0125",
+        "openai:gpt-3.5-turbo-0301",
+        "openai:gpt-3.5-turbo-0613",
+        "openai:gpt-3.5-turbo-1106",
+        "openai:gpt-3.5-turbo-16k",
+        "openai:gpt-3.5-turbo-16k-0613",
+        "openai:gpt-4",
+        "openai:gpt-4-0125-preview",
+        "openai:gpt-4-0314",
+        "openai:gpt-4-0613",
+        "openai:gpt-4-1106-preview",
+        "openai:gpt-4-32k",
+        "openai:gpt-4-32k-0314",
+        "openai:gpt-4-32k-0613",
+        "openai:gpt-4-turbo",
+        "openai:gpt-4-turbo-2024-04-09",
+        "openai:gpt-4-turbo-preview",
+        "openai:gpt-4-vision-preview",
+        "openai:gpt-4o",
+        "openai:gpt-4o-2024-05-13",
+        "openai:gpt-4o-2024-08-06",
+        "openai:gpt-4o-2024-11-20",
+        "openai:gpt-4o-audio-preview",
+        "openai:gpt-4o-audio-preview-2024-10-01",
+        "openai:gpt-4o-audio-preview-2024-12-17",
+        "openai:gpt-4o-mini",
+        "openai:gpt-4o-mini-2024-07-18",
+        "openai:gpt-4o-mini-audio-preview",
+        "openai:gpt-4o-mini-audio-preview-2024-12-17",
+        "openai:gpt-4o-mini-search-preview",
+        "openai:gpt-4o-mini-search-preview-2025-03-11",
+        "openai:gpt-4o-search-preview",
+        "openai:gpt-4o-search-preview-2025-03-11",
+        "openai:o1",
+        "openai:o1-2024-12-17",
+        "openai:o1-mini",
+        "openai:o1-mini-2024-09-12",
+        "openai:o1-preview",
+        "openai:o1-preview-2024-09-12",
+        "openai:o3-mini",
+        "openai:o3-mini-2025-01-31",
+        "test"
+      ],
+      "type": "string"
+    },
+    "SpanQuery": {
+      "description": "A serializable query for filtering SpanNodes based on various conditions.\n\nAll fields are optional and combined with AND logic by default.",
+      "properties": {
+        "name_equals": {
+          "title": "Name Equals",
+          "type": "string"
+        },
+        "name_contains": {
+          "title": "Name Contains",
+          "type": "string"
+        },
+        "name_matches_regex": {
+          "title": "Name Matches Regex",
+          "type": "string"
+        },
+        "has_attributes": {
+          "title": "Has Attributes",
+          "type": "object"
+        },
+        "has_attribute_keys": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Has Attribute Keys",
+          "type": "array"
+        },
+        "min_duration": {
+          "anyOf": [
+            {
+              "format": "duration",
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Min Duration"
+        },
+        "max_duration": {
+          "anyOf": [
+            {
+              "format": "duration",
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Max Duration"
+        },
+        "not_": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "and_": {
+          "items": {
+            "$ref": "#/$defs/SpanQuery"
+          },
+          "title": "And",
+          "type": "array"
+        },
+        "or_": {
+          "items": {
+            "$ref": "#/$defs/SpanQuery"
+          },
+          "title": "Or",
+          "type": "array"
+        },
+        "min_child_count": {
+          "title": "Min Child Count",
+          "type": "integer"
+        },
+        "max_child_count": {
+          "title": "Max Child Count",
+          "type": "integer"
+        },
+        "some_child_has": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "all_children_have": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "no_child_has": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "stop_recursing_when": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "min_descendant_count": {
+          "title": "Min Descendant Count",
+          "type": "integer"
+        },
+        "max_descendant_count": {
+          "title": "Max Descendant Count",
+          "type": "integer"
+        },
+        "some_descendant_has": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "all_descendants_have": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "no_descendant_has": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "min_depth": {
+          "title": "Min Depth",
+          "type": "integer"
+        },
+        "max_depth": {
+          "title": "Max Depth",
+          "type": "integer"
+        },
+        "some_ancestor_has": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "all_ancestors_have": {
+          "$ref": "#/$defs/SpanQuery"
+        },
+        "no_ancestor_has": {
+          "$ref": "#/$defs/SpanQuery"
+        }
+      },
+      "title": "SpanQuery",
+      "type": "object"
+    },
+    "TimeRangeBuilderError": {
+      "description": "Response when a time range cannot not be generated.",
+      "properties": {
+        "error_message": {
+          "title": "Error Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "error_message"
+      ],
+      "title": "TimeRangeBuilderError",
+      "type": "object"
+    },
+    "TimeRangeBuilderSuccess": {
+      "description": "Response when a time range could be successfully generated.",
+      "properties": {
+        "min_timestamp_with_offset": {
+          "description": "A datetime in ISO format with timezone offset.",
+          "format": "date-time",
+          "title": "Min Timestamp With Offset",
+          "type": "string"
+        },
+        "max_timestamp_with_offset": {
+          "description": "A datetime in ISO format with timezone offset.",
+          "format": "date-time",
+          "title": "Max Timestamp With Offset",
+          "type": "string"
+        },
+        "explanation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A brief explanation of the time range that was selected.\n\nFor example, if a user only mentions a specific point in time, you might explain that you selected a 10 minute\nwindow around that time.",
+          "title": "Explanation"
+        }
+      },
+      "required": [
+        "min_timestamp_with_offset",
+        "max_timestamp_with_offset",
+        "explanation"
+      ],
+      "title": "TimeRangeBuilderSuccess",
+      "type": "object"
+    },
+    "TimeRangeInputs": {
+      "description": "The inputs for the time range inference agent.",
+      "properties": {
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "now": {
+          "format": "date-time",
+          "title": "Now",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt",
+        "now"
+      ],
+      "title": "TimeRangeInputs",
+      "type": "object"
+    },
+    "evaluator_Contains": {
+      "additionalProperties": false,
+      "properties": {
+        "Contains": {
+          "$ref": "#/$defs/evaluator_params_Contains"
+        }
+      },
+      "required": [
+        "Contains"
+      ],
+      "title": "evaluator_Contains",
+      "type": "object"
+    },
+    "evaluator_LLMJudge": {
+      "additionalProperties": false,
+      "properties": {
+        "LLMJudge": {
+          "$ref": "#/$defs/evaluator_params_LLMJudge"
+        }
+      },
+      "required": [
+        "LLMJudge"
+      ],
+      "title": "evaluator_LLMJudge",
+      "type": "object"
+    },
+    "evaluator_params_Contains": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "title": "Value"
+        },
+        "case_sensitive": {
+          "title": "Case Sensitive",
+          "type": "boolean"
+        },
+        "as_strings": {
+          "title": "As Strings",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "evaluator_params_Contains",
+      "type": "object"
+    },
+    "evaluator_params_LLMJudge": {
+      "additionalProperties": false,
+      "properties": {
+        "rubric": {
+          "title": "Rubric",
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/KnownModelName",
+          "title": "Model"
+        },
+        "include_input": {
+          "title": "Include Input",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "rubric"
+      ],
+      "title": "evaluator_params_LLMJudge",
+      "type": "object"
+    },
+    "short_evaluator_Contains": {
+      "additionalProperties": false,
+      "properties": {
+        "Contains": {
+          "title": "Contains"
+        }
+      },
+      "required": [
+        "Contains"
+      ],
+      "title": "short_evaluator_Contains",
+      "type": "object"
+    },
+    "short_evaluator_Equals": {
+      "additionalProperties": false,
+      "properties": {
+        "Equals": {
+          "title": "Equals"
+        }
+      },
+      "required": [
+        "Equals"
+      ],
+      "title": "short_evaluator_Equals",
+      "type": "object"
+    },
+    "short_evaluator_HasMatchingSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "HasMatchingSpan": {
+          "$ref": "#/$defs/SpanQuery"
+        }
+      },
+      "required": [
+        "HasMatchingSpan"
+      ],
+      "title": "short_evaluator_HasMatchingSpan",
+      "type": "object"
+    },
+    "short_evaluator_IsInstance": {
+      "additionalProperties": false,
+      "properties": {
+        "IsInstance": {
+          "title": "Isinstance",
+          "type": "string"
+        }
+      },
+      "required": [
+        "IsInstance"
+      ],
+      "title": "short_evaluator_IsInstance",
+      "type": "object"
+    },
+    "short_evaluator_LLMJudge": {
+      "additionalProperties": false,
+      "properties": {
+        "LLMJudge": {
+          "title": "Llmjudge",
+          "type": "string"
+        }
+      },
+      "required": [
+        "LLMJudge"
+      ],
+      "title": "short_evaluator_LLMJudge",
+      "type": "object"
+    },
+    "short_evaluator_MaxDuration": {
+      "additionalProperties": false,
+      "properties": {
+        "MaxDuration": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "format": "duration",
+              "type": "string"
+            }
+          ],
+          "title": "Maxduration"
+        }
+      },
+      "required": [
+        "MaxDuration"
+      ],
+      "title": "short_evaluator_MaxDuration",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/Case"
+      },
+      "title": "Cases",
+      "type": "array"
+    },
+    "evaluators": {
+      "default": [],
+      "items": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/short_evaluator_Equals"
+          },
+          {
+            "const": "EqualsExpected",
+            "type": "string"
+          },
+          {
+            "$ref": "#/$defs/short_evaluator_Contains"
+          },
+          {
+            "$ref": "#/$defs/evaluator_Contains"
+          },
+          {
+            "$ref": "#/$defs/short_evaluator_IsInstance"
+          },
+          {
+            "$ref": "#/$defs/short_evaluator_MaxDuration"
+          },
+          {
+            "$ref": "#/$defs/short_evaluator_LLMJudge"
+          },
+          {
+            "$ref": "#/$defs/evaluator_LLMJudge"
+          },
+          {
+            "$ref": "#/$defs/short_evaluator_HasMatchingSpan"
+          }
+        ]
+      },
+      "title": "Evaluators",
+      "type": "array"
+    },
+    "$schema": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "cases"
+  ],
+  "title": "Dataset",
+  "type": "object"
+}

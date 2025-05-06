@@ -1,15 +1,14 @@
 from __future__ import annotations as _annotations
 
 import base64
+import re
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Literal, Union, cast, overload
+from typing import Any, Literal, Union, cast, overload
 
-from openai import NotGiven
-from openai.types import Reasoning
 from typing_extensions import assert_never
 
 from pydantic_ai.providers import Provider, infer_provider
@@ -33,6 +32,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -42,10 +42,12 @@ from . import (
     StreamedResponse,
     cached_async_http_client,
     check_allow_model_requests,
+    get_user_agent,
 )
+from ._json_schema import JsonSchema, WalkJsonSchema
 
 try:
-    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream
+    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream, NotGiven
     from openai.types import ChatModel, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -56,6 +58,8 @@ try:
     )
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
+    from openai.types.chat.chat_completion_content_part_param import File, FileFile
+    from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
@@ -64,6 +68,14 @@ except ImportError as _import_error:
         'Please install `openai` to use the OpenAI model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+__all__ = (
+    'OpenAIModel',
+    'OpenAIResponsesModel',
+    'OpenAIModelSettings',
+    'OpenAIResponsesModelSettings',
+    'OpenAIModelName',
+)
 
 OpenAIModelName = Union[str, ChatModel]
 """
@@ -87,8 +99,7 @@ class OpenAIModelSettings(ModelSettings, total=False):
     """
 
     openai_reasoning_effort: ReasoningEffort
-    """
-    Constrains effort on reasoning for [reasoning models](https://platform.openai.com/docs/guides/reasoning).
+    """Constrains effort on reasoning for [reasoning models](https://platform.openai.com/docs/guides/reasoning).
 
     Currently supported values are `low`, `medium`, and `high`. Reducing reasoning effort can
     result in faster responses and fewer tokens used on reasoning in a response.
@@ -98,6 +109,40 @@ class OpenAIModelSettings(ModelSettings, total=False):
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
 
     See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
+    """
+
+
+class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
+    """Settings used for an OpenAI Responses model request.
+
+    ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+    openai_builtin_tools: Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam]
+    """The provided OpenAI built-in tools to use.
+
+    See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
+    """
+
+    openai_reasoning_generate_summary: Literal['detailed', 'concise']
+    """A summary of the reasoning performed by the model.
+
+    This can be useful for debugging and understanding the model's reasoning process.
+    One of `concise` or `detailed`.
+
+    Check the [OpenAI Computer use documentation](https://platform.openai.com/docs/guides/tools-computer-use#1-send-a-request-to-the-model)
+    for more details.
+    """
+
+    openai_truncation: Literal['disabled', 'auto']
+    """The truncation strategy to use for the model response.
+
+    It can be either:
+    - `disabled` (default): If a model response will exceed the context window size for a model, the
+        request will fail with a 400 error.
+    - `auto`: If the context of this response and previous ones exceeds the model's context window size,
+        the model will truncate the response to fit the context window by dropping input items in the
+        middle of the conversation.
     """
 
 
@@ -111,7 +156,7 @@ class OpenAIModel(Model):
     """
 
     client: AsyncOpenAI = field(repr=False)
-    system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
+    system_prompt_role: OpenAISystemPromptRole | None = field(default=None, repr=False)
 
     _model_name: OpenAIModelName = field(repr=False)
     _system: str = field(default='openai', repr=False)
@@ -169,6 +214,9 @@ class OpenAIModel(Model):
         async with response:
             yield await self._process_streamed_response(response)
 
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        return _customize_request_parameters(model_request_parameters)
+
     @property
     def model_name(self) -> OpenAIModelName:
         """The model name."""
@@ -209,15 +257,12 @@ class OpenAIModel(Model):
         # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_result:
+        elif not model_request_parameters.allow_text_output:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
 
-        openai_messages: list[chat.ChatCompletionMessageParam] = []
-        for m in messages:
-            async for msg in self._map_message(m):
-                openai_messages.append(msg)
+        openai_messages = await self._map_messages(messages)
 
         try:
             return await self.client.chat.completions.create(
@@ -229,6 +274,7 @@ class OpenAIModel(Model):
                 tool_choice=tool_choice or NOT_GIVEN,
                 stream=stream,
                 stream_options={'include_usage': True} if stream else NOT_GIVEN,
+                stop=model_settings.get('stop_sequences', NOT_GIVEN),
                 max_completion_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
@@ -239,6 +285,8 @@ class OpenAIModel(Model):
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
+                extra_headers={'User-Agent': get_user_agent()},
+                extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
@@ -272,35 +320,40 @@ class OpenAIModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
-    async def _map_message(self, message: ModelMessage) -> AsyncIterable[chat.ChatCompletionMessageParam]:
+    async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
-        if isinstance(message, ModelRequest):
-            async for item in self._map_user_message(message):
-                yield item
-        elif isinstance(message, ModelResponse):
-            texts: list[str] = []
-            tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
-            for item in message.parts:
-                if isinstance(item, TextPart):
-                    texts.append(item.content)
-                elif isinstance(item, ToolCallPart):
-                    tool_calls.append(self._map_tool_call(item))
-                else:
-                    assert_never(item)
-            message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
-            if texts:
-                # Note: model responses from this model should only have one text item, so the following
-                # shouldn't merge multiple texts into one unless you switch models between runs:
-                message_param['content'] = '\n\n'.join(texts)
-            if tool_calls:
-                message_param['tool_calls'] = tool_calls
-            yield message_param
-        else:
-            assert_never(message)
+        openai_messages: list[chat.ChatCompletionMessageParam] = []
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                async for item in self._map_user_message(message):
+                    openai_messages.append(item)
+            elif isinstance(message, ModelResponse):
+                texts: list[str] = []
+                tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
+                for item in message.parts:
+                    if isinstance(item, TextPart):
+                        texts.append(item.content)
+                    elif isinstance(item, ToolCallPart):
+                        tool_calls.append(self._map_tool_call(item))
+                    else:
+                        assert_never(item)
+                message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
+                if texts:
+                    # Note: model responses from this model should only have one text item, so the following
+                    # shouldn't merge multiple texts into one unless you switch models between runs:
+                    message_param['content'] = '\n\n'.join(texts)
+                if tool_calls:
+                    message_param['tool_calls'] = tool_calls
+                openai_messages.append(message_param)
+            else:
+                assert_never(message)
+        if instructions := self._get_instructions(messages):
+            openai_messages.insert(0, chat.ChatCompletionSystemMessageParam(content=instructions, role='system'))
+        return openai_messages
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
@@ -312,7 +365,7 @@ class OpenAIModel(Model):
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
-        return {
+        tool_param: chat.ChatCompletionToolParam = {
             'type': 'function',
             'function': {
                 'name': f.name,
@@ -320,6 +373,9 @@ class OpenAIModel(Model):
                 'parameters': f.parameters_json_schema,
             },
         }
+        if f.strict:
+            tool_param['function']['strict'] = f.strict
+        return tool_param
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
@@ -372,36 +428,39 @@ class OpenAIModel(Model):
                         assert item.format in ('wav', 'mp3')
                         audio = InputAudio(data=base64_encoded, format=item.format)
                         content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
+                    elif item.is_document:
+                        content.append(
+                            File(
+                                file=FileFile(
+                                    file_data=f'data:{item.media_type};base64,{base64_encoded}',
+                                    filename=f'filename.{item.format}',
+                                ),
+                                type='file',
+                            )
+                        )
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
-                elif isinstance(item, AudioUrl):  # pragma: no cover
+                elif isinstance(item, AudioUrl):
                     client = cached_async_http_client()
                     response = await client.get(item.url)
                     response.raise_for_status()
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    audio = InputAudio(data=base64_encoded, format=response.headers.get('content-type'))
+                    audio_format: Any = response.headers['content-type'].removeprefix('audio/')
+                    audio = InputAudio(data=base64_encoded, format=audio_format)
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
-                elif isinstance(item, DocumentUrl):  # pragma: no cover
-                    raise NotImplementedError('DocumentUrl is not supported for OpenAI')
-                    # The following implementation should have worked, but it seems we have the following error:
-                    # pydantic_ai.exceptions.ModelHTTPError: status_code: 400, model_name: gpt-4o, body:
-                    # {
-                    #   'message': "Unknown parameter: 'messages[1].content[1].file.data'.",
-                    #   'type': 'invalid_request_error',
-                    #   'param': 'messages[1].content[1].file.data',
-                    #   'code': 'unknown_parameter'
-                    # }
-                    #
-                    # client = cached_async_http_client()
-                    # response = await client.get(item.url)
-                    # response.raise_for_status()
-                    # base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    # media_type = response.headers.get('content-type').split(';')[0]
-                    # file_data = f'data:{media_type};base64,{base64_encoded}'
-                    # file = File(file={'file_data': file_data, 'file_name': item.url, 'file_id': item.url}, type='file')
-                    # content.append(file)
+                elif isinstance(item, DocumentUrl):
+                    client = cached_async_http_client()
+                    response = await client.get(item.url)
+                    response.raise_for_status()
+                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                    media_type = response.headers.get('content-type').split(';')[0]
+                    file_data = f'data:{media_type};base64,{base64_encoded}'
+                    file = File(file=FileFile(file_data=file_data, filename=f'filename.{item.format}'), type='file')
+                    content.append(file)
                 elif isinstance(item, FileUrl):  # pragma: no cover
                     raise RuntimeError('Direct file Url is not supported.')
+                elif isinstance(item, VideoUrl):  # pragma: no cover
+                    raise NotImplementedError('VideoUrl is not supported for OpenAI')
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
@@ -419,6 +478,8 @@ class OpenAIResponsesModel(Model):
     - [Web search](https://platform.openai.com/docs/guides/tools-web-search)
     - [File search](https://platform.openai.com/docs/guides/tools-file-search)
     - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use)
+
+    Use the `openai_builtin_tools` setting to add these tools to your model.
 
     If you are interested in the differences between the Responses API and the Chat Completions API,
     see the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
@@ -465,7 +526,7 @@ class OpenAIResponsesModel(Model):
     ) -> tuple[ModelResponse, usage.Usage]:
         check_allow_model_requests()
         response = await self._responses_create(
-            messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+            messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
         return self._process_response(response), _map_usage(response)
 
@@ -478,10 +539,13 @@ class OpenAIResponsesModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._responses_create(
-            messages, True, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+            messages, True, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
             yield await self._process_streamed_response(response)
+
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        return _customize_request_parameters(model_request_parameters)
 
     def _process_response(self, response: responses.Response) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -514,7 +578,7 @@ class OpenAIResponsesModel(Model):
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: Literal[False],
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response: ...
 
@@ -523,7 +587,7 @@ class OpenAIResponsesModel(Model):
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: Literal[True],
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[responses.ResponseStreamEvent]: ...
 
@@ -531,32 +595,28 @@ class OpenAIResponsesModel(Model):
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: bool,
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
         tools = self._get_tools(model_request_parameters)
+        tools = list(model_settings.get('openai_builtin_tools', [])) + tools
 
         # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_result:
+        elif not model_request_parameters.allow_text_output:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
 
-        system_prompt, openai_messages = await self._map_message(messages)
-
-        reasoning_effort = model_settings.get('openai_reasoning_effort', NOT_GIVEN)
-        if not isinstance(reasoning_effort, NotGiven):
-            reasoning = Reasoning(effort=reasoning_effort)
-        else:
-            reasoning = NOT_GIVEN
+        instructions, openai_messages = await self._map_messages(messages)
+        reasoning = self._get_reasoning(model_settings)
 
         try:
             return await self.client.responses.create(
                 input=openai_messages,
                 model=self._model_name,
-                instructions=system_prompt,
+                instructions=instructions,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
@@ -564,19 +624,30 @@ class OpenAIResponsesModel(Model):
                 stream=stream,
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
+                truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 reasoning=reasoning,
-                user=model_settings.get('user', NOT_GIVEN),
+                user=model_settings.get('openai_user', NOT_GIVEN),
+                extra_headers={'User-Agent': get_user_agent()},
+                extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise
 
+    def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
+        reasoning_effort = model_settings.get('openai_reasoning_effort', None)
+        reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
+
+        if reasoning_effort is None and reasoning_generate_summary is None:
+            return NOT_GIVEN
+        return Reasoning(effort=reasoning_effort, generate_summary=reasoning_generate_summary)
+
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
     @staticmethod
@@ -586,18 +657,20 @@ class OpenAIResponsesModel(Model):
             'parameters': f.parameters_json_schema,
             'type': 'function',
             'description': f.description,
-            'strict': True,
+            # NOTE: f.strict should already be a boolean thanks to customize_request_parameters
+            'strict': f.strict or False,
         }
 
-    async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[responses.ResponseInputItemParam]]:
+    async def _map_messages(
+        self, messages: list[ModelMessage]
+    ) -> tuple[str | NotGiven, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
-        system_prompt: str = ''
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if isinstance(part, SystemPromptPart):
-                        system_prompt += part.content
+                        openai_messages.append(responses.EasyInputMessageParam(role='system', content=part.content))
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
@@ -634,7 +707,8 @@ class OpenAIResponsesModel(Model):
                         assert_never(item)
             else:
                 assert_never(message)
-        return system_prompt, openai_messages
+        instructions = self._get_instructions(messages) or NOT_GIVEN
+        return instructions, openai_messages
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> responses.ResponseFunctionToolCallParam:
@@ -700,15 +774,18 @@ class OpenAIResponsesModel(Model):
                     response = await client.get(item.url)
                     response.raise_for_status()
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                    media_type = response.headers.get('content-type').split(';')[0]
                     content.append(
                         responses.ResponseInputFileParam(
                             type='input_file',
-                            file_data=f'data:{item.media_type};base64,{base64_encoded}',
+                            file_data=f'data:{media_type};base64,{base64_encoded}',
                             filename=f'filename.{item.format}',
                         )
                     )
                 elif isinstance(item, FileUrl):
                     raise RuntimeError('Direct file Url is not supported.')
+                elif isinstance(item, VideoUrl):  # pragma: no cover
+                    raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                 else:
                     assert_never(item)
         return responses.EasyInputMessageParam(role='user', content=content)
@@ -853,7 +930,7 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             },
         )
     else:
-        details: dict[str, int] = {}
+        details = {}
         if response_usage.completion_tokens_details is not None:
             details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
         if response_usage.prompt_tokens_details is not None:
@@ -864,3 +941,142 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             total_tokens=response_usage.total_tokens,
             details=details,
         )
+
+
+_STRICT_INCOMPATIBLE_KEYS = [
+    'minLength',
+    'maxLength',
+    'pattern',
+    'format',
+    'minimum',
+    'maximum',
+    'multipleOf',
+    'patternProperties',
+    'unevaluatedProperties',
+    'propertyNames',
+    'minProperties',
+    'maxProperties',
+    'unevaluatedItems',
+    'contains',
+    'minContains',
+    'maxContains',
+    'minItems',
+    'maxItems',
+    'uniqueItems',
+]
+
+_sentinel = object()
+
+
+@dataclass
+class _OpenAIJsonSchema(WalkJsonSchema):
+    """Recursively handle the schema to make it compatible with OpenAI strict mode.
+
+    See https://platform.openai.com/docs/guides/function-calling?api-mode=responses#strict-mode for more details,
+    but this basically just requires:
+    * `additionalProperties` must be set to false for each object in the parameters
+    * all fields in properties must be marked as required
+    """
+
+    def __init__(self, schema: JsonSchema, strict: bool | None):
+        super().__init__(schema)
+        self.strict = strict
+        self.is_strict_compatible = True
+        self.root_ref = schema.get('$ref')
+
+    def walk(self) -> JsonSchema:
+        # Note: OpenAI does not support anyOf at the root in strict mode
+        # However, we don't need to check for it here because we ensure in pydantic_ai._utils.check_object_json_schema
+        # that the root schema either has type 'object' or is recursive.
+        result = super().walk()
+
+        # For recursive models, we need to tweak the schema to make it compatible with strict mode.
+        # Because the following should never change the semantics of the schema we apply it unconditionally.
+        if self.root_ref is not None:
+            result.pop('$ref', None)  # We replace references to the self.root_ref with just '#' in the transform method
+            root_key = re.sub(r'^#/\$defs/', '', self.root_ref)
+            result.update(self.defs.get(root_key) or {})
+
+        return result
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:  # noqa C901
+        # Remove unnecessary keys
+        schema.pop('title', None)
+        schema.pop('default', None)
+        schema.pop('$schema', None)
+        schema.pop('discriminator', None)
+
+        if schema_ref := schema.get('$ref'):
+            if schema_ref == self.root_ref:
+                schema['$ref'] = '#'
+            if len(schema) > 1:
+                # OpenAI Strict mode doesn't support siblings to "$ref", but _does_ allow siblings to "anyOf".
+                # So if there is a "description" field or any other extra info, we move the "$ref" into an "anyOf":
+                schema['anyOf'] = [{'$ref': schema.pop('$ref')}]
+
+        # Track strict-incompatible keys
+        incompatible_values: dict[str, Any] = {}
+        for key in _STRICT_INCOMPATIBLE_KEYS:
+            value = schema.get(key, _sentinel)
+            if value is not _sentinel:
+                incompatible_values[key] = value
+        description = schema.get('description')
+        if incompatible_values:
+            if self.strict is True:
+                notes: list[str] = []
+                for key, value in incompatible_values.items():
+                    schema.pop(key)
+                    notes.append(f'{key}={value}')
+                notes_string = ', '.join(notes)
+                schema['description'] = notes_string if not description else f'{description} ({notes_string})'
+            elif self.strict is None:
+                self.is_strict_compatible = False
+
+        schema_type = schema.get('type')
+        if 'oneOf' in schema:
+            # OpenAI does not support oneOf in strict mode
+            if self.strict is True:
+                schema['anyOf'] = schema.pop('oneOf')
+            else:
+                self.is_strict_compatible = False
+
+        if schema_type == 'object':
+            if self.strict is True:
+                # additional properties are disallowed
+                schema['additionalProperties'] = False
+
+                # all properties are required
+                if 'properties' not in schema:
+                    schema['properties'] = dict[str, Any]()
+                schema['required'] = list(schema['properties'].keys())
+
+            elif self.strict is None:
+                if (
+                    schema.get('additionalProperties') is not False
+                    or 'properties' not in schema
+                    or 'required' not in schema
+                ):
+                    self.is_strict_compatible = False
+                else:
+                    required = schema['required']
+                    for k in schema['properties'].keys():
+                        if k not in required:
+                            self.is_strict_compatible = False
+        return schema
+
+
+def _customize_request_parameters(model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+    """Customize the request parameters for OpenAI models."""
+
+    def _customize_tool_def(t: ToolDefinition):
+        schema_transformer = _OpenAIJsonSchema(t.parameters_json_schema, strict=t.strict)
+        parameters_json_schema = schema_transformer.walk()
+        if t.strict is None:
+            t = replace(t, strict=schema_transformer.is_strict_compatible)
+        return replace(t, parameters_json_schema=parameters_json_schema)
+
+    return ModelRequestParameters(
+        function_tools=[_customize_tool_def(tool) for tool in model_request_parameters.function_tools],
+        allow_text_output=model_request_parameters.allow_text_output,
+        output_tools=[_customize_tool_def(tool) for tool in model_request_parameters.output_tools],
+    )

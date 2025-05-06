@@ -1,18 +1,32 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from functools import cache
 from textwrap import indent
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Union
 
+from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 if TYPE_CHECKING:  # pragma: no cover
     # Since opentelemetry isn't a required dependency, don't actually import these at runtime
     from opentelemetry.sdk.trace import ReadableSpan
-    from opentelemetry.trace import SpanContext
-    from opentelemetry.util.types import AttributeValue
+
+# Should match opentelemetry.util.types.AttributeValue
+AttributeValue = Union[
+    str,
+    bool,
+    int,
+    float,
+    Sequence[str],
+    Sequence[bool],
+    Sequence[int],
+    Sequence[float],
+]
+
 
 __all__ = 'SpanNode', 'SpanTree', 'SpanQuery'
 
@@ -47,20 +61,16 @@ class SpanQuery(TypedDict, total=False):
     and_: list[SpanQuery]
     or_: list[SpanQuery]
 
-    # Related-span conditions
-    ## Ancestor conditions
-    min_depth: int  # depth is equivalent to ancestor count; roots have depth 0
-    max_depth: int
-    some_ancestor_has: SpanQuery
-    all_ancestors_have: SpanQuery
-    no_ancestor_has: SpanQuery
-
-    ## Child conditions
+    # Child conditions
     min_child_count: int
     max_child_count: int
     some_child_has: SpanQuery
     all_children_have: SpanQuery
     no_child_has: SpanQuery
+
+    # Recursive conditions
+    stop_recursing_when: SpanQuery
+    """If present, stop recursing through ancestors or descendants at nodes that match this condition."""
 
     ## Descendant conditions
     min_descendant_count: int
@@ -69,29 +79,31 @@ class SpanQuery(TypedDict, total=False):
     all_descendants_have: SpanQuery
     no_descendant_has: SpanQuery
 
+    ## Ancestor conditions
+    min_depth: int  # depth is equivalent to ancestor count; roots have depth 0
+    max_depth: int
+    some_ancestor_has: SpanQuery
+    all_ancestors_have: SpanQuery
+    no_ancestor_has: SpanQuery
 
+
+@dataclass(repr=False)
 class SpanNode:
     """A node in the span tree; provides references to parents/children for easy traversal and queries."""
 
-    # -------------------------------------------------------------------------
-    # Construction
-    # -------------------------------------------------------------------------
-    def __init__(self, span: ReadableSpan):
-        self._span = span
-        # If a span has no context, it's going to cause problems. We may need to add improved handling of this scenario.
-        assert self._span.context is not None, f'{span=} has no context'
+    name: str
+    trace_id: int
+    span_id: int
+    parent_span_id: int | None
+    start_timestamp: datetime
+    end_timestamp: datetime
+    attributes: dict[str, AttributeValue]
 
-        self.parent: SpanNode | None = None
-        self.children_by_id: dict[int, SpanNode] = {}  # note: we rely on insertion order to determine child order
+    @property
+    def duration(self) -> timedelta:
+        """Return the span's duration as a timedelta, or None if start/end not set."""
+        return self.end_timestamp - self.start_timestamp
 
-    def add_child(self, child: SpanNode) -> None:
-        """Attach a child node to this node's list of children."""
-        self.children_by_id[child.span_id] = child
-        child.parent = self
-
-    # -------------------------------------------------------------------------
-    # Utility properties
-    # -------------------------------------------------------------------------
     @property
     def children(self) -> list[SpanNode]:
         return list(self.children_by_id.values())
@@ -107,53 +119,43 @@ class SpanNode:
         return self.find_ancestors(lambda _: True)
 
     @property
-    def context(self) -> SpanContext:
-        """Return the SpanContext of the wrapped span."""
-        assert self._span.context is not None
-        return self._span.context
+    def node_key(self) -> str:
+        return f'{self.trace_id:032x}:{self.span_id:016x}'
 
     @property
-    def parent_context(self) -> SpanContext | None:
-        """Return the SpanContext of the parent of the wrapped span."""
-        return self._span.parent
+    def parent_node_key(self) -> str | None:
+        return None if self.parent_span_id is None else f'{self.trace_id:032x}:{self.parent_span_id:016x}'
 
-    @property
-    def span_id(self) -> int:
-        """Return the integer span_id from the SpanContext."""
-        return self.context.span_id
+    # -------------------------------------------------------------------------
+    # Construction
+    # -------------------------------------------------------------------------
+    def __post_init__(self):
+        self.parent: SpanNode | None = None
+        self.children_by_id: dict[str, SpanNode] = {}
 
-    @property
-    def trace_id(self) -> int:
-        """Return the integer trace_id from the SpanContext."""
-        return self.context.trace_id
+    @staticmethod
+    def from_readable_span(span: ReadableSpan) -> SpanNode:
+        assert span.context is not None, 'Span has no context'
+        assert span.start_time is not None, 'Span has no start time'
+        assert span.end_time is not None, 'Span has no end time'
+        return SpanNode(
+            name=span.name,
+            trace_id=span.context.trace_id,
+            span_id=span.context.span_id,
+            parent_span_id=span.parent.span_id if span.parent else None,
+            start_timestamp=datetime.fromtimestamp(span.start_time / 1e9, tz=timezone.utc),
+            end_timestamp=datetime.fromtimestamp(span.end_time / 1e9, tz=timezone.utc),
+            attributes=dict(span.attributes or {}),
+        )
 
-    @property
-    def name(self) -> str:
-        """Convenience for the span's name."""
-        return self._span.name
-
-    @property
-    def start_timestamp(self) -> datetime:
-        """Return the span's start time as a UTC datetime, or None if not set."""
-        assert self._span.start_time is not None
-        return datetime.fromtimestamp(self._span.start_time / 1e9, tz=timezone.utc)
-
-    @property
-    def end_timestamp(self) -> datetime:
-        """Return the span's end time as a UTC datetime, or None if not set."""
-        assert self._span.end_time is not None
-        return datetime.fromtimestamp(self._span.end_time / 1e9, tz=timezone.utc)
-
-    @property
-    def duration(self) -> timedelta:
-        """Return the span's duration as a timedelta, or None if start/end not set."""
-        return self.end_timestamp - self.start_timestamp
-
-    @property
-    def attributes(self) -> Mapping[str, AttributeValue]:
-        # Note: It would be nice to expose the non-JSON-serialized versions of (logfire-recorded) attributes with
-        # nesting etc. This just exposes the JSON-serialized version, but doing more would be difficult.
-        return self._span.attributes or {}
+    def add_child(self, child: SpanNode) -> None:
+        """Attach a child node to this node's list of children."""
+        assert child.trace_id == self.trace_id, f"traces don't match: {child.trace_id:032x} != {self.trace_id:032x}"
+        assert child.parent_span_id == self.span_id, (
+            f'parent span mismatch: {child.parent_span_id:016x} != {self.span_id:016x}'
+        )
+        self.children_by_id[child.node_key] = child
+        child.parent = self
 
     # -------------------------------------------------------------------------
     # Child queries
@@ -176,46 +178,66 @@ class SpanNode:
     # -------------------------------------------------------------------------
     # Descendant queries (DFS)
     # -------------------------------------------------------------------------
-    def find_descendants(self, predicate: SpanQuery | SpanPredicate) -> list[SpanNode]:
+    def find_descendants(
+        self, predicate: SpanQuery | SpanPredicate, stop_recursing_when: SpanQuery | SpanPredicate | None = None
+    ) -> list[SpanNode]:
         """Return all descendant nodes that satisfy the given predicate in DFS order."""
-        return list(self._filter_descendants(predicate))
+        return list(self._filter_descendants(predicate, stop_recursing_when))
 
-    def first_descendant(self, predicate: SpanQuery | SpanPredicate) -> SpanNode | None:
+    def first_descendant(
+        self, predicate: SpanQuery | SpanPredicate, stop_recursing_when: SpanQuery | SpanPredicate | None = None
+    ) -> SpanNode | None:
         """DFS: Return the first descendant (in DFS order) that satisfies the given predicate, or `None` if none match."""
-        return next(self._filter_descendants(predicate), None)
+        return next(self._filter_descendants(predicate, stop_recursing_when), None)
 
-    def any_descendant(self, predicate: SpanQuery | SpanPredicate) -> bool:
+    def any_descendant(
+        self, predicate: SpanQuery | SpanPredicate, stop_recursing_when: SpanQuery | SpanPredicate | None = None
+    ) -> bool:
         """Returns `True` if there is at least one descendant that satisfies the predicate."""
-        return self.first_descendant(predicate) is not None
+        return self.first_descendant(predicate, stop_recursing_when) is not None
 
-    def _filter_descendants(self, predicate: SpanQuery | SpanPredicate) -> Iterator[SpanNode]:
+    def _filter_descendants(
+        self, predicate: SpanQuery | SpanPredicate, stop_recursing_when: SpanQuery | SpanPredicate | None
+    ) -> Iterator[SpanNode]:
         stack = list(self.children)
         while stack:
             node = stack.pop()
             if node.matches(predicate):
                 yield node
+            if stop_recursing_when is not None and node.matches(stop_recursing_when):
+                continue
             stack.extend(node.children)
 
     # -------------------------------------------------------------------------
     # Ancestor queries (DFS "up" the chain)
     # -------------------------------------------------------------------------
-    def find_ancestors(self, predicate: SpanQuery | SpanPredicate) -> list[SpanNode]:
+    def find_ancestors(
+        self, predicate: SpanQuery | SpanPredicate, stop_recursing_when: SpanQuery | SpanPredicate | None = None
+    ) -> list[SpanNode]:
         """Return all ancestors that satisfy the given predicate."""
-        return list(self._filter_ancestors(predicate))
+        return list(self._filter_ancestors(predicate, stop_recursing_when))
 
-    def first_ancestor(self, predicate: SpanQuery | SpanPredicate) -> SpanNode | None:
+    def first_ancestor(
+        self, predicate: SpanQuery | SpanPredicate, stop_recursing_when: SpanQuery | SpanPredicate | None = None
+    ) -> SpanNode | None:
         """Return the closest ancestor that satisfies the given predicate, or `None` if none match."""
-        return next(self._filter_ancestors(predicate), None)
+        return next(self._filter_ancestors(predicate, stop_recursing_when), None)
 
-    def any_ancestor(self, predicate: SpanQuery | SpanPredicate) -> bool:
+    def any_ancestor(
+        self, predicate: SpanQuery | SpanPredicate, stop_recursing_when: SpanQuery | SpanPredicate | None = None
+    ) -> bool:
         """Returns True if any ancestor satisfies the predicate."""
-        return self.first_ancestor(predicate) is not None
+        return self.first_ancestor(predicate, stop_recursing_when) is not None
 
-    def _filter_ancestors(self, predicate: SpanQuery | SpanPredicate) -> Iterator[SpanNode]:
+    def _filter_ancestors(
+        self, predicate: SpanQuery | SpanPredicate, stop_recursing_when: SpanQuery | SpanPredicate | None
+    ) -> Iterator[SpanNode]:
         node = self.parent
         while node:
             if node.matches(predicate):
                 yield node
+            if stop_recursing_when is not None and node.matches(stop_recursing_when):
+                break
             node = node.parent
 
     # -------------------------------------------------------------------------
@@ -274,24 +296,6 @@ class SpanNode:
             if self.duration > max_duration:
                 return False
 
-        # Ancestor conditions
-        if (min_depth := query.get('min_depth')) and len(self.ancestors) < min_depth:
-            return False
-        if (max_depth := query.get('max_depth')) and len(self.ancestors) > max_depth:
-            return False
-        if (some_ancestor_has := query.get('some_ancestor_has')) and not any(
-            ancestor._matches_query(some_ancestor_has) for ancestor in self.ancestors
-        ):
-            return False
-        if (all_ancestors_have := query.get('all_ancestors_have')) and not all(
-            ancestor._matches_query(all_ancestors_have) for ancestor in self.ancestors
-        ):
-            return False
-        if (no_ancestor_has := query.get('no_ancestor_has')) and any(
-            ancestor._matches_query(no_ancestor_has) for ancestor in self.ancestors
-        ):
-            return False
-
         # Children conditions
         if (min_child_count := query.get('min_child_count')) and len(self.children) < min_child_count:
             return False
@@ -311,20 +315,60 @@ class SpanNode:
             return False
 
         # Descendant conditions
-        if (min_descendant_count := query.get('min_descendant_count')) and len(self.descendants) < min_descendant_count:
+        # The following local functions with cache decorators are used to avoid repeatedly evaluating these properties
+        @cache
+        def descendants():
+            return self.descendants
+
+        @cache
+        def pruned_descendants():
+            stop_recursing_when = query.get('stop_recursing_when')
+            return (
+                self._filter_descendants(lambda _: True, stop_recursing_when) if stop_recursing_when else descendants()
+            )
+
+        if (min_descendant_count := query.get('min_descendant_count')) and len(descendants()) < min_descendant_count:
             return False
-        if (max_descendant_count := query.get('max_descendant_count')) and len(self.descendants) > max_descendant_count:
+        if (max_descendant_count := query.get('max_descendant_count')) and len(descendants()) > max_descendant_count:
             return False
         if (some_descendant_has := query.get('some_descendant_has')) and not any(
-            descendant._matches_query(some_descendant_has) for descendant in self.descendants
+            descendant._matches_query(some_descendant_has) for descendant in pruned_descendants()
         ):
             return False
         if (all_descendants_have := query.get('all_descendants_have')) and not all(
-            descendant._matches_query(all_descendants_have) for descendant in self.descendants
+            descendant._matches_query(all_descendants_have) for descendant in pruned_descendants()
         ):
             return False
         if (no_descendant_has := query.get('no_descendant_has')) and any(
-            descendant._matches_query(no_descendant_has) for descendant in self.descendants
+            descendant._matches_query(no_descendant_has) for descendant in pruned_descendants()
+        ):
+            return False
+
+        # Ancestor conditions
+        # The following local functions with cache decorators are used to avoid repeatedly evaluating these properties
+        @cache
+        def ancestors():
+            return self.ancestors
+
+        @cache
+        def pruned_ancestors():
+            stop_recursing_when = query.get('stop_recursing_when')
+            return self._filter_ancestors(lambda _: True, stop_recursing_when) if stop_recursing_when else ancestors()
+
+        if (min_depth := query.get('min_depth')) and len(ancestors()) < min_depth:
+            return False
+        if (max_depth := query.get('max_depth')) and len(ancestors()) > max_depth:
+            return False
+        if (some_ancestor_has := query.get('some_ancestor_has')) and not any(
+            ancestor._matches_query(some_ancestor_has) for ancestor in pruned_ancestors()
+        ):
+            return False
+        if (all_ancestors_have := query.get('all_ancestors_have')) and not all(
+            ancestor._matches_query(all_ancestors_have) for ancestor in pruned_ancestors()
+        ):
+            return False
+        if (no_ancestor_has := query.get('no_ancestor_has')) and any(
+            ancestor._matches_query(no_ancestor_has) for ancestor in pruned_ancestors()
         ):
             return False
 
@@ -336,20 +380,20 @@ class SpanNode:
     def repr_xml(
         self,
         include_children: bool = True,
-        include_span_id: bool = False,
         include_trace_id: bool = False,
+        include_span_id: bool = False,
         include_start_timestamp: bool = False,
         include_duration: bool = False,
     ) -> str:
         """Return an XML-like string representation of the node.
 
-        Optionally includes children, span_id, trace_id, start_timestamp, and duration.
+        Optionally includes children, trace_id, span_id, start_timestamp, and duration.
         """
         first_line_parts = [f'<SpanNode name={self.name!r}']
-        if include_span_id:
-            first_line_parts.append(f'span_id={self.span_id:016x}')
         if include_trace_id:
-            first_line_parts.append(f'trace_id={self.trace_id:032x}')
+            first_line_parts.append(f"trace_id='{self.trace_id:032x}'")
+        if include_span_id:
+            first_line_parts.append(f"span_id='{self.span_id:016x}'")
         if include_start_timestamp:
             first_line_parts.append(f'start_timestamp={self.start_timestamp.isoformat()!r}')
         if include_duration:
@@ -363,8 +407,8 @@ class SpanNode:
                     indent(
                         child.repr_xml(
                             include_children=include_children,
-                            include_span_id=include_span_id,
                             include_trace_id=include_trace_id,
+                            include_span_id=include_span_id,
                             include_start_timestamp=include_start_timestamp,
                             include_duration=include_duration,
                         ),
@@ -380,9 +424,9 @@ class SpanNode:
 
     def __str__(self) -> str:
         if self.children:
-            return f'<SpanNode name={self.name!r} span_id={self.span_id:016x}>...</SpanNode>'
+            return f"<SpanNode name={self.name!r} span_id='{self.span_id:016x}'>...</SpanNode>"
         else:
-            return f'<SpanNode name={self.name!r} span_id={self.span_id:016x} />'
+            return f"<SpanNode name={self.name!r} span_id='{self.span_id:016x}' />"
 
     def __repr__(self) -> str:
         return self.repr_xml()
@@ -391,39 +435,42 @@ class SpanNode:
 SpanPredicate = Callable[[SpanNode], bool]
 
 
+@dataclass(repr=False)
 class SpanTree:
     """A container that builds a hierarchy of SpanNode objects from a list of finished spans.
 
     You can then search or iterate the tree to make your assertions (using DFS for traversal).
     """
 
+    roots: list[SpanNode] = field(default_factory=list)
+    nodes_by_id: dict[str, SpanNode] = field(default_factory=dict)
+
     # -------------------------------------------------------------------------
     # Construction
     # -------------------------------------------------------------------------
-    def __init__(self, spans: list[ReadableSpan] | None = None):
-        self.nodes_by_id: dict[int, SpanNode] = {}
-        self.roots: list[SpanNode] = []
-        if spans:  # pragma: no cover
-            self.add_spans(spans)
+    def __post_init__(self):
+        self._rebuild_tree()
 
-    def add_spans(self, spans: list[ReadableSpan]) -> None:
+    def add_spans(self, spans: list[SpanNode]) -> None:
         """Add a list of spans to the tree, rebuilding the tree structure."""
         for span in spans:
-            node = SpanNode(span)
-            self.nodes_by_id[node.span_id] = node
+            self.nodes_by_id[span.node_key] = span
         self._rebuild_tree()
+
+    def add_readable_spans(self, readable_spans: list[ReadableSpan]):
+        self.add_spans([SpanNode.from_readable_span(span) for span in readable_spans])
 
     def _rebuild_tree(self):
         # Ensure spans are ordered by start_timestamp so that roots and children end up in the right order
         nodes = list(self.nodes_by_id.values())
         nodes.sort(key=lambda node: node.start_timestamp or datetime.min)
-        self.nodes_by_id = {node.span_id: node for node in nodes}
+        self.nodes_by_id = {node.node_key: node for node in nodes}
 
         # Build the parent/child relationships
         for node in self.nodes_by_id.values():
-            parent_ctx = node.parent_context
-            if parent_ctx is not None:
-                parent_node = self.nodes_by_id.get(parent_ctx.span_id)
+            parent_node_key = node.parent_node_key
+            if parent_node_key is not None:
+                parent_node = self.nodes_by_id.get(parent_node_key)
                 if parent_node is not None:
                     parent_node.add_child(node)
 
@@ -431,8 +478,8 @@ class SpanTree:
         # A node is a "root" if its parent is None or if its parent's span_id is not in the current set of spans.
         self.roots = []
         for node in self.nodes_by_id.values():
-            parent_ctx = node.parent_context
-            if parent_ctx is None or parent_ctx.span_id not in self.nodes_by_id:
+            parent_node_key = node.parent_node_key
+            if parent_node_key is None or parent_node_key not in self.nodes_by_id:
                 self.roots.append(node)
 
     # -------------------------------------------------------------------------
@@ -465,12 +512,12 @@ class SpanTree:
     def repr_xml(
         self,
         include_children: bool = True,
-        include_span_id: bool = False,
         include_trace_id: bool = False,
+        include_span_id: bool = False,
         include_start_timestamp: bool = False,
         include_duration: bool = False,
     ) -> str:
-        """Return an XML-like string representation of the tree, optionally including children, span_id, trace_id, duration, and timestamps."""
+        """Return an XML-like string representation of the tree, optionally including children, trace_id, span_id, duration, and timestamps."""
         if not self.roots:
             return '<SpanTree />'
         repr_parts = [
@@ -479,8 +526,8 @@ class SpanTree:
                 indent(
                     root.repr_xml(
                         include_children=include_children,
-                        include_span_id=include_span_id,
                         include_trace_id=include_trace_id,
+                        include_span_id=include_span_id,
                         include_start_timestamp=include_start_timestamp,
                         include_duration=include_duration,
                     ),
@@ -497,3 +544,7 @@ class SpanTree:
 
     def __repr__(self):
         return self.repr_xml()
+
+
+SPAN_TREE_ADAPTER = TypeAdapter(SpanTree)
+"""This adapter can be used to serialize and deserialize `SpanTree` objects to and from JSON."""
