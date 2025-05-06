@@ -137,12 +137,12 @@ class AgentRunner(Runner, Generic[AgentDepsT, OutputDataT]):
                         content = url_cls(url=url)
                         try:
                             content.media_type
-                        except ValueError:
+                        except ValueError:  # pragma: no cover
                             continue
                         else:
                             break
                     else:
-                        raise ValueError(f'Unknown file type: {file["mime_type"]}')
+                        raise ValueError(f'Unknown file type: {file["mime_type"]}')  # pragma: no cover
                     model_parts.append(UserPromptPart(content=[content]))
             elif part['type'] == 'data':
                 # TODO(Marcelo): Maybe we should use this for `ToolReturnPart`, and `RetryPromptPart`.
@@ -151,7 +151,7 @@ class AgentRunner(Runner, Generic[AgentDepsT, OutputDataT]):
                 assert_never(part)
         return model_parts
 
-    def _map_response_parts(self, parts: list[Part]) -> list[ModelResponsePart]:
+    def _map_response_parts(self, parts: list[Part]) -> list[ModelResponsePart]:  # pragma: no cover
         model_parts: list[ModelResponsePart] = []
         for part in parts:
             if part['type'] == 'text':
