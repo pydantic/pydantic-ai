@@ -4,7 +4,7 @@ import pytest
 from asgi_lifespan import LifespanManager
 from inline_snapshot import snapshot
 
-from fasta2a.schema import FilePart
+from fasta2a.schema import DataPart, FilePart
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -161,6 +161,52 @@ async def test_a2a_file_message():
                         'artifacts': [
                             {'name': 'result', 'parts': [{'type': 'text', 'text': "('foo', 'bar')"}], 'index': 0}
                         ],
+                    },
+                }
+            )
+
+
+async def test_a2a_file_message_with_data():
+    agent = Agent(model=model, output_type=tuple[str, str])
+    app = agent.to_a2a()
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            message = Message(
+                role='user',
+                parts=[DataPart(type='data', data={'foo': 'bar'})],
+            )
+            response = await a2a_client.send_task(message=message)
+            assert response == snapshot(
+                {
+                    'jsonrpc': '2.0',
+                    'id': IsStr(),
+                    'result': {
+                        'id': IsStr(),
+                        'session_id': IsStr(),
+                        'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
+                        'history': [{'role': 'user', 'parts': [{'type': 'data', 'data': {'foo': 'bar'}}]}],
+                    },
+                }
+            )
+
+            assert 'result' in response
+            task_id = response['result']['id']
+
+            await anyio.sleep(0.1)
+            task = await a2a_client.get_task(task_id)
+            assert task == snapshot(
+                {
+                    'jsonrpc': '2.0',
+                    'id': None,
+                    'result': {
+                        'id': IsStr(),
+                        'session_id': IsStr(),
+                        'status': {'state': 'failed', 'timestamp': IsDatetime(iso_string=True)},
+                        'history': [{'role': 'user', 'parts': [{'type': 'data', 'data': {'foo': 'bar'}}]}],
                     },
                 }
             )

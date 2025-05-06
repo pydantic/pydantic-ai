@@ -92,17 +92,20 @@ class AgentRunner(Runner, Generic[AgentDepsT, OutputDataT]):
 
         await task_ctx.storage.update_task(task['id'], state='working')
 
-        task_history = task.get('history', [])
-        message_history = self.build_message_history(task_history=task_history)
-
         # TODO(Marcelo): We need to have a way to communicate when the task is set to `input-required`. Maybe
         # a custom `output_type` with a `more_info_required` field, or something like that.
 
-        # TODO(Marcelo): We need to make this more customizable e.g. pass deps.
-        result = await self.agent.run(message_history=message_history)  # type: ignore
+        try:
+            task_history = task.get('history', [])
+            message_history = self.build_message_history(task_history=task_history)
 
-        artifacts = self.build_artifacts(result.output)
-        await task_ctx.storage.update_task(task['id'], state='completed', artifacts=artifacts)
+            # TODO(Marcelo): We need to make this more customizable e.g. pass deps.
+            result = await self.agent.run(message_history=message_history)  # type: ignore
+
+            artifacts = self.build_artifacts(result.output)
+            await task_ctx.storage.update_task(task['id'], state='completed', artifacts=artifacts)
+        except Exception:
+            await task_ctx.storage.update_task(task['id'], state='failed')
 
     def build_artifacts(self, result: Any) -> list[Artifact]:
         # TODO(Marcelo): We need to send the json schema of the result on the metadata of the message.
