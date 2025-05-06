@@ -46,7 +46,7 @@ with try_import() as imports_successful:
     from groq.types.chat.chat_completion_message_tool_call import Function
     from groq.types.completion_usage import CompletionUsage
 
-    from pydantic_ai.models.groq import GroqModel
+    from pydantic_ai.models.groq import GroqModel, GroqModelSettings
     from pydantic_ai.providers.groq import GroqProvider
 
     # note: we use Union here so that casting works with Python 3.9
@@ -502,6 +502,14 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world'])
         assert result.is_complete
+
+
+@pytest.mark.vcr()
+async def test_extra_headers(allow_model_requests: None, groq_api_key: str):
+    # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m, model_settings=GroqModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))
+    await agent.run('hello')
 
 
 @pytest.mark.vcr()
