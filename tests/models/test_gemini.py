@@ -241,7 +241,6 @@ async def test_json_def_enum(allow_model_requests: None):
         progress: list[ProgressEnum] | None = None
 
     json_schema = QueryDetails.model_json_schema()
-    print(f'tommybug got {json_schema=}', flush=True)
     assert json_schema == snapshot(
         {
             '$defs': {'ProgressEnum': {'enum': [100, 80, 60, 40, 20], 'title': 'ProgressEnum', 'type': 'integer'}},
