@@ -294,7 +294,7 @@ class DataPart(_BasePart):
     """The data of the part."""
 
 
-Part: TypeAlias = Annotated[TextPart | FilePart | DataPart, pydantic.Field(discriminator='type')]
+Part: TypeAlias = Annotated['TextPart | FilePart | DataPart', pydantic.Field(discriminator='type')]
 """A fully formed piece of content exchanged between a client and a remote agent as part of a Message or an Artifact.
 
 Each Part has its own content type and metadata.
