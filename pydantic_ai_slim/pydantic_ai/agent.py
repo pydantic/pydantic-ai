@@ -1671,10 +1671,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         from pydantic_ai._cli import cli
 
-        try:
-            cli(agent=self)
-        except io.UnsupportedOperation:
-            print('Warning: stdin is not a terminal. Interactive mode is not available.')
+        cli(agent=self)
 
 
 @dataclasses.dataclass(repr=False)

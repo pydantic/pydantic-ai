@@ -63,10 +63,6 @@ uvx --from pydantic-ai pai
 
 ### Custom Agents
 
-You can use your own custom agents with the CLI in two ways:
-
-#### Using the `--agent` flag
-
 You can specify a custom agent using the `--agent` flag with a module path and variable name:
 
 ```bash
@@ -77,16 +73,6 @@ The format must be `module:variable` where:
 - `module` is the importable Python module path
 - `variable` is the name of the Agent instance in that module
 
-#### Using the `run_cli()` method
 
-You can directly launch CLI mode directly from an `Agent` instance using `Agent.run_cli()`.
-
-```python
-from pydantic_ai import Agent
-
-my_agent = Agent()
-my_agent.model = 'openai:gpt-4'
-
-# Start CLI loop with this agent
-my_agent.run_cli()
-```
+Additionally, you can directly launch CLI mode directly from an `Agent` instance 
+using `Agent.run_cli()`.
