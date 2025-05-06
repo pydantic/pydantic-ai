@@ -90,7 +90,7 @@ See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models)
 """
 
 
-class AnthropicModelSettings(ModelSettings):
+class AnthropicModelSettings(ModelSettings, total=False):
     """Settings used for an Anthropic model request.
 
     ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -221,6 +221,8 @@ class AnthropicModel(Model):
         system_prompt, anthropic_messages = await self._map_message(messages)
 
         try:
+            extra_headers = model_settings.get('extra_headers', {})
+            extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.messages.create(
                 max_tokens=model_settings.get('max_tokens', 1024),
                 system=system_prompt or NOT_GIVEN,
@@ -234,7 +236,7 @@ class AnthropicModel(Model):
                 top_p=model_settings.get('top_p', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
-                extra_headers={'User-Agent': get_user_agent()},
+                extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
