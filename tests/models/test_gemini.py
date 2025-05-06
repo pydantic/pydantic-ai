@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
+from enum import IntEnum
 from typing import Annotated
 
 import httpx
@@ -220,6 +221,65 @@ async def test_json_def_replaced(allow_model_requests: None):
                             }
                         },
                         'required': ['locations'],
+                        'type': 'object',
+                    },
+                )
+            ]
+        )
+    )
+
+
+async def test_json_def_enum(allow_model_requests: None):
+    class ProgressEnum(IntEnum):
+        DONE = 100
+        ALMOST_DONE = 80
+        IN_PROGRESS = 60
+        BARELY_STARTED = 40
+        NOT_STARTED = 20
+
+    class QueryDetails(BaseModel):
+        progress: list[ProgressEnum] | None = None
+
+    json_schema = QueryDetails.model_json_schema()
+    print(f'tommybug got {json_schema=}', flush=True)
+    assert json_schema == snapshot(
+        {
+            '$defs': {'ProgressEnum': {'enum': [100, 80, 60, 40, 20], 'title': 'ProgressEnum', 'type': 'integer'}},
+            'properties': {
+                'progress': {
+                    'anyOf': [{'items': {'$ref': '#/$defs/ProgressEnum'}, 'type': 'array'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Progress',
+                }
+            },
+            'title': 'QueryDetails',
+            'type': 'object',
+        }
+    )
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    output_tool = ToolDefinition(
+        'result',
+        'This is the tool for the final Result',
+        json_schema,
+    )
+    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+    mrp = m.customize_request_parameters(mrp)
+
+    # This tests that the enum values are properly converted to strings for Gemini
+    assert m._get_tools(mrp) == snapshot(
+        _GeminiTools(
+            function_declarations=[
+                _GeminiFunction(
+                    name='result',
+                    description='This is the tool for the final Result',
+                    parameters={
+                        'properties': {
+                            'progress': {
+                                'items': {'enum': ['100', '80', '60', '40', '20'], 'type': 'string'},
+                                'type': 'array',
+                                'nullable': True,
+                            }
+                        },
                         'type': 'object',
                     },
                 )
