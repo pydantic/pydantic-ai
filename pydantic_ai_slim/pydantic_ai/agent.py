@@ -1667,8 +1667,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     def run_cli(self: Agent[None, str]) -> None:
         """Run the agent in a CLI loop."""
-        import io
-
         from pydantic_ai._cli import cli
 
         cli(agent=self)
