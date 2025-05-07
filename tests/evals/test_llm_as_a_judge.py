@@ -6,6 +6,7 @@ from pytest_mock import MockerFixture
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.settings import ModelSettings
     from pydantic_evals.evaluators.llm_as_a_judge import (
         GradingOutput,
         _stringify,  # pyright: ignore[reportPrivateUsage]
@@ -88,6 +89,34 @@ async def test_judge_output_mock(mocker: MockerFixture):
 
 
 @pytest.mark.anyio
+async def test_judge_output_with_model_settings_mock(mocker: MockerFixture):
+    """Test judge_output function with model_settings and mocked agent."""
+    mock_result = mocker.MagicMock()
+    mock_result.output = GradingOutput(reason='Test passed with settings', pass_=True, score=1.0)
+    mock_run = mocker.patch('pydantic_ai.Agent.run', return_value=mock_result)
+
+    test_model_settings = ModelSettings(temperature=1)
+
+    grading_output = await judge_output(
+        'Hello world settings',
+        'Content contains a greeting with settings',
+        model_settings=test_model_settings,
+    )
+    assert isinstance(grading_output, GradingOutput)
+    assert grading_output.reason == 'Test passed with settings'
+    assert grading_output.pass_ is True
+    assert grading_output.score == 1.0
+
+    mock_run.assert_called_once()
+    call_args, call_kwargs = mock_run.call_args
+    assert '<Output>\nHello world settings\n</Output>' in call_args[0]
+    assert '<Rubric>\nContent contains a greeting with settings\n</Rubric>' in call_args[0]
+    assert call_kwargs['model_settings'] == test_model_settings
+    # Check if 'model' kwarg is passed, its value will be the default model or None
+    assert 'model' in call_kwargs
+
+
+@pytest.mark.anyio
 async def test_judge_input_output_mock(mocker: MockerFixture):
     """Test judge_input_output function with mocked agent."""
     # Mock the agent run method
@@ -108,3 +137,33 @@ async def test_judge_input_output_mock(mocker: MockerFixture):
     assert '<Input>\nHello\n</Input>' in call_args[0]
     assert '<Output>\nHello world\n</Output>' in call_args[0]
     assert '<Rubric>\nOutput contains input\n</Rubric>' in call_args[0]
+
+
+@pytest.mark.anyio
+async def test_judge_input_output_with_model_settings_mock(mocker: MockerFixture):
+    """Test judge_input_output function with model_settings and mocked agent."""
+    mock_result = mocker.MagicMock()
+    mock_result.output = GradingOutput(reason='Test passed with settings', pass_=True, score=1.0)
+    mock_run = mocker.patch('pydantic_ai.Agent.run', return_value=mock_result)
+
+    test_model_settings = ModelSettings(temperature=1)
+
+    result = await judge_input_output(
+        'Hello settings',
+        'Hello world with settings',
+        'Output contains input with settings',
+        model_settings=test_model_settings,
+    )
+    assert isinstance(result, GradingOutput)
+    assert result.reason == 'Test passed with settings'
+    assert result.pass_ is True
+    assert result.score == 1.0
+
+    mock_run.assert_called_once()
+    call_args, call_kwargs = mock_run.call_args
+    assert '<Input>\nHello settings\n</Input>' in call_args[0]
+    assert '<Output>\nHello world with settings\n</Output>' in call_args[0]
+    assert '<Rubric>\nOutput contains input with settings\n</Rubric>' in call_args[0]
+    assert call_kwargs['model_settings'] == test_model_settings
+    # Check if 'model' kwarg is passed, its value will be the default model or None
+    assert 'model' in call_kwargs

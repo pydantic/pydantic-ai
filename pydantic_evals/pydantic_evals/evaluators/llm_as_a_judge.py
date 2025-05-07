@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, models
+from pydantic_ai.settings import ModelSettings
 
 __all__ = ('GradingOutput', 'judge_input_output', 'judge_output', 'set_default_judge_model')
 
@@ -44,7 +45,10 @@ _judge_output_agent = Agent(
 
 
 async def judge_output(
-    output: Any, rubric: str, model: models.Model | models.KnownModelName | None = None
+    output: Any,
+    rubric: str,
+    model: models.Model | models.KnownModelName | None = None,
+    model_settings: ModelSettings | None = None,
 ) -> GradingOutput:
     """Judge the output of a model based on a rubric.
 
@@ -52,7 +56,9 @@ async def judge_output(
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = f'<Output>\n{_stringify(output)}\n</Output>\n<Rubric>\n{rubric}\n</Rubric>'
-    return (await _judge_output_agent.run(user_prompt, model=model or _default_model)).output
+    return (
+        await _judge_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
+    ).output
 
 
 _judge_input_output_agent = Agent(
@@ -79,7 +85,11 @@ _judge_input_output_agent = Agent(
 
 
 async def judge_input_output(
-    inputs: Any, output: Any, rubric: str, model: models.Model | models.KnownModelName | None = None
+    inputs: Any,
+    output: Any,
+    rubric: str,
+    model: models.Model | models.KnownModelName | None = None,
+    model_settings: ModelSettings | None = None,
 ) -> GradingOutput:
     """Judge the output of a model based on the inputs and a rubric.
 
@@ -87,7 +97,9 @@ async def judge_input_output(
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = f'<Input>\n{_stringify(inputs)}\n</Input>\n<Output>\n{_stringify(output)}\n</Output>\n<Rubric>\n{rubric}\n</Rubric>'
-    return (await _judge_input_output_agent.run(user_prompt, model=model or _default_model)).output
+    return (
+        await _judge_input_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
+    ).output
 
 
 def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:  # pragma: no cover
