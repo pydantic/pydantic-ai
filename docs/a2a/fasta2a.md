@@ -36,13 +36,13 @@ flowchart TB
         TM["TaskManager<br>(coordinates)"] --> |Schedules Tasks| TE
         TM <--> Storage
         TE["Worker<br>(queues & exec.)"] <--> Storage["Storage<br>(persistence)"]
-        TE --> |Delegates Execution| Runner
+        TE --> |Delegates Execution| Worker
     end
 
-    Runner["Runner<br>(implementation)"]
+    Worker["Worker<br>(implementation)"]
 ```
 
-You can bring your own `Storage`, `Worker` and `Runner`.
+You can bring your own `Storage`, `Worker` and `Worker`.
 
 By default, if using the `from_agent` method, the `TaskManager` will use an
 in-memory called `InMemoryStorage` and a `Worker` that runs the tasks in the
@@ -59,6 +59,6 @@ overriding the `save_task` and `load_task` methods.
 
 The `Worker` is responsible for both scheduling tasks and executing them.
 
-#### Runner
+#### Worker
 
-The `Runner` is the component that defines how the task is executed.
+The `Worker` is the component that defines how the task is executed.

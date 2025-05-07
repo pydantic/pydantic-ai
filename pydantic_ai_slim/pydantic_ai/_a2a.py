@@ -9,6 +9,8 @@ from starlette.routing import Route
 from starlette.types import ExceptionHandler, Lifespan
 from typing_extensions import assert_never
 
+from fasta2a.broker import Broker, InMemoryBroker
+from fasta2a.worker import InMemoryWorker
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -28,10 +30,9 @@ from .agent import Agent, AgentDepsT, OutputDataT
 
 try:
     from fasta2a.applications import FastA2A
-    from fasta2a.runner import Runner
+    from fasta2a.broker import Broker, InMemoryBroker, TaskContext
     from fasta2a.schema import Artifact, Message, Part, Provider, Skill, TaskSendParams, TextPart as A2ATextPart
     from fasta2a.storage import InMemoryStorage, Storage
-    from fasta2a.worker import InMemoryWorker, TaskContext, Worker
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `fasta2a` package to use `Agent.to_a2a()` method, '
@@ -43,7 +44,7 @@ def agent_to_a2a(
     agent: Agent[AgentDepsT, OutputDataT],
     *,
     storage: Storage | None = None,
-    worker: Worker | None = None,
+    broker: Broker | None = None,
     # Agent card
     name: str | None = None,
     url: str = 'http://localhost:8000',
@@ -60,9 +61,12 @@ def agent_to_a2a(
 ) -> FastA2A:
     """Create a FastA2A server from an agent."""
     storage = storage or InMemoryStorage()
-    worker = worker or InMemoryWorker(runner=AgentRunner(agent=agent), storage=storage)
+    broker = broker or InMemoryBroker()
+    worker = AgentWorker(agent=agent, broker=broker, storage=storage)
+
     return FastA2A(
         storage=storage,
+        broker=broker,
         worker=worker,
         name=name or agent.name,
         url=url,
@@ -79,18 +83,18 @@ def agent_to_a2a(
 
 
 @dataclass
-class AgentRunner(Runner, Generic[AgentDepsT, OutputDataT]):
-    """A runner that uses an agent to execute tasks."""
+class AgentWorker(InMemoryWorker, Generic[AgentDepsT, OutputDataT]):
+    """A worker that uses an agent to execute tasks."""
 
     agent: Agent[AgentDepsT, OutputDataT]
 
     async def run(self, task_ctx: TaskContext[TaskSendParams]) -> None:
         params = task_ctx.params
-        task = await task_ctx.storage.load_task(params['id'], history_length=params.get('history_length'))
+        task = await self.storage.load_task(params['id'], history_length=params.get('history_length'))
         assert task is not None, f'Task {task_ctx.params["id"]} not found'
         assert 'session_id' in task, 'Task must have a session_id'
 
-        await task_ctx.storage.update_task(task['id'], state='working')
+        await self.storage.update_task(task['id'], state='working')
 
         # TODO(Marcelo): We need to have a way to communicate when the task is set to `input-required`. Maybe
         # a custom `output_type` with a `more_info_required` field, or something like that.
@@ -103,9 +107,12 @@ class AgentRunner(Runner, Generic[AgentDepsT, OutputDataT]):
             result = await self.agent.run(message_history=message_history)  # type: ignore
 
             artifacts = self.build_artifacts(result.output)
-            await task_ctx.storage.update_task(task['id'], state='completed', artifacts=artifacts)
+            await self.storage.update_task(task['id'], state='completed', artifacts=artifacts)
         except Exception:
-            await task_ctx.storage.update_task(task['id'], state='failed')
+            await self.storage.update_task(task['id'], state='failed')
+
+    async def cancel(self, task_ctx: TaskContext[TaskSendParams]) -> None:
+        pass
 
     def build_artifacts(self, result: Any) -> list[Artifact]:
         # TODO(Marcelo): We need to send the json schema of the result on the metadata of the message.

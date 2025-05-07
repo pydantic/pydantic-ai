@@ -57,9 +57,9 @@ if TYPE_CHECKING:
     from starlette.types import ExceptionHandler, Lifespan
 
     from fasta2a.applications import FastA2A
+    from fasta2a.broker import Broker
     from fasta2a.schema import Provider, Skill
     from fasta2a.storage import Storage
-    from fasta2a.worker import Worker
     from pydantic_ai.mcp import MCPServer
 
 
@@ -1677,7 +1677,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         *,
         storage: Storage | None = None,
-        worker: Worker | None = None,
+        broker: Broker | None = None,
         # Agent card
         name: str | None = None,
         url: str = 'http://localhost:8000',
@@ -1715,7 +1715,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         return agent_to_a2a(
             self,
             storage=storage,
-            worker=worker,
+            broker=broker,
             name=name,
             url=url,
             version=version,

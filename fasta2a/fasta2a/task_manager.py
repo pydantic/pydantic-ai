@@ -65,6 +65,7 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Any
 
+from .broker import Broker
 from .schema import (
     CancelTaskRequest,
     CancelTaskResponse,
@@ -82,7 +83,6 @@ from .schema import (
     TaskNotFoundError,
 )
 from .storage import Storage
-from .broker import Broker
 
 
 @dataclass

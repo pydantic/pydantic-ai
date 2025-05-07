@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Annotated, Any, Generic, Literal, TypeVar, TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeVar
 
 import anyio
 from opentelemetry.trace import Span, get_current_span, get_tracer, use_span
@@ -15,22 +15,22 @@ from .schema import TaskIdParams, TaskSendParams
 tracer = get_tracer(__name__)
 
 if TYPE_CHECKING:
-    from . import FastA2A
-    from .runner import Runner
+    from .applications import FastA2A
+    from .worker import Worker
 
 
 @dataclass
 class Broker(ABC):
-    """The worker class is in charge of scheduling and running tasks.
+    """The broker class is in charge of scheduling and running tasks.
 
     The HTTP server is in charge of scheduling tasks, but you can have a remote worker
     that is in charge of running the tasks.
 
-    The simple implementation is the `InMemoryWorker`, which is the worker that
+    The simple implementation is the `InMemoryBroker`, which is the broker that
     runs the tasks in the same process as the HTTP server. That said, this class can be
     extended to support remote workers.
     """
-    # Application actions
+
     @abstractmethod
     async def run_task(self, params: TaskSendParams) -> None:
         """Send a task to be executed by the worker."""
@@ -42,7 +42,7 @@ class Broker(ABC):
         raise NotImplementedError('send_cancel_task is not implemented yet.')
 
     @abstractmethod
-    async def on_runner_connect(self, runner: Runner) -> None:
+    async def on_runner_connect(self, worker: Worker) -> None:
         """This is used so that the broker can notify the runners about requests from the app."""
         raise NotImplementedError('on_runner_connect is not implemented yet.')
 
@@ -59,10 +59,7 @@ class Broker(ABC):
 
 
 class InMemoryBroker(Broker):
-    """A worker that executes tasks in memory.
-
-    The worker keeps a loop that waits for tasks to be scheduled.
-    """
+    """A broker that schedules tasks in memory."""
 
     async def __aenter__(self):
         self.aexit_stack = AsyncExitStack()
@@ -90,7 +87,7 @@ class InMemoryBroker(Broker):
                     if task_operation['operation'] == 'run':
                         self._task_group.start_soon(self._handle_run_task, task_operation['params'])
 
-    async def _handle_run_task(self, params: TaskSendParams):
+    async def _handle_run_task(self, params: TaskSendParams) -> None:
         # task_context = TaskContext(params=params)
         # await self.runner.run(task_context)
         raise NotImplementedError
@@ -106,6 +103,12 @@ class InMemoryBroker(Broker):
 
     async def send_cancel_task(self, params: TaskIdParams) -> None:
         await self.cancel_task(params)
+
+    async def on_runner_connect(self, worker: Worker) -> None:
+        """This is used so that the broker can notify the runners about requests from the app."""
+
+    async def on_app_connect(self, app: FastA2A) -> None:
+        """This is used so that the broker can notify the app about subscription events from the runners."""
 
 
 OperationT = TypeVar('OperationT')
@@ -131,6 +134,7 @@ TaskParamsT = TypeVar('TaskParamsT')
 @dataclass
 class TaskContext(Generic[TaskParamsT]):
     """A context for a task."""
+
     # TODO: Can we get rid of this now that it isn't aware of storage?
 
     params: TaskParamsT

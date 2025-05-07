@@ -11,10 +11,11 @@ from starlette.responses import Response
 from starlette.routing import Route
 from starlette.types import ExceptionHandler, Lifespan, Receive, Scope, Send
 
+from .broker import Broker
 from .schema import AgentCard, Provider, Skill, a2a_request_ta, a2a_response_ta, agent_card_ta
 from .storage import Storage
 from .task_manager import TaskManager
-from .broker import Broker
+from .worker import Worker
 
 
 class FastA2A(Starlette):
@@ -25,6 +26,7 @@ class FastA2A(Starlette):
         *,
         storage: Storage,
         broker: Broker,
+        worker: Worker,
         # Agent card
         name: str | None = None,
         url: str = 'http://localhost:8000',
