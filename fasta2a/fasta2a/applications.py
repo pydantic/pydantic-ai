@@ -14,7 +14,7 @@ from starlette.types import ExceptionHandler, Lifespan, Receive, Scope, Send
 from .schema import AgentCard, Provider, Skill, a2a_request_ta, a2a_response_ta, agent_card_ta
 from .storage import Storage
 from .task_manager import TaskManager
-from .worker import Worker
+from .broker import Broker
 
 
 class FastA2A(Starlette):
@@ -24,7 +24,7 @@ class FastA2A(Starlette):
         self,
         *,
         storage: Storage,
-        worker: Worker,
+        broker: Broker,
         # Agent card
         name: str | None = None,
         url: str = 'http://localhost:8000',
@@ -60,7 +60,7 @@ class FastA2A(Starlette):
         self.default_input_modes = ['application/json']
         self.default_output_modes = ['application/json']
 
-        self.task_manager = TaskManager(worker=worker, storage=storage)
+        self.task_manager = TaskManager(broker=broker, storage=storage)
 
         # Setup
         self._agent_card_json_schema: bytes | None = None

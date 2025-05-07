@@ -82,14 +82,14 @@ from .schema import (
     TaskNotFoundError,
 )
 from .storage import Storage
-from .worker import Worker
+from .broker import Broker
 
 
 @dataclass
 class TaskManager:
     """A task manager responsible for managing tasks."""
 
-    worker: Worker
+    broker: Broker
     storage: Storage
 
     _aexit_stack: AsyncExitStack | None = field(default=None, init=False)
@@ -97,7 +97,7 @@ class TaskManager:
     async def __aenter__(self):
         self._aexit_stack = AsyncExitStack()
         await self._aexit_stack.__aenter__()
-        await self._aexit_stack.enter_async_context(self.worker)
+        await self._aexit_stack.enter_async_context(self.broker)
 
         return self
 
@@ -122,7 +122,7 @@ class TaskManager:
             message = request['params']['message']
             task = await self.storage.submit_task(task_id, session_id, message)
 
-        await self.worker.send_run_task(request['params'])
+        await self.broker.run_task(request['params'])
         return SendTaskResponse(jsonrpc='2.0', id=request_id, result=task)
 
     async def get_task(self, request: GetTaskRequest) -> GetTaskResponse:
@@ -142,7 +142,7 @@ class TaskManager:
         return GetTaskResponse(jsonrpc='2.0', id=request['id'], result=task)
 
     async def cancel_task(self, request: CancelTaskRequest) -> CancelTaskResponse:
-        await self.worker.send_cancel_task(request['params'])
+        await self.broker.cancel_task(request['params'])
         task = await self.storage.load_task(request['params']['id'])
         if task is None:
             return CancelTaskResponse(

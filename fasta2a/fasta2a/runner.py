@@ -6,14 +6,19 @@ from typing import TYPE_CHECKING, Any
 from .schema import Artifact, Message, TaskSendParams
 
 if TYPE_CHECKING:
-    from .worker import TaskContext
+    from .broker import TaskContext, Broker
 
 
 class Runner(ABC):
     """A runner is responsible for executing tasks."""
+    
+    broker: Broker
 
     @abstractmethod
     async def run(self, task_ctx: TaskContext[TaskSendParams]) -> None: ...
+
+    @abstractmethod
+    async def cancel(self, task_ctx: TaskContext[TaskSendParams]) -> None: ...
 
     @abstractmethod
     def build_message_history(self, task_history: list[Message]) -> list[Any]: ...
