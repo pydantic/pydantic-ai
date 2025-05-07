@@ -296,6 +296,7 @@ class ModelResponsePartsManager:
             has been added to the manager, or replaced an existing part.
         """
         new_part = ToolCallPart(
+            id=str(vendor_part_id) if vendor_part_id is not None else None,
             tool_name=tool_name,
             args=args,
             tool_call_id=tool_call_id or _generate_tool_call_id(),

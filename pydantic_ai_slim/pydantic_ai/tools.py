@@ -352,6 +352,7 @@ class Tool(Generic[AgentDepsT]):
 
         self.current_retry = 0
         return _messages.ToolReturnPart(
+            id=message.id,
             tool_name=message.tool_name,
             content=response_content,
             tool_call_id=message.tool_call_id,
