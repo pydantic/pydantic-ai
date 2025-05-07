@@ -2,14 +2,14 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-import json
+import hashlib
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
-from opentelemetry.trace import Span, Tracer
+from opentelemetry.trace import Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_graph import BaseNode, Graph, GraphRunContext
@@ -24,7 +24,6 @@ from . import (
     result,
     usage as _usage,
 )
-from .models.instrumented import InstrumentedModel
 from .result import OutputDataT, ToolOutput
 from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, Tool, ToolDefinition, ToolsPrepareFunc
@@ -94,8 +93,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
     mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
+    default_retries: int
 
-    run_span: Span
     tracer: Tracer
 
     prepare_tools: ToolsPrepareFunc[DepsT] | None = None
@@ -505,38 +504,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         final_result: result.FinalResult[NodeRunEndT],
         tool_responses: list[_messages.ModelRequestPart],
     ) -> End[result.FinalResult[NodeRunEndT]]:
-        run_span = ctx.deps.run_span
-        usage = ctx.state.usage
         messages = ctx.state.message_history
 
         # For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if tool_responses:
             messages.append(_messages.ModelRequest(parts=tool_responses))
-
-        run_span.set_attributes(
-            {
-                **usage.opentelemetry_attributes(),
-                'all_messages_events': json.dumps(
-                    [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)]
-                ),
-                'final_result': final_result.output
-                if isinstance(final_result.output, str)
-                else json.dumps(InstrumentedModel.serialize_any(final_result.output)),
-            }
-        )
-        run_span.set_attributes(
-            {
-                'logfire.json_schema': json.dumps(
-                    {
-                        'type': 'object',
-                        'properties': {
-                            'all_messages_events': {'type': 'array'},
-                            'final_result': {'type': 'object'},
-                        },
-                    }
-                ),
-            }
-        )
 
         return End(final_result)
 
@@ -583,7 +555,14 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     )
 
 
-async def process_function_tools(
+def multi_modal_content_identifier(identifier: str | bytes) -> str:
+    """Generate stable identifier for multi-modal content to help LLM in finding a specific file in tool call responses."""
+    if isinstance(identifier, str):
+        identifier = identifier.encode('utf-8')
+    return hashlib.sha1(identifier).hexdigest()[:6]
+
+
+async def process_function_tools(  # noqa C901
     tool_calls: list[_messages.ToolCallPart],
     output_tool_name: str | None,
     output_tool_call_id: str | None,
@@ -669,6 +648,8 @@ async def process_function_tools(
     if not calls_to_run:
         return
 
+    user_parts: list[_messages.UserPromptPart] = []
+
     # Run all tool tasks in parallel
     results_by_index: dict[int, _messages.ModelRequestPart] = {}
     with ctx.deps.tracer.start_as_current_span(
@@ -682,6 +663,7 @@ async def process_function_tools(
             asyncio.create_task(tool.run(call, run_context, ctx.deps.tracer), name=call.tool_name)
             for tool, call in calls_to_run
         ]
+
         pending = tasks
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
@@ -689,7 +671,43 @@ async def process_function_tools(
                 index = tasks.index(task)
                 result = task.result()
                 yield _messages.FunctionToolResultEvent(result, tool_call_id=call_index_to_event_id[index])
-                if isinstance(result, (_messages.ToolReturnPart, _messages.RetryPromptPart)):
+
+                if isinstance(result, _messages.RetryPromptPart):
+                    results_by_index[index] = result
+                elif isinstance(result, _messages.ToolReturnPart):
+                    contents: list[Any]
+                    single_content: bool
+                    if isinstance(result.content, list):
+                        contents = result.content  # type: ignore
+                        single_content = False
+                    else:
+                        contents = [result.content]
+                        single_content = True
+
+                    processed_contents: list[Any] = []
+                    for content in contents:
+                        if isinstance(content, _messages.MultiModalContentTypes):
+                            if isinstance(content, _messages.BinaryContent):
+                                identifier = multi_modal_content_identifier(content.data)
+                            else:
+                                identifier = multi_modal_content_identifier(content.url)
+
+                            user_parts.append(
+                                _messages.UserPromptPart(
+                                    content=[f'This is file {identifier}:', content],
+                                    timestamp=result.timestamp,
+                                    part_kind='user-prompt',
+                                )
+                            )
+                            processed_contents.append(f'See file {identifier}')
+                        else:
+                            processed_contents.append(content)
+
+                    if single_content:
+                        result.content = processed_contents[0]
+                    else:
+                        result.content = processed_contents
+
                     results_by_index[index] = result
                 else:
                     assert_never(result)
@@ -698,6 +716,8 @@ async def process_function_tools(
     # This is mostly just to simplify testing
     for k in sorted(results_by_index):
         output_parts.append(results_by_index[k])
+
+    output_parts.extend(user_parts)
 
 
 async def _tool_from_mcp_server(
@@ -725,7 +745,7 @@ async def _tool_from_mcp_server(
     for server in ctx.deps.mcp_servers:
         tools = await server.list_tools()
         if tool_name in {tool.name for tool in tools}:
-            return Tool(name=tool_name, function=run_tool, takes_ctx=True)
+            return Tool(name=tool_name, function=run_tool, takes_ctx=True, max_retries=ctx.deps.default_retries)
     return None
 
 

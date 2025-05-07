@@ -9,16 +9,10 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool, ToolOutput, UserError
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-)
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -549,6 +543,20 @@ def test_init_plain_tool_invalid():
         Tool(ctx_tool, takes_ctx=False)
 
 
+@pytest.mark.parametrize(
+    'args, expected',
+    [
+        ('', {}),
+        ({'x': 42, 'y': 'value'}, {'x': 42, 'y': 'value'}),
+        ('{"a": 1, "b": "c"}', {'a': 1, 'b': 'c'}),
+    ],
+)
+def test_tool_call_part_args_as_dict(args: Union[str, dict[str, Any]], expected: dict[str, Any]):
+    part = ToolCallPart(tool_name='foo', args=args)
+    result = part.args_as_dict()
+    assert result == expected
+
+
 def test_return_pydantic_model():
     agent = Agent('test')
 
@@ -911,6 +919,40 @@ def test_schema_generator():
                 'strict': None,
             },
         ]
+    )
+
+
+def test_tool_parameters_with_attribute_docstrings():
+    agent = Agent(FunctionModel(get_json_schema))
+
+    class Data(TypedDict):
+        a: int
+        """The first parameter"""
+        b: int
+        """The second parameter"""
+
+    @agent.tool_plain
+    def get_score(data: Data) -> int: ...
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.output)
+    assert json_schema == snapshot(
+        {
+            'name': 'get_score',
+            'description': None,
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {
+                    'a': {'description': 'The first parameter', 'type': 'integer'},
+                    'b': {'description': 'The second parameter', 'type': 'integer'},
+                },
+                'required': ['a', 'b'],
+                'title': 'Data',
+                'type': 'object',
+            },
+            'outer_typed_dict_key': None,
+            'strict': None,
+        }
     )
 
 

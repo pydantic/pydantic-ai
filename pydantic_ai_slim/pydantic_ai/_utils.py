@@ -11,6 +11,7 @@ from functools import partial
 from types import GenericAlias
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union
 
+from anyio.to_thread import run_sync
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import ParamSpec, TypeAlias, TypeGuard, is_typeddict
@@ -31,11 +32,8 @@ _R = TypeVar('_R')
 
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    if kwargs:
-        # noinspection PyTypeChecker
-        return await asyncio.get_running_loop().run_in_executor(None, partial(func, *args, **kwargs))
-    else:
-        return await asyncio.get_running_loop().run_in_executor(None, func, *args)  # type: ignore
+    wrapped_func = partial(func, *args, **kwargs)
+    return await run_sync(wrapped_func)
 
 
 def is_model_like(type_: Any) -> bool:
@@ -291,13 +289,4 @@ class PeekableAsyncStream(Generic[T]):
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun | GraphRunResult) -> str:
-    import logfire
-    import logfire_api
-    from logfire.experimental.annotations import get_traceparent
-
-    span: AbstractSpan | None = x._span(required=False)  # type: ignore[reportPrivateUsage]
-    if not span:  # pragma: no cover
-        return ''
-    if isinstance(span, logfire_api.LogfireSpan):  # pragma: no cover
-        assert isinstance(span, logfire.LogfireSpan)
-    return get_traceparent(span)
+    return x._traceparent(required=False) or ''  # type: ignore[reportPrivateUsage]

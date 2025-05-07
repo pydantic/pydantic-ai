@@ -8,10 +8,11 @@ import httpx
 import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, TypeAdapter, field_validator
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
+from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -31,7 +32,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from .conftest import IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -1815,6 +1816,23 @@ def test_instructions_with_message_history():
     )
 
 
+def test_instructions_parameter_with_sequence():
+    def instructions() -> str:
+        return 'You are a potato.'
+
+    agent = Agent('test', instructions=('You are a helpful assistant.', instructions))
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+            instructions="""\
+You are a helpful assistant.
+You are a potato.\
+""",
+        )
+    )
+
+
 def test_empty_final_response():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -1869,3 +1887,16 @@ def test_empty_final_response():
             ModelResponse(parts=[], model_name='function:llm:', timestamp=IsNow(tz=timezone.utc)),
         ]
     )
+
+
+def test_agent_run_result_serialization() -> None:
+    agent = Agent('test', output_type=Foo)
+    result = agent.run_sync('Hello')
+
+    # Check that dump_json doesn't raise an error
+    adapter = TypeAdapter(AgentRunResult[Foo])
+    serialized_data = adapter.dump_json(result)
+
+    # Check that we can load the data back
+    deserialized_result = adapter.validate_json(serialized_data)
+    assert deserialized_result == result

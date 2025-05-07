@@ -1,0 +1,327 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1770'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get me a dict, respond on one line
+        role: user
+      model: gpt-4o
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
+            \       Temperature in Fahrenheit\n    "
+          name: celsius_to_fahrenheit
+          parameters:
+            properties:
+              celsius:
+                type: number
+            required:
+            - celsius
+            type: object
+        type: function
+      - function:
+          description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
+            forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+          name: get_weather_forecast
+          parameters:
+            properties:
+              location:
+                type: string
+            required:
+            - location
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_dict
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_error
+          parameters:
+            properties:
+              value:
+                type: boolean
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_none
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_multiple_items
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+          name: get_log_level
+          parameters:
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1060'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '953'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_dict
+            id: call_oqKviITBj8PwpQjGyUu4Zu5x
+            type: function
+      created: 1745958344
+      id: chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_55d88aaf2f
+      usage:
+        completion_tokens: 11
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 195
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 206
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2016'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=94n.etM.XZ9BhUYXG5FF37vBIe2HNdQ7nnq7Gg8.1ag-1745958345-1.0.1.1-ZEZQ7xzSm7sKO765NF_Fo0.Q6NdO5_GvkwNpG8Pbp8ano7693MTkVhD.J2osxvzVzpOZDDLVbPB1HGzeyU21YDrYCmlLngKsBJSk3VdZiLE;
+        _cfuvid=Hi7j4oFyo9z_jtpwAyznvhgoGw56MiYKy4HxoOqazEM-1745958345551-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get me a dict, respond on one line
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_dict
+          id: call_oqKviITBj8PwpQjGyUu4Zu5x
+          type: function
+      - content: '{"foo":"bar","baz":123}'
+        role: tool
+        tool_call_id: call_oqKviITBj8PwpQjGyUu4Zu5x
+      model: gpt-4o
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
+            \       Temperature in Fahrenheit\n    "
+          name: celsius_to_fahrenheit
+          parameters:
+            properties:
+              celsius:
+                type: number
+            required:
+            - celsius
+            type: object
+        type: function
+      - function:
+          description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
+            forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+          name: get_weather_forecast
+          parameters:
+            properties:
+              location:
+                type: string
+            required:
+            - location
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_dict
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_error
+          parameters:
+            properties:
+              value:
+                type: boolean
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_none
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_multiple_items
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+          name: get_log_level
+          parameters:
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '833'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '728'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: '{"foo":"bar","baz":123}'
+          refusal: null
+          role: assistant
+      created: 1745958345
+      id: chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_f5bdcc3276
+      usage:
+        completion_tokens: 11
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 222
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 233
+    status:
+      code: 200
+      message: OK
+version: 1

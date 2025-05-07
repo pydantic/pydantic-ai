@@ -15,6 +15,8 @@ There are a number of ways to register tools with an agent:
 * via the [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
 * via the [`tools`][pydantic_ai.Agent.__init__] keyword argument to `Agent` which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
 
+## Registering Function Tools via Decorator
+
 `@agent.tool` is considered the default decorator since in the majority of cases tools will need access to the agent context.
 
 Here's an example using both:
@@ -188,7 +190,7 @@ sequenceDiagram
     Note over Agent: Game session complete
 ```
 
-## Registering Function Tools via kwarg
+## Registering Function Tools via Agent Argument
 
 As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to reuse tools, and can also give more fine-grained control over the tools.
 
@@ -243,6 +245,67 @@ print(dice_result['b'].output)
 2. `agent_a` and `agent_b` are identical — but we can use [`Tool`][pydantic_ai.tools.Tool] to reuse tool definitions and give more fine-grained control over how tools are defined, e.g. setting their name or description, or using a custom [`prepare`](#tool-prepare) method.
 
 _(This example is complete, it can be run "as is")_
+
+## Function Tool Output
+
+Tools can return anything that Pydantic can serialize to JSON, as well as audio, video, image or document content depending on the types of [multi-modal input](input.md) the model supports:
+
+```python {title="function_tool_output.py"}
+from datetime import datetime
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, DocumentUrl, ImageUrl
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+
+class User(BaseModel):
+    name: str
+    age: int
+
+
+agent = Agent(model=OpenAIResponsesModel('gpt-4o'))
+
+
+@agent.tool_plain
+def get_current_time() -> datetime:
+    return datetime.now()
+
+
+@agent.tool_plain
+def get_user() -> User:
+    return User(name='John', age=30)
+
+
+@agent.tool_plain
+def get_company_logo() -> ImageUrl:
+    return ImageUrl(url='https://iili.io/3Hs4FMg.png')
+
+
+@agent.tool_plain
+def get_document() -> DocumentUrl:
+    return DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+
+result = agent.run_sync('What time is it?')
+print(result.output)
+#> The current time is 10:45 PM on April 17, 2025.
+
+result = agent.run_sync('What is the user name?')
+print(result.output)
+#> The user's name is John.
+
+result = agent.run_sync('What is the company name in the logo?')
+print(result.output)
+#> The company name in the logo is "Pydantic."
+
+result = agent.run_sync('What is the main content of the document?')
+print(result.output)
+#> The document contains just the text "Dummy PDF file."
+```
+_(This example is complete, it can be run "as is")_
+
+Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
 
 ## Function Tools vs. Structured Outputs
 
@@ -306,8 +369,6 @@ agent.run_sync('hello', model=FunctionModel(print_schema))
 ```
 
 _(This example is complete, it can be run "as is")_
-
-The return type of tool can be anything which Pydantic can serialize to JSON as some models (e.g. Gemini) support semi-structured return values, some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
 
 If a tool has a single parameter that can be represented as an object in JSON schema (e.g. dataclass, TypedDict, pydantic model), the schema for the tool is simplified to be just that object.
 
@@ -467,3 +528,23 @@ print(test_model.last_model_request_parameters.function_tools)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+
+## Tool Execution and Retries {#tool-retries}
+
+When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic. If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
+
+Beyond automatic validation errors, the tool's own internal logic can also explicitly request a retry by raising the [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception. This is useful for situations where the parameters were technically valid, but an issue occurred during execution (like a transient network error, or the tool determining the initial attempt needs modification).
+
+```python
+from pydantic_ai import ModelRetry
+
+
+def my_flaky_tool(query: str) -> str:
+    if query == 'bad':
+        # Tell the LLM the query was bad and it should try again
+        raise ModelRetry("The query 'bad' is not allowed. Please provide a different query.")
+    # ... process query ...
+    return 'Success!'
+```
+Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the `retries` setting configured on the `Tool` or `Agent`.

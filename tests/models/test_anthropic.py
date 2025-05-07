@@ -141,14 +141,29 @@ async def test_sync_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=5, response_tokens=10, total_tokens=15))
-
+    assert result.usage() == snapshot(
+        Usage(
+            requests=1,
+            request_tokens=5,
+            response_tokens=10,
+            total_tokens=15,
+            details={'input_tokens': 5, 'output_tokens': 10},
+        )
+    )
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=5, response_tokens=10, total_tokens=15))
+    assert result.usage() == snapshot(
+        Usage(
+            requests=1,
+            request_tokens=5,
+            response_tokens=10,
+            total_tokens=15,
+            details={'input_tokens': 5, 'output_tokens': 10},
+        )
+    )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -167,6 +182,38 @@ async def test_sync_request_text_response(allow_model_requests: None):
     )
 
 
+async def test_async_request_prompt_caching(allow_model_requests: None):
+    c = completion_message(
+        [TextBlock(text='world', type='text')],
+        usage=AnthropicUsage(
+            input_tokens=3,
+            output_tokens=5,
+            cache_creation_input_tokens=4,
+            cache_read_input_tokens=6,
+        ),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+    assert result.usage() == snapshot(
+        Usage(
+            requests=1,
+            request_tokens=13,
+            response_tokens=5,
+            total_tokens=18,
+            details={
+                'input_tokens': 3,
+                'output_tokens': 5,
+                'cache_creation_input_tokens': 4,
+                'cache_read_input_tokens': 6,
+            },
+        )
+    )
+
+
 async def test_async_request_text_response(allow_model_requests: None):
     c = completion_message(
         [TextBlock(text='world', type='text')],
@@ -178,7 +225,15 @@ async def test_async_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=3, response_tokens=5, total_tokens=8))
+    assert result.usage() == snapshot(
+        Usage(
+            requests=1,
+            request_tokens=3,
+            response_tokens=5,
+            total_tokens=8,
+            details={'input_tokens': 3, 'output_tokens': 5},
+        )
+    )
 
 
 async def test_request_structured_response(allow_model_requests: None):
@@ -551,7 +606,15 @@ async def test_stream_structured(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage() == snapshot(Usage(requests=2, request_tokens=20, response_tokens=5, total_tokens=25))
+        assert result.usage() == snapshot(
+            Usage(
+                requests=2,
+                request_tokens=20,
+                response_tokens=5,
+                total_tokens=25,
+                details={'input_tokens': 20, 'output_tokens': 5},
+            )
+        )
         assert tool_called
 
 
@@ -572,6 +635,19 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
 
 
 @pytest.mark.vcr()
+async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str):
+    # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
+    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        model_settings=AnthropicModelSettings(
+            anthropic_metadata={'user_id': '123'}, extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}
+        ),
+    )
+    await agent.run('hello')
+
+
+@pytest.mark.vcr()
 async def test_image_url_input_invalid_mime_type(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -586,6 +662,66 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
     )
     assert result.output == snapshot(
         'This is a Great Horned Owl (Bubo virginianus), a large and powerful owl species. It has distinctive ear tufts (the "horns"), large yellow eyes, and a mottled gray-brown plumage that provides excellent camouflage. In this image, the owl is perched on a branch, surrounded by soft yellow and green vegetation, which creates a beautiful, slightly blurred background that highlights the owl\'s sharp features. Great Horned Owls are known for their adaptability, wide distribution across the Americas, and their status as powerful nocturnal predators.'
+    )
+
+
+@pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, anthropic_api_key: str, image_content: BinaryContent
+):
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Let me get the image and check what fruit is shown.'),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01VMGXdexE1Fy5xdWgoom9Te'),
+                ],
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1c8566',
+                        tool_call_id='toolu_01VMGXdexE1Fy5xdWgoom9Te',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1c8566:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The kiwi's fuzzy brown skin is visible around the edges of the slice."
+                    )
+                ],
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+            ),
+        ]
     )
 
 

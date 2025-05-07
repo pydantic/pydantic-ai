@@ -57,6 +57,7 @@ try:
     )
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
+    from openai.types.chat.chat_completion_content_part_param import File, FileFile
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.shared import ReasoningEffort
@@ -263,6 +264,8 @@ class OpenAIModel(Model):
         openai_messages = await self._map_messages(messages)
 
         try:
+            extra_headers = model_settings.get('extra_headers', {})
+            extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.chat.completions.create(
                 model=self._model_name,
                 messages=openai_messages,
@@ -283,7 +286,8 @@ class OpenAIModel(Model):
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
-                extra_headers={'User-Agent': get_user_agent()},
+                extra_headers=extra_headers,
+                extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
@@ -425,34 +429,35 @@ class OpenAIModel(Model):
                         assert item.format in ('wav', 'mp3')
                         audio = InputAudio(data=base64_encoded, format=item.format)
                         content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
+                    elif item.is_document:
+                        content.append(
+                            File(
+                                file=FileFile(
+                                    file_data=f'data:{item.media_type};base64,{base64_encoded}',
+                                    filename=f'filename.{item.format}',
+                                ),
+                                type='file',
+                            )
+                        )
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
-                elif isinstance(item, AudioUrl):  # pragma: no cover
+                elif isinstance(item, AudioUrl):
                     client = cached_async_http_client()
                     response = await client.get(item.url)
                     response.raise_for_status()
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    audio = InputAudio(data=base64_encoded, format=response.headers.get('content-type'))
+                    audio_format: Any = response.headers['content-type'].removeprefix('audio/')
+                    audio = InputAudio(data=base64_encoded, format=audio_format)
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
-                elif isinstance(item, DocumentUrl):  # pragma: no cover
-                    raise NotImplementedError('DocumentUrl is not supported for OpenAI')
-                    # The following implementation should have worked, but it seems we have the following error:
-                    # pydantic_ai.exceptions.ModelHTTPError: status_code: 400, model_name: gpt-4o, body:
-                    # {
-                    #   'message': "Unknown parameter: 'messages[1].content[1].file.data'.",
-                    #   'type': 'invalid_request_error',
-                    #   'param': 'messages[1].content[1].file.data',
-                    #   'code': 'unknown_parameter'
-                    # }
-                    #
-                    # client = cached_async_http_client()
-                    # response = await client.get(item.url)
-                    # response.raise_for_status()
-                    # base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    # media_type = response.headers.get('content-type').split(';')[0]
-                    # file_data = f'data:{media_type};base64,{base64_encoded}'
-                    # file = File(file={'file_data': file_data, 'file_name': item.url, 'file_id': item.url}, type='file')
-                    # content.append(file)
+                elif isinstance(item, DocumentUrl):
+                    client = cached_async_http_client()
+                    response = await client.get(item.url)
+                    response.raise_for_status()
+                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                    media_type = response.headers.get('content-type').split(';')[0]
+                    file_data = f'data:{media_type};base64,{base64_encoded}'
+                    file = File(file=FileFile(file_data=file_data, filename=f'filename.{item.format}'), type='file')
+                    content.append(file)
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
                 else:
@@ -607,6 +612,8 @@ class OpenAIResponsesModel(Model):
         reasoning = self._get_reasoning(model_settings)
 
         try:
+            extra_headers = model_settings.get('extra_headers', {})
+            extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.responses.create(
                 input=openai_messages,
                 model=self._model_name,
@@ -622,7 +629,8 @@ class OpenAIResponsesModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
-                extra_headers={'User-Agent': get_user_agent()},
+                extra_headers=extra_headers,
+                extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
@@ -767,10 +775,11 @@ class OpenAIResponsesModel(Model):
                     response = await client.get(item.url)
                     response.raise_for_status()
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                    media_type = response.headers.get('content-type').split(';')[0]
                     content.append(
                         responses.ResponseInputFileParam(
                             type='input_file',
-                            file_data=f'data:{item.media_type};base64,{base64_encoded}',
+                            file_data=f'data:{media_type};base64,{base64_encoded}',
                             filename=f'filename.{item.format}',
                         )
                     )
