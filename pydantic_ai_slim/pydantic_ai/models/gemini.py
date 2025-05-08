@@ -333,7 +333,6 @@ class GeminiModel(Model):
         if isinstance(part.content, str):
             return [{'text': part.content}]
         else:
-            provider = self._provider.name if isinstance(self._provider, Provider) else self._provider
             content: list[_GeminiPartUnion] = []
             for item in part.content:
                 if isinstance(item, str):
@@ -347,7 +346,7 @@ class GeminiModel(Model):
                     file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                     content.append(file_data)
                 elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl, VideoUrl)):
-                    if provider == 'google-vertex':
+                    if self.system == 'google-vertex':
                         file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         content.append(file_data)
                     else:
