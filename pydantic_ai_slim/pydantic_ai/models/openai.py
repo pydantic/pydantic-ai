@@ -311,7 +311,7 @@ class OpenAIModel(Model):
             items.extend(split_content_into_text_and_thinking(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
-                items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
+                items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id, id=c.id))
         return ModelResponse(items, model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
@@ -560,7 +560,6 @@ class OpenAIResponsesModel(Model):
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created_at, tz=timezone.utc)
         items: list[ModelResponsePart] = []
-        items.append(TextPart(response.output_text))
         for item in response.output:
             if item.type == 'reasoning':
                 for summary in item.summary:
@@ -568,7 +567,11 @@ class OpenAIResponsesModel(Model):
                     # The providers don't force the signature to be unique.
                     items.append(ThinkingPart(content=summary.text, signature=item.id))
             elif item.type == 'function_call':
-                items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
+                items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id, id=item.id))
+            elif item.type == 'message':
+                for part in item.content:
+                    if part.type == 'output_text':
+                        items.append(TextPart(part.text))
         return ModelResponse(items, model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(
@@ -697,7 +700,12 @@ class OpenAIResponsesModel(Model):
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if isinstance(part, SystemPromptPart):
-                        openai_messages.append(responses.EasyInputMessageParam(role='system', content=part.content))
+                        openai_messages.append(
+                            responses.EasyInputMessageParam(
+                                role=self.system_prompt_role or 'system',
+                                content=part.content,
+                            )
+                        )
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
@@ -768,6 +776,7 @@ class OpenAIResponsesModel(Model):
             call_id=_guard_tool_call_id(t=t),
             name=t.tool_name,
             type='function_call',
+            status='completed',
         )
 
     @staticmethod
