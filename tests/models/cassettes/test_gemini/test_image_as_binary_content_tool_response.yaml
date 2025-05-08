@@ -23,7 +23,7 @@ interactions:
         functionDeclarations:
         - description: ''
           name: get_image
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-03-25:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
   response:
     headers:
       alt-svc:
@@ -53,7 +53,7 @@ interactions:
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: gemini-2.5-pro-preview-03-25
+      modelVersion: gemini-2.5-pro-preview-05-06
       usageMetadata:
         candidatesTokenCount: 28
         promptTokenCount: 38
@@ -107,7 +107,7 @@ interactions:
         functionDeclarations:
         - description: ''
           name: get_image
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-03-25:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
   response:
     headers:
       alt-svc:
@@ -132,7 +132,7 @@ interactions:
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: gemini-2.5-pro-preview-03-25
+      modelVersion: gemini-2.5-pro-preview-05-06
       usageMetadata:
         candidatesTokenCount: 11
         promptTokenCount: 360

@@ -964,7 +964,7 @@ async def test_safety_settings_safe(
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
 ) -> None:
-    m = GeminiModel('gemini-2.5-pro-preview-03-25', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.5-pro-preview-05-06', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     @agent.tool_plain
@@ -992,7 +992,7 @@ I need to use the `get_image` tool to see the image first.
                     ),
                     ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
                 ],
-                model_name='gemini-2.5-pro-preview-03-25',
+                model_name='gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
             ),
             ModelRequest(
@@ -1014,7 +1014,7 @@ I need to use the `get_image` tool to see the image first.
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a kiwi fruit, sliced in half.')],
-                model_name='gemini-2.5-pro-preview-03-25',
+                model_name='gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
             ),
         ]
