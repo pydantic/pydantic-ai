@@ -72,7 +72,7 @@ class SystemPromptPart:
 
 @dataclass
 class VideoUrl:
-    """A URL to an video."""
+    """A URL to a video."""
 
     url: str
     """The URL of the video."""
@@ -99,8 +99,22 @@ class VideoUrl:
             return 'video/x-ms-wmv'
         elif self.url.endswith('.three_gp'):
             return 'video/3gpp'
+        # Assume that YouTube videos are mp4 because there would be no extension
+        # to infer from. This should not be a problem, as Gemini disregards media
+        # type for YouTube URLs.
+        elif self.is_youtube:
+            return 'video/mp4'
         else:
             raise ValueError(f'Unknown video file extension: {self.url}')
+
+    @property
+    def is_youtube(self) -> bool:
+        """True if the URL has a YouTube domain."""
+        return (
+            self.url.startswith('https://youtu.be/')
+            or self.url.startswith('https://youtube.com/')
+            or self.url.startswith('https://www.youtube.com/')
+        )
 
     @property
     def format(self) -> VideoFormat:

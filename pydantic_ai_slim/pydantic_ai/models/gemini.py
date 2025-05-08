@@ -343,6 +343,9 @@ class GeminiModel(Model):
                     content.append(
                         _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
                     )
+                elif isinstance(item, VideoUrl) and item.is_youtube:
+                    file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
+                    content.append(file_data)
                 elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl, VideoUrl)):
                     if provider == 'google-vertex':
                         file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})

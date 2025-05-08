@@ -30,15 +30,20 @@ async def mock_refresh_token():
     'url',
     [
         pytest.param(AudioUrl(url='https://cdn.openai.com/API/docs/audio/alloy.wav'), id='AudioUrl'),
+        pytest.param(AudioUrl(url='gs://my-bucket/path/to/audio-blob.mp3'), id='AudioUrl (gs://)'),
         pytest.param(
             DocumentUrl(url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf'),
             id='DocumentUrl',
         ),
+        pytest.param(DocumentUrl(url='gs://my-bucket/path/to/pdf-blob.pdf'), id='DocumentUrl (gs://)'),
         pytest.param(
             ImageUrl(url='https://upload.wikimedia.org/wikipedia/commons/6/6a/Www.wikipedia_screenshot_%282021%29.png'),
             id='ImageUrl',
         ),
+        pytest.param(ImageUrl(url='gs://my-bucket/path/to/image-blob.png'), id='ImageUrl (gs://)'),
         pytest.param(VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4'), id='VideoUrl'),
+        pytest.param(VideoUrl(url='gs://my-bucket/path/to/video-blob.mp4'), id='VideoUrl (gs://)'),
+        pytest.param(VideoUrl(url='https://youtu.be/lCdaVNyHtjU'), id='VideoUrl (YouTube)'),
     ],
 )
 async def test_url_inputs_are_sent_via_file_uri_field(

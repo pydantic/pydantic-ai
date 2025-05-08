@@ -1070,6 +1070,35 @@ async def test_url_inputs_are_downloaded(
     assert result.output == '...'
 
 
+async def test_youtube_video_url_sent_directly_without_download(
+    client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
+) -> None:
+    video_url = VideoUrl(url='https://youtu.be/lCdaVNyHtjU')
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        text = json.loads(request.content)['contents'][0]['parts'][0]['text']
+        assert text == 'What is the main content of this URL?'
+
+        file_data = json.loads(request.content)['contents'][0]['parts'][1]['fileData']
+        assert file_data == {'fileUri': video_url.url, 'mimeType': video_url.media_type}
+
+        return httpx.Response(
+            200,
+            content=_gemini_response_ta.dump_json(
+                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('...')]))),
+                by_alias=True,
+            ),
+            headers={'Content-Type': 'application/json'},
+        )
+
+    gemini_client = client_with_handler(handler)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
+    agent = Agent(m)
+    result = await agent.run(['What is the main content of this URL?', video_url])
+
+    assert result.output == '...'
+
+
 @pytest.mark.vcr()
 async def test_image_as_binary_content_input(
     allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
