@@ -1,7 +1,6 @@
 import re
 import subprocess
 import sys
-from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from pydantic import BaseModel, Field
@@ -26,7 +25,6 @@ def main(exclude_comment: str = 'pragma: no cover') -> int:
 
     blocks: list[str] = []
     total_lines = 0
-    cwd = Path.cwd()
     for file_name, file_coverage in r.files.items():
         # Find lines that are both excluded and executed
         common_lines = sorted(set(file_coverage.excluded_lines) & set(file_coverage.executed_lines))
@@ -43,10 +41,10 @@ def main(exclude_comment: str = 'pragma: no cover') -> int:
                 code_analysise = CodeAnalyzer(file_name)
 
             if not code_analysise.all_block_openings(start, end):
-                b = str(start) if start == end else f'{start}-{end}'
+                b = str(start) if start == end else f'{start} to {end}'
                 if not blocks or blocks[-1] != b:
                     total_lines += end - start + 1
-                    blocks.append(f'  [link=file://{cwd / file_name}]{file_name} {b}[/link]')
+                    blocks.append(f'  {file_name}:{b}')
 
         first_line, *rest = common_lines
         current_start = current_end = first_line
@@ -64,8 +62,7 @@ def main(exclude_comment: str = 'pragma: no cover') -> int:
     console = Console()
     if blocks:
         console.print(f"❎ {total_lines} lines marked with '{exclude_comment}' and covered")
-        for block in blocks:
-            console.print(block)
+        console.print('\n'.join(blocks))
         return 1
     else:
         console.print(f"✅ No lines wrongly marked with '{exclude_comment}'")
