@@ -15,10 +15,13 @@ def main() -> int:
         with NamedTemporaryFile(mode='w', suffix='.toml') as config_file:
             config_file.write(f"[tool.coverage.report]\nexclude_lines = ['{EXCLUDE_COMMENT}']\n")
             config_file.flush()
-            subprocess.run(
+            p = subprocess.run(
                 ['uv', 'run', 'coverage', 'json', f'--rcfile={config_file.name}', '-o', coverage_json.name],
-                check=True,
+                stdout=subprocess.PIPE,
             )
+            if p.returncode != 0:
+                print(f'Error running coverage: {p.stderr.decode()}', file=sys.stderr)
+                return p.returncode
 
         r = CoverageReport.model_validate_json(coverage_json.read())
 
@@ -40,13 +43,11 @@ def main() -> int:
             if code_analysise is None:
                 code_analysise = CodeAnalyzer(file_name)
 
-            if all(code_analysise.is_expression_start(line_no) for line_no in range(start, end + 1)):
-                return
-
-            b = str(start) if start == end else f'{start}-{end}'
-            if not blocks or blocks[-1] != b:
-                total_lines += end - start + 1
-                blocks.append(f'  [link=file://{cwd / file_name}]{file_name} {b}[/link]')
+            if not code_analysise.all_block_openings(start, end):
+                b = str(start) if start == end else f'{start}-{end}'
+                if not blocks or blocks[-1] != b:
+                    total_lines += end - start + 1
+                    blocks.append(f'  [link=file://{cwd / file_name}]{file_name} {b}[/link]')
 
         first_line, *rest = common_lines
         current_start = current_end = first_line
@@ -98,7 +99,9 @@ class CoverageReport(BaseModel):
     files: dict[str, FileCoverage]
 
 
-EXPRESSION_START_REGEX = re.compile(r'\s*(?:def|async def|@|class|if|elif|else)')
+# python expressions that can open blocks so can have the `# pragma: no cover` comment on them
+# even though they're covered
+BLOCK_OPENINGS = re.compile(r'\s*(?:def|async def|@|class|if|elif|else)')
 
 
 class CodeAnalyzer:
@@ -107,9 +110,11 @@ class CodeAnalyzer:
             content = f.read()
         self.lines: dict[int, str] = dict(enumerate(content.splitlines(), start=1))
 
-    def is_expression_start(self, line_no: int) -> bool:
-        line = self.lines[line_no]
-        return bool(EXPRESSION_START_REGEX.match(line))
+    def all_block_openings(self, start: int, end: int) -> bool:
+        return all(self._is_block_opening(line_no) for line_no in range(start, end + 1))
+
+    def _is_block_opening(self, line_no: int) -> bool:
+        return bool(BLOCK_OPENINGS.match(self.lines[line_no]))
 
 
 if __name__ == '__main__':

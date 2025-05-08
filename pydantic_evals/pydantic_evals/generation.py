@@ -59,6 +59,7 @@ async def generate_dataset(
     """
     output_schema = dataset_type.model_json_schema_with_evaluators(custom_evaluator_types)
 
+    # TODO(DavidM): Update this once we add better response_format and/or ResultTool support to PydanticAI
     agent = Agent(
         model,
         system_prompt=(
