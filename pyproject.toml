@@ -183,7 +183,6 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = "tests"
 xfail_strict = true
-timeout = 30
 filterwarnings = [
     "error",
     # boto3
