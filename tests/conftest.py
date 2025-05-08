@@ -192,6 +192,9 @@ def pytest_recording_configure(config: Any, vcr: VCR):
 def vcr_config():
     return {
         'ignore_localhost': True,
+        # Ignores any GCP auth requests, which are used to authenticate to Gemini
+        # models on Vertex AI.
+        'ignore_hosts': ['oauth2.googleapis.com'],
         # Note: additional header filtering is done inside the serializer
         'filter_headers': ['authorization', 'x-api-key'],
         'decode_compressed_response': True,
