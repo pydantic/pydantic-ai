@@ -87,6 +87,7 @@ dev = [
     "pytest-recording>=0.13.2",
     "diff-cover>=9.2.0",
     "boto3-stubs[bedrock-runtime]",
+    "pytest-timeout>=2.4.0",
 ]
 
 [tool.hatch.metadata]

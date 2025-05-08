@@ -158,7 +158,7 @@ jobs:
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-standard
 
-      - run: uv run --all-extras coverage run -m pytest
+      - run: uv run --all-extras coverage run -m pytest -vv
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
 
@@ -390,7 +390,7 @@ jobs:
     steps:
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
       - name: Install dependencies
         run: pip install tweepy==4.14.0
       - name: Send tweet
