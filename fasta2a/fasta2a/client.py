@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import uuid
 from typing import Any
 
-import httpx
 import pydantic
 
 from .schema import (
@@ -19,6 +18,13 @@ from .schema import (
 
 send_task_response_ta = pydantic.TypeAdapter(SendTaskResponse)
 get_task_response_ta = pydantic.TypeAdapter(GetTaskResponse)
+
+try:
+    import httpx
+except ImportError as _import_error:
+    raise ImportError(
+        'httpx is required to use the A2AClient. Please install it with `pip install httpx`.',
+    ) from _import_error
 
 
 class A2AClient:
