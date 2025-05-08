@@ -60,3 +60,18 @@ If you have [uv](https://docs.astral.sh/uv/) installed, the quickest way to run 
 ```bash
 uvx --from pydantic-ai pai
 ```
+
+### Custom Agents
+
+You can specify a custom agent using the `--agent` flag with a module path and variable name:
+
+```bash
+pai --agent mymodule.submodule:my_agent "What's the weather today?"
+```
+
+The format must be `module:variable` where:
+- `module` is the importable Python module path
+- `variable` is the name of the Agent instance in that module
+
+
+Additionally, you can directly launch CLI mode from an `Agent` instance using `Agent.run_cli()`.

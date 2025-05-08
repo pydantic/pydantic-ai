@@ -40,7 +40,7 @@ def test_cli_help(capfd: CaptureFixture[str]):
 
     assert capfd.readouterr().out.splitlines() == snapshot(
         [
-            'usage: pai [-h] [-m [MODEL]] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]',
+            'usage: pai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]',
             '',
             IsStr(),
             '',
@@ -56,6 +56,8 @@ def test_cli_help(capfd: CaptureFixture[str]):
             '  -h, --help            show this help message and exit',
             '  -m [MODEL], --model [MODEL]',
             '                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o". Defaults to "openai:gpt-4o".',
+            '  -a AGENT, --agent AGENT',
+            '                        Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
             '  -l, --list-models     List all available models and exit',
             '  -t [CODE_THEME], --code-theme [CODE_THEME]',
             '                        Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "monokai".',
@@ -70,6 +72,72 @@ def test_invalid_model(capfd: CaptureFixture[str]):
     assert capfd.readouterr().out.splitlines() == snapshot(
         [IsStr(), 'Error initializing potato:', 'Unknown model: potato']
     )
+
+
+def test_agent_flag(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+
+    # Create a dynamic module using types.ModuleType
+    import types
+
+    test_module = types.ModuleType('test_module')
+
+    # Create and add agent to the module
+    test_agent = Agent()
+    test_agent.model = TestModel(custom_output_text='Hello from custom agent')
+    setattr(test_module, 'custom_agent', test_agent)
+
+    # Register the module in sys.modules
+    sys.modules['test_module'] = test_module
+
+    try:
+        # Mock ask_agent to avoid actual execution but capture the agent
+        mock_ask = mocker.patch('pydantic_ai._cli.ask_agent')
+
+        # Test CLI with custom agent
+        assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
+
+        # Verify the output contains the custom agent message
+        assert 'Using custom agent: test_module:custom_agent' in capfd.readouterr().out
+
+        # Verify ask_agent was called with our custom agent
+        mock_ask.assert_called_once()
+        assert mock_ask.call_args[0][0] is test_agent
+
+    finally:
+        # Clean up by removing the module from sys.modules
+        if 'test_module' in sys.modules:
+            del sys.modules['test_module']
+
+
+def test_agent_flag_non_agent(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+
+    # Create a dynamic module using types.ModuleType
+    import types
+
+    test_module = types.ModuleType('test_module')
+
+    # Create and add agent to the module
+    test_agent = 'Not an Agent object'
+    setattr(test_module, 'custom_agent', test_agent)
+
+    # Register the module in sys.modules
+    sys.modules['test_module'] = test_module
+
+    try:
+        assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 1
+        assert 'is not an Agent' in capfd.readouterr().out
+
+    finally:
+        # Clean up by removing the module from sys.modules
+        if 'test_module' in sys.modules:
+            del sys.modules['test_module']
+
+
+def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
+    assert cli(['--agent', 'bad_path', 'hello']) == 1
+    assert 'Agent must be specified in "module:variable" format' in capfd.readouterr().out
 
 
 def test_list_models(capfd: CaptureFixture[str]):
@@ -186,6 +254,15 @@ def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=dark'])
+    mock_run_chat.assert_awaited_once_with(
+        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai'
+    )
+
+
+def test_agent_run_cli(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+    cli_agent.run_cli()
     mock_run_chat.assert_awaited_once_with(
         IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai'
     )

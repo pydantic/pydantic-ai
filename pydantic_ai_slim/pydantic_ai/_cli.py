@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import argparse
 import asyncio
+import importlib
 import sys
 from asyncio import CancelledError
 from collections.abc import Sequence
@@ -83,7 +84,7 @@ The current date and time is {datetime.now()} {tzname}.
 The user is running {sys.platform}."""
 
 
-def cli(args_list: Sequence[str] | None = None) -> int:
+def cli(args_list: Sequence[str] | None = None, agent: Agent[None, str] = cli_agent) -> int:
     parser = argparse.ArgumentParser(
         prog='pai',
         description=f"""\
@@ -108,6 +109,11 @@ Special prompt:
     # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
     qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
     arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
+    parser.add_argument(
+        '-a',
+        '--agent',
+        help='Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
+    )
     parser.add_argument(
         '-l',
         '--list-models',
@@ -139,8 +145,22 @@ Special prompt:
             console.print(f'  {model}', highlight=False)
         return 0
 
+    # Load custom agent if specified
+    if args.agent:
+        try:
+            module_path, variable_name = args.agent.split(':')
+            module = importlib.import_module(module_path)
+            agent = getattr(module, variable_name)
+            if not isinstance(agent, Agent):
+                console.print(f'[red]Error: {args.agent} is not an Agent instance[/red]')
+                return 1
+            console.print(f'[green]Using custom agent:[/green] [magenta]{args.agent}[/magenta]', highlight=False)
+        except ValueError:
+            console.print('[red]Error: Agent must be specified in "module:variable" format[/red]')
+            return 1
+
     try:
-        cli_agent.model = infer_model(args.model)
+        agent.model = infer_model(args.model)
     except UserError as e:
         console.print(f'Error initializing [magenta]{args.model}[/magenta]:\n[red]{e}[/red]')
         return 1
@@ -155,7 +175,7 @@ Special prompt:
 
     if prompt := cast(str, args.prompt):
         try:
-            asyncio.run(ask_agent(cli_agent, prompt, stream, console, code_theme))
+            asyncio.run(ask_agent(agent, prompt, stream, console, code_theme))
         except KeyboardInterrupt:
             pass
         return 0
@@ -164,7 +184,7 @@ Special prompt:
     # doing this instead of `PromptSession[Any](history=` allows mocking of PromptSession in tests
     session: PromptSession[Any] = PromptSession(history=FileHistory(str(history)))
     try:
-        return asyncio.run(run_chat(session, stream, cli_agent, console, code_theme))
+        return asyncio.run(run_chat(session, stream, agent, console, code_theme))
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 
