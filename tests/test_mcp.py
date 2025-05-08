@@ -1,6 +1,9 @@
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
+import os
+import sys
 from pathlib import Path
+from pprint import pprint
 
 import pytest
 from inline_snapshot import snapshot
@@ -41,6 +44,8 @@ def agent(openai_api_key: str):
 
 
 async def test_stdio_server():
+    pprint(sys.modules)
+    pprint(os.getcwd())
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = await server.list_tools()
