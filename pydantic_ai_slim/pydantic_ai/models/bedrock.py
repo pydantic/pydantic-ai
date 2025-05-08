@@ -434,16 +434,19 @@ class BedrockConverseModel(Model):
         last_message: dict[str, Any] | None = None
         for current_message in bedrock_messages:
             if (
-                last_message is None
-                or current_message['role'] != last_message['role']
-                or current_message['role'] != 'user'
-            ):  # Remove the "user" test to also allow merging sequential "assistant" messages
-                processed_messages.append(current_message)
-                last_message = cast(dict[str, Any], current_message)
-            else:
+                last_message is not None
+                and current_message['role'] == last_message['role']
+                and current_message['role'] == 'user'
+            ):
+                # Add the new user content onto the existing user message.
                 last_content = list(last_message['content'])
                 last_content.extend(current_message['content'])
                 last_message['content'] = last_content
+                continue
+
+            # Add the entire message to the list of messages.
+            processed_messages.append(current_message)
+            last_message = cast(dict[str, Any], current_message)
 
         if instructions := self._get_instructions(messages):
             system_prompt.insert(0, {'text': instructions})

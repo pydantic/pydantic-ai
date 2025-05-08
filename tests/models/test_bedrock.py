@@ -587,26 +587,32 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
     """
     Test that consecutive ToolReturnPart objects are grouped into a single user message for Bedrock.
     """
-    import datetime
-
-    from pydantic_ai.messages import ModelRequest, ToolReturnPart
-    from pydantic_ai.models.bedrock import BedrockConverseModel
-
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     now = datetime.datetime.now()
     # Create a ModelRequest with 3 consecutive ToolReturnParts
-    req = ModelRequest(
-        parts=[
-            ToolReturnPart(tool_name='tool1', content='result1', tool_call_id='id1', timestamp=now),
-            ToolReturnPart(tool_name='tool2', content='result2', tool_call_id='id2', timestamp=now),
-            ToolReturnPart(tool_name='tool3', content='result3', tool_call_id='id3', timestamp=now),
-        ]
-    )
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Hello'])]),
+        ModelResponse(parts=[TextPart(content='Hi')]),
+        ModelRequest(parts=[UserPromptPart(content=['How are you?'])]),
+        ModelResponse(parts=[TextPart(content='Cloudy')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='tool1', content='result1', tool_call_id='id1', timestamp=now),
+                ToolReturnPart(tool_name='tool2', content='result2', tool_call_id='id2', timestamp=now),
+                ToolReturnPart(tool_name='tool3', content='result3', tool_call_id='id3', timestamp=now),
+            ]
+        ),
+    ]
+
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages([req])  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
+            {'role': 'user', 'content': [{'text': 'Hello'}]},
+            {'role': 'assistant', 'content': [{'text': 'Hi'}]},
+            {'role': 'user', 'content': [{'text': 'How are you?'}]},
+            {'role': 'assistant', 'content': [{'text': 'Cloudy'}]},
             {
                 'role': 'user',
                 'content': [
@@ -614,6 +620,6 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
                     {'toolResult': {'toolUseId': 'id2', 'content': [{'text': 'result2'}], 'status': 'success'}},
                     {'toolResult': {'toolUseId': 'id3', 'content': [{'text': 'result3'}], 'status': 'success'}},
                 ],
-            }
+            },
         ]
     )
