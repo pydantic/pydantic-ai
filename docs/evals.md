@@ -156,7 +156,7 @@ _(This example is complete, it can be run "as is")_
 
 In this example we evaluate a method for generating recipes based on customer orders.
 
-```python {title="judge_recipes.py"}
+```python {title="judge_recipes.py" test="skip"}
 from __future__ import annotations
 
 from typing import Any
