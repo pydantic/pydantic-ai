@@ -1070,35 +1070,6 @@ async def test_url_inputs_are_downloaded(
     assert result.output == '...'
 
 
-async def test_youtube_video_url_sent_directly_without_download(
-    client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
-) -> None:
-    video_url = VideoUrl(url='https://youtu.be/lCdaVNyHtjU')
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        text = json.loads(request.content)['contents'][0]['parts'][0]['text']
-        assert text == 'What is the main content of this URL?'
-
-        file_data = json.loads(request.content)['contents'][0]['parts'][1]['fileData']
-        assert file_data == {'fileUri': video_url.url, 'mimeType': video_url.media_type}
-
-        return httpx.Response(
-            200,
-            content=_gemini_response_ta.dump_json(
-                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('...')]))),
-                by_alias=True,
-            ),
-            headers={'Content-Type': 'application/json'},
-        )
-
-    gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
-    agent = Agent(m)
-    result = await agent.run(['What is the main content of this URL?', video_url])
-
-    assert result.output == '...'
-
-
 @pytest.mark.vcr()
 async def test_image_as_binary_content_input(
     allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
@@ -1243,3 +1214,34 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
         assert result.output == snapshot(
             'I need a location dictionary to use the `get_temperature` function.  I cannot provide the temperature in Tokyo without more information.\n'
         )
+
+
+@pytest.mark.vcr()
+async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    url = VideoUrl(url='https://youtu.be/lCdaVNyHtjU')
+
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+    result = await agent.run(['What is the main content of this URL?', url])
+
+    assert result.output == snapshot(
+        'The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several patterns, including the most common endpoints with 404 errors, request patterns (such as all requests being GET requests), timeline-related issues, and configuration/authentication problems. The analysis also provides recommendations for addressing the 404 errors.'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content=['What is the main content of this URL?', url], timestamp=IsDatetime()),
+                ],
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several patterns, including the most common endpoints with 404 errors, request patterns (such as all requests being GET requests), timeline-related issues, and configuration/authentication problems. The analysis also provides recommendations for addressing the 404 errors.'
+                    ),
+                ],
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
