@@ -562,10 +562,15 @@ class OpenAIResponsesModel(Model):
         items: list[ModelResponsePart] = []
         for item in response.output:
             if item.type == 'reasoning':
+                if not item.summary:
+                    # NOTE: tool calls require the associated reasoning part even if the summary was empty
+                    items.append(ThinkingPart(id=item.id, content='', signature=item.id))
+                    continue
+
                 for summary in item.summary:
                     # NOTE: We use the same id for all summaries because we can merge them on the round trip.
                     # The providers don't force the signature to be unique.
-                    items.append(ThinkingPart(content=summary.text, signature=item.id))
+                    items.append(ThinkingPart(id=item.id, content=summary.text, signature=item.id))
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id, id=item.id))
             elif item.type == 'message':
