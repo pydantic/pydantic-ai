@@ -105,15 +105,18 @@ print(result.output)
 
 ## Client-side download vs. direct file URL
 
-As a general rule, when you provide a URL using any of `ImageUrl`, `AudioUrl`, `VideoUrl` and `DocumentUrl`, `pydantic-ai` downloads the binary content from the provided URL and then sends it as a base 64-encoded string as part of the API request.
+As a general rule, when you provide a URL using any of `ImageUrl`, `AudioUrl`, `VideoUrl` and `DocumentUrl`, `pydantic-ai` downloads the binary content from the provided URL and then sends it as a base64-encoded string as part of the API request.
 
 The situation is different for some models:
 
 - Anthropic models: if you provide a PDF document via `DocumentUrl`, the URL is sent directly in the API request, no download happens on the client side.
 
 - Gemini models on Vertex AI: any URL provided using `ImageUrl`, `AudioUrl`, `VideoUrl`, or `DocumentUrl` is sent as-is in the API request and no data is downloaded beforehand. See the [Gemini API docs for Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata) to learn more about supported URLs, formats and limitations:
+
     - Cloud Storage bucket URI (with protocol `gs://`)
+
     - Public HTTP URL
+
     - Public YouTube video URL
 
 - Gemini models on GLA: only YouTube video URLs are sent directly and no download happens on the user side.
