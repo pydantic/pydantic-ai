@@ -114,7 +114,7 @@ include = [
 extend-select = [
     "Q",
     "RUF100",
-    "RUF018",  # https://docs.astral.sh/ruff/rules/assignment-in-assert/
+    "RUF018", # https://docs.astral.sh/ruff/rules/assignment-in-assert/
     "C90",
     "UP",
     "I",
@@ -193,7 +193,7 @@ filterwarnings = [
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
     # random resource warnings; I suspect these are coming from vendor SDKs when running examples..
     "ignore:unclosed <socket:ResourceWarning",
-    "ignore:unclosed event loop:ResourceWarning"
+    "ignore:unclosed event loop:ResourceWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
