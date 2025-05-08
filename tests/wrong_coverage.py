@@ -1,51 +1,23 @@
 import re
 import subprocess
+import sys
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-import logfire
 from pydantic import BaseModel, Field
 from rich.console import Console
 
-logfire.configure()
+EXCLUDE_COMMENT = 'pragma: not covered'
 
 
-class FunctionSummary(BaseModel):
-    covered_lines: int
-    num_statements: int
-    percent_covered: float
-    percent_covered_display: str
-    missing_lines: int
-    excluded_lines: int
-    num_branches: int
-    num_partial_branches: int
-    covered_branches: int
-    missing_branches: int
-
-
-class FileCoverage(BaseModel):
-    executed_lines: list[int]
-    summary: FunctionSummary
-    missing_lines: list[int]
-    excluded_lines: list[int]
-    executed_branches: list[list[int]] = Field(default_factory=list)
-    missing_branches: list[list[int]] = Field(default_factory=list)
-
-
-class CoverageReport(BaseModel):
-    files: dict[str, FileCoverage]
-
-
-def main():
-    exclude_comment = 'pragma: not covered'
+def main() -> int:
     with NamedTemporaryFile(suffix='.json') as coverage_json:
         with NamedTemporaryFile(mode='w', suffix='.toml') as config_file:
-            config_file.write(f"[tool.coverage.report]\nexclude_lines = ['{exclude_comment}']\n")
+            config_file.write(f"[tool.coverage.report]\nexclude_lines = ['{EXCLUDE_COMMENT}']\n")
             config_file.flush()
             subprocess.run(
                 ['uv', 'run', 'coverage', 'json', f'--rcfile={config_file.name}', '-o', coverage_json.name],
                 check=True,
-                stdout=subprocess.PIPE,
             )
 
         r = CoverageReport.model_validate_json(coverage_json.read())
@@ -91,9 +63,39 @@ def main():
 
     console = Console()
     if blocks:
-        console.print(f"{total_lines} lines wrongly marked with '{exclude_comment}'")
+        console.print(f"❎ {total_lines} lines wrongly marked with '{EXCLUDE_COMMENT}'")
         for block in blocks:
             console.print(block)
+        return 1
+    else:
+        console.print(f"✅ No lines wrongly marked with '{EXCLUDE_COMMENT}'")
+        return 0
+
+
+class FunctionSummary(BaseModel):
+    covered_lines: int
+    num_statements: int
+    percent_covered: float
+    percent_covered_display: str
+    missing_lines: int
+    excluded_lines: int
+    num_branches: int
+    num_partial_branches: int
+    covered_branches: int
+    missing_branches: int
+
+
+class FileCoverage(BaseModel):
+    executed_lines: list[int]
+    summary: FunctionSummary
+    missing_lines: list[int]
+    excluded_lines: list[int]
+    executed_branches: list[list[int]] = Field(default_factory=list)
+    missing_branches: list[list[int]] = Field(default_factory=list)
+
+
+class CoverageReport(BaseModel):
+    files: dict[str, FileCoverage]
 
 
 EXPRESSION_START_REGEX = re.compile(r'\s*(?:def|async def|@|class|if|elif|else)')
@@ -111,4 +113,4 @@ class CodeAnalyzer:
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

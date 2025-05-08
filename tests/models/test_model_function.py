@@ -92,7 +92,7 @@ def test_simple():
     )
 
 
-async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: not covered
+async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
     assert info.allow_text_output
     assert {t.name for t in info.function_tools} == {'get_location', 'get_weather'}
     last = messages[-1].parts[-1]
@@ -194,7 +194,7 @@ def test_weather():
     assert result.output == 'Sunny in Ipswich'
 
 
-async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: not covered
+async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: no cover
     last = messages[-1].parts[-1]
     if isinstance(last, UserPromptPart):
         if isinstance(last.content, str) and last.content.startswith('{'):

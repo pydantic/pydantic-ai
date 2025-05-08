@@ -296,7 +296,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     def evaluate_sync(
         self, task: Callable[[InputsT], Awaitable[OutputT]], name: str | None = None, max_concurrency: int | None = None
-    ) -> EvaluationReport:  # pragma: not covered
+    ) -> EvaluationReport:
         """Evaluates the test cases in the dataset using the given task.
 
         This is a synchronous wrapper around [`evaluate`][pydantic_evals.Dataset.evaluate] provided for convenience.

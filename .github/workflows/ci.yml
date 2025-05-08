@@ -223,6 +223,7 @@ jobs:
 
       - run: uv run coverage report --fail-under 95
       - run: uv run diff-cover coverage.xml --fail-under 100
+      - run: uv run tests/wrong_coverage.py
 
   test-mcp-run-python:
     runs-on: ubuntu-latest

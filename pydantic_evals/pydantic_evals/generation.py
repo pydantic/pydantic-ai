@@ -37,7 +37,7 @@ async def generate_dataset(
     model: models.Model | models.KnownModelName = 'openai:gpt-4o',
     n_examples: int = 3,
     extra_instructions: str | None = None,
-) -> Dataset[InputsT, OutputT, MetadataT]:  # pragma: not covered
+) -> Dataset[InputsT, OutputT, MetadataT]:
     """Use an LLM to generate a dataset of test cases, each consisting of input, expected output, and metadata.
 
     This function creates a properly structured dataset with the specified input, output, and metadata types.
@@ -59,7 +59,6 @@ async def generate_dataset(
     """
     output_schema = dataset_type.model_json_schema_with_evaluators(custom_evaluator_types)
 
-    # TODO(DavidM): Update this once we add better response_format and/or ResultTool support to PydanticAI
     agent = Agent(
         model,
         system_prompt=(

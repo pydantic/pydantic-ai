@@ -66,9 +66,7 @@ class MockAsyncClientV2:
     def create_mock(cls, completions: MockChatResponse | Sequence[MockChatResponse]) -> AsyncClientV2:
         return cast(AsyncClientV2, cls(completions=completions))
 
-    async def chat(  # pragma: not covered
-        self, *_args: Any, **_kwargs: Any
-    ) -> ChatResponse:
+    async def chat(self, *_args: Any, **_kwargs: Any) -> ChatResponse:
         assert self.completions is not None
         if isinstance(self.completions, Sequence):
             raise_if_exception(self.completions[self.index])

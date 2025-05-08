@@ -59,7 +59,7 @@ class TestEnv:
     def remove(self, name: str) -> None:
         self.envars[name] = os.environ.pop(name, None)
 
-    def reset(self) -> None:  # pragma: not covered
+    def reset(self) -> None:  # pragma: no cover
         for name, value in self.envars.items():
             if value is None:
                 os.environ.pop(name, None)
@@ -100,7 +100,7 @@ async def client_with_handler() -> AsyncIterator[ClientWithHandler]:
     try:
         yield create_client
     finally:
-        if client:  # pragma: not covered
+        if client:  # pragma: no cover
             await client.aclose()
 
 
@@ -137,13 +137,13 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
         path.write_text(source_code)
         filename = str(path)
 
-        if module_name_prefix:  # pragma: not covered
+        if module_name_prefix:  # pragma: no cover
             module_name = module_name_prefix + module_name
 
         if rewrite_assertions:
             loader = AssertionRewritingHook(config=request.config)
             loader.mark_rewrite(module_name)
-        else:  # pragma: not covered
+        else:  # pragma: no cover
             loader = None
 
         spec = importlib.util.spec_from_file_location(module_name, filename, loader=loader)
@@ -155,7 +155,7 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
 
 
 @contextmanager
-def try_import() -> Iterator[Callable[[], bool]]:  # pragma: not covered
+def try_import() -> Iterator[Callable[[], bool]]:  # pragma: no cover
     import_success = False
 
     def check_import() -> bool:
@@ -276,7 +276,7 @@ def mistral_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
-def bedrock_provider():  # pragma: not covered
+def bedrock_provider():  # pragma: no cover
     try:
         import boto3
 
@@ -304,7 +304,7 @@ def model(
     co_api_key: str,
     gemini_api_key: str,
     bedrock_provider: BedrockProvider,
-) -> Model:  # pragma: not covered
+) -> Model:  # pragma: no cover
     try:
         if request.param == 'openai':
             from pydantic_ai.models.openai import OpenAIModel

@@ -358,7 +358,7 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
         Args:
             city: The city name.
         """
-        return '30°C'  # pragma: not covered
+        return '30°C'
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='What is the temperature of the capital of France?') as agent_run:
