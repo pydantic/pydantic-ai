@@ -1,16 +1,13 @@
 from __future__ import annotations, annotations as _annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Generic
 
-from starlette.middleware import Middleware
-from starlette.routing import Route
-from starlette.types import ExceptionHandler, Lifespan
 from typing_extensions import assert_never
 
-from fasta2a.broker import Broker, InMemoryBroker
-from fasta2a.worker import InMemoryWorker
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -29,15 +26,40 @@ from pydantic_ai.messages import (
 from .agent import Agent, AgentDepsT, OutputDataT
 
 try:
+    from starlette.middleware import Middleware
+    from starlette.routing import Route
+    from starlette.types import ExceptionHandler, Lifespan
+
     from fasta2a.applications import FastA2A
-    from fasta2a.broker import Broker, InMemoryBroker, TaskContext
-    from fasta2a.schema import Artifact, Message, Part, Provider, Skill, TaskSendParams, TextPart as A2ATextPart
+    from fasta2a.broker import Broker, InMemoryBroker
+    from fasta2a.schema import (
+        Artifact,
+        Message,
+        Part,
+        Provider,
+        Skill,
+        TaskIdParams,
+        TaskSendParams,
+        TextPart as A2ATextPart,
+    )
     from fasta2a.storage import InMemoryStorage, Storage
+    from fasta2a.worker import Worker
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `fasta2a` package to use `Agent.to_a2a()` method, '
         'you can use the `a2a` optional group — `pip install "pydantic-ai-slim[a2a]"`'
     ) from _import_error
+
+
+@asynccontextmanager
+async def worker_lifespan(app: FastA2A, worker: Worker) -> AsyncIterator[None]:
+    """Custom lifespan that runs the worker during application startup.
+
+    This ensures the worker is started and ready to process tasks as soon as the application starts.
+    """
+    async with app.task_manager:
+        async with worker.run():
+            yield
 
 
 def agent_to_a2a(
@@ -64,10 +86,11 @@ def agent_to_a2a(
     broker = broker or InMemoryBroker()
     worker = AgentWorker(agent=agent, broker=broker, storage=storage)
 
+    lifespan = lifespan or partial(worker_lifespan, worker=worker)
+
     return FastA2A(
         storage=storage,
         broker=broker,
-        worker=worker,
         name=name or agent.name,
         url=url,
         version=version,
@@ -83,15 +106,14 @@ def agent_to_a2a(
 
 
 @dataclass
-class AgentWorker(InMemoryWorker, Generic[AgentDepsT, OutputDataT]):
+class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
     """A worker that uses an agent to execute tasks."""
 
     agent: Agent[AgentDepsT, OutputDataT]
 
-    async def run(self, task_ctx: TaskContext[TaskSendParams]) -> None:
-        params = task_ctx.params
+    async def run_task(self, params: TaskSendParams) -> None:
         task = await self.storage.load_task(params['id'], history_length=params.get('history_length'))
-        assert task is not None, f'Task {task_ctx.params["id"]} not found'
+        assert task is not None, f'Task {params["id"]} not found'
         assert 'session_id' in task, 'Task must have a session_id'
 
         await self.storage.update_task(task['id'], state='working')
@@ -99,19 +121,16 @@ class AgentWorker(InMemoryWorker, Generic[AgentDepsT, OutputDataT]):
         # TODO(Marcelo): We need to have a way to communicate when the task is set to `input-required`. Maybe
         # a custom `output_type` with a `more_info_required` field, or something like that.
 
-        try:
-            task_history = task.get('history', [])
-            message_history = self.build_message_history(task_history=task_history)
+        task_history = task.get('history', [])
+        message_history = self.build_message_history(task_history=task_history)
 
-            # TODO(Marcelo): We need to make this more customizable e.g. pass deps.
-            result = await self.agent.run(message_history=message_history)  # type: ignore
+        # TODO(Marcelo): We need to make this more customizable e.g. pass deps.
+        result = await self.agent.run(message_history=message_history)  # type: ignore
 
-            artifacts = self.build_artifacts(result.output)
-            await self.storage.update_task(task['id'], state='completed', artifacts=artifacts)
-        except Exception:
-            await self.storage.update_task(task['id'], state='failed')
+        artifacts = self.build_artifacts(result.output)
+        await self.storage.update_task(task['id'], state='completed', artifacts=artifacts)
 
-    async def cancel(self, task_ctx: TaskContext[TaskSendParams]) -> None:
+    async def cancel_task(self, params: TaskIdParams) -> None:
         pass
 
     def build_artifacts(self, result: Any) -> list[Artifact]:

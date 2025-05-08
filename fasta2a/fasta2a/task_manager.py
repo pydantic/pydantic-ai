@@ -28,18 +28,18 @@ Architecture:
           v                            v
   +------------------+         +----------------+
   |                  |         |                |
-  |      Worker      |<------->|    Storage     |
-  | (queues & exec.) |         | (persistence)  |
+  |      Broker      | .       |    Storage     |
+  |     (queues) .   |         | (persistence)  |
   |                  |         |                |
   +------------------+         +----------------+
-          ^
-          |
-          | Delegates Execution
-          v
-  +------------------+
-  |                  |
-  |      Runner      |
-  | (implementation) |
+          ^                            ^
+          |                            |
+          | Delegates Execution        |
+          v                            |
+  +------------------+                 |
+  |                  |                 |
+  |      Worker      |                 |
+  | (implementation) |-----------------+
   |                  |
   +------------------+
 ```
