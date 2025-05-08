@@ -7,20 +7,19 @@ from tempfile import NamedTemporaryFile
 from pydantic import BaseModel, Field
 from rich.console import Console
 
-EXCLUDE_COMMENT = 'pragma: no cover'
 
-
-def main() -> int:
+def main(exclude_comment: str = 'pragma: no cover') -> int:
     with NamedTemporaryFile(suffix='.json') as coverage_json:
         with NamedTemporaryFile(mode='w', suffix='.toml') as config_file:
-            config_file.write(f"[tool.coverage.report]\nexclude_lines = ['{EXCLUDE_COMMENT}']\n")
+            config_file.write(f"[tool.coverage.report]\nexclude_lines = ['{exclude_comment}']\n")
             config_file.flush()
             p = subprocess.run(
                 ['uv', 'run', 'coverage', 'json', f'--rcfile={config_file.name}', '-o', coverage_json.name],
                 stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
             )
             if p.returncode != 0:
-                print(f'Error running coverage: {p.stderr.decode()}', file=sys.stderr)
+                print(f'Error running coverage:\n{p.stdout.decode()}', file=sys.stderr)
                 return p.returncode
 
         r = CoverageReport.model_validate_json(coverage_json.read())
@@ -64,12 +63,12 @@ def main() -> int:
 
     console = Console()
     if blocks:
-        console.print(f"❎ {total_lines} lines marked with '{EXCLUDE_COMMENT}' and covered")
+        console.print(f"❎ {total_lines} lines marked with '{exclude_comment}' and covered")
         for block in blocks:
             console.print(block)
         return 1
     else:
-        console.print(f"✅ No lines wrongly marked with '{EXCLUDE_COMMENT}'")
+        console.print(f"✅ No lines wrongly marked with '{exclude_comment}'")
         return 0
 
 
@@ -101,14 +100,14 @@ class CoverageReport(BaseModel):
 
 # python expressions that can open blocks so can have the `# pragma: no cover` comment on them
 # even though they're covered
-BLOCK_OPENINGS = re.compile(r'\s*(?:def|async def|@|class|if|elif|else)')
+BLOCK_OPENINGS = re.compile(rb'\s*(?:def|async def|@|class|if|elif|else)')
 
 
 class CodeAnalyzer:
     def __init__(self, file_path: str) -> None:
-        with open(file_path) as f:
+        with open(file_path, 'rb') as f:
             content = f.read()
-        self.lines: dict[int, str] = dict(enumerate(content.splitlines(), start=1))
+        self.lines: dict[int, bytes] = dict(enumerate(content.splitlines(), start=1))
 
     def all_block_openings(self, start: int, end: int) -> bool:
         return all(self._is_block_opening(line_no) for line_no in range(start, end + 1))
