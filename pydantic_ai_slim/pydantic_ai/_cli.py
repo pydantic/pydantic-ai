@@ -165,7 +165,7 @@ Special prompt:
     session: PromptSession[Any] = PromptSession(history=FileHistory(str(history)))
     try:
         return asyncio.run(run_chat(session, stream, cli_agent, console, code_theme))
-    except KeyboardInterrupt:  # pragma: no cover
+    except KeyboardInterrupt:  # pragma: not covered
         return 0
 
 
@@ -177,7 +177,7 @@ async def run_chat(session: PromptSession[Any], stream: bool, agent: Agent, cons
         try:
             auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit'])
             text = await session.prompt_async('pai ➤ ', auto_suggest=auto_suggest, multiline=multiline)
-        except (KeyboardInterrupt, EOFError):  # pragma: no cover
+        except (KeyboardInterrupt, EOFError):  # pragma: not covered
             return 0
 
         if not text.strip():
@@ -191,7 +191,7 @@ async def run_chat(session: PromptSession[Any], stream: bool, agent: Agent, cons
         else:
             try:
                 messages = await ask_agent(agent, text, stream, console, code_theme, messages)
-            except CancelledError:  # pragma: no cover
+            except CancelledError:  # pragma: not covered
                 console.print('[dim]Interrupted[/dim]')
 
 
@@ -233,7 +233,7 @@ class CustomAutoSuggest(AutoSuggestFromHistory):
         super().__init__()
         self.special_suggestions = special_suggestions or []
 
-    def get_suggestion(self, buffer: Buffer, document: Document) -> Suggestion | None:  # pragma: no cover
+    def get_suggestion(self, buffer: Buffer, document: Document) -> Suggestion | None:  # pragma: not covered
         # Get the suggestion from history
         suggestion = super().get_suggestion(buffer, document)
 
@@ -284,5 +284,5 @@ def handle_slash_command(
     return None, multiline
 
 
-def app():  # pragma: no cover
+def app():  # pragma: not covered
     sys.exit(cli())

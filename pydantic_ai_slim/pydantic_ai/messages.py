@@ -308,7 +308,7 @@ def _video_format(media_type: str) -> VideoFormat:
         return 'wmv'
     elif media_type == 'video/3gpp':
         return 'three_gp'
-    else:  # pragma: no cover
+    else:  # pragma: not covered
         raise ValueError(f'Unknown video media type: {media_type}')
 
 

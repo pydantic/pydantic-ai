@@ -12,7 +12,7 @@ from pydantic_ai.providers import Provider
 
 try:
     from openai import AsyncAzureOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:  # pragma: not covered
     raise ImportError(
         'Please install the `openai` package to use the Azure provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
@@ -82,17 +82,17 @@ class AzureProvider(Provider[AsyncOpenAI]):
             self._client = openai_client
         else:
             azure_endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT')
-            if not azure_endpoint:  # pragma: no cover
+            if not azure_endpoint:
                 raise UserError(
                     'Must provide one of the `azure_endpoint` argument or the `AZURE_OPENAI_ENDPOINT` environment variable'
                 )
 
-            if not api_key and 'AZURE_OPENAI_API_KEY' not in os.environ:  # pragma: no cover
+            if not api_key and 'AZURE_OPENAI_API_KEY' not in os.environ:  # pragma: not covered
                 raise UserError(
                     'Must provide one of the `api_key` argument or the `AZURE_OPENAI_API_KEY` environment variable'
                 )
 
-            if not api_version and 'OPENAI_API_VERSION' not in os.environ:  # pragma: no cover
+            if not api_version and 'OPENAI_API_VERSION' not in os.environ:  # pragma: not covered
                 raise UserError(
                     'Must provide one of the `api_version` argument or the `OPENAI_API_VERSION` environment variable'
                 )

@@ -12,7 +12,7 @@ from pydantic_ai.providers import Provider
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:  # pragma: not covered
     raise ImportError(
         'Please install the `openai` package to use the DeepSeek provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'

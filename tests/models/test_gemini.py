@@ -420,7 +420,7 @@ async def get_gemini_client(
 
 def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
     candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
-    if finish_reason:  # pragma: no cover
+    if finish_reason:  # pragma: not covered
         candidate['finish_reason'] = finish_reason
     return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage(), model_version='gemini-1.5-flash-123')
 
@@ -652,7 +652,7 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
             parts[0].decode()
         except UnicodeDecodeError:
             break
-    else:  # pragma: no cover
+    else:  # pragma: not covered
         assert False, 'failed to find a spot in payload that would break unicode parsing'
 
     with pytest.raises(UnicodeDecodeError):
@@ -1141,7 +1141,7 @@ async def test_gemini_additional_properties_is_false(allow_model_requests: None,
     agent = Agent(m)
 
     @agent.tool_plain
-    async def get_temperature(location: CurrentLocation) -> float:  # pragma: no cover
+    async def get_temperature(location: CurrentLocation) -> float:  # pragma: not covered
         return 20.0
 
     result = await agent.run('What is the temperature in Tokyo?')
@@ -1158,7 +1158,7 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
     with pytest.warns(UserWarning, match='.*additionalProperties.*'):
 
         @agent.tool_plain
-        async def get_temperature(location: dict[str, CurrentLocation]) -> float:  # pragma: no cover
+        async def get_temperature(location: dict[str, CurrentLocation]) -> float:  # pragma: not covered
             return 20.0
 
         result = await agent.run('What is the temperature in Tokyo?')

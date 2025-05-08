@@ -197,7 +197,7 @@ async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: No
         Returns:
             The current temperature in degrees Celsius.
         """
-        return '30°C'  # pragma: no cover
+        return '30°C'  # pragma: not covered
 
     # TODO(Marcelo): Anthropic models don't support tools on the Bedrock Converse Interface.
     # I'm unsure what to do, so for the time being I'm just documenting the test. Let's see if someone complains.
@@ -349,7 +349,7 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
         Args:
             country: The country name.
         """
-        return 'Paris'  # pragma: no cover
+        return 'Paris'  # pragma: not covered
 
     @agent.tool_plain
     async def get_temperature(city: str) -> str:
@@ -358,7 +358,7 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
         Args:
             city: The city name.
         """
-        return '30°C'  # pragma: no cover
+        return '30°C'  # pragma: not covered
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='What is the temperature of the capital of France?') as agent_run:

@@ -30,12 +30,12 @@ pytestmark = pytest.mark.anyio
 
 
 def hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[TextPart('hello world')])  # pragma: no cover
+    return ModelResponse(parts=[TextPart('hello world')])  # pragma: not covered
 
 
 async def stream_hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
-    yield 'hello '  # pragma: no cover
-    yield 'world'  # pragma: no cover
+    yield 'hello '  # pragma: not covered
+    yield 'world'  # pragma: not covered
 
 
 def test_init() -> None:
@@ -92,7 +92,7 @@ def test_simple():
     )
 
 
-async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: not covered
     assert info.allow_text_output
     assert {t.name for t in info.function_tools} == {'get_location', 'get_weather'}
     last = messages[-1].parts[-1]
@@ -194,7 +194,7 @@ def test_weather():
     assert result.output == 'Sunny in Ipswich'
 
 
-async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: no cover
+async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: not covered
     last = messages[-1].parts[-1]
     if isinstance(last, UserPromptPart):
         if isinstance(last.content, str) and last.content.startswith('{'):

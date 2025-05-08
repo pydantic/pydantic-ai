@@ -68,7 +68,7 @@ async def test_openai_responses_output_type(allow_model_requests: None, openai_a
 
     agent = Agent(model=model, output_type=MyOutput)
     result = await agent.run('Give me the name and age of Brazil, Argentina, and Chile.')
-    assert result.output == snapshot({'name': 'Brazil', 'age': 2023})  # pragma: no cover
+    assert result.output == snapshot({'name': 'Brazil', 'age': 2023})  # pragma: not covered
 
 
 async def test_openai_responses_reasoning_effort(allow_model_requests: None, openai_api_key: str):

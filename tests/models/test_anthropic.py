@@ -366,7 +366,7 @@ async def test_request_tool_call(allow_model_requests: None):
 def get_mock_chat_completion_kwargs(async_anthropic: AsyncAnthropic) -> list[dict[str, Any]]:
     if isinstance(async_anthropic, MockAnthropic):
         return async_anthropic.chat_completion_kwargs
-    else:  # pragma: no cover
+    else:  # pragma: not covered
         raise RuntimeError('Not a MockOpenAI instance')
 
 

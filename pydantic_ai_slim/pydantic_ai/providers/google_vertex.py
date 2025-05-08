@@ -163,7 +163,7 @@ class _VertexAIAuth(httpx.Auth):
             self.project_id = creds_project_id
         return creds
 
-    async def _refresh_token(self) -> str:  # pragma: no cover
+    async def _refresh_token(self) -> str:  # pragma: not covered
         assert self.credentials is not None
         await anyio.to_thread.run_sync(self.credentials.refresh, Request())  # type: ignore[reportUnknownMemberType]
         assert isinstance(self.credentials.token, str), f'Expected token to be a string, got {self.credentials.token}'  # type: ignore[reportUnknownMemberType]

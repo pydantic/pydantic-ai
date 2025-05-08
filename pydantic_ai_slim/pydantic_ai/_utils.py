@@ -182,7 +182,7 @@ async def group_by_temporal(
 
     try:
         yield async_iter_groups()
-    finally:  # pragma: no cover
+    finally:  # pragma: not covered
         # after iteration if a tasks still exists, cancel it, this will only happen if an error occurred
         if task:
             task.cancel('Cancelling due to error in iterator')

@@ -245,7 +245,7 @@ async def test_plain_response():
 
     with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
         async with agent.run_stream(''):
-            pass  # pragma: no cover
+            pass  # pragma: not covered
 
     assert call_index == 2
 
@@ -357,7 +357,7 @@ async def test_call_tool_empty():
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream('hello'):
-            pass  # pragma: no cover
+            pass  # pragma: not covered
 
 
 async def test_call_tool_wrong_name():
@@ -371,13 +371,13 @@ async def test_call_tool_wrong_name():
     )
 
     @agent.tool_plain
-    async def ret_a(x: str) -> str:  # pragma: no cover
+    async def ret_a(x: str) -> str:  # pragma: not covered
         return x
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(0\) for result validation'):
             async with agent.run_stream('hello'):
-                pass  # pragma: no cover
+                pass  # pragma: not covered
 
     assert messages == snapshot(
         [
@@ -410,13 +410,13 @@ async def test_early_strategy_stops_after_first_final_result():
     agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='early')
 
     @agent.tool_plain
-    def regular_tool(x: int) -> int:  # pragma: no cover
+    def regular_tool(x: int) -> int:  # pragma: not covered
         """A regular tool that should not be called."""
         tool_called.append('regular_tool')
         return x
 
     @agent.tool_plain
-    def another_tool(y: int) -> int:  # pragma: no cover
+    def another_tool(y: int) -> int:  # pragma: not covered
         """Another tool that should not be called."""
         tool_called.append('another_tool')
         return y
@@ -609,13 +609,13 @@ async def test_early_strategy_with_final_result_in_middle():
     agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='early')
 
     @agent.tool_plain
-    def regular_tool(x: int) -> int:  # pragma: no cover
+    def regular_tool(x: int) -> int:  # pragma: not covered
         """A regular tool that should not be called."""
         tool_called.append('regular_tool')
         return x
 
     @agent.tool_plain
-    def another_tool(y: int) -> int:  # pragma: no cover
+    def another_tool(y: int) -> int:  # pragma: not covered
         """A tool that should not be called."""
         tool_called.append('another_tool')
         return y

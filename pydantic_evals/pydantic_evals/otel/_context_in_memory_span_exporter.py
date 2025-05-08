@@ -18,7 +18,7 @@ try:
     )
 
     _LOGFIRE_IS_INSTALLED = True
-except ImportError:  # pragma: no cover
+except ImportError:  # pragma: not covered
     _LOGFIRE_IS_INSTALLED = False  # pyright: ignore[reportConstantRedefinition]
 
     # Ensure that we can do an isinstance check without erroring
@@ -91,7 +91,7 @@ class _ContextInMemorySpanExporter(SpanExporter):
     def clear(self, context_id: str | None = None) -> None:
         """Clear list of collected spans."""
         with self._lock:
-            if context_id is None:  # pragma: no cover
+            if context_id is None:  # pragma: not covered
                 self._finished_spans.clear()
             else:
                 self._finished_spans.pop(context_id, None)
@@ -99,7 +99,7 @@ class _ContextInMemorySpanExporter(SpanExporter):
     def get_finished_spans(self, context_id: str | None = None) -> tuple[ReadableSpan, ...]:
         """Get list of collected spans."""
         with self._lock:
-            if context_id is None:  # pragma: no cover
+            if context_id is None:  # pragma: not covered
                 all_finished_spans: list[ReadableSpan] = []
                 for finished_spans in self._finished_spans.values():
                     all_finished_spans.extend(finished_spans)
@@ -109,7 +109,7 @@ class _ContextInMemorySpanExporter(SpanExporter):
 
     def export(self, spans: typing.Sequence[ReadableSpan]) -> SpanExportResult:
         """Stores a list of spans in memory."""
-        if self._stopped:  # pragma: no cover
+        if self._stopped:  # pragma: not covered
             return SpanExportResult.FAILURE
         with self._lock:
             context_id = _EXPORTER_CONTEXT_ID.get()
@@ -124,7 +124,7 @@ class _ContextInMemorySpanExporter(SpanExporter):
         """
         self._stopped = True
 
-    def force_flush(self, timeout_millis: int = 30000) -> bool:  # pragma: no cover
+    def force_flush(self, timeout_millis: int = 30000) -> bool:  # pragma: not covered
         return True
 
 

@@ -166,7 +166,7 @@ def test_one_node(mock_snapshot_id: object):
     class MyNode(BaseNode[None, None, int]):
         node_field: int
 
-        async def run(self, ctx: GraphRunContext) -> End[int]:  # pragma: no cover
+        async def run(self, ctx: GraphRunContext) -> End[int]:  # pragma: not covered
             return End(123)
 
     g = Graph(nodes=[MyNode])
@@ -199,7 +199,7 @@ def test_one_node(mock_snapshot_id: object):
 def test_no_generic_arg(mock_snapshot_id: object):
     @dataclass
     class NoGenericArgsNode(BaseNode):
-        async def run(self, ctx: GraphRunContext) -> NoGenericArgsNode:  # pragma: no cover
+        async def run(self, ctx: GraphRunContext) -> NoGenericArgsNode:  # pragma: not covered
             return NoGenericArgsNode()
 
     g = Graph(nodes=[NoGenericArgsNode])

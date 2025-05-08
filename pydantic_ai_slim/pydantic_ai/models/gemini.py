@@ -236,7 +236,7 @@ class GeminiModel(Model):
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
                 generation_config['frequency_penalty'] = frequency_penalty
             if (thinkingConfig := model_settings.get('gemini_thinking_config')) is not None:
-                generation_config['thinking_config'] = thinkingConfig  # pragma: no cover
+                generation_config['thinking_config'] = thinkingConfig  # pragma: not covered
             if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) is not None:
                 request_data['safetySettings'] = gemini_safety_settings
         if generation_config:
@@ -805,7 +805,7 @@ class _GeminiJsonSchema(WalkJsonSchema):
         additional_properties = schema.pop(
             'additionalProperties', None
         )  # don't pop yet so it's included in the warning
-        if additional_properties:  # pragma: no cover
+        if additional_properties:
             original_schema = {**schema, 'additionalProperties': additional_properties}
             warnings.warn(
                 '`additionalProperties` is not supported by Gemini; it will be removed from the tool JSON schema.'
@@ -820,7 +820,7 @@ class _GeminiJsonSchema(WalkJsonSchema):
         schema.pop('title', None)
         schema.pop('default', None)
         schema.pop('$schema', None)
-        if (const := schema.pop('const', None)) is not None:  # pragma: no cover
+        if (const := schema.pop('const', None)) is not None:  # pragma: not covered
             # Gemini doesn't support const, but it does support enum with a single value
             schema['enum'] = [const]
         schema.pop('discriminator', None)
@@ -832,7 +832,7 @@ class _GeminiJsonSchema(WalkJsonSchema):
         schema.pop('exclusiveMinimum', None)
 
         type_ = schema.get('type')
-        if 'oneOf' in schema and 'type' not in schema:  # pragma: no cover
+        if 'oneOf' in schema and 'type' not in schema:  # pragma: not covered
             # This gets hit when we have a discriminated union
             # Gemini returns an API error in this case even though it says in its error message it shouldn't...
             # Changing the oneOf to an anyOf prevents the API error and I think is functionally equivalent
@@ -856,7 +856,7 @@ class _GeminiJsonSchema(WalkJsonSchema):
             for item in prefix_items:
                 if item not in unique_items:
                     unique_items.append(item)
-            if len(unique_items) > 1:  # pragma: no cover
+            if len(unique_items) > 1:  # pragma: not covered
                 schema['items'] = {'anyOf': unique_items}
             elif len(unique_items) == 1:
                 schema['items'] = unique_items[0]

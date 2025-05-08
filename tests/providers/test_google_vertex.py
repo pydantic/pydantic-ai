@@ -35,7 +35,7 @@ def http_client():
             == '/v1/projects/my-project-id/locations/us-central1/publishers/google/models/gemini-1.0-pro:generateContent'
         ):
             return httpx.Response(200, json={'content': 'success'})
-        raise NotImplementedError(f'Unexpected request: {request.url!r}')  # pragma: no cover
+        raise NotImplementedError(f'Unexpected request: {request.url!r}')  # pragma: not covered
 
     return httpx.AsyncClient(transport=httpx.MockTransport(handler=handler))
 
@@ -147,7 +147,7 @@ def save_service_account(service_account_path: Path, project_id: str) -> None:
 def vertex_provider_auth(mocker: MockerFixture) -> None:
     # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
     if not os.getenv('CI'):
-        return  # pragma: no cover
+        return  # pragma: not covered
 
     @dataclass
     class NoOpCredentials:

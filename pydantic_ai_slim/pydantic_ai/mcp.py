@@ -308,7 +308,7 @@ class MCPServerHTTP(MCPServer):
         self,
     ) -> AsyncIterator[
         tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
-    ]:  # pragma: no cover
+    ]:  # pragma: not covered
         async with sse_client(
             url=self.url, headers=self.headers, timeout=self.timeout, sse_read_timeout=self.sse_read_timeout
         ) as (read_stream, write_stream):

@@ -41,7 +41,7 @@ def test_call_one():
         return f'{x}-a'
 
     @agent.tool_plain
-    async def ret_b(x: str) -> str:  # pragma: no cover
+    async def ret_b(x: str) -> str:  # pragma: not covered
         calls.append('b')
         return f'{x}-b'
 

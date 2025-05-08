@@ -215,7 +215,9 @@ show_missing = true
 ignore_errors = true
 precision = 2
 exclude_lines = [
-    'pragma: no cover',
+    'pragma: no cover$',
+    # this is used specifically for marked code that's currently not covered
+    'pragma: not covered$',
     'raise NotImplementedError',
     'if TYPE_CHECKING:',
     'if typing.TYPE_CHECKING:',

@@ -289,9 +289,9 @@ def _map_usage(response: ChatResponse) -> usage.Usage:
                 details['input_tokens'] = int(u.billed_units.input_tokens)
             if u.billed_units.output_tokens:
                 details['output_tokens'] = int(u.billed_units.output_tokens)
-            if u.billed_units.search_units:  # pragma: no cover
+            if u.billed_units.search_units:  # pragma: not covered
                 details['search_units'] = int(u.billed_units.search_units)
-            if u.billed_units.classifications:  # pragma: no cover
+            if u.billed_units.classifications:  # pragma: not covered
                 details['classifications'] = int(u.billed_units.classifications)
 
         request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else None

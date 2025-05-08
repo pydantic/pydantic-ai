@@ -489,7 +489,7 @@ async def test_no_content(allow_model_requests: None):
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream(''):
-            pass  # pragma: no cover
+            pass  # pragma: not covered
 
 
 async def test_no_delta(allow_model_requests: None):

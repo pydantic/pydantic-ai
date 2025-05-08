@@ -269,7 +269,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self.name = name
         self.model_settings = model_settings
 
-        if 'result_type' in _deprecated_kwargs:  # pragma: no cover
+        if 'result_type' in _deprecated_kwargs:  # pragma: not covered
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
             warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning)
@@ -282,20 +282,20 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._deps_type = deps_type
 
         self._deprecated_result_tool_name = _deprecated_kwargs.get('result_tool_name')
-        if self._deprecated_result_tool_name is not None:  # pragma: no cover
+        if self._deprecated_result_tool_name is not None:  # pragma: not covered
             warnings.warn(
                 '`result_tool_name` is deprecated, use `output_type` with `ToolOutput` instead',
                 DeprecationWarning,
             )
 
         self._deprecated_result_tool_description = _deprecated_kwargs.get('result_tool_description')
-        if self._deprecated_result_tool_description is not None:  # pragma: no cover
+        if self._deprecated_result_tool_description is not None:  # pragma: not covered
             warnings.warn(
                 '`result_tool_description` is deprecated, use `output_type` with `ToolOutput` instead',
                 DeprecationWarning,
             )
         result_retries = _deprecated_kwargs.get('result_retries')
-        if result_retries is not None:  # pragma: no cover
+        if result_retries is not None:  # pragma: not covered
             if output_retries is not None:
                 raise TypeError('`output_retries` and `result_retries` cannot be set at the same time.')
             warnings.warn('`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning)
@@ -432,7 +432,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        if 'result_type' in _deprecated_kwargs:  # pragma: no cover
+        if 'result_type' in _deprecated_kwargs:  # pragma: not covered
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
@@ -583,7 +583,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         model_used = self._get_model(model)
         del model
 
-        if 'result_type' in _deprecated_kwargs:  # pragma: no cover
+        if 'result_type' in _deprecated_kwargs:  # pragma: not covered
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
@@ -810,7 +810,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        if 'result_type' in _deprecated_kwargs:  # pragma: no cover
+        if 'result_type' in _deprecated_kwargs:  # pragma: not covered
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
@@ -926,7 +926,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             if frame := inspect.currentframe():  # pragma: no branch
                 self._infer_name(frame.f_back)
 
-        if 'result_type' in _deprecated_kwargs:  # pragma: no cover
+        if 'result_type' in _deprecated_kwargs:  # pragma: not covered
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
@@ -1741,7 +1741,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def _traceparent(self) -> str: ...
     def _traceparent(self, *, required: bool = True) -> str | None:
         traceparent = self._graph_run._traceparent(required=False)  # type: ignore[reportPrivateUsage]
-        if traceparent is None and required:  # pragma: no cover
+        if traceparent is None and required:  # pragma: not covered
             raise AttributeError('No span was created for this agent run')
         return traceparent
 
@@ -1765,7 +1765,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             return next_node
         if _agent_graph.is_agent_node(next_node):
             return next_node
-        raise exceptions.AgentRunError(f'Unexpected node type: {type(next_node)}')  # pragma: no cover
+        raise exceptions.AgentRunError(f'Unexpected node type: {type(next_node)}')  # pragma: not covered
 
     @property
     def result(self) -> AgentRunResult[OutputDataT] | None:
@@ -1907,7 +1907,7 @@ class AgentRunResult(Generic[OutputDataT]):
     @overload
     def _traceparent(self) -> str: ...
     def _traceparent(self, *, required: bool = True) -> str | None:
-        if self._traceparent_value is None and required:  # pragma: no cover
+        if self._traceparent_value is None and required:  # pragma: not covered
             raise AttributeError('No span was created for this agent run')
         return self._traceparent_value
 

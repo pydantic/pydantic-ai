@@ -684,7 +684,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
     @overload
     def _traceparent(self) -> str: ...
     def _traceparent(self, *, required: bool = True) -> str | None:
-        if self.__traceparent is None and required:  # pragma: no cover
+        if self.__traceparent is None and required:  # pragma: not covered
             raise exceptions.GraphRuntimeError('No span was created for this graph run')
         return self.__traceparent
 
@@ -837,7 +837,7 @@ class GraphRunResult(Generic[StateT, RunEndT]):
     def _traceparent(self, *, required: typing_extensions.Literal[False]) -> str | None: ...
     @overload
     def _traceparent(self) -> str: ...
-    def _traceparent(self, *, required: bool = True) -> str | None:  # pragma: no cover
+    def _traceparent(self, *, required: bool = True) -> str | None:  # pragma: not covered
         if self.__traceparent is None and required:
             raise exceptions.GraphRuntimeError('No span was created for this graph run.')
         return self.__traceparent

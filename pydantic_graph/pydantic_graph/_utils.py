@@ -38,7 +38,7 @@ try:
         TRACEPARENT_PROPAGATOR.inject(carrier, context)
         return carrier.get(TRACEPARENT_NAME, '')
 
-except ImportError:  # pragma: no cover
+except ImportError:  # pragma: not covered
 
     def get_traceparent(span: AbstractSpan) -> str | None:
         # Opentelemetry wasn't installed, so we can't get the traceparent
