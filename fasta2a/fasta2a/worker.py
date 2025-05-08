@@ -4,10 +4,11 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, assert_never
+from typing import TYPE_CHECKING, Any
 
 import anyio
 from opentelemetry.trace import get_tracer, use_span
+from typing_extensions import assert_never
 
 if TYPE_CHECKING:
     from .broker import Broker, TaskOperation
