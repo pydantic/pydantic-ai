@@ -1,13 +1,13 @@
 ## FastA2A
 
 !!! warning
-    This page is WIP.
+    This page is a work in progress.
 
 To make it easier to implement A2A servers, we've implemented FastA2A,
 a library built on top of Starlette and Pydantic to bring A2A to Python.
 
 You can use FastA2A with any agentic framework (it's not exclusive
-to PydanticAI). That said, we have a convenience method to create an
+to PydanticAI). That said, we provide a convenience method on `pydantic_ai.Agent` to create an
 A2A server from an existing PydanticAI agent.
 
 ```python {title="a2a.py}

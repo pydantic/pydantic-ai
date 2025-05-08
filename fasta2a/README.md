@@ -5,3 +5,8 @@
 [![PyPI](https://img.shields.io/pypi/v/fasta2a.svg)](https://pypi.python.org/pypi/fasta2a)
 [![python versions](https://img.shields.io/pypi/pyversions/fasta2a.svg)](https://github.com/pydantic/pydantic-ai)
 [![license](https://img.shields.io/github/license/pydantic/pydantic-ai.svg)](https://github.com/pydantic/pydantic-ai/blob/main/LICENSE)
+
+To make it easier to implement A2A servers, we've implemented FastA2A,
+a library built on top of Starlette and Pydantic to bring A2A to Python.
+
+See [the docs](../docs/a2a/index.md) for more information.
