@@ -350,9 +350,9 @@ class GroqModel(Model):
                         content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     else:
                         raise RuntimeError('Only images are supported for binary content in Groq.')
-                elif isinstance(item, DocumentUrl):  # pragma: not covered
+                elif isinstance(item, DocumentUrl):  # pragma: no cover
                     raise RuntimeError('DocumentUrl is not supported in Groq.')
-                else:  # pragma: not covered
+                else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
 
         return chat.ChatCompletionUserMessageParam(role='user', content=content)

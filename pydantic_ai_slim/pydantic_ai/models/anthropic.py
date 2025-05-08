@@ -374,7 +374,7 @@ class AnthropicModel(Model):
                             source=PlainTextSourceParam(data=response.text, media_type=item.media_type, type='text'),
                             type='document',
                         )
-                    else:  # pragma: not covered
+                    else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')

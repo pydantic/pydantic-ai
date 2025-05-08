@@ -439,7 +439,7 @@ class OpenAIModel(Model):
                                 type='file',
                             )
                         )
-                    else:  # pragma: not covered
+                    else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):
                     client = cached_async_http_client()
@@ -458,7 +458,7 @@ class OpenAIModel(Model):
                     file_data = f'data:{media_type};base64,{base64_encoded}'
                     file = File(file=FileFile(file_data=file_data, filename=f'filename.{item.format}'), type='file')
                     content.append(file)
-                elif isinstance(item, VideoUrl):  # pragma: not covered
+                elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
                 else:
                     assert_never(item)
@@ -562,7 +562,7 @@ class OpenAIResponsesModel(Model):
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
-        if isinstance(first_chunk, _utils.Unset):  # pragma: not covered
+        if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         assert isinstance(first_chunk, responses.ResponseCreatedEvent)
@@ -684,7 +684,7 @@ class OpenAIResponsesModel(Model):
                         )
                     elif isinstance(part, RetryPromptPart):
                         # TODO(Marcelo): How do we test this conditional branch?
-                        if part.tool_name is None:  # pragma: not covered
+                        if part.tool_name is None:  # pragma: no cover
                             openai_messages.append(
                                 Message(role='user', content=[{'type': 'input_text', 'text': part.model_response()}])
                             )
@@ -753,13 +753,13 @@ class OpenAIResponsesModel(Model):
                         )
                     elif item.is_audio:
                         raise NotImplementedError('Audio as binary content is not supported for OpenAI Responses API.')
-                    else:  # pragma: not covered
+                    else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, ImageUrl):
                     content.append(
                         responses.ResponseInputImageParam(image_url=item.url, type='input_image', detail='auto')
                     )
-                elif isinstance(item, AudioUrl):  # pragma: not covered
+                elif isinstance(item, AudioUrl):  # pragma: no cover
                     client = cached_async_http_client()
                     response = await client.get(item.url)
                     response.raise_for_status()
@@ -783,7 +783,7 @@ class OpenAIResponsesModel(Model):
                             filename=f'filename.{item.format}',
                         )
                     )
-                elif isinstance(item, VideoUrl):  # pragma: not covered
+                elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
                 else:
                     assert_never(item)
@@ -855,7 +855,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseCreatedEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: not covered
+            elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
                 self._usage += _map_usage(chunk.response)
 
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
@@ -871,7 +871,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
                 pass  # there's nothing we need to do here
 
-            elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: not covered
+            elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
                 self._usage += _map_usage(chunk.response)
 
             elif isinstance(chunk, responses.ResponseInProgressEvent):
@@ -896,7 +896,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseTextDoneEvent):
                 pass  # there's nothing we need to do here
 
-            else:  # pragma: not covered
+            else:  # pragma: no cover
                 warnings.warn(
                     f'Handling of this event type is not yet implemented. Please report on our GitHub: {chunk}',
                     UserWarning,

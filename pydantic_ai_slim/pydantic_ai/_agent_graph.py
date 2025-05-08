@@ -608,7 +608,7 @@ async def process_function_tools(  # noqa C901
         elif mcp_tool := await _tool_from_mcp_server(call.tool_name, ctx):
             if stub_function_tools:
                 # TODO(Marcelo): We should add coverage for this part of the code.
-                output_parts.append(  # pragma: not covered
+                output_parts.append(  # pragma: no cover
                     _messages.ToolReturnPart(
                         tool_name=call.tool_name,
                         content='Tool not executed - a final result was already processed.',
@@ -730,7 +730,7 @@ async def _tool_from_mcp_server(
     async def run_tool(ctx: RunContext[DepsT], **args: Any) -> Any:
         # There's no normal situation where the server will not be running at this point, we check just in case
         # some weird edge case occurs.
-        if not server.is_running:  # pragma: not covered
+        if not server.is_running:  # pragma: no cover
             raise exceptions.UserError(f'MCP server is not running: {server}')
         result = await server.call_tool(tool_name, args)
         return result

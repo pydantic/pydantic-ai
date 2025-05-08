@@ -281,7 +281,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     def all_messages_json(
         self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
-    ) -> bytes:  # pragma: not covered
+    ) -> bytes:  # pragma: no cover
         """Return all messages from [`all_messages`][pydantic_ai.result.StreamedRunResult.all_messages] as JSON bytes.
 
         Args:
@@ -306,7 +306,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     def new_messages(
         self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
-    ) -> list[_messages.ModelMessage]:  # pragma: not covered
+    ) -> list[_messages.ModelMessage]:  # pragma: no cover
         """Return new messages associated with this run.
 
         Messages from older runs are excluded.
@@ -333,7 +333,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     def new_messages_json(
         self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
-    ) -> bytes:  # pragma: not covered
+    ) -> bytes:  # pragma: no cover
         """Return new messages from [`new_messages`][pydantic_ai.result.StreamedRunResult.new_messages] as JSON bytes.
 
         Args:
@@ -591,7 +591,7 @@ def coalesce_deprecated_return_content(
 ) -> T | None:
     """Return the first non-None value."""
     if output_tool_return_content is None:
-        if result_tool_return_content is not None:  # pragma: not covered
+        if result_tool_return_content is not None:  # pragma: no cover
             warnings.warn(
                 '`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.',
                 DeprecationWarning,

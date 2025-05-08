@@ -396,7 +396,7 @@ class BedrockConverseModel(Model):
                         )
                     elif isinstance(part, RetryPromptPart):
                         # TODO(Marcelo): We need to add a test here.
-                        if part.tool_name is None:  # pragma: not covered
+                        if part.tool_name is None:  # pragma: no cover
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
                         else:
                             assert part.tool_call_id is not None
@@ -475,7 +475,7 @@ class BedrockConverseModel(Model):
                         )
                         video: VideoBlockTypeDef = {'format': format, 'source': {'bytes': response.content}}
                         content.append({'video': video})
-                elif isinstance(item, AudioUrl):  # pragma: not covered
+                elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 else:
                     assert_never(item)

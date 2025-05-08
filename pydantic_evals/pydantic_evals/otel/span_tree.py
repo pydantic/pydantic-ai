@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable, Union
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
-if TYPE_CHECKING:  # pragma: not covered
+if TYPE_CHECKING:  # pragma: no cover
     # Since opentelemetry isn't a required dependency, don't actually import these at runtime
     from opentelemetry.sdk.trace import ReadableSpan
 

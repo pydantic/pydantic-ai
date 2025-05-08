@@ -918,7 +918,7 @@ def test_run_sync_multiple():
             # use this as I suspect it's about the fastest globally available endpoint
             try:
                 response = await client.get('https://cloudflare.com/cdn-cgi/trace')
-            except httpx.ConnectError:  # pragma: not covered
+            except httpx.ConnectError:  # pragma: no cover
                 pytest.skip('offline')
             else:
                 return str(response.status_code)
@@ -1007,13 +1007,13 @@ class TestMultipleToolCalls:
         agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
 
         @agent.tool_plain
-        def regular_tool(x: int) -> int:  # pragma: not covered
+        def regular_tool(x: int) -> int:  # pragma: no cover
             """A regular tool that should not be called."""
             tool_called.append('regular_tool')
             return x
 
         @agent.tool_plain
-        def another_tool(y: int) -> int:  # pragma: not covered
+        def another_tool(y: int) -> int:  # pragma: no cover
             """Another tool that should not be called."""
             tool_called.append('another_tool')
             return y
@@ -1191,13 +1191,13 @@ class TestMultipleToolCalls:
         agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
 
         @agent.tool_plain
-        def regular_tool(x: int) -> int:  # pragma: not covered
+        def regular_tool(x: int) -> int:  # pragma: no cover
             """A regular tool that should not be called."""
             tool_called.append('regular_tool')
             return x
 
         @agent.tool_plain
-        def another_tool(y: int) -> int:  # pragma: not covered
+        def another_tool(y: int) -> int:  # pragma: no cover
             """A tool that should not be called."""
             tool_called.append('another_tool')
             return y
@@ -1667,7 +1667,7 @@ def test_custom_output_type_invalid() -> None:
     agent = Agent('test')
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], o: Any) -> Any:  # pragma: not covered
+    def validate_output(ctx: RunContext[None], o: Any) -> Any:  # pragma: no cover
         return o
 
     with pytest.raises(UserError, match='Cannot set a custom run `output_type` when the agent has output validators'):

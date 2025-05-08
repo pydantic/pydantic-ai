@@ -99,7 +99,7 @@ class MockOpenAI:
     ) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(stream=stream))
 
-    async def chat_completions_create(  # pragma: no cover
+    async def chat_completions_create(  # pragma: lax no cover
         self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
         self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
@@ -125,7 +125,7 @@ class MockOpenAI:
 def get_mock_chat_completion_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str, Any]]:
     if isinstance(async_open_ai, MockOpenAI):
         return async_open_ai.chat_completion_kwargs
-    else:  # pragma: not covered
+    else:  # pragma: no cover
         raise RuntimeError('Not a MockOpenAI instance')
 
 
@@ -519,7 +519,7 @@ async def test_no_content(allow_model_requests: None):
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream(''):
-            pass  # pragma: not covered
+            pass  # pragma: no cover
 
 
 async def test_no_delta(allow_model_requests: None):
@@ -851,7 +851,7 @@ async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_
         elif country == 'England':
             return 'London'
         else:
-            raise ValueError(f'Country {country} not supported.')  # pragma: not covered
+            raise ValueError(f'Country {country} not supported.')  # pragma: no cover
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.\n')
@@ -905,27 +905,27 @@ class MyModel(BaseModel, extra='allow'):
 
 
 def strict_compatible_tool(x: int) -> str:
-    return str(x)  # pragma: not covered
+    return str(x)  # pragma: no cover
 
 
 def tool_with_default(x: int = 1) -> str:
-    return f'{x}'  # pragma: not covered
+    return f'{x}'  # pragma: no cover
 
 
 def tool_with_recursion(x: MyRecursiveDc, y: MyDefaultRecursiveDc):
-    return f'{x} {y}'  # pragma: not covered
+    return f'{x} {y}'  # pragma: no cover
 
 
 def tool_with_additional_properties(x: MyModel) -> str:
-    return f'{x}'  # pragma: not covered
+    return f'{x}'  # pragma: no cover
 
 
 def tool_with_kwargs(x: int, **kwargs: Any) -> str:
-    return f'{x} {kwargs}'  # pragma: not covered
+    return f'{x} {kwargs}'  # pragma: no cover
 
 
 def tool_with_union(x: int | MyDefaultDc) -> str:
-    return f'{x}'  # pragma: not covered
+    return f'{x}'  # pragma: no cover
 
 
 def tool_with_discriminated_union(
@@ -934,15 +934,15 @@ def tool_with_discriminated_union(
         Discriminator(lambda x: type(x).__name__),
     ],
 ) -> str:
-    return f'{x}'  # pragma: not covered
+    return f'{x}'  # pragma: no cover
 
 
 def tool_with_lists(x: list[int], y: list[MyDefaultDc]) -> str:
-    return f'{x} {y}'  # pragma: not covered
+    return f'{x} {y}'  # pragma: no cover
 
 
 def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
-    return f'{x} {y}'  # pragma: not covered
+    return f'{x} {y}'  # pragma: no cover
 
 
 @pytest.mark.parametrize(

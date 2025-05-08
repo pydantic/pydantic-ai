@@ -84,5 +84,5 @@ class BedrockProvider(Provider[BaseClient]):
                     region_name=region_name,
                     config=Config(read_timeout=read_timeout, connect_timeout=connect_timeout),
                 )
-            except NoRegionError as exc:  # pragma: not covered
+            except NoRegionError as exc:  # pragma: no cover
                 raise UserError('You must provide a `region_name` or a boto3 client for Bedrock Runtime.') from exc

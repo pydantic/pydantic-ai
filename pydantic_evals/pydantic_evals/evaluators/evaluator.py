@@ -160,7 +160,7 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
     @abstractmethod
     def evaluate(
         self, ctx: EvaluatorContext[InputsT, OutputT, MetadataT]
-    ) -> EvaluatorOutput | Awaitable[EvaluatorOutput]:  # pragma: not covered
+    ) -> EvaluatorOutput | Awaitable[EvaluatorOutput]:  # pragma: no cover
         """Evaluate the task output in the given context.
 
         This is the main evaluation method that subclasses must implement. It can be either synchronous
@@ -190,7 +190,7 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
             of evaluation names to either of those.
         """
         output = self.evaluate(ctx)
-        if inspect.iscoroutine(output):  # pragma: not covered
+        if inspect.iscoroutine(output):  # pragma: no cover
             return get_event_loop().run_until_complete(output)
         else:
             return cast(EvaluatorOutput, output)

@@ -238,7 +238,7 @@ class InstrumentedModel(WrapperModel):
         if base_url := model.base_url:
             try:
                 parsed = urlparse(base_url)
-            except Exception:  # pragma: not covered
+            except Exception:  # pragma: no cover
                 pass
             else:
                 if parsed.hostname:

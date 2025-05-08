@@ -85,5 +85,5 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .cohere import CohereProvider
 
         return CohereProvider()
-    else:  # pragma: not covered
+    else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')

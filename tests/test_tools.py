@@ -24,7 +24,7 @@ def test_tool_no_ctx():
     with pytest.raises(UserError) as exc_info:
 
         @agent.tool  # pyright: ignore[reportArgumentType]
-        def invalid_tool(x: int) -> str:  # pragma: not covered
+        def invalid_tool(x: int) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
@@ -39,7 +39,7 @@ def test_tool_plain_with_ctx():
     with pytest.raises(UserError) as exc_info:
 
         @agent.tool_plain
-        async def invalid_tool(ctx: RunContext[None]) -> str:  # pragma: not covered
+        async def invalid_tool(ctx: RunContext[None]) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
@@ -54,7 +54,7 @@ def test_tool_ctx_second():
     with pytest.raises(UserError) as exc_info:
 
         @agent.tool  # pyright: ignore[reportArgumentType]
-        def invalid_tool(x: int, ctx: RunContext[None]) -> str:  # pragma: not covered
+        def invalid_tool(x: int, ctx: RunContext[None]) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
@@ -64,7 +64,7 @@ def test_tool_ctx_second():
     )
 
 
-async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: not covered
+async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     """Do foobar stuff, a lot.
 
     Args:
@@ -113,7 +113,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
     assert keys[1] == 'description'
 
 
-def sphinx_style_docstring(foo: int, /) -> str:  # pragma: not covered
+def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
     """Sphinx style docstring.
 
     :param foo: The foo thing.
@@ -144,7 +144,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
     )
 
 
-def numpy_style_docstring(*, foo: int, bar: str) -> str:  # pragma: not covered
+def numpy_style_docstring(*, foo: int, bar: str) -> str:  # pragma: no cover
     """Numpy style docstring.
 
     Parameters
@@ -186,7 +186,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
 def test_google_style_with_returns():
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(x: int) -> str:  # pragma: not covered
+    def my_tool(x: int) -> str:  # pragma: no cover
         """A function that does something.
 
         Args:
@@ -225,7 +225,7 @@ def test_google_style_with_returns():
 def test_sphinx_style_with_returns():
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(x: int) -> str:  # pragma: not covered
+    def my_tool(x: int) -> str:  # pragma: no cover
         """A sphinx function with returns.
 
         :param x: The input value.
@@ -262,7 +262,7 @@ def test_sphinx_style_with_returns():
 def test_numpy_style_with_returns():
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(x: int) -> str:  # pragma: not covered
+    def my_tool(x: int) -> str:  # pragma: no cover
         """A numpy function with returns.
 
         Parameters
@@ -302,7 +302,7 @@ def test_numpy_style_with_returns():
     )
 
 
-def only_returns_type() -> str:  # pragma: not covered
+def only_returns_type() -> str:  # pragma: no cover
     """
 
     Returns:
@@ -333,7 +333,7 @@ def test_only_returns_type():
     )
 
 
-def unknown_docstring(**kwargs: int) -> str:  # pragma: not covered
+def unknown_docstring(**kwargs: int) -> str:  # pragma: no cover
     """Unknown style docstring."""
     return str(kwargs)
 
@@ -358,7 +358,7 @@ def test_docstring_unknown():
 # fmt: off
 async def google_style_docstring_no_body(
     foo: int, bar: Annotated[str, Field(description='from fields')]
-) -> str:  # pragma: not covered
+) -> str:  # pragma: no cover
     """
     Args:
         foo: The foo thing.
@@ -530,7 +530,7 @@ def test_tool_return_conflict():
 
 
 def test_init_ctx_tool_invalid():
-    def plain_tool(x: int) -> int:  # pragma: not covered
+    def plain_tool(x: int) -> int:  # pragma: no cover
         return x + 1
 
     m = r'First parameter of tools that take context must be annotated with RunContext\[\.\.\.\]'
@@ -735,7 +735,7 @@ agent = Agent('test', tools=[ctx_tool], deps_type=int)
     assert result.output == snapshot('{"ctx_tool":5}')
 
 
-async def tool_without_return_annotation_in_docstring() -> str:  # pragma: not covered
+async def tool_without_return_annotation_in_docstring() -> str:  # pragma: no cover
     """A tool that documents what it returns but doesn't have a return annotation in the docstring."""
 
     return ''
@@ -764,7 +764,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
     assert caplog.messages == snapshot([])
 
 
-async def missing_parameter_descriptions_docstring(foo: int, bar: str) -> str:  # pragma: not covered
+async def missing_parameter_descriptions_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     """Describes function ops, but missing parameter descriptions."""
     return f'{foo} {bar}'
 
@@ -889,7 +889,7 @@ def test_schema_generator():
     agent = Agent(FunctionModel(get_json_schema))
 
     def my_tool(x: Annotated[Union[str, None], WithJsonSchema({'type': 'string'})] = None, **kwargs: Any):
-        return x  # pragma: not covered
+        return x  # pragma: no cover
 
     agent.tool_plain(name='my_tool_1')(my_tool)
     agent.tool_plain(name='my_tool_2', schema_generator=MyGenerateJsonSchema)(my_tool)

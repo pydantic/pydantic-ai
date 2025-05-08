@@ -294,7 +294,7 @@ class Model(ABC):
         raise NotImplementedError(f'Streamed requests not supported by this {self.__class__.__name__}')
         # yield is required to make this a generator for type checking
         # noinspection PyUnreachableCode
-        yield  # pragma: not covered
+        yield  # pragma: no cover
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         """Customize the request parameters for the model.

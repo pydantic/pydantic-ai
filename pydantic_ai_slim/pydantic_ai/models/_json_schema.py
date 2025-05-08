@@ -43,7 +43,7 @@ class WalkJsonSchema(ABC):
         if not self.prefer_inlined_defs and self.defs:
             handled['$defs'] = {k: self._handle(v) for k, v in self.defs.items()}
 
-        elif self.recursive_refs:  # pragma: not covered
+        elif self.recursive_refs:  # pragma: no cover
             # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
             # We try to use whatever the original root key was, but if it is already in use,
             # we modify it to avoid collisions.
@@ -70,7 +70,7 @@ class WalkJsonSchema(ABC):
                     break  # recursive ref can't be unpacked
                 self.refs_stack += (key,)
                 def_schema = self.defs.get(key)
-                if def_schema is None:  # pragma: not covered
+                if def_schema is None:  # pragma: no cover
                     raise UserError(f'Could not find $ref definition for {key}')
                 schema = def_schema
 
@@ -153,8 +153,8 @@ class WalkJsonSchema(ABC):
                 new_schema = deepcopy(non_null_schema)
                 new_schema['nullable'] = True
                 return [new_schema]
-            else:  # pragma: not covered
+            else:  # pragma: no cover
                 # they are both null, so just return one of them
                 return [cases[0]]
 
-        return cases  # pragma: not covered
+        return cases  # pragma: no cover

@@ -42,7 +42,7 @@ from .otel import SpanTree
 from .otel._context_subtree import context_subtree
 from .reporting import EvaluationReport, ReportCase
 
-if sys.version_info < (3, 11):  # pragma: not covered
+if sys.version_info < (3, 11):  # pragma: no cover
     from exceptiongroup import ExceptionGroup
 else:
     ExceptionGroup = ExceptionGroup
@@ -50,7 +50,7 @@ else:
 # while waiting for https://github.com/pydantic/logfire/issues/745
 try:
     import logfire._internal.stack_info
-except ImportError:  # pragma: not covered
+except ImportError:  # pragma: no cover
     pass
 else:
     from pathlib import Path
@@ -386,7 +386,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata = getattr(c, '__pydantic_generic_metadata__', {})
             if len(args := (metadata.get('args', ()) or getattr(c, '__args__', ()))) == 3:
                 return args
-        else:  # pragma: not covered
+        else:  # pragma: no cover
             warnings.warn(
                 f'Could not determine the generic parameters for {cls}; using `Any` for each.'
                 f' You should explicitly set the generic parameters via `Dataset[MyInputs, MyOutput, MyMetadata]`'
@@ -424,7 +424,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         raw = Path(path).read_text()
         try:
             return cls.from_text(raw, fmt=fmt, custom_evaluator_types=custom_evaluator_types)
-        except ValidationError as e:  # pragma: not covered
+        except ValidationError as e:  # pragma: no cover
             raise ValueError(f'{path} contains data that does not match the schema for {cls.__name__}:\n{e}.') from e
 
     @classmethod
@@ -558,9 +558,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             if not schema_path.is_absolute():
                 schema_ref = str(schema_path)
                 schema_path = path.parent / schema_path
-            elif schema_path.is_relative_to(path):  # pragma: not covered
+            elif schema_path.is_relative_to(path):  # pragma: no cover
                 schema_ref = str(_get_relative_path_reference(schema_path, path))
-            else:  # pragma: not covered
+            else:  # pragma: no cover
                 schema_ref = str(schema_path)
             self._save_schema(schema_path, custom_evaluator_types)
 
@@ -719,7 +719,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             return nxt(self)
 
 
-def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:  # pragma: not covered
+def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:  # pragma: no cover
     """Get a relative path reference from source to target.
 
     Recursively resolve a relative path to target from source, adding '..' as needed.
@@ -807,7 +807,7 @@ async def _run_task(
         Exception: Any exception raised by the task.
     """
     task_run = _TaskRun()
-    if _CURRENT_TASK_RUN.get() is not None:  # pragma: not covered
+    if _CURRENT_TASK_RUN.get() is not None:  # pragma: no cover
         raise RuntimeError('A task run has already been entered. Task runs should not be nested')
 
     # Note: the current behavior is for task execution errors to just bubble up all the way and kill the evaluation.
@@ -900,7 +900,7 @@ async def _run_task_and_evaluators(
         case_span.set_attribute('labels', _evaluation_results_adapter.dump_python(labels))
 
         context = case_span.context
-        if context is None:  # pragma: not covered
+        if context is None:  # pragma: no cover
             trace_id = ''
             span_id = ''
         else:
@@ -1010,7 +1010,7 @@ def _get_span_duration(span: logfire_api.LogfireSpan, fallback: float) -> float:
     """
     try:
         return (span.end_time - span.start_time) / 1_000_000_000  # type: ignore
-    except (AttributeError, TypeError):  # pragma: not covered
+    except (AttributeError, TypeError):  # pragma: no cover
         return fallback
 
 

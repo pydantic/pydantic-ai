@@ -90,7 +90,7 @@ async def judge_input_output(
     return (await _judge_input_output_agent.run(user_prompt, model=model or _default_model)).output
 
 
-def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:  # pragma: not covered
+def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:  # pragma: no cover
     """Set the default model used for judging.
 
     This model is used if `None` is passed to the `model` argument of `judge_output` and `judge_input_output`.

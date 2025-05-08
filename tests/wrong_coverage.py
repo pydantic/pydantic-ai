@@ -7,7 +7,7 @@ from tempfile import NamedTemporaryFile
 from pydantic import BaseModel, Field
 from rich.console import Console
 
-EXCLUDE_COMMENT = 'pragma: not covered'
+EXCLUDE_COMMENT = 'pragma: no cover'
 
 
 def main() -> int:
@@ -63,7 +63,7 @@ def main() -> int:
 
     console = Console()
     if blocks:
-        console.print(f"❎ {total_lines} lines wrongly marked with '{EXCLUDE_COMMENT}'")
+        console.print(f"❎ {total_lines} lines marked with '{EXCLUDE_COMMENT}' and covered")
         for block in blocks:
             console.print(block)
         return 1

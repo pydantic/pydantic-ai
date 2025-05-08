@@ -408,7 +408,7 @@ class MistralModel(Model):
         if value_type == 'object':
             additional_properties = value.get('additionalProperties', {})
             if isinstance(additional_properties, bool):
-                return 'bool'  # pragma: not covered
+                return 'bool'  # pragma: no cover
             additional_properties_type = additional_properties.get('type')
             if (
                 additional_properties_type in SIMPLE_JSON_TYPE_MAPPING
@@ -520,7 +520,7 @@ class MistralModel(Model):
                     raise RuntimeError('DocumentUrl is not supported in Mistral.')
                 elif isinstance(item, VideoUrl):
                     raise RuntimeError('VideoUrl is not supported in Mistral.')
-                else:  # pragma: not covered
+                else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
         return MistralUserMessage(content=content)
 
@@ -680,7 +680,7 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None
         output = content
 
     # Note: Check len to handle potential mismatch between function calls and responses from the API. (`msg: not the same number of function class and responses`)
-    if output and len(output) == 0:  # pragma: not covered
+    if output and len(output) == 0:  # pragma: no cover
         output = None
 
     return output

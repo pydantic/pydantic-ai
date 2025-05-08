@@ -93,7 +93,7 @@ def simple_evaluator() -> type[Evaluator[TaskInput, TaskOutput, TaskMetadata]]:
     @dataclass
     class SimpleEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
-            if ctx.expected_output is None:  # pragma: not covered
+            if ctx.expected_output is None:  # pragma: no cover
                 return {'result': 'no_expected_output'}
 
             return {
@@ -129,7 +129,7 @@ async def test_add_evaluator(
 
     @dataclass
     class MetadataEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
-        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):  # pragma: not covered
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):  # pragma: no cover
             """Evaluator that uses metadata."""
             if ctx.metadata is None:
                 return {'result': 'no_metadata'}
@@ -190,7 +190,7 @@ async def test_evaluate(
             return TaskOutput(answer='4')
         elif inputs.query == 'What is the capital of France?':
             return TaskOutput(answer='Paris')
-        return TaskOutput(answer='Unknown')  # pragma: not covered
+        return TaskOutput(answer='Unknown')  # pragma: no cover
 
     report = await example_dataset.evaluate(mock_task)
 
@@ -242,7 +242,7 @@ async def test_evaluate_with_concurrency(
             return TaskOutput(answer='4')
         elif inputs.query == 'What is the capital of France?':
             return TaskOutput(answer='Paris')
-        return TaskOutput(answer='Unknown')  # pragma: not covered
+        return TaskOutput(answer='Unknown')  # pragma: no cover
 
     report = await example_dataset.evaluate(mock_task, max_concurrency=1)
 
@@ -672,12 +672,12 @@ async def test_from_text_failure():
 async def test_duplicate_evaluator_failure(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     @dataclass
     class FirstEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
-        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):  # pragma: not covered
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):  # pragma: no cover
             return False
 
     @dataclass
     class SecondEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
-        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):  # pragma: not covered
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):  # pragma: no cover
             return False
 
     SecondEvaluator.__name__ = FirstEvaluator.__name__
@@ -871,7 +871,7 @@ async def test_dataset_evaluate_with_empty_cases(example_dataset: Dataset[TaskIn
     """Test evaluating a dataset with no cases."""
     dataset = Dataset(cases=[])
 
-    async def task(inputs: TaskInput) -> TaskOutput:  # pragma: not covered
+    async def task(inputs: TaskInput) -> TaskOutput:  # pragma: no cover
         return TaskOutput(answer=inputs.query.upper())
 
     report = await dataset.evaluate(task)
@@ -970,7 +970,7 @@ def test_add_invalid_evaluator():
         pass
 
     class SimpleEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
-        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):  # pragma: not covered
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):  # pragma: no cover
             return False
 
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](cases=[])

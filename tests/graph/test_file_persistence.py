@@ -45,7 +45,7 @@ class Double(BaseNode[None, None, int]):
     input_data: int
 
     async def run(self, ctx: GraphRunContext) -> Union[String2Length, End[int]]:  # noqa: UP007
-        if self.input_data == 7:  # pragma: not covered
+        if self.input_data == 7:  # pragma: no cover
             return String2Length('x' * 21)
         else:
             return End(self.input_data * 2)
