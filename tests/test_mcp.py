@@ -41,7 +41,6 @@ def agent(openai_api_key: str):
 
 
 async def test_stdio_server():
-    print(f'cwd: {Path.cwd()!r}')
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = await server.list_tools()
