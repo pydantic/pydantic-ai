@@ -61,7 +61,7 @@ def main(exclude_comment: str = 'pragma: no cover') -> int:
 
     console = Console()
     if blocks:
-        console.print(f"❎ {total_lines} lines marked with '{exclude_comment}' and covered")
+        console.print(f"❎ {total_lines} lines wrongly marked with '{exclude_comment}' are covered")
         console.print('\n'.join(blocks))
         return 1
     else:

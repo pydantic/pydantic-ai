@@ -42,7 +42,7 @@ from .otel import SpanTree
 from .otel._context_subtree import context_subtree
 from .reporting import EvaluationReport, ReportCase
 
-if sys.version_info < (3, 11):  # pragma: no cover
+if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup
 else:
     ExceptionGroup = ExceptionGroup
@@ -50,7 +50,7 @@ else:
 # while waiting for https://github.com/pydantic/logfire/issues/745
 try:
     import logfire._internal.stack_info
-except ImportError:  # pragma: no cover
+except ImportError:
     pass
 else:
     from pathlib import Path
