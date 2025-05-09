@@ -394,6 +394,11 @@ text_responses: dict[str, str | ToolCallPart] = {
             'steps': ['Mix the ingredients', 'Bake at 350°F for 30 minutes'],
         },
     ),
+    'What is 123 / 456?': ToolCallPart(
+        tool_name='divide',
+        args={'numerator': '123', 'denominator': '456'},
+        tool_call_id='pyd_ai_2e0e396768a14fe482df90a29a78dc7b',
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
