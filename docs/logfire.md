@@ -219,17 +219,15 @@ import os
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.trace import set_tracer_provider
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.models.instrumented import InstrumentationSettings
 
 os.environ['OTEL_EXPORTER_OTLP_ENDPOINT'] = 'http://localhost:4318'
 exporter = OTLPSpanExporter()
 span_processor = BatchSpanProcessor(exporter)
 tracer_provider = TracerProvider()
 tracer_provider.add_span_processor(span_processor)
-
-from opentelemetry.trace import set_tracer_provider
 
 set_tracer_provider(tracer_provider)
 
@@ -248,7 +246,6 @@ PydanticAI follows the [OpenTelemetry Semantic Conventions for Generative AI sys
 import logfire
 
 from pydantic_ai import Agent
-from pydantic_ai.agent import InstrumentationSettings
 
 logfire.configure()
 logfire.instrument_pydantic_ai(event_mode='logs')
