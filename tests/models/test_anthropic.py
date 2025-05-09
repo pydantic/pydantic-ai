@@ -529,18 +529,23 @@ async def test_stream_structured(allow_model_requests: None):
         RawContentBlockStartEvent(
             type='content_block_start',
             index=0,
-            content_block=ToolUseBlock(type='tool_use', id='tool_1', name='my_tool', input={'first': 'One'}),
+            content_block=ToolUseBlock(type='tool_use', id='tool_1', name='my_tool', input={}),
         ),
         # Add more data through an incomplete JSON delta
         RawContentBlockDeltaEvent(
             type='content_block_delta',
             index=0,
-            delta=InputJSONDelta(type='input_json_delta', partial_json='{"second":'),
+            delta=InputJSONDelta(type='input_json_delta', partial_json='{"first": "One'),
         ),
         RawContentBlockDeltaEvent(
             type='content_block_delta',
             index=0,
-            delta=InputJSONDelta(type='input_json_delta', partial_json='"Two"}'),
+            delta=InputJSONDelta(type='input_json_delta', partial_json='", "second": "Two"'),
+        ),
+        RawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=0,
+            delta=InputJSONDelta(type='input_json_delta', partial_json='}'),
         ),
         # Mark tool block as complete
         RawContentBlockStopEvent(type='content_block_stop', index=0),

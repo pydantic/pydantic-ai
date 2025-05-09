@@ -5,7 +5,6 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from json import JSONDecodeError, loads as json_loads
 from typing import Any, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
@@ -441,7 +440,6 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         current_block: ContentBlock | None = None
-        current_json: str = ''
 
         async for event in self._response:
             self._usage += _map_usage(event)
@@ -454,7 +452,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=current_block.id,
                         tool_name=current_block.name,
-                        args=cast(dict[str, Any], current_block.input),
+                        args=cast(dict[str, Any], current_block.input) or None,
                         tool_call_id=current_block.id,
                     )
                     if maybe_event is not None:
@@ -466,20 +464,10 @@ class AnthropicStreamedResponse(StreamedResponse):
                 elif (
                     current_block and event.delta.type == 'input_json_delta' and isinstance(current_block, ToolUseBlock)
                 ):
-                    # Try to parse the JSON immediately, otherwise cache the value for later. This handles
-                    # cases where the JSON is not currently valid but will be valid once we stream more tokens.
-                    try:
-                        parsed_args = json_loads(current_json + event.delta.partial_json)
-                        current_json = ''
-                    except JSONDecodeError:
-                        current_json += event.delta.partial_json
-                        continue
-
-                    # For tool calls, we need to handle partial JSON updates
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=current_block.id,
                         tool_name='',
-                        args=parsed_args,
+                        args=event.delta.partial_json,
                         tool_call_id=current_block.id,
                     )
                     if maybe_event is not None:
