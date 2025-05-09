@@ -41,7 +41,7 @@ def test_result_tuple():
     def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)], usage=Usage())
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), output_type=tuple[str, str])
 
@@ -58,7 +58,7 @@ def test_result_pydantic_model():
     def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         args_json = '{"a": 1, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)], usage=Usage())
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), output_type=Foo)
 
@@ -74,7 +74,7 @@ def test_result_pydantic_model_retry():
             args_json = '{"a": "wrong", "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)], usage=Usage())
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), output_type=Foo)
 
@@ -138,7 +138,7 @@ def test_result_pydantic_model_validation_error():
             args_json = '{"a": 1, "b": "foo"}'
         else:
             args_json = '{"a": 1, "b": "bar"}'
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)], usage=Usage())
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     class Bar(BaseModel):
         a: int
@@ -192,7 +192,7 @@ def test_output_validator():
             args_json = '{"a": 41, "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)], usage=Usage())
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_model), output_type=Foo)
 
@@ -255,10 +255,10 @@ def test_plain_response_then_tuple():
         assert info.output_tools is not None
         call_index += 1
         if call_index == 1:
-            return ModelResponse(parts=[TextPart('hello')], usage=Usage())
+            return ModelResponse(parts=[TextPart('hello')])
         else:
             args_json = '{"response": ["foo", "bar"]}'
-            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)], usage=Usage())
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     agent = Agent(FunctionModel(return_tuple), output_type=tuple[str, str])
 
@@ -821,7 +821,7 @@ def test_run_with_history_new_structured():
 
 def test_empty_tool_calls():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[], usage=Usage())
+        return ModelResponse(parts=[])
 
     agent = Agent(FunctionModel(empty))
 
@@ -831,7 +831,7 @@ def test_empty_tool_calls():
 
 def test_unknown_tool():
     def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[ToolCallPart('foobar', '{}')], usage=Usage())
+        return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
     agent = Agent(FunctionModel(empty))
 
@@ -870,9 +870,9 @@ def test_unknown_tool():
 def test_unknown_tool_fix():
     def empty(m: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if len(m) > 1:
-            return ModelResponse(parts=[TextPart('success')], usage=Usage())
+            return ModelResponse(parts=[TextPart('success')])
         else:
-            return ModelResponse(parts=[ToolCallPart('foobar', '{}')], usage=Usage())
+            return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
     agent = Agent(FunctionModel(empty))
 
@@ -1035,7 +1035,6 @@ class TestMultipleToolCalls:
                     ToolCallPart('regular_tool', {'x': 1}),
                     ToolCallPart('another_tool', {'y': 2}),
                 ],
-                usage=Usage(),
             )
 
         agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
@@ -1092,7 +1091,6 @@ class TestMultipleToolCalls:
                     ToolCallPart('final_result', {'value': 'first'}),
                     ToolCallPart('final_result', {'value': 'second'}),
                 ],
-                usage=Usage(),
             )
 
         agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
@@ -1133,7 +1131,6 @@ class TestMultipleToolCalls:
                     ToolCallPart('final_result', {'value': 'second'}),
                     ToolCallPart('unknown_tool', {'value': '???'}),
                 ],
-                usage=Usage(),
             )
 
         agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='exhaustive')
@@ -1223,7 +1220,6 @@ class TestMultipleToolCalls:
                     ToolCallPart('another_tool', {'y': 2}),
                     ToolCallPart('unknown_tool', {'value': '???'}),
                 ],
-                usage=Usage(),
             )
 
         agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
@@ -1324,7 +1320,6 @@ class TestMultipleToolCalls:
                     ToolCallPart('final_result', {'bad_value': 'first'}, tool_call_id='first'),
                     ToolCallPart('final_result', {'value': 'second'}, tool_call_id='second'),
                 ],
-                usage=Usage(),
             )
 
         agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
@@ -1354,7 +1349,7 @@ class TestMultipleToolCalls:
 
 async def test_model_settings_override() -> None:
     def return_settings(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart(to_json(info.model_settings).decode())], usage=Usage())
+        return ModelResponse(parts=[TextPart(to_json(info.model_settings).decode())])
 
     my_agent = Agent(FunctionModel(return_settings))
     assert (await my_agent.run('Hello')).output == IsJson(None)
@@ -1374,7 +1369,6 @@ async def test_empty_text_part():
                 TextPart(''),
                 ToolCallPart(info.output_tools[0].name, args_json),
             ],
-            usage=Usage(),
         )
 
     agent = Agent(FunctionModel(return_empty_text), output_type=tuple[str, str])
@@ -1393,7 +1387,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
             parts = [TextPart(content='foo'), ToolCallPart('get_location', {'loc_name': 'London'})]
         else:
             parts = [TextPart(content='final response')]
-        return ModelResponse(parts=parts, usage=Usage())
+        return ModelResponse(parts=parts)
 
     agent = Agent(FunctionModel(return_model))
 
@@ -1901,11 +1895,11 @@ You are a potato.\
 def test_empty_final_response():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
-            return ModelResponse(parts=[TextPart('foo'), ToolCallPart('my_tool', {'x': 1})], usage=Usage())
+            return ModelResponse(parts=[TextPart('foo'), ToolCallPart('my_tool', {'x': 1})])
         elif len(messages) == 3:
-            return ModelResponse(parts=[TextPart('bar'), ToolCallPart('my_tool', {'x': 2})], usage=Usage())
+            return ModelResponse(parts=[TextPart('bar'), ToolCallPart('my_tool', {'x': 2})])
         else:
-            return ModelResponse(parts=[], usage=Usage())
+            return ModelResponse(parts=[])
 
     agent = Agent(FunctionModel(llm))
 

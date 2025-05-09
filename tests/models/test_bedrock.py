@@ -578,9 +578,9 @@ async def test_bedrock_multiple_documents_in_history(
         'What is in the documents?',
         message_history=[
             ModelRequest(parts=[UserPromptPart(content=['Here is a PDF document: ', document_content])]),
-            ModelResponse(parts=[TextPart(content='foo bar')], usage=Usage()),
+            ModelResponse(parts=[TextPart(content='foo bar')]),
             ModelRequest(parts=[UserPromptPart(content=['Here is another PDF document: ', document_content])]),
-            ModelResponse(parts=[TextPart(content='foo bar 2')], usage=Usage()),
+            ModelResponse(parts=[TextPart(content='foo bar 2')]),
         ],
     )
 

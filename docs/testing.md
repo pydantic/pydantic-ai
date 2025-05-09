@@ -210,7 +210,6 @@ from pydantic_ai.messages import (
     ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.usage import Usage
 
 from fake_database import DatabaseConn
 from weather_app import run_weather_forecast, weather_agent
@@ -228,12 +227,12 @@ def call_weather_forecast(  # (1)!
         m = re.search(r'\d{4}-\d{2}-\d{2}', user_prompt.content)
         assert m is not None
         args = {'location': 'London', 'forecast_date': m.group()}  # (2)!
-        return ModelResponse(parts=[ToolCallPart('weather_forecast', args)], usage=Usage())
+        return ModelResponse(parts=[ToolCallPart('weather_forecast', args)])
     else:
         # second call, return the forecast
         msg = messages[-1].parts[0]
         assert msg.part_kind == 'tool-return'
-        return ModelResponse(parts=[TextPart(f'The forecast is: {msg.content}')], usage=Usage())
+        return ModelResponse(parts=[TextPart(f'The forecast is: {msg.content}')])
 
 
 async def test_forecast_future():

@@ -430,7 +430,7 @@ def example_usage() -> _GeminiUsageMetaData:
 
 
 async def test_text_success(get_gemini_client: GetGeminiClient):
-    response = gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello world')], usage=Usage())))
+    response = gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello world')])))
     gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
     agent = Agent(m)
@@ -474,9 +474,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
 
 async def test_request_structured_response(get_gemini_client: GetGeminiClient):
     response = gemini_response(
-        _content_model_response(
-            ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]})], usage=Usage())
-        )
+        _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]})]))
     )
     gemini_client = get_gemini_client(response)
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
@@ -510,9 +508,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
 async def test_request_tool_call(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(
-            _content_model_response(
-                ModelResponse(parts=[ToolCallPart('get_location', {'loc_name': 'San Fransisco'})], usage=Usage())
-            )
+            _content_model_response(ModelResponse(parts=[ToolCallPart('get_location', {'loc_name': 'San Fransisco'})]))
         ),
         gemini_response(
             _content_model_response(
@@ -521,11 +517,10 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                         ToolCallPart('get_location', {'loc_name': 'London'}),
                         ToolCallPart('get_location', {'loc_name': 'New York'}),
                     ],
-                    usage=Usage(),
                 )
             )
         ),
-        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('final response')], usage=Usage()))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('final response')]))),
     ]
     gemini_client = get_gemini_client(responses)
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
@@ -622,8 +617,8 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
 
 async def test_stream_text(get_gemini_client: GetGeminiClient):
     responses = [
-        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello ')], usage=Usage()))),
-        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')], usage=Usage()))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello ')]))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
     ]
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
     stream = AsyncByteStreamList([json_data[:100], json_data[100:200], json_data[200:]])
@@ -653,8 +648,8 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
 async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
     # Probably safe to remove this test once https://github.com/pydantic/pydantic-core/issues/1633 is resolved
     responses = [
-        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('abc')], usage=Usage()))),
-        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('€def')], usage=Usage()))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('abc')]))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('€def')]))),
     ]
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
 
@@ -697,9 +692,7 @@ async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
 async def test_stream_structured(get_gemini_client: GetGeminiClient):
     responses = [
         gemini_response(
-            _content_model_response(
-                ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2]})], usage=Usage())
-            ),
+            _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2]})])),
         ),
     ]
     json_data = _gemini_streamed_response_ta.dump_json(responses, by_alias=True)
@@ -717,10 +710,10 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
 async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     first_responses = [
         gemini_response(
-            _content_model_response(ModelResponse(parts=[ToolCallPart('foo', {'x': 'a'})], usage=Usage())),
+            _content_model_response(ModelResponse(parts=[ToolCallPart('foo', {'x': 'a'})])),
         ),
         gemini_response(
-            _content_model_response(ModelResponse(parts=[ToolCallPart('bar', {'y': 'b'})], usage=Usage())),
+            _content_model_response(ModelResponse(parts=[ToolCallPart('bar', {'y': 'b'})])),
         ),
     ]
     d1 = _gemini_streamed_response_ta.dump_json(first_responses, by_alias=True)
@@ -728,9 +721,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
 
     second_responses = [
         gemini_response(
-            _content_model_response(
-                ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2]})], usage=Usage())
-            ),
+            _content_model_response(ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2]})])),
         ),
     ]
     d2 = _gemini_streamed_response_ta.dump_json(second_responses, by_alias=True)
@@ -800,7 +791,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
 
 async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
     responses = [
-        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello ')], usage=Usage()))),
+        gemini_response(_content_model_response(ModelResponse(parts=[TextPart('Hello ')]))),
         gemini_response(
             _GeminiContent(
                 role='model',
@@ -829,9 +820,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
 
 async def test_empty_text_ignored():
     content = _content_model_response(
-        ModelResponse(
-            parts=[ToolCallPart('final_result', {'response': [1, 2, 123]}), TextPart(content='xxx')], usage=Usage()
-        )
+        ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]}), TextPart(content='xxx')])
     )
     # text included
     assert content == snapshot(
@@ -845,9 +834,7 @@ async def test_empty_text_ignored():
     )
 
     content = _content_model_response(
-        ModelResponse(
-            parts=[ToolCallPart('final_result', {'response': [1, 2, 123]}), TextPart(content='')], usage=Usage()
-        )
+        ModelResponse(parts=[ToolCallPart('final_result', {'response': [1, 2, 123]}), TextPart(content='')])
     )
     # text skipped
     assert content == snapshot(
@@ -871,7 +858,7 @@ async def test_model_settings(client_with_handler: ClientWithHandler, env: TestE
         return httpx.Response(
             200,
             content=_gemini_response_ta.dump_json(
-                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')], usage=Usage()))),
+                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
                 by_alias=True,
             ),
             headers={'Content-Type': 'application/json'},
@@ -960,7 +947,7 @@ async def test_safety_settings_safe(
         return httpx.Response(
             200,
             content=_gemini_response_ta.dump_json(
-                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')], usage=Usage()))),
+                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
                 by_alias=True,
             ),
             headers={'Content-Type': 'application/json'},

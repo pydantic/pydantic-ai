@@ -444,7 +444,6 @@ async def test_stream_structured(allow_model_requests: None):
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(),
                 model_name='llama-3.3-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),

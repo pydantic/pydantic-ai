@@ -166,7 +166,6 @@ class TestModel(Model):
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(
                 parts=[ToolCallPart(name, self.gen_tool_args(args)) for name, args in tool_calls],
-                usage=Usage(),
                 model_name=self._model_name,
             )
 
@@ -196,7 +195,7 @@ class TestModel(Model):
                             if tool.name in new_retry_names
                         ]
                     )
-                return ModelResponse(parts=retry_parts, usage=Usage(), model_name=self._model_name)
+                return ModelResponse(parts=retry_parts, model_name=self._model_name)
 
         if isinstance(output_wrapper, _WrappedTextOutput):
             if (response_text := output_wrapper.value) is None:
@@ -210,15 +209,12 @@ class TestModel(Model):
                 if output:
                     return ModelResponse(
                         parts=[TextPart(pydantic_core.to_json(output).decode())],
-                        usage=Usage(),
                         model_name=self._model_name,
                     )
                 else:
-                    return ModelResponse(
-                        parts=[TextPart('success (no tool calls)')], usage=Usage(), model_name=self._model_name
-                    )
+                    return ModelResponse(parts=[TextPart('success (no tool calls)')], model_name=self._model_name)
             else:
-                return ModelResponse(parts=[TextPart(response_text)], usage=Usage(), model_name=self._model_name)
+                return ModelResponse(parts=[TextPart(response_text)], model_name=self._model_name)
         else:
             assert output_tools, 'No output tools provided'
             custom_output_args = output_wrapper.value
@@ -226,13 +222,13 @@ class TestModel(Model):
             if custom_output_args is not None:
                 return ModelResponse(
                     parts=[ToolCallPart(output_tool.name, custom_output_args)],
-                    usage=Usage(),
                     model_name=self._model_name,
                 )
             else:
                 response_args = self.gen_tool_args(output_tool)
                 return ModelResponse(
-                    parts=[ToolCallPart(output_tool.name, response_args)], model_name=self._model_name, usage=Usage()
+                    parts=[ToolCallPart(output_tool.name, response_args)],
+                    model_name=self._model_name,
                 )
 
 

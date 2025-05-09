@@ -36,7 +36,6 @@ from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import Usage
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
@@ -411,25 +410,21 @@ async def model_logic(  # noqa: C901
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
         if isinstance(m.content, list) and m.content[0] == 'This is file d9a13f:':
-            return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')], usage=Usage())
+            return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
         elif isinstance(m.content, list) and m.content[0] == 'This is file c6720d:':
-            return ModelResponse(
-                parts=[TextPart('The document contains just the text "Dummy PDF file."')], usage=Usage()
-            )
+            return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
 
         assert isinstance(m.content, str)
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='joke_factory', args={'count': 5}, tool_call_id='pyd_ai_tool_call_id')],
-                usage=Usage(),
+                parts=[ToolCallPart(tool_name='joke_factory', args={'count': 5}, tool_call_id='pyd_ai_tool_call_id')]
             )
         elif m.content == 'Please generate 5 jokes.' and any(t.name == 'get_jokes' for t in info.function_tools):
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='get_jokes', args={'count': 5}, tool_call_id='pyd_ai_tool_call_id')],
-                usage=Usage(),
+                parts=[ToolCallPart(tool_name='get_jokes', args={'count': 5}, tool_call_id='pyd_ai_tool_call_id')]
             )
         elif re.fullmatch(r'sql prompt \d+', m.content):
-            return ModelResponse(parts=[TextPart('SELECT 1')], usage=Usage())
+            return ModelResponse(parts=[TextPart('SELECT 1')])
         elif m.content.startswith('Write a welcome email for the user:'):
             return ModelResponse(
                 parts=[
@@ -441,42 +436,35 @@ async def model_logic(  # noqa: C901
                         },
                         tool_call_id='pyd_ai_tool_call_id',
                     )
-                ],
-                usage=Usage(),
+                ]
             )
         elif m.content.startswith('Write a list of 5 very rude things that I might say'):
             raise UnexpectedModelBehavior('Safety settings triggered', body='<safety settings details>')
         elif m.content.startswith('<examples>\n  <user>'):
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result_EmailOk', args={}, tool_call_id='pyd_ai_tool_call_id')],
-                usage=Usage(),
+                parts=[ToolCallPart(tool_name='final_result_EmailOk', args={}, tool_call_id='pyd_ai_tool_call_id')]
             )
         elif m.content == 'Ask a simple question with a single correct answer.' and len(messages) > 2:
-            return ModelResponse(parts=[TextPart('what is 1 + 1?')], usage=Usage())
+            return ModelResponse(parts=[TextPart('what is 1 + 1?')])
         elif '<Rubric>\n' in m.content:
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'reason': '-', 'pass': True, 'score': 1.0})],
-                usage=Usage(),
+                parts=[ToolCallPart(tool_name='final_result', args={'reason': '-', 'pass': True, 'score': 1.0})]
             )
         elif m.content == 'What time is it?':
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='get_current_time', args={}, tool_call_id='pyd_ai_tool_call_id')],
-                usage=Usage(),
+                parts=[ToolCallPart(tool_name='get_current_time', args={}, tool_call_id='pyd_ai_tool_call_id')]
             )
         elif m.content == 'What is the user name?':
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user', args={}, tool_call_id='pyd_ai_tool_call_id')],
-                usage=Usage(),
+                parts=[ToolCallPart(tool_name='get_user', args={}, tool_call_id='pyd_ai_tool_call_id')]
             )
         elif m.content == 'What is the company name in the logo?':
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='get_company_logo', args={}, tool_call_id='pyd_ai_tool_call_id')],
-                usage=Usage(),
+                parts=[ToolCallPart(tool_name='get_company_logo', args={}, tool_call_id='pyd_ai_tool_call_id')]
             )
         elif m.content == 'What is the main content of the document?':
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id')],
-                usage=Usage(),
+                parts=[ToolCallPart(tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id')]
             )
         elif 'Generate question-answer pairs about world capitals and landmarks.' in m.content:
             return ModelResponse(
@@ -506,35 +494,28 @@ async def model_logic(  # noqa: C901
                             }
                         )
                     )
-                ],
-                usage=Usage(),
+                ]
             )
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
-                return ModelResponse(parts=[TextPart(response)], usage=Usage())
+                return ModelResponse(parts=[TextPart(response)])
             else:
-                return ModelResponse(parts=[response], usage=Usage())
+                return ModelResponse(parts=[response])
 
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
         return ModelResponse(
             parts=[ToolCallPart(tool_name='final_result', args={'response': win}, tool_call_id='pyd_ai_tool_call_id')],
-            usage=Usage(),
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roll_die':
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id')],
-            usage=Usage(),
+            parts=[ToolCallPart(tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
         if 'Anne' in m.content:
-            return ModelResponse(
-                parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")], usage=Usage()
-            )
+            return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
         elif 'Yashar' in m.content:
-            return ModelResponse(
-                parts=[TextPart('Tough luck, Yashar, you rolled a 4. Better luck next time.')], usage=Usage()
-            )
+            return ModelResponse(parts=[TextPart('Tough luck, Yashar, you rolled a 4. Better luck next time.')])
     if (
         isinstance(m, RetryPromptPart)
         and isinstance(m.content, str)
@@ -545,13 +526,11 @@ async def model_logic(  # noqa: C901
                 ToolCallPart(
                     tool_name='get_user_by_name', args={'name': 'John Doe'}, tool_call_id='pyd_ai_tool_call_id'
                 )
-            ],
-            usage=Usage(),
+            ]
         )
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'infinite_retry_tool':
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id')],
-            usage=Usage(),
+            parts=[ToolCallPart(tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user_by_name':
         args: dict[str, Any] = {
@@ -559,12 +538,11 @@ async def model_logic(  # noqa: C901
             'user_id': 123,
         }
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')], usage=Usage()
+            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')],
-            usage=Usage(),
+            parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'customer_balance':
         args = {
@@ -573,33 +551,29 @@ async def model_logic(  # noqa: C901
             'risk': 1,
         }
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')], usage=Usage()
+            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'joke_factory':
-        return ModelResponse(
-            parts=[TextPart('Did you hear about the toothpaste scandal? They called it Colgate.')], usage=Usage()
-        )
+        return ModelResponse(parts=[TextPart('Did you hear about the toothpaste scandal? They called it Colgate.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_jokes':
         args = {'response': []}
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')], usage=Usage()
+            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'flight_search':
         args = {'flight_number': m.content.flight_number}  # type: ignore
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='final_result_FlightDetails', args=args, tool_call_id='pyd_ai_tool_call_id')],
-            usage=Usage(),
+            parts=[ToolCallPart(tool_name='final_result_FlightDetails', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_current_time':
-        return ModelResponse(parts=[TextPart('The current time is 10:45 PM on April 17, 2025.')], usage=Usage())
+        return ModelResponse(parts=[TextPart('The current time is 10:45 PM on April 17, 2025.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
-        return ModelResponse(parts=[TextPart("The user's name is John.")], usage=Usage())
+        return ModelResponse(parts=[TextPart("The user's name is John.")])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo':
-        return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')], usage=Usage())
+        return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document':
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id')],
-            usage=Usage(),
+            parts=[ToolCallPart(tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
     else:
         sys.stdout.write(str(debug.format(messages, info)))

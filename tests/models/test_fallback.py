@@ -28,7 +28,7 @@ pytestmark = pytest.mark.anyio
 
 
 def success_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[TextPart('success')], usage=Usage())
+    return ModelResponse(parts=[TextPart('success')])
 
 
 def failure_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:

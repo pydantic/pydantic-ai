@@ -30,7 +30,7 @@ pytestmark = pytest.mark.anyio
 
 
 def hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[TextPart('hello world')], usage=Usage())  # pragma: no cover
+    return ModelResponse(parts=[TextPart('hello world')])  # pragma: no cover
 
 
 async def stream_hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
@@ -54,7 +54,7 @@ async def return_last(messages: list[ModelMessage], _: AgentInfo) -> ModelRespon
     response = asdict(last)
     response.pop('timestamp', None)
     response['message_count'] = len(messages)
-    return ModelResponse(parts=[TextPart(' '.join(f'{k}={v!r}' for k, v in response.items()))], usage=Usage())
+    return ModelResponse(parts=[TextPart(' '.join(f'{k}={v!r}' for k, v in response.items()))])
 
 
 def test_simple():
@@ -100,12 +100,10 @@ async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
     assert {t.name for t in info.function_tools} == {'get_location', 'get_weather'}
     last = messages[-1].parts[-1]
     if isinstance(last, UserPromptPart):
-        return ModelResponse(
-            parts=[ToolCallPart('get_location', json.dumps({'location_description': last.content}))], usage=Usage()
-        )
+        return ModelResponse(parts=[ToolCallPart('get_location', json.dumps({'location_description': last.content}))])
     elif isinstance(last, ToolReturnPart):
         if last.tool_name == 'get_location':
-            return ModelResponse(parts=[ToolCallPart('get_weather', last.model_response_str())], usage=Usage())
+            return ModelResponse(parts=[ToolCallPart('get_weather', last.model_response_str())])
         elif last.tool_name == 'get_weather':
             location_name: str | None = None
             for m in messages:
@@ -121,7 +119,7 @@ async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelR
                     break
 
             assert location_name is not None
-            return ModelResponse(parts=[TextPart(f'{last.content} in {location_name}')], usage=Usage())
+            return ModelResponse(parts=[TextPart(f'{last.content} in {location_name}')])
 
     raise ValueError(f'Unexpected message: {last}')
 
@@ -207,11 +205,9 @@ async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> Mod
     if isinstance(last, UserPromptPart):
         if isinstance(last.content, str) and last.content.startswith('{'):
             details = json.loads(last.content)
-            return ModelResponse(
-                parts=[ToolCallPart(details['function'], json.dumps(details['arguments']))], usage=Usage()
-            )
+            return ModelResponse(parts=[ToolCallPart(details['function'], json.dumps(details['arguments']))])
     elif isinstance(last, ToolReturnPart):
-        return ModelResponse(parts=[TextPart(pydantic_core.to_json(last).decode())], usage=Usage())
+        return ModelResponse(parts=[TextPart(pydantic_core.to_json(last).decode())])
 
     raise ValueError(f'Unexpected message: {last}')
 
@@ -245,9 +241,9 @@ async def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelRespo
     if len(messages) == 1:
         assert len(info.function_tools) == 1
         tool_name = info.function_tools[0].name
-        return ModelResponse(parts=[ToolCallPart(tool_name, '{}')], usage=Usage())
+        return ModelResponse(parts=[ToolCallPart(tool_name, '{}')])
     else:
-        return ModelResponse(parts=[TextPart('final response')], usage=Usage())
+        return ModelResponse(parts=[TextPart('final response')])
 
 
 def test_deps_none():
@@ -335,7 +331,6 @@ def test_register_all():
                     f'messages={len(messages)} allow_text_output={info.allow_text_output} tools={len(info.function_tools)}'
                 )
             ],
-            usage=Usage(),
         )
 
     result = agent_all.run_sync('Hello', model=FunctionModel(f))
@@ -401,7 +396,7 @@ def test_retry_str():
         nonlocal call_count
         call_count += 1
 
-        return ModelResponse(parts=[TextPart(str(call_count))], usage=Usage())
+        return ModelResponse(parts=[TextPart(str(call_count))])
 
     agent = Agent(FunctionModel(try_again))
 
@@ -423,7 +418,7 @@ def test_retry_result_type():
         nonlocal call_count
         call_count += 1
 
-        return ModelResponse(parts=[ToolCallPart('final_result', {'x': call_count})], usage=Usage())
+        return ModelResponse(parts=[ToolCallPart('final_result', {'x': call_count})])
 
     class Foo(BaseModel):
         x: int

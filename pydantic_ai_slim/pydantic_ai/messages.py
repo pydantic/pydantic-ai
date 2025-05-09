@@ -555,8 +555,11 @@ class ModelResponse:
     parts: list[ModelResponsePart]
     """The parts of the model message."""
 
-    usage: Usage
-    """Usage information for the request."""
+    usage: Usage = field(default_factory=Usage)
+    """Usage information for the request.
+
+    This has a default to make tests easier, and to support loading old messages where usage will be missing.
+    """
 
     model_name: str | None = None
     """The name of the model that generated the response."""

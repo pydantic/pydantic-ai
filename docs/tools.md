@@ -346,7 +346,6 @@ To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.usage import Usage
 
 agent = Agent()
 
@@ -384,7 +383,7 @@ def print_schema(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse
         'type': 'object',
     }
     """
-    return ModelResponse(parts=[TextPart('foobar')], usage=Usage())
+    return ModelResponse(parts=[TextPart('foobar')])
 
 
 agent.run_sync('hello', model=FunctionModel(print_schema))

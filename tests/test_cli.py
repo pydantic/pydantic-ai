@@ -11,7 +11,6 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import Usage
 
 from .conftest import TestEnv, try_import
 
@@ -97,9 +96,7 @@ def test_handle_slash_command_markdown():
     assert handle_slash_command('/markdown', [], False, Console(file=io), 'default') == (None, False)
     assert io.getvalue() == snapshot('No markdown output available.\n')
 
-    messages: list[ModelMessage] = [
-        ModelResponse(parts=[TextPart('[hello](# hello)'), ToolCallPart('foo', '{}')], usage=Usage())
-    ]
+    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('[hello](# hello)'), ToolCallPart('foo', '{}')])]
     io = StringIO()
     assert handle_slash_command('/markdown', messages, True, Console(file=io), 'default') == (None, True)
     assert io.getvalue() == snapshot("""\

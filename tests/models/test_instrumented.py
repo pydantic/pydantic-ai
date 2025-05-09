@@ -125,7 +125,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 {},  # test unexpected parts  # type: ignore
             ]
         ),
-        ModelResponse(parts=[TextPart('text3')], usage=Usage()),
+        ModelResponse(parts=[TextPart('text3')]),
     ]
     await model.request(
         messages,
@@ -534,7 +534,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                 {},  # test unexpected parts  # type: ignore
             ]
         ),
-        ModelResponse(parts=[TextPart('text3')], usage=Usage()),
+        ModelResponse(parts=[TextPart('text3')]),
     ]
     await model.request(
         messages,
@@ -671,7 +671,7 @@ def test_messages_to_otel_events_serialization_errors():
             raise ValueError('error!')
 
     messages = [
-        ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()}, tool_call_id='tool_call_id')], usage=Usage()),
+        ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()}, tool_call_id='tool_call_id')]),
         ModelRequest(parts=[ToolReturnPart('tool', Bar(), tool_call_id='return_tool_call_id')]),
     ]
 
@@ -692,7 +692,7 @@ def test_messages_to_otel_events_serialization_errors():
 def test_messages_to_otel_events_instructions():
     messages = [
         ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
-        ModelResponse(parts=[TextPart('text1')], usage=Usage()),
+        ModelResponse(parts=[TextPart('text1')]),
     ]
     assert [
         InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
@@ -713,7 +713,7 @@ def test_messages_to_otel_events_instructions():
 def test_messages_to_otel_events_instructions_multiple_messages():
     messages = [
         ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
-        ModelResponse(parts=[TextPart('text1')], usage=Usage()),
+        ModelResponse(parts=[TextPart('text1')]),
         ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')]),
     ]
     assert [
@@ -753,7 +753,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
             ]
         ),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
-        ModelResponse(parts=[TextPart('text1')], usage=Usage()),
+        ModelResponse(parts=[TextPart('text1')]),
     ]
     assert [
         InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
