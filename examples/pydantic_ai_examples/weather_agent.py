@@ -23,8 +23,8 @@ from httpx import AsyncClient
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 
-os.environ['OTEL_EXPORTER_OTLP_ENDPOINT'] = 'http://localhost:4318'
-logfire.configure(send_to_logfire=False, service_name='weather-agent')
+# 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
+logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
 
