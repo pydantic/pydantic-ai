@@ -418,7 +418,7 @@ def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage
     # Tokens are only counted once between input_tokens, cache_creation_input_tokens, and cache_read_input_tokens
     # This approach maintains request_tokens as the count of all input tokens, with cached counts as details
     request_tokens = (
-        getattr(response_usage, 'input_tokens', 0)
+        (getattr(response_usage, 'input_tokens', 0) or 0)
         + (getattr(response_usage, 'cache_creation_input_tokens', 0) or 0)  # These can be missing, None, or int
         + (getattr(response_usage, 'cache_read_input_tokens', 0) or 0)
     )
