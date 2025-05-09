@@ -102,6 +102,7 @@ def test_tool_retry():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -117,6 +118,7 @@ def test_tool_retry():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=61, response_tokens=8, total_tokens=69),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -129,6 +131,7 @@ def test_tool_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"my_ret":"1"}')],
+                usage=Usage(requests=1, request_tokens=62, response_tokens=12, total_tokens=74),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),

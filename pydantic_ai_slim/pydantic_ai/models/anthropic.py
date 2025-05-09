@@ -145,12 +145,14 @@ class AnthropicModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         check_allow_model_requests()
         response = await self._messages_create(
             messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response), _map_usage(response)
+        model_response = self._process_response(response)
+        model_response.usage.requests = 1
+        return model_response
 
     @asynccontextmanager
     async def request_stream(
@@ -260,7 +262,7 @@ class AnthropicModel(Model):
                     )
                 )
 
-        return ModelResponse(items, model_name=response.model)
+        return ModelResponse(items, usage=_map_usage(response), model_name=response.model)
 
     async def _process_streamed_response(self, response: AsyncStream[RawMessageStreamEvent]) -> StreamedResponse:
         peekable_response = _utils.PeekableAsyncStream(response)

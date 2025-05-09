@@ -278,7 +278,7 @@ class Model(ABC):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
+    ) -> ModelResponse:
         """Make a request to the model."""
         raise NotImplementedError()
 
@@ -365,7 +365,10 @@ class StreamedResponse(ABC):
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
         return ModelResponse(
-            parts=self._parts_manager.get_parts(), model_name=self.model_name, timestamp=self.timestamp
+            parts=self._parts_manager.get_parts(),
+            model_name=self.model_name,
+            timestamp=self.timestamp,
+            usage=self.usage(),
         )
 
     def usage(self) -> Usage:

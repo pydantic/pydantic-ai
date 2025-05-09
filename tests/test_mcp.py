@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.usage import Usage
 
 from .conftest import IsDatetime, try_import
 
@@ -105,6 +106,19 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                             tool_call_id='call_QssdxTGkPblTYHmyVES1tKBj',
                         )
                     ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=195,
+                        response_tokens=19,
+                        total_tokens=214,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -120,6 +134,19 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                 ),
                 ModelResponse(
                     parts=[TextPart(content='0 degrees Celsius is equal to 32 degrees Fahrenheit.')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=227,
+                        response_tokens=13,
+                        total_tokens=240,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -180,6 +207,19 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                             tool_call_id='call_m9goNwaHBbU926w47V7RtWPt',
                         )
                     ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=194,
+                        response_tokens=18,
+                        total_tokens=212,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -199,6 +239,19 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                             content='The weather in Mexico City is currently sunny with a temperature of 26 degrees Celsius.'
                         )
                     ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=234,
+                        response_tokens=19,
+                        total_tokens=253,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -227,6 +280,19 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                             tool_name='get_product_name', args='{}', tool_call_id='call_LaiWltzI39sdquflqeuF0EyE'
                         )
                     ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=200,
+                        response_tokens=12,
+                        total_tokens=212,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -242,6 +308,19 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The product name is "PydanticAI".')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=224,
+                        response_tokens=12,
+                        total_tokens=236,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -272,6 +351,19 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                             tool_name='get_image_resource', args='{}', tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt'
                         )
                     ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=191,
+                        response_tokens=12,
+                        total_tokens=203,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -298,6 +390,19 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                             content='This is an image of a sliced kiwi with a vibrant green interior and black seeds.'
                         )
                     ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=1332,
+                        response_tokens=19,
+                        total_tokens=1351,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -324,6 +429,19 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     parts=[
                         ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_Q7xG8CCG0dyevVfUS0ubsDdN')
                     ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=190,
+                        response_tokens=11,
+                        total_tokens=201,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -346,6 +464,19 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Here is an image of a sliced kiwi on a white background.')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=1329,
+                        response_tokens=15,
+                        total_tokens=1344,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -370,6 +501,19 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_dict', args='{}', tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=195,
+                        response_tokens=11,
+                        total_tokens=206,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -385,6 +529,19 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"foo":"bar","baz":123}')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=222,
+                        response_tokens=11,
+                        total_tokens=233,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -415,6 +572,19 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             tool_name='get_error', args='{"value":false}', tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc'
                         )
                     ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=203,
+                        response_tokens=15,
+                        total_tokens=218,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -434,6 +604,19 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             tool_name='get_error', args='{"value":true}', tool_call_id='call_4xGyvdghYKHN8x19KWkRtA5N'
                         )
                     ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=250,
+                        response_tokens=15,
+                        total_tokens=265,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -453,6 +636,19 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                             content='I called the tool with the correct parameter, and it returned: "This is not an error."'
                         )
                     ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=277,
+                        response_tokens=22,
+                        total_tokens=299,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -477,6 +673,19 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_none', args='{}', tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=193,
+                        response_tokens=11,
+                        total_tokens=204,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -492,6 +701,19 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Hello! How can I assist you today?')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=212,
+                        response_tokens=11,
+                        total_tokens=223,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -522,6 +744,19 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                             tool_name='get_multiple_items', args='{}', tool_call_id='call_kL0TvjEVQBDGZrn1Zv7iNYOW'
                         )
                     ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=195,
+                        response_tokens=12,
+                        total_tokens=207,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),
@@ -553,6 +788,19 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                             content='The data includes two strings, a dictionary with a key-value pair, and an image of a sliced kiwi.'
                         )
                     ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=1355,
+                        response_tokens=24,
+                        total_tokens=1379,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                 ),

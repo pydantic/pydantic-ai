@@ -147,13 +147,15 @@ class MistralModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
+    ) -> ModelResponse:
         """Make a non-streaming request to the model from Pydantic AI call."""
         check_allow_model_requests()
         response = await self._completions_create(
             messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response), _map_usage(response)
+        model_response = self._process_response(response)
+        model_response.usage.requests = 1
+        return model_response
 
     @asynccontextmanager
     async def request_stream(
@@ -323,7 +325,7 @@ class MistralModel(Model):
                 tool = self._map_mistral_to_pydantic_tool_call(tool_call=tool_call)
                 parts.append(tool)
 
-        return ModelResponse(parts, model_name=response.model, timestamp=timestamp)
+        return ModelResponse(parts, usage=_map_usage(response), model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(
         self,

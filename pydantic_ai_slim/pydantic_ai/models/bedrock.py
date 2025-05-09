@@ -232,10 +232,12 @@ class BedrockConverseModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, settings, model_request_parameters)
-        return await self._process_response(response)
+        model_response = await self._process_response(response)
+        model_response.usage.requests = 1
+        return model_response
 
     @asynccontextmanager
     async def request_stream(
@@ -248,7 +250,7 @@ class BedrockConverseModel(Model):
         response = await self._messages_create(messages, True, settings, model_request_parameters)
         yield BedrockStreamedResponse(_model_name=self.model_name, _event_stream=response)
 
-    async def _process_response(self, response: ConverseResponseTypeDef) -> tuple[ModelResponse, usage.Usage]:
+    async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
         items: list[ModelResponsePart] = []
         if message := response['output'].get('message'):
             for item in message['content']:
@@ -269,7 +271,7 @@ class BedrockConverseModel(Model):
             response_tokens=response['usage']['outputTokens'],
             total_tokens=response['usage']['totalTokens'],
         )
-        return ModelResponse(items, model_name=self.model_name), u
+        return ModelResponse(items, usage=u, model_name=self.model_name)
 
     @overload
     async def _messages_create(

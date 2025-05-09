@@ -28,14 +28,12 @@ class Usage:
     details: dict[str, int] | None = None
     """Any extra details returned by the model."""
 
-    def incr(self, incr_usage: Usage, *, requests: int = 0) -> None:
+    def incr(self, incr_usage: Usage) -> None:
         """Increment the usage in place.
 
         Args:
             incr_usage: The usage to increment by.
-            requests: The number of requests to increment by in addition to `incr_usage.requests`.
         """
-        self.requests += requests
         for f in 'requests', 'request_tokens', 'response_tokens', 'total_tokens':
             self_value = getattr(self, f)
             other_value = getattr(incr_usage, f)
@@ -65,6 +63,10 @@ class Usage:
         for key, value in (self.details or {}).items():
             result[f'gen_ai.usage.details.{key}'] = value
         return {k: v for k, v in result.items() if v}
+
+    def has_values(self) -> bool:
+        """Whether any values are set and non-zero."""
+        return bool(self.requests or self.request_tokens or self.response_tokens or self.details)
 
 
 @dataclass

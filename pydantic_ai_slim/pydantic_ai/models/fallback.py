@@ -15,7 +15,6 @@ from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, i
 if TYPE_CHECKING:
     from ..messages import ModelMessage, ModelResponse
     from ..settings import ModelSettings
-    from ..usage import Usage
 
 
 @dataclass(init=False)
@@ -55,7 +54,7 @@ class FallbackModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
+    ) -> ModelResponse:
         """Try each model in sequence until one succeeds.
 
         In case of failure, raise a FallbackExceptionGroup with all exceptions.
@@ -65,7 +64,7 @@ class FallbackModel(Model):
         for model in self.models:
             customized_model_request_parameters = model.customize_request_parameters(model_request_parameters)
             try:
-                response, usage = await model.request(messages, model_settings, customized_model_request_parameters)
+                response = await model.request(messages, model_settings, customized_model_request_parameters)
             except Exception as exc:
                 if self._fallback_on(exc):
                     exceptions.append(exc)
@@ -73,7 +72,7 @@ class FallbackModel(Model):
                 raise exc
 
             self._set_span_attributes(model)
-            return response, usage
+            return response
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
 
