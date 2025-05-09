@@ -1,6 +1,6 @@
 # Command Line Interface (CLI)
 
-**PydanticAI** comes with a CLI which you can use to interact with various LLMs from the command line.
+**PydanticAI** comes with a CLI, `clai` (pronounced "clay") which you can use to interact with various LLMs from the command line.
 It provides a convenient way to chat with language models and quickly get answers right in the terminal.
 
 We originally developed this CLI for our own use, but found ourselves using it so frequently that we decided to share it as part of the PydanticAI package.
@@ -29,7 +29,13 @@ You can also install `clai` globally with:
 uv tool install clai
 ```
 
-This will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
+If you're using `pip`, install `clai` with:
+
+```bash
+pip install clai
+```
+
+Either way, running `clai` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
 
 - `/exit`: Exit the session
 - `/markdown`: Show the last response in markdown format
