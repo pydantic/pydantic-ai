@@ -9,30 +9,36 @@ We plan to continue adding new features, such as interaction with MCP servers, a
 
 ## Usage
 
+<!-- Keep this in sync with clai/README.md -->
+
 You'll need to set an environment variable depending on the provider you intend to use.
 
-E.g. if using OpenAI, set the `OPENAI_API_KEY` environment variable:
+E.g. if you're using OpenAI, set the `OPENAI_API_KEY` environment variable:
 
 ```bash
 export OPENAI_API_KEY='your-api-key-here'
 ```
 
-Then with `uvx` (part of [uv](https://docs.astral.sh/uv/)) installed, simply run:
+Then with [`uvx`](https://docs.astral.sh/uv/guides/tools/), run:
 
 ```bash
 uvx clai
 ```
 
-You can also install `clai` globally with:
+Or to install `clai` globally [with `uv`](https://docs.astral.sh/uv/guides/tools/#installing-tools), run:
 
 ```bash
 uv tool install clai
+...
+clai
 ```
 
-If you're using `pip`, install `clai` with:
+Or with `pip`, run:
 
 ```bash
 pip install clai
+...
+clai
 ```
 
 Either way, running `clai` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
