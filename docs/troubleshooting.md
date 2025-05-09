@@ -24,4 +24,4 @@ If you're running into issues with setting the API key for your model, visit the
 
 You can use custom `httpx` clients in your models in order to access specific requests, responses, and headers at runtime.
 
-It's particularly helpful to use `logfire`'s [HTTPX integration](logfire.md#monitoring-httpx-requests) to monitor the above.
+It's particularly helpful to use `logfire`'s [HTTPX integration](logfire.md#monitoring-http-requests) to monitor the above.
