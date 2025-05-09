@@ -31,13 +31,13 @@ A trace is generated for the agent run, and spans are emitted for each model req
 
 ## Using Logfire
 
-To use logfire, you'll need a logfire [account](https://logfire.pydantic.dev), and the logfire Python SDK installed:
+To use Logfire, you'll need a Logfire [account](https://logfire.pydantic.dev), and the Logfire Python SDK installed:
 
 ```bash
 pip/uv-add "pydantic-ai[logfire]"
 ```
 
-Then authenticate your local environment with logfire:
+Then authenticate your local environment with Logfire:
 
 ```bash
 py-cli logfire auth
@@ -53,7 +53,7 @@ py-cli logfire projects new
 
 This will write to a `.logfire` directory in the current working directory, which the Logfire SDK will use for configuration at run time.
 
-With that, you can start using logfire to instrument PydanticAI code:
+With that, you can start using Logfire to instrument PydanticAI code:
 
 ```python {title="instrument_pydantic_ai.py" hl_lines="1 5 6"}
 import logfire
@@ -77,12 +77,14 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 _(This example is complete, it can be run "as is")_
 
+Which will display in Logfire thus:
+
 ![Logfire Simple Agent Run](img/logfire-simple-agent.png)
 
-The [logfire documentation](https://logfire.pydantic.dev/docs/) has more details on how to use logfire,
+The [logfire documentation](https://logfire.pydantic.dev/docs/) has more details on how to use Logfire,
 including how to instrument other libraries like [HTTPX](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) and [FastAPI](https://logfire.pydantic.dev/docs/integrations/web-frameworks/fastapi/).
 
-Since Logfire is built on [OpenTelemetry](https://opentelemetry.io/), you can use the Logfire Python SDK to send data to any OpenTelemetry collector.
+Since Logfire is built on [OpenTelemetry](https://opentelemetry.io/), you can use the Logfire Python SDK to send data to any OpenTelemetry collector, see [below](#using-opentelemetry).
 
 ### Debugging
 
@@ -149,13 +151,13 @@ PydanticAI's instrumentation uses [OpenTelemetry](https://opentelemetry.io/) (OT
 
 This means you can debug and monitor PydanticAI with any OpenTelemetry backend.
 
-PydanticAI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), so while we think you'll have the best experience using the Logfire platform :wink:, you should get the best experience possible with other platforms.
+PydanticAI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), so while we think you'll have the best experience using the Logfire platform :wink:, you should be able to use any OTel service with GenAI support.
 
 ### Logfire with an alternative OTel backend
 
 You can use the Logfire SDK completely freely and send the data to any OpenTelemetry backend.
 
-Here's an example of configuring the logfire library to send data to the excellent [otel-tui](https://github.com/ymtdzzz/otel-tui) — an open source terminal based OTel backend and viewer (no association with Pydantic).
+Here's an example of configuring the Logfire library to send data to the excellent [otel-tui](https://github.com/ymtdzzz/otel-tui) — an open source terminal based OTel backend and viewer (no association with Pydantic).
 
 Run `otel-tui` with docker (see [the otel-tui readme](https://github.com/ymtdzzz/otel-tui) for more instructions):
 
@@ -183,23 +185,23 @@ print(result.output)
 #> Paris
 ```
 
-1. Set the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable to the URL of your OpenTelemetry backend. If you're using a backend that requires authentication, you may need to set [other environment variables](https://opentelemetry.io/docs/languages/sdk-configuration/otlp-exporter/). Of course, these can also be set outside the process with `export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`.
-2. We [configure][logfire.configure] logfire to disable sending data to the logfire OTel backend itself.
+1. Set the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable to the URL of your OpenTelemetry backend. If you're using a backend that requires authentication, you may need to set [other environment variables](https://opentelemetry.io/docs/languages/sdk-configuration/otlp-exporter/). Of course, these can also be set outside the process, e.g. with `export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`.
+2. We [configure][logfire.configure] Logfire to disable sending data to the Logfire OTel backend itself. If you removed `send_to_logfire=False`, data would be sent to both Logfire and your OpenTelemetry backend.
 
-Running the above code will send tracing data to otel-tui, which will display like this:
+Running the above code will send tracing data to `otel-tui`, which will display like this:
 
 ![otel tui simple](img/otel-tui-simple.png)
 
-Running the [weather agent](examples/weather-agent.md) example connected to otel-tui shows how it can be used to visualise a more complex trace:
+Running the [weather agent](examples/weather-agent.md) example connected to `otel-tui` shows how it can be used to visualise a more complex trace:
 
 ![otel tui weather agent](img/otel-tui-weather.png)
 
-For more information on using the logfire SDK to send data to alternative backends, see
-[the logfire documentation](https://logfire.pydantic.dev/docs/how-to-guides/alternative-backends/).
+For more information on using the Logfire SDK to send data to alternative backends, see
+[the Logfire documentation](https://logfire.pydantic.dev/docs/how-to-guides/alternative-backends/).
 
-### OTel without logfire
+### OTel without Logfire
 
-You can also emit OpenTelemetry data from PydanticAI without using logfire at all.
+You can also emit OpenTelemetry data from PydanticAI without using Logfire at all.
 
 To do this, you'll need to install and configure the OpenTelemetry packages you need. To run the following examples, use
 
