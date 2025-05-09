@@ -7,6 +7,8 @@ import pytest
 from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
+from pydantic_ai.settings import ModelSettings
+
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -222,7 +224,7 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     assert result.value is True
     assert result.reason == 'Test passed'
 
-    mock_judge_output.assert_called_once_with('Hello world', 'Content contains a greeting', None)
+    mock_judge_output.assert_called_once_with('Hello world', 'Content contains a greeting', None, None)
 
     # Test with input
     evaluator = LLMJudge(rubric='Output contains input', include_input=True, model='openai:gpt-4o')
@@ -232,7 +234,7 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     assert result.reason == 'Test passed'
 
     mock_judge_input_output.assert_called_once_with(
-        {'prompt': 'Hello'}, 'Hello world', 'Output contains input', 'openai:gpt-4o'
+        {'prompt': 'Hello'}, 'Hello world', 'Output contains input', 'openai:gpt-4o', None
     )
 
     # Test with failing result
@@ -242,6 +244,61 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     assert isinstance(result, EvaluationReason)
     assert result.value is False
     assert result.reason == 'Test failed'
+
+
+@pytest.mark.anyio
+async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
+    """Test LLMJudge evaluator with specific model_settings."""
+    mock_grading_output = mocker.MagicMock()
+    mock_grading_output.pass_ = True
+    mock_grading_output.reason = 'Test passed with settings'
+
+    mock_judge_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_output')
+    mock_judge_output.return_value = mock_grading_output
+
+    mock_judge_input_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_input_output')
+    mock_judge_input_output.return_value = mock_grading_output
+
+    custom_model_settings = ModelSettings(temperature=0.77)
+
+    ctx = EvaluatorContext(
+        name='test_custom_settings',
+        inputs={'prompt': 'Hello Custom'},
+        metadata=None,
+        expected_output=None,
+        output='Hello world custom settings',
+        duration=0.0,
+        _span_tree=SpanTreeRecordingError('spans were not recorded'),
+        attributes={},
+        metrics={},
+    )
+
+    # Test without input, with custom model_settings
+    evaluator_no_input = LLMJudge(rubric='Greeting with custom settings', model_settings=custom_model_settings)
+    result_no_input = await evaluator_no_input.evaluate(ctx)
+    assert result_no_input.value is True
+    assert result_no_input.reason == 'Test passed with settings'
+    mock_judge_output.assert_called_once_with(
+        'Hello world custom settings', 'Greeting with custom settings', None, custom_model_settings
+    )
+
+    # Test with input, with custom model_settings
+    evaluator_with_input = LLMJudge(
+        rubric='Output contains input with custom settings',
+        include_input=True,
+        model='openai:gpt-3.5-turbo',
+        model_settings=custom_model_settings,
+    )
+    result_with_input = await evaluator_with_input.evaluate(ctx)
+    assert result_with_input.value is True
+    assert result_with_input.reason == 'Test passed with settings'
+    mock_judge_input_output.assert_called_once_with(
+        {'prompt': 'Hello Custom'},
+        'Hello world custom settings',
+        'Output contains input with custom settings',
+        'openai:gpt-3.5-turbo',
+        custom_model_settings,
+    )
 
 
 async def test_python():

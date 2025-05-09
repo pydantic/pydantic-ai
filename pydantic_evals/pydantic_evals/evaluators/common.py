@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import Any, cast
 
 from pydantic_ai import models
+from pydantic_ai.settings import ModelSettings
 
 from ..otel.span_tree import SpanQuery
 from .context import EvaluatorContext
@@ -164,6 +165,7 @@ class LLMJudge(Evaluator[object, object, object]):
     rubric: str
     model: models.Model | models.KnownModelName | None = None
     include_input: bool = False
+    model_settings: ModelSettings | None = None
 
     async def evaluate(
         self,
@@ -172,11 +174,13 @@ class LLMJudge(Evaluator[object, object, object]):
         if self.include_input:
             from .llm_as_a_judge import judge_input_output
 
-            grading_output = await judge_input_output(ctx.inputs, ctx.output, self.rubric, self.model)
+            grading_output = await judge_input_output(
+                ctx.inputs, ctx.output, self.rubric, self.model, self.model_settings
+            )
         else:
             from .llm_as_a_judge import judge_output
 
-            grading_output = await judge_output(ctx.output, self.rubric, self.model)
+            grading_output = await judge_output(ctx.output, self.rubric, self.model, self.model_settings)
         return EvaluationReason(value=grading_output.pass_, reason=grading_output.reason)
 
     def build_serialization_arguments(self):
