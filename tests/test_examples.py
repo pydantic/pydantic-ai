@@ -74,6 +74,15 @@ def find_filter_examples() -> Iterable[ParameterSet]:
             yield pytest.param(ex, id=test_id)
 
 
+@pytest.fixture
+def reset_cwd():
+    original_cwd = os.getcwd()
+    try:
+        yield
+    finally:
+        os.chdir(original_cwd)
+
+
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(  # noqa: C901
     example: CodeExample,
@@ -83,6 +92,7 @@ def test_docs_examples(  # noqa: C901
     allow_model_requests: None,
     env: TestEnv,
     tmp_path: Path,
+    reset_cwd: None,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
@@ -133,8 +143,6 @@ def test_docs_examples(  # noqa: C901
         python_version_info = tuple(int(v) for v in python_version.split('.'))
         if sys.version_info < python_version_info:
             pytest.skip(f'Python version {python_version} required')
-
-    cwd = Path.cwd()
 
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
         pytest.skip('both running code and lint skipped')
@@ -189,7 +197,6 @@ def test_docs_examples(  # noqa: C901
         else:
             module_dict = eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
 
-        os.chdir(cwd)
         if title := opt_title:
             if title.endswith('.py'):
                 module_name = title[:-3]
