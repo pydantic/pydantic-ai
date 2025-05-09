@@ -259,7 +259,7 @@ def httpx_with_handler() -> Iterator[HttpxWithHandler]:
     try:
         yield create_client
     finally:
-        if client:  # pragma: no cover
+        if client:
             client.close()
 
 

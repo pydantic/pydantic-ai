@@ -59,7 +59,7 @@ class TestEnv:
     def remove(self, name: str) -> None:
         self.envars[name] = os.environ.pop(name, None)
 
-    def reset(self) -> None:  # pragma: no cover
+    def reset(self) -> None:
         for name, value in self.envars.items():
             if value is None:
                 os.environ.pop(name, None)
@@ -100,7 +100,7 @@ async def client_with_handler() -> AsyncIterator[ClientWithHandler]:
     try:
         yield create_client
     finally:
-        if client:  # pragma: no cover
+        if client:
             await client.aclose()
 
 
@@ -155,7 +155,7 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
 
 
 @contextmanager
-def try_import() -> Iterator[Callable[[], bool]]:  # pragma: no cover
+def try_import() -> Iterator[Callable[[], bool]]:
     import_success = False
 
     def check_import() -> bool:
@@ -276,7 +276,7 @@ def mistral_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
-def bedrock_provider():  # pragma: no cover
+def bedrock_provider():
     try:
         import boto3
 
@@ -304,7 +304,7 @@ def model(
     co_api_key: str,
     gemini_api_key: str,
     bedrock_provider: BedrockProvider,
-) -> Model:  # pragma: no cover
+) -> Model:  # pragma: lax no cover
     try:
         if request.param == 'openai':
             from pydantic_ai.models.openai import OpenAIModel

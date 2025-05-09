@@ -99,7 +99,7 @@ class WalkJsonSchema(ABC):
         if (additional_properties := schema.get('additionalProperties')) is not None:
             if isinstance(additional_properties, bool):
                 schema['additionalProperties'] = additional_properties
-            else:  # pragma: no cover
+            else:
                 schema['additionalProperties'] = self._handle(additional_properties)
 
         if (pattern_properties := schema.get('patternProperties')) is not None:

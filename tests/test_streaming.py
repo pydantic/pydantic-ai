@@ -245,7 +245,7 @@ async def test_plain_response():
 
     with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
         async with agent.run_stream(''):
-            pass  # pragma: no cover
+            pass
 
     assert call_index == 2
 
@@ -357,7 +357,7 @@ async def test_call_tool_empty():
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream('hello'):
-            pass  # pragma: no cover
+            pass
 
 
 async def test_call_tool_wrong_name():
@@ -377,7 +377,7 @@ async def test_call_tool_wrong_name():
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(0\) for result validation'):
             async with agent.run_stream('hello'):
-                pass  # pragma: no cover
+                pass
 
     assert messages == snapshot(
         [
