@@ -14,7 +14,12 @@ bump = true
 name = "pydantic-ai-slim"
 dynamic = ["version", "dependencies", "optional-dependencies"]
 description = "Agent Framework / shim to use Pydantic with LLMs, slim package"
-authors = [{ name = "Samuel Colvin", email = "samuel@pydantic.dev" }]
+authors = [
+  { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+  { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+  { name = "David Montague", email = "david@pydantic.dev" },
+  { name = "Alex Hall", email = "alex@pydantic.dev" },
+]
 license = "MIT"
 readme = "README.md"
 classifiers = [
@@ -94,7 +99,7 @@ dev = [
 allow-direct-references = true
 
 [project.scripts]
-pai = "pydantic_ai._cli:app"
+pai = "pydantic_ai._cli:cli_exit"  # TODO remove this when clai has been out for a while
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai"]
