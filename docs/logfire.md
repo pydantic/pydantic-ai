@@ -100,14 +100,14 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
 
 !!! tip ""F**k you, show me the prompt.""
     As per Hamel Husain's influential 2024 blog post ["Fuck You, Show Me The Prompt."](https://hamel.dev/blog/posts/prompt/)
-    (bare with the capitalization, the point is valid), it's often useful to be able to view the raw HTTP requests and responses made to model providers.
+    (bear with the capitalization, the point is valid), it's often useful to be able to view the raw HTTP requests and responses made to model providers.
 
-To observer raw HTTP requests made to model providers, you can use `logfire`'s [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) since all provider SDKs use the [HTTPX](https://www.python-httpx.org/) library internally.
+To observe raw HTTP requests made to model providers, you can use `logfire`'s [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) since all provider SDKs use the [HTTPX](https://www.python-httpx.org/) library internally.
 
 
 === "With HTTP instrumentation"
 
-    ```py {title="with_logfire_instrument_httpx.py" hl_lines="6"}
+    ```py {title="with_logfire_instrument_httpx.py" hl_lines="7"}
     import logfire
 
     from pydantic_ai import Agent
@@ -145,7 +145,7 @@ To observer raw HTTP requests made to model providers, you can use `logfire`'s [
 
 ## Using OpenTelemetry
 
-PydanticAI's instrumentation uses [OpenTelemetry](https://opentelemetry.io/), which Logfire is based on.
+PydanticAI's instrumentation uses [OpenTelemetry](https://opentelemetry.io/) (OTel), which Logfire is based on.
 
 This means you can debug and monitor PydanticAI with any OpenTelemetry backend.
 
@@ -184,7 +184,7 @@ print(result.output)
 ```
 
 1. Set the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable to the URL of your OpenTelemetry backend. If you're using a backend that requires authentication, you may need to set [other environment variables](https://opentelemetry.io/docs/languages/sdk-configuration/otlp-exporter/). Of course, these can also be set outside the process with `export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`.
-2. We [configure][logfire.configure] logfire to disable sending data to the logfire otel backend itself.
+2. We [configure][logfire.configure] logfire to disable sending data to the logfire OTel backend itself.
 
 Running the above code will send tracing data to otel-tui, which will display like this:
 
@@ -227,7 +227,11 @@ span_processor = BatchSpanProcessor(exporter)
 tracer_provider = TracerProvider()
 tracer_provider.add_span_processor(span_processor)
 
-Agent.instrument_all(InstrumentationSettings(tracer_provider=tracer_provider))
+from opentelemetry.trace import set_tracer_provider
+
+set_tracer_provider(tracer_provider)
+
+Agent.instrument_all()
 agent = Agent('openai:gpt-4o')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
@@ -245,7 +249,7 @@ from pydantic_ai import Agent
 from pydantic_ai.agent import InstrumentationSettings
 
 logfire.configure()
-Agent.instrument_all(InstrumentationSettings(event_mode='logs'))
+logfire.instrument_pydantic_ai(event_mode='logs')
 agent = Agent('openai:gpt-4o')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
