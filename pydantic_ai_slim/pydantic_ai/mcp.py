@@ -366,5 +366,5 @@ class MCPServerHTTP(MCPServer):
     def _get_log_level(self) -> LoggingLevel | None:
         return self.log_level
 
-    def __repr__(self) -> str:
+    def __repr__(self) -> str:  # pragma: no cover
         return f'MCPServerHTTP(url={self.url!r}, tool_prefix={self.tool_prefix!r})'
