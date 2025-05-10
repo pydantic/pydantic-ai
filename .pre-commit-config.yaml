@@ -60,6 +60,6 @@ repos:
     rev: v2.3.0
     hooks:
     - id: codespell
-      args: ['--skip', 'tests/models/cassettes/*']
+      args: ['--skip', 'tests/models/cassettes/*,docs/a2a/fasta2a.md']
       additional_dependencies:
       - tomli

@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
+
+[project]
+name = "fasta2a"
+dynamic = ["version", "dependencies"]
+description = "Convert an AI Agent into a A2A server! ✨"
+authors = [
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+]
+license = "MIT"
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Unix",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: Console",
+    "Environment :: MacOS X",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet",
+]
+requires-python = ">=3.9"
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning]
+dependencies = [
+    "starlette>0.29.0",
+    "pydantic>=2.10",
+    "opentelemetry-api>=1.28.0",
+]
+
+[project.optional-dependencies]
+logfire = ["logfire>=2.3"]
+
+[project.urls]
+Homepage = "https://ai.pydantic.dev/a2a/fasta2a"
+Source = "https://github.com/pydantic/fasta2a"
+Documentation = "https://ai.pydantic.dev/a2a"
+Changelog = "https://github.com/pydantic/pydantic-ai/releases"
+
+[tool.hatch.build.targets.wheel]
+packages = ["fasta2a"]
