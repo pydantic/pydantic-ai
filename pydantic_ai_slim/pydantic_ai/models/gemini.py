@@ -831,6 +831,12 @@ class _GeminiJsonSchema(WalkJsonSchema):
         schema.pop('exclusiveMaximum', None)
         schema.pop('exclusiveMinimum', None)
 
+        # Gemini only supports string enums, so we need to convert any enum values to strings.
+        # Pydantic will take care of transforming the transformed string values to the correct type.
+        if enum := schema.get('enum'):
+            schema['type'] = 'string'
+            schema['enum'] = [str(val) for val in enum]
+
         type_ = schema.get('type')
         if 'oneOf' in schema and 'type' not in schema:  # pragma: no cover
             # This gets hit when we have a discriminated union
