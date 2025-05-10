@@ -770,7 +770,7 @@ class OpenAIResponsesModel(Model):
                             file_data=f'data:{item.media_type};base64,{base64_encoded}',
                         )
                     )
-                elif isinstance(item, DocumentUrl):  # pragma: no cover
+                elif isinstance(item, DocumentUrl):
                     client = cached_async_http_client()
                     response = await client.get(item.url)
                     response.raise_for_status()

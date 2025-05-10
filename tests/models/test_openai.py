@@ -99,7 +99,7 @@ class MockOpenAI:
     ) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(stream=stream))
 
-    async def chat_completions_create(  # pragma: no cover
+    async def chat_completions_create(  # pragma: lax no cover
         self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
         self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
@@ -519,7 +519,7 @@ async def test_no_content(allow_model_requests: None):
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream(''):
-            pass  # pragma: no cover
+            pass
 
 
 async def test_no_delta(allow_model_requests: None):

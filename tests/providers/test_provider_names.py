@@ -37,7 +37,7 @@ with try_import() as imports_successful:
     ]
 
 if not imports_successful():
-    test_infer_provider_params = []  # pragma: no cover
+    test_infer_provider_params = []
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='need to install all extra packages')
 
