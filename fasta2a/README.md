@@ -9,4 +9,4 @@
 To make it easier to implement A2A servers, we've implemented FastA2A,
 a library built on top of Starlette and Pydantic to bring A2A to Python.
 
-See [the docs](../docs/a2a/index.md) for more information.
+See [the docs](https://ai.pydantic.dev/a2a/) for more information.
