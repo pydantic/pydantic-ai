@@ -52,7 +52,11 @@ with try_import() as imports_successful:
     )
     from anthropic.types.raw_message_delta_event import Delta
 
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic import (
+        AnthropicModel,
+        AnthropicModelSettings,
+        _map_usage,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
     # note: we use Union here so that casting works with Python 3.9
@@ -843,3 +847,61 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
             ),
         ]
     )
+
+
+def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
+    return AnthropicMessage(
+        id='x',
+        content=[],
+        model='claude-3-7-sonnet-latest',
+        role='assistant',
+        type='message',
+        usage=usage,
+    )
+
+
+@pytest.mark.parametrize(
+    'message,usage',
+    [
+        pytest.param(
+            anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)),
+            snapshot(Usage(request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1})),
+            id='AnthropicMessage',
+        ),
+        pytest.param(
+            anth_msg(
+                AnthropicUsage(
+                    input_tokens=1, output_tokens=1, cache_creation_input_tokens=2, cache_read_input_tokens=3
+                )
+            ),
+            snapshot(
+                Usage(
+                    request_tokens=6,
+                    response_tokens=1,
+                    total_tokens=7,
+                    details={'cache_creation_input_tokens': 2, 'cache_read_input_tokens': 3, 'input_tokens': 1},
+                )
+            ),
+            id='AnthropicMessage-cached',
+        ),
+        pytest.param(
+            RawMessageStartEvent(
+                message=anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)), type='message_start'
+            ),
+            snapshot(Usage(request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1})),
+            id='RawMessageStartEvent',
+        ),
+        pytest.param(
+            RawMessageDeltaEvent(
+                delta=Delta(),
+                usage=MessageDeltaUsage(output_tokens=5),
+                type='message_delta',
+            ),
+            snapshot(Usage(response_tokens=5, total_tokens=5)),
+            id='RawMessageDeltaEvent',
+        ),
+        pytest.param(RawMessageStopEvent(type='message_stop'), snapshot(Usage()), id='RawMessageStopEvent'),
+    ],
+)
+def test_usage(message: AnthropicMessage | RawMessageStreamEvent, usage: Usage):
+    assert _map_usage(message) == usage
