@@ -29,6 +29,7 @@ __all__ = (
     'ToolFuncEither',
     'ToolParams',
     'ToolPrepareFunc',
+    'ToolsPrepareFunc',
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
@@ -144,6 +145,7 @@ Example — here `turn_on_strict_if_openai` is valid as a `ToolsPrepareFunc`:
 
 ```python {noqa="I001"}
 from dataclasses import replace
+from typing import Union
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import ToolDefinition
@@ -151,7 +153,7 @@ from pydantic_ai.tools import ToolDefinition
 
 async def turn_on_strict_if_openai(
     ctx: RunContext[None], tools_def: list[ToolDefinition]
-) -> list[ToolDefinition]:
+) -> Union[list[ToolDefinition], None]:
     if ctx.model.system == 'openai':
         return [replace(tool_def, strict=True) for tool_def in tools_def]
     return tools_def

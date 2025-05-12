@@ -531,16 +531,18 @@ _(This example is complete, it can be run "as is")_
 
 ## Agent-wide Dynamic Tool Preparation {#prepare-tools}
 
-In addition to per-tool `prepare` methods, you can also define an agent-wide `prepare_tools` function. This function is called at each step and allows you to filter or modify the list of all tool definitions available to the agent for that step. This is especially useful if you want to enable or disable multiple tools at once, or apply global logic based on the current context, model, or dependencies.
+In addition to per-tool `prepare` methods, you can also define an agent-wide `prepare_tools` function. This function is called at each step and allows you to filter or modify the list of all tool definitions available to the agent for that step. This is especially useful if you want to enable or disable multiple tools at once, or apply global logic based on the current context.
 
 The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns a new list of tool definitions (or `None` to disable all tools for that step).
 
-**The list of tool definitions passed to `prepare_tools` includes both regular tools and tools from any MCP servers attached to the agent.**
+!!! note
+    The list of tool definitions passed to `prepare_tools` includes both regular tools and tools from any MCP servers attached to the agent.
 
 Here's an example that makes all tools strict if the model is an OpenAI model:
 
 ```python {title="agent_prepare_tools_customize.py" noqa="I001"}
 from dataclasses import replace
+from typing import Union
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import ToolDefinition
@@ -548,7 +550,7 @@ from pydantic_ai.tools import ToolDefinition
 
 async def turn_on_strict_if_openai(
     ctx: RunContext[None], tools_def: list[ToolDefinition]
-) -> list[ToolDefinition]:
+) -> Union[list[ToolDefinition], None]:
     if ctx.model.system == 'openai':
         return [replace(tool_def, strict=True) for tool_def in tools_def]
     return tools_def
@@ -556,17 +558,21 @@ async def turn_on_strict_if_openai(
 agent = Agent('openai:gpt-4o', prepare_tools=turn_on_strict_if_openai)
 ```
 
-Here's another example that filters out specific tools by name:
+Here's another example that conditionally filters out the tools from a given list if the dependency (`ctx.deps`) is `True`:
 
-```python {title="agent_prepare_tools_filter_out" noqa="I001"}
+```python {title="agent_prepare_tools_filter_out.py" noqa="I001"}
+from typing import Union
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import ToolDefinition
 
 
 TOOLS_TO_FILTER_OUT = ['git_push', 'git_delete_branch']
 
-async def filter_out_tools_by_name(ctx: RunContext[bool], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-    return [tool_def for tool_def in tool_defs if tool_def.name not in TOOLS_TO_FILTER_OUT]
+async def filter_out_tools_by_name(ctx: RunContext[bool], tool_defs: list[ToolDefinition]) -> Union[list[ToolDefinition], None]:
+    if ctx.deps:
+        return [tool_def for tool_def in tool_defs if tool_def.name not in TOOLS_TO_FILTER_OUT]
+    return tool_defs
 
 agent = Agent('openai:gpt-4o', prepare_tools=filter_out_tools_by_name)
 ```
