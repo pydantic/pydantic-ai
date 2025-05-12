@@ -177,15 +177,15 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
                 assert_never(part)
         return model_parts
 
-    def _map_response_parts(self, parts: list[Part]) -> list[ModelResponsePart]:  # pragma: no cover
+    def _map_response_parts(self, parts: list[Part]) -> list[ModelResponsePart]:
         model_parts: list[ModelResponsePart] = []
         for part in parts:
             if part['type'] == 'text':
                 model_parts.append(TextPart(content=part['text']))
-            elif part['type'] == 'file':
+            elif part['type'] == 'file':  # pragma: no cover
                 raise NotImplementedError('File parts are not supported yet.')
-            elif part['type'] == 'data':
+            elif part['type'] == 'data':  # pragma: no cover
                 raise NotImplementedError('Data parts are not supported yet.')
-            else:
+            else:  # pragma: no cover
                 assert_never(part)
         return model_parts
