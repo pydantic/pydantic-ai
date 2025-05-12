@@ -126,7 +126,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     prepare_tools: ToolsPrepareFunc[AgentDepsT] | None
     """
-    Function invoked on each step, allowing to modify and filter out the tools as needed. It's not required and default to None
+    Function invoked on each step, allowing the tools to be modified and filtered out as needed.
     """
 
     instrument: InstrumentationSettings | bool | None

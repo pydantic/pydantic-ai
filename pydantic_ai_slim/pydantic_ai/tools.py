@@ -137,7 +137,7 @@ ToolsPrepareFunc: TypeAlias = (
     'Callable[[RunContext[AgentDepsT], list[ToolDefinition]], Awaitable[list[ToolDefinition] | None]]'
 )
 """Definition of a function that can prepare the tool definition of all tools for each step.
-This is useful if you want to customize the definition of multiple tools or you can to register
+This is useful if you want to customize the definition of multiple tools or you want to register
 a subset of tools for a given step.
 
 Example — here `turn_on_strict_if_openai` is valid as a `ToolsPrepareFunc`:
