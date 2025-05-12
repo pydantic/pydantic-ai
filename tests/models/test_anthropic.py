@@ -927,6 +927,22 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
     )
 
 
+async def test_multiple_system_prompt_formatting(allow_model_requests: None):
+    c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic().create_mock(c)
+    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, system_prompt='this is the system prompt')
+
+    @agent.system_prompt
+    def system_prompt() -> str:
+        return 'and this is another'
+
+    await agent.run('hello')
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'system' in completion_kwargs
+    assert completion_kwargs['system'] == 'this is the system prompt\n\nand this is another'
+
+
 def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
     return AnthropicMessage(
         id='x',
