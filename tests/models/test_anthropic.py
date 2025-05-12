@@ -942,7 +942,7 @@ async def test_multiple_system_prompt_formatting(allow_model_requests: None):
     assert 'system' in completion_kwargs
     assert completion_kwargs['system'] == 'this is the system prompt\n\nand this is another'
 
-    
+
 def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
     return AnthropicMessage(
         id='x',
