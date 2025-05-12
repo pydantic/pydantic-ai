@@ -228,7 +228,7 @@ async def _prepare_request_parameters(
             # prepare_tool_def may change tool_def.name
             if tool_def.name in function_tool_defs:
                 raise exceptions.UserError(
-                    f"Tool name '{tool_def.name}' for tool `{tool}` conflicts with existing tool: {tool_def.name!r}."
+                    f"New tool name '{tool_def.name}' for tool `{tool.name}` conflicts with existing tool."
                 )
             function_tool_defs[tool_def.name] = tool_def
 
