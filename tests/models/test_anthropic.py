@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import timezone
 from functools import cached_property
-from typing import Any, TypeVar, Union, cast
+from typing import Any, Callable, TypeVar, Union, cast
 
 import httpx
 import pytest
@@ -861,10 +861,10 @@ def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
 
 
 @pytest.mark.parametrize(
-    'message,usage',
+    'message_callback,usage',
     [
         pytest.param(
-            anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)),
+            lambda: anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)),
             snapshot(
                 Usage(
                     request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
@@ -873,7 +873,7 @@ def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
             id='AnthropicMessage',
         ),
         pytest.param(
-            anth_msg(
+            lambda: anth_msg(
                 AnthropicUsage(
                     input_tokens=1, output_tokens=1, cache_creation_input_tokens=2, cache_read_input_tokens=3
                 )
@@ -894,7 +894,7 @@ def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
             id='AnthropicMessage-cached',
         ),
         pytest.param(
-            RawMessageStartEvent(
+            lambda: RawMessageStartEvent(
                 message=anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)), type='message_start'
             ),
             snapshot(
@@ -905,7 +905,7 @@ def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
             id='RawMessageStartEvent',
         ),
         pytest.param(
-            RawMessageDeltaEvent(
+            lambda: RawMessageDeltaEvent(
                 delta=Delta(),
                 usage=MessageDeltaUsage(output_tokens=5),
                 type='message_delta',
@@ -913,8 +913,8 @@ def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
             snapshot(Usage(response_tokens=5, total_tokens=5, details={'output_tokens': 5})),
             id='RawMessageDeltaEvent',
         ),
-        pytest.param(RawMessageStopEvent(type='message_stop'), snapshot(Usage()), id='RawMessageStopEvent'),
+        pytest.param(lambda: RawMessageStopEvent(type='message_stop'), snapshot(Usage()), id='RawMessageStopEvent'),
     ],
 )
-def test_usage(message: AnthropicMessage | RawMessageStreamEvent, usage: Usage):
-    assert _map_usage(message) == usage
+def test_usage(message_callback: Callable[[], AnthropicMessage | RawMessageStreamEvent], usage: Usage):
+    assert _map_usage(message_callback()) == usage
