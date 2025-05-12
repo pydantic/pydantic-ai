@@ -355,7 +355,7 @@ class BedrockConverseModel(Model):
 
         if max_tokens := model_settings.get('max_tokens'):
             inference_config['maxTokens'] = max_tokens
-        if temperature := model_settings.get('temperature'):
+        if (temperature := model_settings.get('temperature')) is not None:
             inference_config['temperature'] = temperature
         if top_p := model_settings.get('top_p'):
             inference_config['topP'] = top_p

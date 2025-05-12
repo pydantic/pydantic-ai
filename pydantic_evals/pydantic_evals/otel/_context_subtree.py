@@ -8,7 +8,7 @@ from .span_tree import SpanTree
 
 try:
     from ._context_in_memory_span_exporter import context_subtree
-except ImportError as e:  # pragma: no cover
+except ImportError as e:
     _IMPORT_ERROR = e
 
     @contextmanager

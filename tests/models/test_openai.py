@@ -99,7 +99,7 @@ class MockOpenAI:
     ) -> AsyncOpenAI:
         return cast(AsyncOpenAI, cls(stream=stream))
 
-    async def chat_completions_create(  # pragma: no cover
+    async def chat_completions_create(  # pragma: lax no cover
         self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
         self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
@@ -519,7 +519,7 @@ async def test_no_content(allow_model_requests: None):
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream(''):
-            pass  # pragma: no cover
+            pass
 
 
 async def test_no_delta(allow_model_requests: None):
@@ -860,6 +860,14 @@ async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_
         'What is the capital of England?', model=openai_model, message_history=result.all_messages()
     )
     assert result.output == snapshot('The capital of England is London.')
+
+
+@pytest.mark.vcr()
+async def test_extra_headers(allow_model_requests: None, openai_api_key: str):
+    # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, model_settings=OpenAIModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))
+    await agent.run('hello')
 
 
 @pytest.mark.vcr()
