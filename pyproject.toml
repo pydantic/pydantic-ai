@@ -124,7 +124,6 @@ extend-select = [
     "I",
     "D",
     "TID251",
-    "TC005",  # https://docs.astral.sh/ruff/rules/empty-type-checking-block/
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 isort = { combine-as-imports = true, known-first-party = ["pydantic_ai"] }
