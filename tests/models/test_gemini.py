@@ -164,9 +164,17 @@ async def test_require_response_tool(allow_model_requests: None):
 
 
 async def test_json_def_replaced(allow_model_requests: None):
+    class Axis(BaseModel):
+        label: str
+
+    class Chart(BaseModel):
+        x_axis: Axis
+        y_axis: Axis
+
     class Location(BaseModel):
         lat: float
         lng: float = 1.1
+        chart: Chart
 
     class Locations(BaseModel):
         locations: list[Location]
@@ -175,15 +183,28 @@ async def test_json_def_replaced(allow_model_requests: None):
     assert json_schema == snapshot(
         {
             '$defs': {
+                'Axis': {
+                    'properties': {'label': {'title': 'Label', 'type': 'string'}},
+                    'required': ['label'],
+                    'title': 'Axis',
+                    'type': 'object',
+                },
+                'Chart': {
+                    'properties': {'x_axis': {'$ref': '#/$defs/Axis'}, 'y_axis': {'$ref': '#/$defs/Axis'}},
+                    'required': ['x_axis', 'y_axis'],
+                    'title': 'Chart',
+                    'type': 'object',
+                },
                 'Location': {
                     'properties': {
                         'lat': {'title': 'Lat', 'type': 'number'},
                         'lng': {'default': 1.1, 'title': 'Lng', 'type': 'number'},
+                        'chart': {'$ref': '#/$defs/Chart'},
                     },
-                    'required': ['lat'],
+                    'required': ['lat', 'chart'],
                     'title': 'Location',
                     'type': 'object',
-                }
+                },
             },
             'properties': {'locations': {'items': {'$ref': '#/$defs/Location'}, 'title': 'Locations', 'type': 'array'}},
             'required': ['locations'],
@@ -201,20 +222,36 @@ async def test_json_def_replaced(allow_model_requests: None):
     mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
     mrp = m.customize_request_parameters(mrp)
     assert m._get_tools(mrp) == snapshot(
-        _GeminiTools(
-            function_declarations=[
-                _GeminiFunction(
-                    name='result',
-                    description='This is the tool for the final Result',
-                    parameters={
+        {
+            'function_declarations': [
+                {
+                    'name': 'result',
+                    'description': 'This is the tool for the final Result',
+                    'parameters': {
                         'properties': {
                             'locations': {
                                 'items': {
                                     'properties': {
                                         'lat': {'type': 'number'},
                                         'lng': {'type': 'number'},
+                                        'chart': {
+                                            'properties': {
+                                                'x_axis': {
+                                                    'properties': {'label': {'type': 'string'}},
+                                                    'required': ['label'],
+                                                    'type': 'object',
+                                                },
+                                                'y_axis': {
+                                                    'properties': {'label': {'type': 'string'}},
+                                                    'required': ['label'],
+                                                    'type': 'object',
+                                                },
+                                            },
+                                            'required': ['x_axis', 'y_axis'],
+                                            'type': 'object',
+                                        },
                                     },
-                                    'required': ['lat'],
+                                    'required': ['lat', 'chart'],
                                     'type': 'object',
                                 },
                                 'type': 'array',
@@ -223,9 +260,9 @@ async def test_json_def_replaced(allow_model_requests: None):
                         'required': ['locations'],
                         'type': 'object',
                     },
-                )
+                }
             ]
-        )
+        }
     )
 
 

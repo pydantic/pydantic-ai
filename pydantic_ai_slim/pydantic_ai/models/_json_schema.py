@@ -25,7 +25,7 @@ class WalkJsonSchema(ABC):
         self.simplify_nullable_unions = simplify_nullable_unions
 
         self.defs: dict[str, JsonSchema] = self.schema.get('$defs', {})
-        self.refs_stack = tuple[str, ...]()
+        self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
 
     @abstractmethod
@@ -62,13 +62,16 @@ class WalkJsonSchema(ABC):
         return handled
 
     def _handle(self, schema: JsonSchema) -> JsonSchema:
+        nested_refs = 0
         if self.prefer_inlined_defs:
             while ref := schema.get('$ref'):
                 key = re.sub(r'^#/\$defs/', '', ref)
                 if key in self.refs_stack:
                     self.recursive_refs.add(key)
                     break  # recursive ref can't be unpacked
-                self.refs_stack += (key,)
+                self.refs_stack.append(key)
+                nested_refs += 1
+
                 def_schema = self.defs.get(key)
                 if def_schema is None:  # pragma: no cover
                     raise UserError(f'Could not find $ref definition for {key}')
@@ -86,6 +89,9 @@ class WalkJsonSchema(ABC):
 
         # Apply the base transform
         schema = self.transform(schema)
+
+        if nested_refs > 0:
+            self.refs_stack = self.refs_stack[:-nested_refs]
 
         return schema
 
