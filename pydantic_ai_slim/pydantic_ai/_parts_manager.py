@@ -14,7 +14,7 @@ event-emitting logic.
 from __future__ import annotations as _annotations
 
 from collections.abc import Hashable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Union
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -198,6 +198,8 @@ class ModelResponsePartsManager:
                     return PartStartEvent(index=part_index, part=updated_part)
                 else:
                     # We updated an existing part, so emit a PartDeltaEvent
+                    if updated_part.tool_call_id and not delta.tool_call_id:
+                        delta = replace(delta, tool_call_id=updated_part.tool_call_id)
                     return PartDeltaEvent(index=part_index, delta=delta)
 
     def handle_tool_call_part(

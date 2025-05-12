@@ -145,14 +145,14 @@ class GeminiModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         check_allow_model_requests()
         async with self._make_request(
             messages, False, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
         ) as http_response:
             data = await http_response.aread()
             response = _gemini_response_ta.validate_json(data)
-        return self._process_response(response), _metadata_as_usage(response)
+        return self._process_response(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -269,7 +269,9 @@ class GeminiModel(Model):
             else:
                 raise UnexpectedModelBehavior('Content field missing from Gemini response', str(response))
         parts = response['candidates'][0]['content']['parts']
-        return _process_response_from_parts(parts, model_name=response.get('model_version', self._model_name))
+        usage = _metadata_as_usage(response)
+        usage.requests = 1
+        return _process_response_from_parts(parts, response.get('model_version', self._model_name), usage)
 
     async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -591,7 +593,7 @@ def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart
 
 
 def _process_response_from_parts(
-    parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, timestamp: datetime | None = None
+    parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, usage: usage.Usage
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
@@ -603,7 +605,7 @@ def _process_response_from_parts(
             raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
-    return ModelResponse(parts=items, model_name=model_name, timestamp=timestamp or _utils.now_utc())
+    return ModelResponse(parts=items, usage=usage, model_name=model_name)
 
 
 class _GeminiFunctionCall(TypedDict):
@@ -830,6 +832,12 @@ class _GeminiJsonSchema(WalkJsonSchema):
         #   where we add notes about these properties to the field description?
         schema.pop('exclusiveMaximum', None)
         schema.pop('exclusiveMinimum', None)
+
+        # Gemini only supports string enums, so we need to convert any enum values to strings.
+        # Pydantic will take care of transforming the transformed string values to the correct type.
+        if enum := schema.get('enum'):
+            schema['type'] = 'string'
+            schema['enum'] = [str(val) for val in enum]
 
         type_ = schema.get('type')
         if 'oneOf' in schema and 'type' not in schema:  # pragma: no cover
