@@ -24,7 +24,7 @@ import pydantic_ai.models
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
 
-__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'TestEnv', 'ClientWithHandler', 'try_import'
+__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'TestEnv', 'ClientWithHandler', 'try_import'
 
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
@@ -34,10 +34,11 @@ if TYPE_CHECKING:
 
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
+    def IsInt(*args: Any, **kwargs: Any) -> int: ...
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
 else:
-    from dirty_equals import IsDatetime, IsFloat, IsNow as _IsNow, IsStr
+    from dirty_equals import IsDatetime, IsFloat, IsInt, IsNow as _IsNow, IsStr
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines

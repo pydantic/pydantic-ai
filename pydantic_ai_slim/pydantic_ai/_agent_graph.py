@@ -301,16 +301,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.message_history, model_settings, model_request_parameters
         ) as streamed_response:
             self._did_stream = True
-            ctx.state.usage.incr(_usage.Usage(), requests=1)
+            ctx.state.usage.requests += 1
             yield streamed_response
             # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
             # otherwise usage won't be properly counted:
             async for _ in streamed_response:
                 pass
         model_response = streamed_response.get()
-        request_usage = streamed_response.usage()
 
-        self._finish_handling(ctx, model_response, request_usage)
+        self._finish_handling(ctx, model_response)
         assert self._result is not None  # this should be set by the previous line
 
     async def _make_request(
@@ -321,12 +320,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        model_response, request_usage = await ctx.deps.model.request(
+        model_response = await ctx.deps.model.request(
             ctx.state.message_history, model_settings, model_request_parameters
         )
-        ctx.state.usage.incr(_usage.Usage(), requests=1)
+        ctx.state.usage.incr(_usage.Usage())
 
-        return self._finish_handling(ctx, model_response, request_usage)
+        return self._finish_handling(ctx, model_response)
 
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -348,10 +347,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
-        usage: _usage.Usage,
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
         # Update usage
-        ctx.state.usage.incr(usage, requests=0)
+        ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
 

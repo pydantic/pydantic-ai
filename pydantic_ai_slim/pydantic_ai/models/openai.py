@@ -192,12 +192,14 @@ class OpenAIModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         check_allow_model_requests()
         response = await self._completions_create(
             messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response), _map_usage(response)
+        model_response = self._process_response(response)
+        model_response.usage.requests = 1
+        return model_response
 
     @asynccontextmanager
     async def request_stream(
@@ -304,7 +306,7 @@ class OpenAIModel(Model):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
-        return ModelResponse(items, model_name=response.model, timestamp=timestamp)
+        return ModelResponse(items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -522,12 +524,12 @@ class OpenAIResponsesModel(Model):
         messages: list[ModelRequest | ModelResponse],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         check_allow_model_requests()
         response = await self._responses_create(
             messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response), _map_usage(response)
+        return self._process_response(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -554,7 +556,7 @@ class OpenAIResponsesModel(Model):
         for item in response.output:
             if item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
-        return ModelResponse(items, model_name=response.model, timestamp=timestamp)
+        return ModelResponse(items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(
         self, response: AsyncStream[responses.ResponseStreamEvent]
@@ -935,6 +937,7 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
         if response_usage.prompt_tokens_details is not None:
             details.update(response_usage.prompt_tokens_details.model_dump(exclude_none=True))
         return usage.Usage(
+            requests=1,
             request_tokens=response_usage.prompt_tokens,
             response_tokens=response_usage.completion_tokens,
             total_tokens=response_usage.total_tokens,
