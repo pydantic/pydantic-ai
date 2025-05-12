@@ -92,7 +92,7 @@ class MockMistralAI:
     ) -> Mistral:
         return cast(Mistral, cls(stream=completions_streams))
 
-    async def chat_completions_create(  # pragma: no cover
+    async def chat_completions_create(  # pragma: lax no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
     ) -> MistralChatCompletionResponse | MockAsyncStream[MockCompletionEvent]:
         if stream or self.stream:

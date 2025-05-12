@@ -805,7 +805,7 @@ class _GeminiJsonSchema(WalkJsonSchema):
         additional_properties = schema.pop(
             'additionalProperties', None
         )  # don't pop yet so it's included in the warning
-        if additional_properties:  # pragma: no cover
+        if additional_properties:
             original_schema = {**schema, 'additionalProperties': additional_properties}
             warnings.warn(
                 '`additionalProperties` is not supported by Gemini; it will be removed from the tool JSON schema.'

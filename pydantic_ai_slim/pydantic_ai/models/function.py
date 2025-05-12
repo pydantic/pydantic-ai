@@ -282,7 +282,7 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
         return 0
     if isinstance(content, str):
         return len(re.split(r'[\s",.:]+', content.strip()))
-    else:  # pragma: no cover
+    else:
         tokens = 0
         for part in content:
             if isinstance(part, str):
