@@ -107,7 +107,7 @@ def test_docs_examples(  # noqa: C901
 
     class CustomEvaluationReport(EvaluationReport):
         def print(self, *args: Any, **kwargs: Any) -> None:
-            if 'width' in kwargs:  # pragma: no cover
+            if 'width' in kwargs:  # pragma: lax no cover
                 raise ValueError('width should not be passed to CustomEvaluationReport')
             table = self.console_table(*args, **kwargs)
             io_file = StringIO()
@@ -181,7 +181,7 @@ def test_docs_examples(  # noqa: C901
 
     if not opt_lint.startswith('skip'):
         # ruff and seem to black disagree here, not sure if that's easily fixable
-        if eval_example.update_examples:  # pragma: no cover
+        if eval_example.update_examples:  # pragma: lax no cover
             eval_example.format_ruff(example)
         else:
             eval_example.lint_ruff(example)
@@ -192,7 +192,7 @@ def test_docs_examples(  # noqa: C901
         test_globals: dict[str, str] = {}
         if opt_title == 'mcp_client.py':
             test_globals['__name__'] = '__test__'
-        if eval_example.update_examples:  # pragma: no cover
+        if eval_example.update_examples:  # pragma: lax no cover
             module_dict = eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
         else:
             module_dict = eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
@@ -241,7 +241,7 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         return 'Vichy'
     elif prompt == 'what is 1 + 1?':
         return '2'
-    else:  # pragma: no cover
+    else:
         raise ValueError(f'Unexpected prompt: {prompt}')
 
 
@@ -404,7 +404,9 @@ tool_responses: dict[tuple[str, str], str] = {
 }
 
 
-async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover  # noqa: C901
+async def model_logic(  # noqa: C901
+    messages: list[ModelMessage], info: AgentInfo
+) -> ModelResponse:  # pragma: lax no cover
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
         if isinstance(m.content, list) and m.content[0] == 'This is file d9a13f:':
@@ -503,7 +505,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='final_result', args={'response': win}, tool_call_id='pyd_ai_tool_call_id')]
+            parts=[ToolCallPart(tool_name='final_result', args={'response': win}, tool_call_id='pyd_ai_tool_call_id')],
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roll_die':
         return ModelResponse(
@@ -580,7 +582,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
 
 async def stream_model_logic(  # noqa C901
     messages: list[ModelMessage], info: AgentInfo
-) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: no cover
+) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: lax no cover
     async def stream_text_response(r: str) -> AsyncIterator[str]:
         if isinstance(r, str):
             words = r.split(' ')
@@ -638,7 +640,7 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
     if isinstance(model, FallbackModel):
         # When a fallback model is encountered, replace any OpenAIModel with a model that will raise a ModelHTTPError.
         # Otherwise, do the usual inference.
-        def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelHTTPError(401, 'Invalid API Key')
 
         mock_fallback_models: list[Model] = []

@@ -70,19 +70,17 @@ class MyModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
-        return (
-            ModelResponse(
-                parts=[
-                    TextPart('text1'),
-                    ToolCallPart('tool1', 'args1', 'tool_call_1'),
-                    ToolCallPart('tool2', {'args2': 3}, 'tool_call_2'),
-                    TextPart('text2'),
-                    {},  # test unexpected parts  # type: ignore
-                ],
-                model_name='my_model_123',
-            ),
-            Usage(request_tokens=100, response_tokens=200),
+    ) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                TextPart('text1'),
+                ToolCallPart('tool1', 'args1', 'tool_call_1'),
+                ToolCallPart('tool2', {'args2': 3}, 'tool_call_2'),
+                TextPart('text2'),
+                {},  # test unexpected parts  # type: ignore
+            ],
+            usage=Usage(request_tokens=100, response_tokens=200),
+            model_name='my_model_123',
         )
 
     @asynccontextmanager
@@ -127,11 +125,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 {},  # test unexpected parts  # type: ignore
             ]
         ),
-        ModelResponse(
-            parts=[
-                TextPart('text3'),
-            ]
-        ),
+        ModelResponse(parts=[TextPart('text3')]),
     ]
     await model.request(
         messages,
@@ -540,11 +534,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                 {},  # test unexpected parts  # type: ignore
             ]
         ),
-        ModelResponse(
-            parts=[
-                TextPart('text3'),
-            ]
-        ),
+        ModelResponse(parts=[TextPart('text3')]),
     ]
     await model.request(
         messages,

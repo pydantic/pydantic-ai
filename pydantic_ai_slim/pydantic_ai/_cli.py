@@ -7,16 +7,16 @@ from asyncio import CancelledError
 from collections.abc import Sequence
 from contextlib import ExitStack
 from datetime import datetime, timezone
-from importlib.metadata import version
 from pathlib import Path
 from typing import Any, cast
 
 from typing_inspection.introspection import get_literal_values
 
-from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models import KnownModelName, infer_model
+from . import __version__
+from .agent import Agent
+from .exceptions import UserError
+from .messages import ModelMessage
+from .models import KnownModelName, infer_model
 
 try:
     import argcomplete
@@ -39,7 +39,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-__version__ = version('pydantic-ai-slim')
+__all__ = 'cli', 'cli_exit'
 
 
 class SimpleCodeBlock(CodeBlock):
@@ -83,14 +83,20 @@ The current date and time is {datetime.now()} {tzname}.
 The user is running {sys.platform}."""
 
 
-def cli(args_list: Sequence[str] | None = None) -> int:
+def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
+    """Run the CLI and exit."""
+    sys.exit(cli(prog_name=prog_name))
+
+
+def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai') -> int:
+    """Run the CLI and return the exit code for the process."""
     parser = argparse.ArgumentParser(
-        prog='pai',
+        prog=prog_name,
         description=f"""\
 PydanticAI CLI v{__version__}\n\n
 
-Special prompt:
-* `/exit` - exit the interactive mode
+Special prompts:
+* `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
 * `/markdown` - show the last markdown output of the last question
 * `/multiline` - toggle multiline mode
 """,
@@ -101,7 +107,7 @@ Special prompt:
         '-m',
         '--model',
         nargs='?',
-        help='Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o". Defaults to "openai:gpt-4o".',
+        help='Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o" or "anthropic:claude-3-7-sonnet-latest". Defaults to "openai:gpt-4o".',
         default='openai:gpt-4o',
     )
     # we don't want to autocomplete or list models that don't include the provider,
@@ -118,10 +124,10 @@ Special prompt:
         '-t',
         '--code-theme',
         nargs='?',
-        help='Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "monokai".',
-        default='monokai',
+        help='Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.',
+        default='dark',
     )
-    parser.add_argument('--no-stream', action='store_true', help='Whether to stream responses from the model')
+    parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
     parser.add_argument('--version', action='store_true', help='Show version and exit')
 
     argcomplete.autocomplete(parser)
@@ -129,7 +135,8 @@ Special prompt:
 
     console = Console()
     console.print(
-        f'[green]pai - PydanticAI CLI v{__version__} using[/green] [magenta]{args.model}[/magenta]', highlight=False
+        f'[green]{prog_name} - PydanticAI CLI v{__version__} using[/green] [magenta]{args.model}[/magenta]',
+        highlight=False,
     )
     if args.version:
         return 0
@@ -160,23 +167,25 @@ Special prompt:
             pass
         return 0
 
-    history = Path.home() / '.pai-prompt-history.txt'
+    history = Path.home() / f'.{prog_name}-prompt-history.txt'
     # doing this instead of `PromptSession[Any](history=` allows mocking of PromptSession in tests
     session: PromptSession[Any] = PromptSession(history=FileHistory(str(history)))
     try:
-        return asyncio.run(run_chat(session, stream, cli_agent, console, code_theme))
+        return asyncio.run(run_chat(session, stream, cli_agent, console, code_theme, prog_name))
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 
 
-async def run_chat(session: PromptSession[Any], stream: bool, agent: Agent, console: Console, code_theme: str) -> int:
+async def run_chat(
+    session: PromptSession[Any], stream: bool, agent: Agent, console: Console, code_theme: str, prog_name: str
+) -> int:
     multiline = False
     messages: list[ModelMessage] = []
 
     while True:
         try:
             auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit'])
-            text = await session.prompt_async('pai ➤ ', auto_suggest=auto_suggest, multiline=multiline)
+            text = await session.prompt_async(f'{prog_name} ➤ ', auto_suggest=auto_suggest, multiline=multiline)
         except (KeyboardInterrupt, EOFError):  # pragma: no cover
             return 0
 
@@ -214,14 +223,14 @@ async def ask_agent(
 
     with status, ExitStack() as stack:
         async with agent.iter(prompt, message_history=messages) as agent_run:
-            live = Live('', refresh_per_second=15, console=console, vertical_overflow='visible')
+            live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
             async for node in agent_run:
                 if Agent.is_model_request_node(node):
                     async with node.stream(agent_run.ctx) as handle_stream:
                         status.stop()  # stopping multiple times is idempotent
                         stack.enter_context(live)  # entering multiple times is idempotent
 
-                        async for content in handle_stream.stream_output():
+                        async for content in handle_stream.stream_output(debounce_by=None):
                             live.update(Markdown(content, code_theme=code_theme))
 
         assert agent_run.result is not None
@@ -282,7 +291,3 @@ def handle_slash_command(
     else:
         console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
     return None, multiline
-
-
-def app():  # pragma: no cover
-    sys.exit(cli())

@@ -66,6 +66,7 @@ def test_simple():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=3, total_tokens=54),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -79,12 +80,14 @@ def test_simple():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=3, total_tokens=54),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content="content='World' part_kind='user-prompt' message_count=3")],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=6, total_tokens=58),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -92,7 +95,7 @@ def test_simple():
     )
 
 
-async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
     assert info.allow_text_output
     assert {t.name for t in info.function_tools} == {'get_location', 'get_weather'}
     last = messages[-1].parts[-1]
@@ -154,6 +157,7 @@ def test_weather():
                         tool_name='get_location', args='{"location_description": "London"}', tool_call_id=IsStr()
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=5, total_tokens=56),
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -169,6 +173,7 @@ def test_weather():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_weather', args='{"lat": 51, "lng": 0}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=56, response_tokens=11, total_tokens=67),
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -184,6 +189,7 @@ def test_weather():
             ),
             ModelResponse(
                 parts=[TextPart(content='Raining in London')],
+                usage=Usage(requests=1, request_tokens=57, response_tokens=14, total_tokens=71),
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -194,7 +200,7 @@ def test_weather():
     assert result.output == 'Sunny in Ipswich'
 
 
-async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: no cover
+async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: lax no cover
     last = messages[-1].parts[-1]
     if isinstance(last, UserPromptPart):
         if isinstance(last.content, str) and last.content.startswith('{'):
@@ -324,7 +330,7 @@ def test_register_all():
                 TextPart(
                     f'messages={len(messages)} allow_text_output={info.allow_text_output} tools={len(info.function_tools)}'
                 )
-            ]
+            ],
         )
 
     result = agent_all.run_sync('Hello', model=FunctionModel(f))
@@ -350,6 +356,7 @@ def test_call_all():
                     ToolCallPart(tool_name='qux', args={'x': 0}, tool_call_id=IsStr()),
                     ToolCallPart(tool_name='quz', args={'x': 'a'}, tool_call_id=IsStr()),
                 ],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=21, total_tokens=73),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -374,6 +381,7 @@ def test_call_all():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')],
+                usage=Usage(requests=1, request_tokens=57, response_tokens=33, total_tokens=90),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -442,6 +450,7 @@ async def test_stream_text():
                 ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
+                    usage=Usage(request_tokens=50, response_tokens=2, total_tokens=52),
                     model_name='function::stream_text_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
