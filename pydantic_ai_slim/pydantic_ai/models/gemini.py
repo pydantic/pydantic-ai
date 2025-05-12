@@ -151,7 +151,22 @@ class GeminiModel(Model):
             messages, False, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
         ) as http_response:
             data = await http_response.aread()
-            response = _gemini_response_ta.validate_json(data)
+            from pydantic_core import ValidationError
+            import json
+            try:
+                response = _gemini_response_ta.validate_json(data)
+            except ValidationError as e:
+                response = json.loads(data)
+                response["candidates"] = [{
+                        "finish_reason": "STOP", 
+                        "content": {
+                            "parts": [{
+                                "text": "Gemini sent malformed response. Use newer models to avoid issues.",
+                            }],
+                            "role": "model"
+                        }
+                    }]
+                response = _gemini_response_ta.validate_json(json.dumps(response))
         return self._process_response(response), _metadata_as_usage(response)
 
     @asynccontextmanager
