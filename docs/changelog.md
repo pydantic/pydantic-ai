@@ -18,6 +18,13 @@ See [#1248](https://github.com/pydantic/pydantic-ai/pull/1248) — the attribute
 
 See [#1484](https://github.com/pydantic/pydantic-ai/pull/1484) — `format_as_xml` was moved and made available to import from the package root, e.g. `from pydantic_ai import format_as_xml`.
 
+### v0.2.0 (2025-05-12)
+
+See [#1647](https://github.com/pydantic/pydantic-ai/pull/1647) — usage makes sense as part of `ModelResponse`, and could be really useful in "messages" (really a sequence of requests and response). In this PR:
+
+* Adds `usage` to `ModelResponse` (field has a default factory of `Usage()` so it'll work to load data that doesn't have usage)
+* changes the return type of `Model.request` to just `ModelResponse` instead of `tuple[ModelResponse, Usage]`
+
 ---
 
 ## Full Changelog
