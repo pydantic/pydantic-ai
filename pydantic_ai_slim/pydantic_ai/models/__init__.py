@@ -12,7 +12,6 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cache
-from typing import TYPE_CHECKING
 
 import httpx
 from typing_extensions import Literal, TypeAliasType
@@ -21,11 +20,8 @@ from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent
 from ..settings import ModelSettings
+from ..tools import ToolDefinition
 from ..usage import Usage
-
-if TYPE_CHECKING:
-    from ..tools import ToolDefinition
-
 
 KnownModelName = TypeAliasType(
     'KnownModelName',
