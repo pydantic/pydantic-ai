@@ -539,11 +539,12 @@ The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.
 
 Here's an example that makes all tools strict if the model is an OpenAI model:
 
-```python {title="agent_prepare_tools_customize.py"}
+```python {title="agent_prepare_tools_customize.py" noqa="I001"}
 from dataclasses import replace
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import ToolDefinition
+
 
 async def turn_on_strict_if_openai(
     ctx: RunContext[None], tools_def: list[ToolDefinition]
@@ -557,13 +558,14 @@ agent = Agent('openai:gpt-4o', prepare_tools=turn_on_strict_if_openai)
 
 Here's another example that filters out specific tools by name:
 
-```python {title="agent_prepare_tools_filter_out"}
+```python {title="agent_prepare_tools_filter_out" noqa="I001"}
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import ToolDefinition
 
+
 TOOLS_TO_FILTER_OUT = ['git_push', 'git_delete_branch']
 
-async def filter_out_tools_by_name(ctx: RunContext[bool], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+async def filter_out_tools_by_name(ctx: RunContext[bool], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
     return [tool_def for tool_def in tool_defs if tool_def.name not in TOOLS_TO_FILTER_OUT]
 
 agent = Agent('openai:gpt-4o', prepare_tools=filter_out_tools_by_name)
