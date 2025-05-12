@@ -367,13 +367,16 @@ class BedrockConverseModel(Model):
     async def _map_messages(
         self, messages: list[ModelMessage]
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
-        """Just maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`."""
+        """Maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`.
+
+        Groups consecutive ToolReturnPart objects into a single user message as required by Bedrock Claude/Nova models.
+        """
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)
-        for m in messages:
-            if isinstance(m, ModelRequest):
-                for part in m.parts:
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                for part in message.parts:
                     if isinstance(part, SystemPromptPart):
                         system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
@@ -414,9 +417,9 @@ class BedrockConverseModel(Model):
                                     ],
                                 }
                             )
-            elif isinstance(m, ModelResponse):
+            elif isinstance(message, ModelResponse):
                 content: list[ContentBlockOutputTypeDef] = []
-                for item in m.parts:
+                for item in message.parts:
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
                     else:
@@ -424,12 +427,31 @@ class BedrockConverseModel(Model):
                         content.append(self._map_tool_call(item))
                 bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
-                assert_never(m)
+                assert_never(message)
+
+        # Merge together sequential user messages.
+        processed_messages: list[MessageUnionTypeDef] = []
+        last_message: dict[str, Any] | None = None
+        for current_message in bedrock_messages:
+            if (
+                last_message is not None
+                and current_message['role'] == last_message['role']
+                and current_message['role'] == 'user'
+            ):
+                # Add the new user content onto the existing user message.
+                last_content = list(last_message['content'])
+                last_content.extend(current_message['content'])
+                last_message['content'] = last_content
+                continue
+
+            # Add the entire message to the list of messages.
+            processed_messages.append(current_message)
+            last_message = cast(dict[str, Any], current_message)
 
         if instructions := self._get_instructions(messages):
             system_prompt.insert(0, {'text': instructions})
 
-        return system_prompt, bedrock_messages
+        return system_prompt, processed_messages
 
     @staticmethod
     async def _map_user_prompt(part: UserPromptPart, document_count: Iterator[int]) -> list[MessageUnionTypeDef]:
