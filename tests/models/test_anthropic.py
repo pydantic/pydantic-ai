@@ -865,7 +865,11 @@ def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
     [
         pytest.param(
             anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)),
-            snapshot(Usage(request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1})),
+            snapshot(
+                Usage(
+                    request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
+                )
+            ),
             id='AnthropicMessage',
         ),
         pytest.param(
@@ -879,7 +883,12 @@ def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
                     request_tokens=6,
                     response_tokens=1,
                     total_tokens=7,
-                    details={'cache_creation_input_tokens': 2, 'cache_read_input_tokens': 3, 'input_tokens': 1},
+                    details={
+                        'cache_creation_input_tokens': 2,
+                        'cache_read_input_tokens': 3,
+                        'input_tokens': 1,
+                        'output_tokens': 1,
+                    },
                 )
             ),
             id='AnthropicMessage-cached',
@@ -888,7 +897,11 @@ def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
             RawMessageStartEvent(
                 message=anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)), type='message_start'
             ),
-            snapshot(Usage(request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1})),
+            snapshot(
+                Usage(
+                    request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
+                )
+            ),
             id='RawMessageStartEvent',
         ),
         pytest.param(
@@ -897,7 +910,7 @@ def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
                 usage=MessageDeltaUsage(output_tokens=5),
                 type='message_delta',
             ),
-            snapshot(Usage(response_tokens=5, total_tokens=5)),
+            snapshot(Usage(response_tokens=5, total_tokens=5, details={'output_tokens': 5})),
             id='RawMessageDeltaEvent',
         ),
         pytest.param(RawMessageStopEvent(type='message_stop'), snapshot(Usage()), id='RawMessageStopEvent'),

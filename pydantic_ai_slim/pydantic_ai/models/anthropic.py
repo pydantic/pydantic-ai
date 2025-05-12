@@ -406,9 +406,7 @@ def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage
     # Store all integer-typed usage values in the details, except 'output_tokens' which is represented exactly by
     # `response_tokens`
     details: dict[str, int] = {
-        key: value
-        for key, value in response_usage.model_dump(exclude={'output_tokens'}).items()
-        if isinstance(value, int)
+        key: value for key, value in response_usage.model_dump().items() if isinstance(value, int)
     }
 
     # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence using `get`
