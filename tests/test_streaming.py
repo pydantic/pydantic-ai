@@ -29,7 +29,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import AgentStream, FinalResult, Usage
 from pydantic_graph import End
 
-from .conftest import IsNow, IsStr
+from .conftest import IsInt, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -52,6 +52,7 @@ async def test_streamed_text_response():
                 ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                    usage=Usage(request_tokens=51, response_tokens=0, total_tokens=51),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -81,6 +82,7 @@ async def test_streamed_text_response():
                 ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                    usage=Usage(request_tokens=51, response_tokens=0, total_tokens=51),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -93,6 +95,7 @@ async def test_streamed_text_response():
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                    usage=Usage(request_tokens=52, response_tokens=11, total_tokens=63),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -194,36 +197,43 @@ async def test_streamed_text_stream():
             [
                 ModelResponse(
                     parts=[TextPart(content='The ')],
+                    usage=Usage(request_tokens=51, response_tokens=1, total_tokens=52),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat ')],
+                    usage=Usage(request_tokens=51, response_tokens=2, total_tokens=53),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat ')],
+                    usage=Usage(request_tokens=51, response_tokens=3, total_tokens=54),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on ')],
+                    usage=Usage(request_tokens=51, response_tokens=4, total_tokens=55),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the ')],
+                    usage=Usage(request_tokens=51, response_tokens=5, total_tokens=56),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
+                    usage=Usage(request_tokens=51, response_tokens=7, total_tokens=58),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
+                    usage=Usage(request_tokens=51, response_tokens=7, total_tokens=58),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -245,7 +255,7 @@ async def test_plain_response():
 
     with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
         async with agent.run_stream(''):
-            pass  # pragma: no cover
+            pass
 
     assert call_index == 2
 
@@ -290,6 +300,7 @@ async def test_call_tool():
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
+                    usage=Usage(request_tokens=50, response_tokens=5, total_tokens=55),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -311,6 +322,7 @@ async def test_call_tool():
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
+                    usage=Usage(request_tokens=50, response_tokens=5, total_tokens=55),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -332,6 +344,7 @@ async def test_call_tool():
                             tool_call_id=IsStr(),
                         )
                     ],
+                    usage=Usage(request_tokens=50, response_tokens=7, total_tokens=57),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -357,7 +370,7 @@ async def test_call_tool_empty():
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream('hello'):
-            pass  # pragma: no cover
+            pass
 
 
 async def test_call_tool_wrong_name():
@@ -377,13 +390,14 @@ async def test_call_tool_wrong_name():
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(0\) for result validation'):
             async with agent.run_stream('hello'):
-                pass  # pragma: no cover
+                pass
 
     assert messages == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=Usage(request_tokens=50, response_tokens=1, total_tokens=51),
                 model_name='function::stream_structured_function',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -439,6 +453,7 @@ async def test_early_strategy_stops_after_first_final_result():
                     ToolCallPart(tool_name='regular_tool', args='{"x": 1}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='another_tool', args='{"y": 2}', tool_call_id=IsStr()),
                 ],
+                usage=Usage(request_tokens=50, response_tokens=10, total_tokens=60),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -494,6 +509,7 @@ async def test_early_strategy_uses_first_final_result():
                     ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
                 ],
+                usage=Usage(request_tokens=50, response_tokens=8, total_tokens=58),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -560,6 +576,7 @@ async def test_exhaustive_strategy_executes_all_tools():
                     ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='unknown_tool', args='{"value": "???"}', tool_call_id=IsStr()),
                 ],
+                usage=Usage(request_tokens=50, response_tokens=18, total_tokens=68),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -668,6 +685,7 @@ async def test_early_strategy_with_final_result_in_middle():
                         part_kind='tool-call',
                     ),
                 ],
+                usage=Usage(request_tokens=50, response_tokens=14, total_tokens=64),
                 model_name='function::sf',
                 timestamp=IsNow(tz=datetime.timezone.utc),
                 kind='response',
@@ -741,6 +759,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='regular_tool', args={'x': 0}, tool_call_id=IsStr())],
+                usage=Usage(request_tokens=57, response_tokens=0, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -753,6 +772,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'value': 'a'}, tool_call_id=IsStr())],
+                usage=Usage(request_tokens=58, response_tokens=4, total_tokens=62),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -858,6 +878,9 @@ async def test_iter_stream_responses():
     assert messages == [
         ModelResponse(
             parts=[TextPart(content=text, part_kind='text')],
+            usage=Usage(
+                requests=0, request_tokens=IsInt(), response_tokens=IsInt(), total_tokens=IsInt(), details=None
+            ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             kind='response',

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import timezone
 from functools import cached_property
-from typing import Any, TypeVar, Union, cast
+from typing import Any, Callable, TypeVar, Union, cast
 
 import httpx
 import pytest
@@ -52,7 +52,11 @@ with try_import() as imports_successful:
     )
     from anthropic.types.raw_message_delta_event import Delta
 
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic import (
+        AnthropicModel,
+        AnthropicModelSettings,
+        _map_usage,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
     # note: we use Union here so that casting works with Python 3.9
@@ -169,12 +173,26 @@ async def test_sync_request_text_response(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=5,
+                    response_tokens=10,
+                    total_tokens=15,
+                    details={'input_tokens': 5, 'output_tokens': 10},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=5,
+                    response_tokens=10,
+                    total_tokens=15,
+                    details={'input_tokens': 5, 'output_tokens': 10},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -258,6 +276,13 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=3,
+                    response_tokens=5,
+                    total_tokens=8,
+                    details={'input_tokens': 3, 'output_tokens': 5},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -320,6 +345,13 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=2,
+                    response_tokens=1,
+                    total_tokens=3,
+                    details={'input_tokens': 2, 'output_tokens': 1},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -341,6 +373,13 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=3,
+                    response_tokens=2,
+                    total_tokens=5,
+                    details={'input_tokens': 3, 'output_tokens': 2},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -356,6 +395,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=3,
+                    response_tokens=5,
+                    total_tokens=8,
+                    details={'input_tokens': 3, 'output_tokens': 5},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -635,6 +681,19 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
 
 
 @pytest.mark.vcr()
+async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str):
+    # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
+    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        model_settings=AnthropicModelSettings(
+            anthropic_metadata={'user_id': '123'}, extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}
+        ),
+    )
+    await agent.run('hello')
+
+
+@pytest.mark.vcr()
 async def test_image_url_input_invalid_mime_type(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -679,6 +738,18 @@ async def test_image_as_binary_content_tool_response(
                     TextPart(content='Let me get the image and check what fruit is shown.'),
                     ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01VMGXdexE1Fy5xdWgoom9Te'),
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=372,
+                    response_tokens=49,
+                    total_tokens=421,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 372,
+                        'output_tokens': 49,
+                    },
+                ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
             ),
@@ -705,6 +776,18 @@ async def test_image_as_binary_content_tool_response(
                         content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The kiwi's fuzzy brown skin is visible around the edges of the slice."
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=2025,
+                    response_tokens=57,
+                    total_tokens=2082,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 2025,
+                        'output_tokens': 57,
+                    },
+                ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
             ),
@@ -825,6 +908,18 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=20,
+                    response_tokens=10,
+                    total_tokens=30,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 20,
+                        'output_tokens': 10,
+                    },
+                ),
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
             ),
@@ -846,3 +941,74 @@ async def test_multiple_system_prompt_formatting(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert 'system' in completion_kwargs
     assert completion_kwargs['system'] == 'this is the system prompt\n\nand this is another'
+
+    
+def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
+    return AnthropicMessage(
+        id='x',
+        content=[],
+        model='claude-3-7-sonnet-latest',
+        role='assistant',
+        type='message',
+        usage=usage,
+    )
+
+
+@pytest.mark.parametrize(
+    'message_callback,usage',
+    [
+        pytest.param(
+            lambda: anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)),
+            snapshot(
+                Usage(
+                    request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
+                )
+            ),
+            id='AnthropicMessage',
+        ),
+        pytest.param(
+            lambda: anth_msg(
+                AnthropicUsage(
+                    input_tokens=1, output_tokens=1, cache_creation_input_tokens=2, cache_read_input_tokens=3
+                )
+            ),
+            snapshot(
+                Usage(
+                    request_tokens=6,
+                    response_tokens=1,
+                    total_tokens=7,
+                    details={
+                        'cache_creation_input_tokens': 2,
+                        'cache_read_input_tokens': 3,
+                        'input_tokens': 1,
+                        'output_tokens': 1,
+                    },
+                )
+            ),
+            id='AnthropicMessage-cached',
+        ),
+        pytest.param(
+            lambda: RawMessageStartEvent(
+                message=anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)), type='message_start'
+            ),
+            snapshot(
+                Usage(
+                    request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
+                )
+            ),
+            id='RawMessageStartEvent',
+        ),
+        pytest.param(
+            lambda: RawMessageDeltaEvent(
+                delta=Delta(),
+                usage=MessageDeltaUsage(output_tokens=5),
+                type='message_delta',
+            ),
+            snapshot(Usage(response_tokens=5, total_tokens=5, details={'output_tokens': 5})),
+            id='RawMessageDeltaEvent',
+        ),
+        pytest.param(lambda: RawMessageStopEvent(type='message_stop'), snapshot(Usage()), id='RawMessageStopEvent'),
+    ],
+)
+def test_usage(message_callback: Callable[[], AnthropicMessage | RawMessageStreamEvent], usage: Usage):
+    assert _map_usage(message_callback()) == usage

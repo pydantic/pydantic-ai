@@ -78,7 +78,7 @@ See [Cohere's docs](https://docs.cohere.com/v2/docs/models) for a list of all av
 """
 
 
-class CohereModelSettings(ModelSettings):
+class CohereModelSettings(ModelSettings, total=False):
     """Settings used for a Cohere model request.
 
     ALL FIELDS MUST BE `cohere_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -133,10 +133,12 @@ class CohereModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         check_allow_model_requests()
         response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_parameters)
-        return self._process_response(response), _map_usage(response)
+        model_response = self._process_response(response)
+        model_response.usage.requests = 1
+        return model_response
 
     @property
     def model_name(self) -> CohereModelName:
@@ -191,7 +193,7 @@ class CohereModel(Model):
                         tool_call_id=c.id or _generate_tool_call_id(),
                     )
                 )
-        return ModelResponse(parts=parts, model_name=self._model_name)
+        return ModelResponse(parts=parts, usage=_map_usage(response), model_name=self._model_name)
 
     def _map_messages(self, messages: list[ModelMessage]) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""

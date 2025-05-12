@@ -90,7 +90,7 @@ See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models)
 """
 
 
-class AnthropicModelSettings(ModelSettings):
+class AnthropicModelSettings(ModelSettings, total=False):
     """Settings used for an Anthropic model request.
 
     ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -145,12 +145,14 @@ class AnthropicModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         check_allow_model_requests()
         response = await self._messages_create(
             messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response), _map_usage(response)
+        model_response = self._process_response(response)
+        model_response.usage.requests = 1
+        return model_response
 
     @asynccontextmanager
     async def request_stream(
@@ -221,6 +223,8 @@ class AnthropicModel(Model):
         system_prompt, anthropic_messages = await self._map_message(messages)
 
         try:
+            extra_headers = model_settings.get('extra_headers', {})
+            extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.messages.create(
                 max_tokens=model_settings.get('max_tokens', 1024),
                 system=system_prompt or NOT_GIVEN,
@@ -234,7 +238,7 @@ class AnthropicModel(Model):
                 top_p=model_settings.get('top_p', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
-                extra_headers={'User-Agent': get_user_agent()},
+                extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
@@ -258,7 +262,7 @@ class AnthropicModel(Model):
                     )
                 )
 
-        return ModelResponse(items, model_name=response.model)
+        return ModelResponse(items, usage=_map_usage(response), model_name=response.model)
 
     async def _process_streamed_response(self, response: AsyncStream[RawMessageStreamEvent]) -> StreamedResponse:
         peekable_response = _utils.PeekableAsyncStream(response)
@@ -390,36 +394,31 @@ class AnthropicModel(Model):
 def _map_usage(message: AnthropicMessage | RawMessageStreamEvent) -> usage.Usage:
     if isinstance(message, AnthropicMessage):
         response_usage = message.usage
+    elif isinstance(message, RawMessageStartEvent):
+        response_usage = message.message.usage
+    elif isinstance(message, RawMessageDeltaEvent):
+        response_usage = message.usage
     else:
-        if isinstance(message, RawMessageStartEvent):
-            response_usage = message.message.usage
-        elif isinstance(message, RawMessageDeltaEvent):
-            response_usage = message.usage
-        else:
-            # No usage information provided in:
-            # - RawMessageStopEvent
-            # - RawContentBlockStartEvent
-            # - RawContentBlockDeltaEvent
-            # - RawContentBlockStopEvent
-            response_usage = None
-
-    if response_usage is None:
+        # No usage information provided in:
+        # - RawMessageStopEvent
+        # - RawContentBlockStartEvent
+        # - RawContentBlockDeltaEvent
+        # - RawContentBlockStopEvent
         return usage.Usage()
 
-    # Store all integer-typed usage values in the details dict
-    response_usage_dict = response_usage.model_dump()
-    details: dict[str, int] = {}
-    for key, value in response_usage_dict.items():
-        if isinstance(value, int):
-            details[key] = value
+    # Store all integer-typed usage values in the details, except 'output_tokens' which is represented exactly by
+    # `response_tokens`
+    details: dict[str, int] = {
+        key: value for key, value in response_usage.model_dump().items() if isinstance(value, int)
+    }
 
-    # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence the getattr call
+    # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence using `get`
     # Tokens are only counted once between input_tokens, cache_creation_input_tokens, and cache_read_input_tokens
     # This approach maintains request_tokens as the count of all input tokens, with cached counts as details
     request_tokens = (
-        getattr(response_usage, 'input_tokens', 0)
-        + (getattr(response_usage, 'cache_creation_input_tokens', 0) or 0)  # These can be missing, None, or int
-        + (getattr(response_usage, 'cache_read_input_tokens', 0) or 0)
+        details.get('input_tokens', 0)
+        + details.get('cache_creation_input_tokens', 0)
+        + details.get('cache_read_input_tokens', 0)
     )
 
     return usage.Usage(

@@ -24,7 +24,7 @@ import pydantic_ai.models
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
 
-__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'TestEnv', 'ClientWithHandler', 'try_import'
+__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'TestEnv', 'ClientWithHandler', 'try_import'
 
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
@@ -34,10 +34,11 @@ if TYPE_CHECKING:
 
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
+    def IsInt(*args: Any, **kwargs: Any) -> int: ...
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
 else:
-    from dirty_equals import IsDatetime, IsFloat, IsNow as _IsNow, IsStr
+    from dirty_equals import IsDatetime, IsFloat, IsInt, IsNow as _IsNow, IsStr
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
@@ -59,7 +60,7 @@ class TestEnv:
     def remove(self, name: str) -> None:
         self.envars[name] = os.environ.pop(name, None)
 
-    def reset(self) -> None:  # pragma: no cover
+    def reset(self) -> None:
         for name, value in self.envars.items():
             if value is None:
                 os.environ.pop(name, None)
@@ -100,7 +101,7 @@ async def client_with_handler() -> AsyncIterator[ClientWithHandler]:
     try:
         yield create_client
     finally:
-        if client:  # pragma: no cover
+        if client:
             await client.aclose()
 
 
@@ -155,7 +156,7 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
 
 
 @contextmanager
-def try_import() -> Iterator[Callable[[], bool]]:  # pragma: no cover
+def try_import() -> Iterator[Callable[[], bool]]:
     import_success = False
 
     def check_import() -> bool:
@@ -276,7 +277,7 @@ def mistral_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
-def bedrock_provider():  # pragma: no cover
+def bedrock_provider():
     try:
         import boto3
 
@@ -304,7 +305,7 @@ def model(
     co_api_key: str,
     gemini_api_key: str,
     bedrock_provider: BedrockProvider,
-) -> Model:  # pragma: no cover
+) -> Model:  # pragma: lax no cover
     try:
         if request.param == 'openai':
             from pydantic_ai.models.openai import OpenAIModel

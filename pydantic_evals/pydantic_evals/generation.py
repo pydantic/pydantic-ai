@@ -37,7 +37,7 @@ async def generate_dataset(
     model: models.Model | models.KnownModelName = 'openai:gpt-4o',
     n_examples: int = 3,
     extra_instructions: str | None = None,
-) -> Dataset[InputsT, OutputT, MetadataT]:  # pragma: no cover
+) -> Dataset[InputsT, OutputT, MetadataT]:
     """Use an LLM to generate a dataset of test cases, each consisting of input, expected output, and metadata.
 
     This function creates a properly structured dataset with the specified input, output, and metadata types.

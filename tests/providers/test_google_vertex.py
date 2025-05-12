@@ -147,7 +147,7 @@ def save_service_account(service_account_path: Path, project_id: str) -> None:
 def vertex_provider_auth(mocker: MockerFixture) -> None:
     # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
     if not os.getenv('CI'):
-        return  # pragma: no cover
+        return  # pragma: lax no cover
 
     @dataclass
     class NoOpCredentials:
