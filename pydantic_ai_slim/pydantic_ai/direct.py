@@ -96,7 +96,7 @@ def model_request_sync(
 
     model_response = model_request_sync(
         'anthropic:claude-3-5-haiku-latest',
-        [ModelRequest.user_text_prompt('What is the capital of France?')]
+        [ModelRequest.user_text_prompt('What is the capital of France?')]  # (1)!
     )
     print(model_response)
     '''
@@ -111,6 +111,8 @@ def model_request_sync(
     )
     '''
     ```
+
+    1. See [`ModelRequest.user_text_prompt`][pydantic_ai.messages.ModelRequest.user_text_prompt] for details.
 
     Args:
         model: The model to make a request to. We allow `str` here since the actual list of allowed models changes frequently.
@@ -151,7 +153,7 @@ def model_request_stream(
 
 
     async def main():
-        messages = [ModelRequest.user_text_prompt('Who was Albert Einstein?')]
+        messages = [ModelRequest.user_text_prompt('Who was Albert Einstein?')]  # (1)!
         async with model_request_stream( 'openai:gpt-4.1-mini', messages) as stream:
             chunks = []
             async for chunk in stream:
@@ -179,6 +181,8 @@ def model_request_stream(
             ]
             '''
     ```
+
+    1. See [`ModelRequest.user_text_prompt`][pydantic_ai.messages.ModelRequest.user_text_prompt] for details.
 
     Args:
         model: The model to make a request to. We allow `str` here since the actual list of allowed models changes frequently.
