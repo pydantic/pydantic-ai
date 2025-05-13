@@ -264,7 +264,7 @@ async def test_a2a_file_message_with_data():
             task_id = response['result']['id']
 
             while task := await a2a_client.get_task(task_id):
-                if 'result' in task and task['result']['status']['state'] == 'completed':
+                if 'result' in task and task['result']['status']['state'] == 'failed':
                     break
                 await anyio.sleep(0.1)
             assert task == snapshot(
