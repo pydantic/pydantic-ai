@@ -13,10 +13,11 @@ from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
-from . import _pydantic, _utils, messages as _messages, models
+from . import _pydantic, _utils, messages as _messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
 
 if TYPE_CHECKING:
+    from .models import Model
     from .result import Usage
 
 __all__ = (
@@ -44,7 +45,7 @@ class RunContext(Generic[AgentDepsT]):
 
     deps: AgentDepsT
     """Dependencies for the agent."""
-    model: models.Model
+    model: Model
     """The model used in this run."""
     usage: Usage
     """LLM usage associated with the run."""

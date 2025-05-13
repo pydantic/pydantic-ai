@@ -18,6 +18,7 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
+    StructuredOutputPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -241,7 +242,7 @@ class TestStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for i, part in enumerate(self._structured_response.parts):
-            if isinstance(part, TextPart):
+            if isinstance(part, (TextPart, StructuredOutputPart)):
                 text = part.content
                 *words, last_word = text.split(' ')
                 words = [f'{word} ' for word in words]

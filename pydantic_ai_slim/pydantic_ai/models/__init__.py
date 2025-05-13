@@ -16,6 +16,7 @@ from functools import cache
 import httpx
 from typing_extensions import Literal, TypeAliasType
 
+from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent
@@ -261,8 +262,11 @@ class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition]
-    allow_text_output: bool
+
+    preferred_output_mode: Literal['tool', 'structured'] | None
+    allow_text_output: bool  # TODO: How to handle with structured output?
     output_tools: list[ToolDefinition]
+    output_object: OutputObjectDefinition | None
 
 
 class Model(ABC):

@@ -24,7 +24,7 @@ from . import (
     result,
     usage as _usage,
 )
-from .result import OutputDataT, ToolOutput
+from .result import OutputDataT, StructuredOutput, ToolOutput
 from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, Tool, ToolDefinition
 
@@ -244,6 +244,8 @@ async def _prepare_request_parameters(
         function_tools=function_tool_defs,
         allow_text_output=allow_text_output(output_schema),
         output_tools=output_schema.tool_defs() if output_schema is not None else [],
+        output_object=output_schema.output_object_schema.definition if output_schema is not None else None,
+        preferred_output_mode=output_schema.preferred_mode if output_schema is not None else None,
     )
 
 
@@ -394,7 +396,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         async for _event in stream:
             pass
 
-    async def _run_stream(
+    async def _run_stream(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         if self._events_iterator is None:
@@ -402,12 +404,16 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:
                 texts: list[str] = []
+                structured_outputs: list[str] = []
                 tool_calls: list[_messages.ToolCallPart] = []
                 for part in self.model_response.parts:
                     if isinstance(part, _messages.TextPart):
                         # ignore empty content for text parts, see #437
                         if part.content:
                             texts.append(part.content)
+                    elif isinstance(part, _messages.StructuredOutputPart):
+                        if part.content:
+                            structured_outputs.append(part.content)
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
                     else:
@@ -420,6 +426,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 if tool_calls:
                     async for event in self._handle_tool_calls(ctx, tool_calls):
                         yield event
+                elif structured_outputs:
+                    # No events are emitted during the handling of structured outputs, so we don't need to yield anything
+                    self._next_node = await self._handle_structured_outputs(ctx, structured_outputs)
                 elif texts:
                     # No events are emitted during the handling of text responses, so we don't need to yield anything
                     self._next_node = await self._handle_text_response(ctx, texts)
@@ -532,6 +541,27 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     ]
                 )
             )
+
+    async def _handle_structured_outputs(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        structured_outputs: list[str],
+    ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        if len(structured_outputs) != 1:
+            raise exceptions.UnexpectedModelBehavior('Received multiple structured outputs in a single response')
+        output_schema = ctx.deps.output_schema
+        if not output_schema:
+            raise exceptions.UnexpectedModelBehavior('Must specify a non-str result_type when using structured outputs')
+
+        structured_output = structured_outputs[0]
+        try:
+            result_data = output_schema.validate(structured_output)
+            result_data = await _validate_output(result_data, ctx, None)
+        except _output.ToolRetryError as e:
+            ctx.state.increment_retries(ctx.deps.max_result_retries)
+            return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
+        else:
+            return self._handle_final_result(ctx, result.FinalResult(result_data, None, None), [])
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
@@ -827,7 +857,9 @@ def get_captured_run_messages() -> _RunMessages:
 
 
 def build_agent_graph(
-    name: str | None, deps_type: type[DepsT], output_type: type[OutputT] | ToolOutput[OutputT]
+    name: str | None,
+    deps_type: type[DepsT],
+    output_type: type[OutputT] | ToolOutput[OutputT] | StructuredOutput[OutputT],
 ) -> Graph[GraphAgentState, GraphAgentDeps[DepsT, result.FinalResult[OutputT]], result.FinalResult[OutputT]]:
     """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
     nodes = (

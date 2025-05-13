@@ -21,6 +21,7 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
+    StructuredOutputPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -270,7 +271,7 @@ class GroqModel(Model):
                 texts: list[str] = []
                 tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
                 for item in message.parts:
-                    if isinstance(item, TextPart):
+                    if isinstance(item, (TextPart, StructuredOutputPart)):
                         texts.append(item.content)
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))

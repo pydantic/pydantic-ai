@@ -63,7 +63,9 @@ async def test_model_simple(allow_model_requests: None):
     assert m.model_name == 'gemini-1.5-flash'
     assert 'x-goog-api-key' in m.client.headers
 
-    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[])
+    mrp = ModelRequestParameters(
+        function_tools=[], allow_text_output=True, output_tools=[], preferred_output_mode=None, output_object=None
+    )
     mrp = m.customize_request_parameters(mrp)
     tools = m._get_tools(mrp)
     tool_config = m._get_tool_config(mrp, tools)
@@ -96,7 +98,13 @@ async def test_model_tools(allow_model_requests: None):
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}, 'required': ['spam']},
     )
 
-    mrp = ModelRequestParameters(function_tools=tools, allow_text_output=True, output_tools=[output_tool])
+    mrp = ModelRequestParameters(
+        function_tools=tools,
+        allow_text_output=True,
+        output_tools=[output_tool],
+        preferred_output_mode=None,
+        output_object=None,
+    )
     mrp = m.customize_request_parameters(mrp)
     tools = m._get_tools(mrp)
     tool_config = m._get_tool_config(mrp, tools)
@@ -138,7 +146,13 @@ async def test_require_response_tool(allow_model_requests: None):
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
     )
-    mrp = ModelRequestParameters(function_tools=[], allow_text_output=False, output_tools=[output_tool])
+    mrp = ModelRequestParameters(
+        function_tools=[],
+        allow_text_output=False,
+        output_tools=[output_tool],
+        preferred_output_mode=None,
+        output_object=None,
+    )
     mrp = m.customize_request_parameters(mrp)
     tools = m._get_tools(mrp)
     tool_config = m._get_tool_config(mrp, tools)
@@ -219,7 +233,13 @@ async def test_json_def_replaced(allow_model_requests: None):
         'This is the tool for the final Result',
         json_schema,
     )
-    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+    mrp = ModelRequestParameters(
+        function_tools=[],
+        allow_text_output=True,
+        output_tools=[output_tool],
+        preferred_output_mode=None,
+        output_object=None,
+    )
     mrp = m.customize_request_parameters(mrp)
     assert m._get_tools(mrp) == snapshot(
         {
@@ -298,7 +318,13 @@ async def test_json_def_enum(allow_model_requests: None):
         'This is the tool for the final Result',
         json_schema,
     )
-    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+    mrp = ModelRequestParameters(
+        function_tools=[],
+        preferred_output_mode=None,
+        allow_text_output=True,
+        output_tools=[output_tool],
+        output_object=None,
+    )
     mrp = m.customize_request_parameters(mrp)
 
     # This tests that the enum values are properly converted to strings for Gemini
@@ -340,7 +366,13 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
         'This is the tool for the final Result',
         json_schema,
     )
-    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+    mrp = ModelRequestParameters(
+        function_tools=[],
+        allow_text_output=True,
+        output_tools=[output_tool],
+        preferred_output_mode=None,
+        output_object=None,
+    )
     mrp = m.customize_request_parameters(mrp)
     assert m._get_tools(mrp) == snapshot(
         _GeminiTools(
@@ -404,7 +436,13 @@ async def test_json_def_recursive(allow_model_requests: None):
         json_schema,
     )
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
-        mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+        mrp = ModelRequestParameters(
+            function_tools=[],
+            allow_text_output=True,
+            output_tools=[output_tool],
+            preferred_output_mode=None,
+            output_object=None,
+        )
         mrp = m.customize_request_parameters(mrp)
         m._get_tools(mrp)
 
@@ -437,7 +475,13 @@ async def test_json_def_date(allow_model_requests: None):
         'This is the tool for the final Result',
         json_schema,
     )
-    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+    mrp = ModelRequestParameters(
+        function_tools=[],
+        allow_text_output=True,
+        output_tools=[output_tool],
+        preferred_output_mode=None,
+        output_object=None,
+    )
     mrp = m.customize_request_parameters(mrp)
     assert m._get_tools(mrp) == snapshot(
         _GeminiTools(

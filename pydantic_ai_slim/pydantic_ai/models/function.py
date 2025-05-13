@@ -22,6 +22,7 @@ from ..messages import (
     ModelResponse,
     ModelResponseStreamEvent,
     RetryPromptPart,
+    StructuredOutputPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -266,7 +267,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
                     assert_never(part)
         elif isinstance(message, ModelResponse):
             for part in message.parts:
-                if isinstance(part, TextPart):
+                if isinstance(part, (TextPart, StructuredOutputPart)):
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolCallPart):
                     call = part

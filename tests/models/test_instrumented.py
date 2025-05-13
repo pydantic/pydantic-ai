@@ -134,6 +134,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
             function_tools=[],
             allow_text_output=True,
             output_tools=[],
+            preferred_output_mode=None,
+            output_object=None,
         ),
     )
 
@@ -151,7 +153,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "preferred_output_mode": null, "allow_text_output": true, "output_tools": [], "output_object": null}',
                     'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
@@ -330,6 +332,8 @@ async def test_instrumented_model_not_recording():
             function_tools=[],
             allow_text_output=True,
             output_tools=[],
+            preferred_output_mode=None,
+            output_object=None,
         ),
     )
 
@@ -352,6 +356,8 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
             function_tools=[],
             allow_text_output=True,
             output_tools=[],
+            preferred_output_mode=None,
+            output_object=None,
         ),
     ) as response_stream:
         assert [event async for event in response_stream] == snapshot(
@@ -375,7 +381,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "preferred_output_mode": null, "allow_text_output": true, "output_tools": [], "output_object": null}',
                     'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
@@ -440,6 +446,8 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 function_tools=[],
                 allow_text_output=True,
                 output_tools=[],
+                preferred_output_mode=None,
+                output_object=None,
             ),
         ) as response_stream:
             async for event in response_stream:
@@ -460,7 +468,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "preferred_output_mode": null, "allow_text_output": true, "output_tools": [], "output_object": null}',
                     'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
@@ -543,6 +551,8 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
             function_tools=[],
             allow_text_output=True,
             output_tools=[],
+            preferred_output_mode=None,
+            output_object=None,
         ),
     )
 
@@ -560,7 +570,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "preferred_output_mode": null, "allow_text_output": true, "output_tools": [], "output_object": null}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',

@@ -17,6 +17,7 @@ from typing_extensions import NotRequired, TypedDict, assert_never
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, UserError, _utils, usage
+from .._output import OutputObjectDefinition
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -28,6 +29,7 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
+    StructuredOutputPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -171,10 +173,17 @@ class GeminiModel(Model):
         def _customize_tool_def(t: ToolDefinition):
             return replace(t, parameters_json_schema=_GeminiJsonSchema(t.parameters_json_schema).walk())
 
+        def _customize_output_object_def(o: OutputObjectDefinition):
+            return replace(o, json_schema=_GeminiJsonSchema(o.json_schema).walk())
+
         return ModelRequestParameters(
             function_tools=[_customize_tool_def(tool) for tool in model_request_parameters.function_tools],
             allow_text_output=model_request_parameters.allow_text_output,
             output_tools=[_customize_tool_def(tool) for tool in model_request_parameters.output_tools],
+            output_object=_customize_output_object_def(model_request_parameters.output_object)
+            if model_request_parameters.output_object
+            else None,
+            preferred_output_mode=model_request_parameters.preferred_output_mode,
         )
 
     @property
@@ -550,7 +559,7 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
     for item in m.parts:
         if isinstance(item, ToolCallPart):
             parts.append(_function_call_part_from_call(item))
-        elif isinstance(item, TextPart):
+        elif isinstance(item, (TextPart, StructuredOutputPart)):
             if item.content:
                 parts.append(_GeminiTextPart(text=item.content))
         else:

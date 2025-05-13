@@ -23,6 +23,7 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
+    StructuredOutputPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -246,6 +247,7 @@ class MistralModel(Model):
             )
 
         elif model_request_parameters.output_tools:
+            # TODO: Port to native "manual JSON" mode
             # Json Mode
             parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_parameters.output_tools]
             user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
@@ -254,7 +256,9 @@ class MistralModel(Model):
             response = await self.client.chat.stream_async(
                 model=str(self._model_name),
                 messages=mistral_messages,
-                response_format={'type': 'json_object'},
+                response_format={
+                    'type': 'json_object'
+                },  # TODO: Should be able to use json_schema now: https://docs.mistral.ai/capabilities/structured-output/custom_structured_output/, https://github.com/mistralai/client-python/blob/bc4adf335968c8a272e1ab7da8461c9943d8e701/src/mistralai/extra/utils/response_format.py#L9
                 stream=True,
                 http_headers={'User-Agent': get_user_agent()},
             )
@@ -474,7 +478,7 @@ class MistralModel(Model):
                 tool_calls: list[MistralToolCall] = []
 
                 for part in message.parts:
-                    if isinstance(part, TextPart):
+                    if isinstance(part, (TextPart, StructuredOutputPart)):
                         content_chunks.append(MistralTextChunk(text=part.content))
                     elif isinstance(part, ToolCallPart):
                         tool_calls.append(self._map_tool_call(part))
@@ -558,6 +562,7 @@ class MistralStreamedResponse(StreamedResponse):
                 # Attempt to produce an output tool call from the received text
                 if self._output_tools:
                     self._delta_content += text
+                    # TODO: Port to native "manual JSON" mode
                     maybe_tool_call_part = self._try_get_output_tool_from_text(self._delta_content, self._output_tools)
                     if maybe_tool_call_part:
                         yield self._parts_manager.handle_tool_call_part(

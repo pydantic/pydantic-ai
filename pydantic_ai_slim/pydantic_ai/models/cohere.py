@@ -14,6 +14,7 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     RetryPromptPart,
+    StructuredOutputPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -205,7 +206,7 @@ class CohereModel(Model):
                 texts: list[str] = []
                 tool_calls: list[ToolCallV2] = []
                 for item in message.parts:
-                    if isinstance(item, TextPart):
+                    if isinstance(item, (TextPart, StructuredOutputPart)):
                         texts.append(item.content)
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
