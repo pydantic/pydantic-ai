@@ -1,6 +1,7 @@
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
 import re
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -70,25 +71,41 @@ async def test_stdio_server_with_cwd():
         assert len(tools) == 10
 
 
-def test_sse_server():
-    sse_server = MCPServerHTTP(url='http://localhost:8000/sse')
-    assert sse_server.url == 'http://localhost:8000/sse'
-    assert sse_server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
+def test_http_server():
+    http_server = MCPServerHTTP(url='http://localhost:8000/sse')
+    assert http_server.url == 'http://localhost:8000/sse'
+    assert http_server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
 
 
-def test_sse_server_with_header_and_timeout():
-    sse_server = MCPServerHTTP(
+def test_http_server_with_header_and_timeout():
+    http_server = MCPServerHTTP(
         url='http://localhost:8000/sse',
         headers={'my-custom-header': 'my-header-value'},
-        timeout=10,
-        sse_read_timeout=100,
+        timeout=timedelta(seconds=10),
+        sse_read_timeout=timedelta(seconds=100),
         log_level='info',
     )
-    assert sse_server.url == 'http://localhost:8000/sse'
-    assert sse_server.headers is not None and sse_server.headers['my-custom-header'] == 'my-header-value'
-    assert sse_server.timeout == 10
-    assert sse_server.sse_read_timeout == 100
-    assert sse_server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
+    assert http_server.url == 'http://localhost:8000/sse'
+    assert http_server.headers is not None and http_server.headers['my-custom-header'] == 'my-header-value'
+    assert http_server.timeout == timedelta(seconds=10)
+    assert http_server.sse_read_timeout == timedelta(seconds=100)
+    assert http_server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_http_server_with_deprecated_arguments():
+    with pytest.warns(DeprecationWarning):
+        http_server = MCPServerHTTP(
+            url='http://localhost:8000/sse',
+            headers={'my-custom-header': 'my-header-value'},
+            timeout=10,
+            sse_read_timeout=100,
+            log_level='info',
+        )
+    assert http_server.url == 'http://localhost:8000/sse'
+    assert http_server.headers is not None and http_server.headers['my-custom-header'] == 'my-header-value'
+    assert http_server.timeout == timedelta(seconds=10)
+    assert http_server.sse_read_timeout == timedelta(seconds=100)
+    assert http_server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.vcr()
