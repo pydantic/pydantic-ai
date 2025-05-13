@@ -74,6 +74,15 @@ def find_filter_examples() -> Iterable[ParameterSet]:
             yield pytest.param(ex, id=test_id)
 
 
+@pytest.fixture
+def reset_cwd():
+    original_cwd = os.getcwd()
+    try:
+        yield
+    finally:
+        os.chdir(original_cwd)
+
+
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(  # noqa: C901
     example: CodeExample,
@@ -83,6 +92,7 @@ def test_docs_examples(  # noqa: C901
     allow_model_requests: None,
     env: TestEnv,
     tmp_path: Path,
+    reset_cwd: None,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
@@ -97,7 +107,7 @@ def test_docs_examples(  # noqa: C901
 
     class CustomEvaluationReport(EvaluationReport):
         def print(self, *args: Any, **kwargs: Any) -> None:
-            if 'width' in kwargs:  # pragma: no cover
+            if 'width' in kwargs:  # pragma: lax no cover
                 raise ValueError('width should not be passed to CustomEvaluationReport')
             table = self.console_table(*args, **kwargs)
             io_file = StringIO()
@@ -133,8 +143,6 @@ def test_docs_examples(  # noqa: C901
         python_version_info = tuple(int(v) for v in python_version.split('.'))
         if sys.version_info < python_version_info:
             pytest.skip(f'Python version {python_version} required')
-
-    cwd = Path.cwd()
 
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
         pytest.skip('both running code and lint skipped')
@@ -173,7 +181,7 @@ def test_docs_examples(  # noqa: C901
 
     if not opt_lint.startswith('skip'):
         # ruff and seem to black disagree here, not sure if that's easily fixable
-        if eval_example.update_examples:  # pragma: no cover
+        if eval_example.update_examples:  # pragma: lax no cover
             eval_example.format_ruff(example)
         else:
             eval_example.lint_ruff(example)
@@ -184,12 +192,11 @@ def test_docs_examples(  # noqa: C901
         test_globals: dict[str, str] = {}
         if opt_title == 'mcp_client.py':
             test_globals['__name__'] = '__test__'
-        if eval_example.update_examples:  # pragma: no cover
+        if eval_example.update_examples:  # pragma: lax no cover
             module_dict = eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
         else:
             module_dict = eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
 
-        os.chdir(cwd)
         if title := opt_title:
             if title.endswith('.py'):
                 module_name = title[:-3]
@@ -234,7 +241,7 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         return 'Vichy'
     elif prompt == 'what is 1 + 1?':
         return '2'
-    else:  # pragma: no cover
+    else:
         raise ValueError(f'Unexpected prompt: {prompt}')
 
 
@@ -397,9 +404,16 @@ tool_responses: dict[tuple[str, str], str] = {
 }
 
 
-async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover  # noqa: C901
+async def model_logic(  # noqa: C901
+    messages: list[ModelMessage], info: AgentInfo
+) -> ModelResponse:  # pragma: lax no cover
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
+        if isinstance(m.content, list) and m.content[0] == 'This is file d9a13f:':
+            return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
+        elif isinstance(m.content, list) and m.content[0] == 'This is file c6720d:':
+            return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
+
         assert isinstance(m.content, str)
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
             return ModelResponse(
@@ -435,6 +449,22 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         elif '<Rubric>\n' in m.content:
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'reason': '-', 'pass': True, 'score': 1.0})]
+            )
+        elif m.content == 'What time is it?':
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_current_time', args={}, tool_call_id='pyd_ai_tool_call_id')]
+            )
+        elif m.content == 'What is the user name?':
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_user', args={}, tool_call_id='pyd_ai_tool_call_id')]
+            )
+        elif m.content == 'What is the company name in the logo?':
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_company_logo', args={}, tool_call_id='pyd_ai_tool_call_id')]
+            )
+        elif m.content == 'What is the main content of the document?':
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id')]
             )
         elif 'Generate question-answer pairs about world capitals and landmarks.' in m.content:
             return ModelResponse(
@@ -475,7 +505,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='final_result', args={'response': win}, tool_call_id='pyd_ai_tool_call_id')]
+            parts=[ToolCallPart(tool_name='final_result', args={'response': win}, tool_call_id='pyd_ai_tool_call_id')],
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roll_die':
         return ModelResponse(
@@ -535,6 +565,16 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         return ModelResponse(
             parts=[ToolCallPart(tool_name='final_result_FlightDetails', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_current_time':
+        return ModelResponse(parts=[TextPart('The current time is 10:45 PM on April 17, 2025.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
+        return ModelResponse(parts=[TextPart("The user's name is John.")])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo':
+        return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document':
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id')]
+        )
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')
@@ -542,7 +582,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
 
 async def stream_model_logic(  # noqa C901
     messages: list[ModelMessage], info: AgentInfo
-) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: no cover
+) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: lax no cover
     async def stream_text_response(r: str) -> AsyncIterator[str]:
         if isinstance(r, str):
             words = r.split(' ')
@@ -600,7 +640,7 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
     if isinstance(model, FallbackModel):
         # When a fallback model is encountered, replace any OpenAIModel with a model that will raise a ModelHTTPError.
         # Otherwise, do the usual inference.
-        def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelHTTPError(401, 'Invalid API Key')
 
         mock_fallback_models: list[Model] = []

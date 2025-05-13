@@ -58,7 +58,7 @@ def function_schema(  # noqa: C901
     Returns:
         A `FunctionSchema` instance.
     """
-    config = ConfigDict(title=function.__name__)
+    config = ConfigDict(title=function.__name__, use_attribute_docstrings=True)
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper)
 

@@ -73,13 +73,25 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 """
 
 
-class GeminiModelSettings(ModelSettings):
+class GeminiModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request.
 
     ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
     gemini_safety_settings: list[GeminiSafetySettings]
+
+    gemini_thinking_config: ThinkingConfig
+    """Thinking is "on" by default in both the API and AI Studio.
+
+    Being on by default doesn't mean the model will send back thoughts. For that, you would need to set `include_thoughts`
+    to `True`, but since end of January 2025, `thoughts` are not returned anymore, and are only displayed in the Google
+    AI Studio. See https://discuss.ai.google.dev/t/thoughts-are-missing-cot-not-included-anymore/63653 for more details.
+
+    If you want to avoid the model spending any tokens on thinking, you can set `thinking_budget` to `0`.
+
+    See more about it on <https://ai.google.dev/gemini-api/docs/thinking>.
+    """
 
 
 @dataclass(init=False)
@@ -133,14 +145,14 @@ class GeminiModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         check_allow_model_requests()
         async with self._make_request(
             messages, False, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
         ) as http_response:
             data = await http_response.aread()
             response = _gemini_response_ta.validate_json(data)
-        return self._process_response(response), _metadata_as_usage(response)
+        return self._process_response(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -223,7 +235,9 @@ class GeminiModel(Model):
                 generation_config['presence_penalty'] = presence_penalty
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
                 generation_config['frequency_penalty'] = frequency_penalty
-            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) != []:
+            if (thinkingConfig := model_settings.get('gemini_thinking_config')) is not None:
+                generation_config['thinking_config'] = thinkingConfig  # pragma: no cover
+            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) is not None:
                 request_data['safetySettings'] = gemini_safety_settings
         if generation_config:
             request_data['generationConfig'] = generation_config
@@ -255,7 +269,9 @@ class GeminiModel(Model):
             else:
                 raise UnexpectedModelBehavior('Content field missing from Gemini response', str(response))
         parts = response['candidates'][0]['content']['parts']
-        return _process_response_from_parts(parts, model_name=response.get('model_version', self._model_name))
+        usage = _metadata_as_usage(response)
+        usage.requests = 1
+        return _process_response_from_parts(parts, response.get('model_version', self._model_name), usage)
 
     async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -497,6 +513,16 @@ class GeminiSafetySettings(TypedDict):
     """
 
 
+class ThinkingConfig(TypedDict, total=False):
+    """The thinking features configuration."""
+
+    include_thoughts: Annotated[bool, pydantic.Field(alias='includeThoughts')]
+    """Indicates whether to include thoughts in the response. If true, thoughts are returned only if the model supports thought and thoughts are available."""
+
+    thinking_budget: Annotated[int, pydantic.Field(alias='thinkingBudget')]
+    """Indicates the thinking budget in tokens."""
+
+
 class _GeminiGenerationConfig(TypedDict, total=False):
     """Schema for an API request to the Gemini API.
 
@@ -511,6 +537,7 @@ class _GeminiGenerationConfig(TypedDict, total=False):
     presence_penalty: float
     frequency_penalty: float
     stop_sequences: list[str]
+    thinking_config: ThinkingConfig
 
 
 class _GeminiContent(TypedDict):
@@ -566,7 +593,7 @@ def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart
 
 
 def _process_response_from_parts(
-    parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, timestamp: datetime | None = None
+    parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, usage: usage.Usage
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
@@ -578,7 +605,7 @@ def _process_response_from_parts(
             raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
-    return ModelResponse(parts=items, model_name=model_name, timestamp=timestamp or _utils.now_utc())
+    return ModelResponse(parts=items, usage=usage, model_name=model_name)
 
 
 class _GeminiFunctionCall(TypedDict):
@@ -780,7 +807,7 @@ class _GeminiJsonSchema(WalkJsonSchema):
         additional_properties = schema.pop(
             'additionalProperties', None
         )  # don't pop yet so it's included in the warning
-        if additional_properties:  # pragma: no cover
+        if additional_properties:
             original_schema = {**schema, 'additionalProperties': additional_properties}
             warnings.warn(
                 '`additionalProperties` is not supported by Gemini; it will be removed from the tool JSON schema.'
@@ -805,6 +832,12 @@ class _GeminiJsonSchema(WalkJsonSchema):
         #   where we add notes about these properties to the field description?
         schema.pop('exclusiveMaximum', None)
         schema.pop('exclusiveMinimum', None)
+
+        # Gemini only supports string enums, so we need to convert any enum values to strings.
+        # Pydantic will take care of transforming the transformed string values to the correct type.
+        if enum := schema.get('enum'):
+            schema['type'] = 'string'
+            schema['enum'] = [str(val) for val in enum]
 
         type_ = schema.get('type')
         if 'oneOf' in schema and 'type' not in schema:  # pragma: no cover

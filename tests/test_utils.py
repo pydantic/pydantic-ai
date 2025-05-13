@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextvars
 import os
 from collections.abc import AsyncIterator
 from importlib.metadata import distributions
@@ -9,7 +10,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import UserError
-from pydantic_ai._utils import UNSET, PeekableAsyncStream, check_object_json_schema, group_by_temporal
+from pydantic_ai._utils import UNSET, PeekableAsyncStream, check_object_json_schema, group_by_temporal, run_in_executor
 
 from .models.mock_async_stream import MockAsyncStream
 
@@ -136,3 +137,19 @@ def test_package_versions(capsys: pytest.CaptureFixture[str]):
             packages = sorted((package.metadata['Name'], package.version) for package in distributions())
             for name, version in packages:
                 print(f'{name:30} {version}')
+
+
+async def test_run_in_executor_with_contextvars() -> None:
+    ctx_var = contextvars.ContextVar('test_var', default='default')
+    ctx_var.set('original_value')
+
+    result = await run_in_executor(ctx_var.get)
+    assert result == ctx_var.get()
+
+    ctx_var.set('new_value')
+    result = await run_in_executor(ctx_var.get)
+    assert result == ctx_var.get()
+
+    # show that the old version did not work
+    old_result = asyncio.get_running_loop().run_in_executor(None, ctx_var.get)
+    assert old_result != ctx_var.get()

@@ -82,7 +82,7 @@ See <https://console.groq.com/docs/models> for an up to date date list of models
 """
 
 
-class GroqModelSettings(ModelSettings):
+class GroqModelSettings(ModelSettings, total=False):
     """Settings used for a Groq model request.
 
     ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -130,12 +130,14 @@ class GroqModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         check_allow_model_requests()
         response = await self._completions_create(
             messages, False, cast(GroqModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response), _map_usage(response)
+        model_response = self._process_response(response)
+        model_response.usage.requests = 1
+        return model_response
 
     @asynccontextmanager
     async def request_stream(
@@ -200,6 +202,8 @@ class GroqModel(Model):
         groq_messages = self._map_messages(messages)
 
         try:
+            extra_headers = model_settings.get('extra_headers', {})
+            extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.chat.completions.create(
                 model=str(self._model_name),
                 messages=groq_messages,
@@ -217,7 +221,7 @@ class GroqModel(Model):
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
-                extra_headers={'User-Agent': get_user_agent()},
+                extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
@@ -235,7 +239,7 @@ class GroqModel(Model):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
-        return ModelResponse(items, model_name=response.model, timestamp=timestamp)
+        return ModelResponse(items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(self, response: AsyncStream[chat.ChatCompletionChunk]) -> GroqStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""

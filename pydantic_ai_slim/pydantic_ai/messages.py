@@ -15,6 +15,7 @@ from typing_extensions import TypeAlias
 
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
+from .usage import Usage
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
@@ -82,7 +83,7 @@ class VideoUrl:
     """Type identifier, this is available on all parts as a discriminator."""
 
     @property
-    def media_type(self) -> VideoMediaType:  # pragma: no cover
+    def media_type(self) -> VideoMediaType:  # pragma: lax no cover
         """Return the media type of the video, based on the url."""
         if self.url.endswith('.mkv'):
             return 'video/x-matroska'
@@ -253,6 +254,9 @@ class BinaryContent:
 
 
 UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
+
+# Ideally this would be a Union of types, but Python 3.9 requires it to be a string, and strings don't work with `isinstance``.
+MultiModalContentTypes = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
 
 
 def _document_format(media_type: str) -> DocumentFormat:
@@ -555,6 +559,12 @@ class ModelResponse:
     parts: list[ModelResponsePart]
     """The parts of the model message."""
 
+    usage: Usage = field(default_factory=Usage)
+    """Usage information for the request.
+
+    This has a default to make tests easier, and to support loading old messages where usage will be missing.
+    """
+
     model_name: str | None = None
     """The name of the model that generated the response."""
 
@@ -833,4 +843,6 @@ class FunctionToolResultEvent:
     """Event type identifier, used as a discriminator."""
 
 
-HandleResponseEvent = Annotated[Union[FunctionToolCallEvent, FunctionToolResultEvent], pydantic.Discriminator('kind')]
+HandleResponseEvent = Annotated[
+    Union[FunctionToolCallEvent, FunctionToolResultEvent], pydantic.Discriminator('event_kind')
+]

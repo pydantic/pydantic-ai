@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, IsNow, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
@@ -92,7 +93,7 @@ class MockMistralAI:
     ) -> Mistral:
         return cast(Mistral, cls(stream=completions_streams))
 
-    async def chat_completions_create(  # pragma: no cover
+    async def chat_completions_create(  # pragma: lax no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
     ) -> MistralChatCompletionResponse | MockAsyncStream[MockCompletionEvent]:
         if stream or self.stream:
@@ -212,12 +213,14 @@ async def test_multiple_completions(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='hello again')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -261,18 +264,21 @@ async def test_three_completions(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='hello again')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='final message', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='final message')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -390,6 +396,7 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
                         tool_call_id='123',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -449,6 +456,7 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
                         tool_call_id='123',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -507,6 +515,7 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
                         tool_call_id='123',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1073,6 +1082,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1094,6 +1104,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=3, response_tokens=2, total_tokens=6),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1109,6 +1120,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1210,6 +1222,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1231,6 +1244,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=3, response_tokens=2, total_tokens=6),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1252,6 +1266,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1350,6 +1365,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(request_tokens=2, response_tokens=2, total_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1365,6 +1381,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"won": true}', tool_call_id='1')],
+                usage=Usage(request_tokens=2, response_tokens=2, total_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1450,6 +1467,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(request_tokens=2, response_tokens=2, total_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1465,6 +1483,7 @@ async def test_stream_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(request_tokens=4, response_tokens=4, total_tokens=4),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1553,6 +1572,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(request_tokens=2, response_tokens=2, total_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1574,6 +1594,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                usage=Usage(request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1589,6 +1610,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(request_tokens=4, response_tokens=4, total_tokens=4),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1738,6 +1760,65 @@ def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: 
     assert result == expected, f'{desc} — expected {expected}, got {result}'
 
 
+@pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, mistral_api_key: str, image_content: BinaryContent
+):
+    m = MistralModel('pixtral-12b-latest', provider=MistralProvider(api_key=mistral_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool? Call the tool.'])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool? Call the tool.'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='utZJMAZN4')],
+                usage=Usage(requests=1, request_tokens=65, response_tokens=16, total_tokens=81),
+                model_name='pixtral-12b-latest',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1c8566',
+                        tool_call_id='utZJMAZN4',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1c8566:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The image you\'re referring to, labeled as "file 1c8566," shows a kiwi. Kiwis are small, brown, oval-shaped fruits with a bright green flesh inside that is dotted with tiny black seeds. They have a sweet and tangy flavor and are known for being rich in vitamin C and fiber.'
+                    )
+                ],
+                usage=Usage(requests=1, request_tokens=2931, response_tokens=70, total_tokens=3001),
+                model_name='pixtral-12b-latest',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
 async def test_image_url_input(allow_model_requests: None):
     c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
     mock_client = MockMistralAI.create_mock(c)
@@ -1767,6 +1848,7 @@ async def test_image_url_input(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
             ),
@@ -1798,6 +1880,7 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
             ),
@@ -1857,6 +1940,7 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
             ),

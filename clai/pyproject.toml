@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
+
+[project]
+name = "clai"
+dynamic = ["version", "dependencies"]
+description = "PydanticAI CLI: command line interface to chat to LLMs"
+authors = [
+  { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+  { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+  { name = "David Montague", email = "david@pydantic.dev" },
+  { name = "Alex Hall", email = "alex@pydantic.dev" },
+]
+license = "MIT"
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Unix",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: Console",
+    "Environment :: MacOS X",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet",
+]
+requires-python = ">=3.9"
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning]
+dependencies = [
+    "pydantic-ai=={{ version }}",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[project.scripts]
+clai = "clai:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["clai"]
+
+[tool.uv.sources]
+pydantic-ai = { workspace = true }

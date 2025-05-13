@@ -128,7 +128,7 @@ jobs:
   test:
     name: test on ${{ matrix.python-version }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -223,6 +223,7 @@ jobs:
 
       - run: uv run coverage report --fail-under 95
       - run: uv run diff-cover coverage.xml --fail-under 100
+      - run: uv run strict-no-cover
 
   test-mcp-run-python:
     runs-on: ubuntu-latest
@@ -390,7 +391,7 @@ jobs:
     steps:
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
       - name: Install dependencies
         run: pip install tweepy==4.14.0
       - name: Send tweet

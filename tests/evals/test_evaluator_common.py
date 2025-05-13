@@ -40,7 +40,7 @@ if TYPE_CHECKING or imports_successful():
             self.expected_output = expected_output
             self.inputs = inputs
             self.duration = duration
-else:  # pragma: no cover
+else:
     MockContext = object
 
 

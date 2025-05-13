@@ -10,7 +10,6 @@ from pydantic import BaseModel, TypeAdapter
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import Usage
 
 from ..conftest import try_import
 
@@ -122,7 +121,7 @@ async def test_llm_judge_serialization():
             messages: list[ModelMessage],
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
-        ) -> tuple[ModelResponse, Usage]:
+        ) -> ModelResponse:
             raise NotImplementedError
 
         @property

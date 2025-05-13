@@ -91,7 +91,7 @@ Since [the Mistral docs](https://docs.mistral.ai/getting-started/models/models_o
 """
 
 
-class MistralModelSettings(ModelSettings):
+class MistralModelSettings(ModelSettings, total=False):
     """Settings used for a Mistral model request.
 
     ALL FIELDS MUST BE `mistral_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -147,13 +147,15 @@ class MistralModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
+    ) -> ModelResponse:
         """Make a non-streaming request to the model from Pydantic AI call."""
         check_allow_model_requests()
         response = await self._completions_create(
             messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response), _map_usage(response)
+        model_response = self._process_response(response)
+        model_response.usage.requests = 1
+        return model_response
 
     @asynccontextmanager
     async def request_stream(
@@ -323,7 +325,7 @@ class MistralModel(Model):
                 tool = self._map_mistral_to_pydantic_tool_call(tool_call=tool_call)
                 parts.append(tool)
 
-        return ModelResponse(parts, model_name=response.model, timestamp=timestamp)
+        return ModelResponse(parts, usage=_map_usage(response), model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(
         self,
@@ -483,7 +485,20 @@ class MistralModel(Model):
                 assert_never(message)
         if instructions := self._get_instructions(messages):
             mistral_messages.insert(0, MistralSystemMessage(content=instructions))
-        return mistral_messages
+
+        # Post-process messages to insert fake assistant message after tool message if followed by user message
+        # to work around `Unexpected role 'user' after role 'tool'` error.
+        processed_messages: list[MistralMessages] = []
+        for i, current_message in enumerate(mistral_messages):
+            processed_messages.append(current_message)
+
+            if isinstance(current_message, MistralToolMessage) and i + 1 < len(mistral_messages):
+                next_message = mistral_messages[i + 1]
+                if isinstance(next_message, MistralUserMessage):
+                    # Insert a dummy assistant message
+                    processed_messages.append(MistralAssistantMessage(content=[MistralTextChunk(text='OK')]))
+
+        return processed_messages
 
     def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:
         content: str | list[MistralContentChunk]

@@ -11,6 +11,7 @@ from functools import partial
 from types import GenericAlias
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union
 
+from anyio.to_thread import run_sync
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import ParamSpec, TypeAlias, TypeGuard, is_typeddict
@@ -31,11 +32,8 @@ _R = TypeVar('_R')
 
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    if kwargs:
-        # noinspection PyTypeChecker
-        return await asyncio.get_running_loop().run_in_executor(None, partial(func, *args, **kwargs))
-    else:
-        return await asyncio.get_running_loop().run_in_executor(None, func, *args)  # type: ignore
+    wrapped_func = partial(func, *args, **kwargs)
+    return await run_sync(wrapped_func)
 
 
 def is_model_like(type_: Any) -> bool:
