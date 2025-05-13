@@ -65,14 +65,6 @@ uvx clai --model anthropic:claude-3-7-sonnet-latest
 
 (a full list of models available can be printed with `uvx clai --list-models`)
 
-### Usage with `uvx`
-
-If you have [uv](https://docs.astral.sh/uv/) installed, the quickest way to run the CLI is with `uvx`:
-
-```bash
-uvx --from pydantic-ai pai
-```
-
 ### Custom Agents
 
 You can specify a custom agent using the `--agent` flag with a module path and variable name:
@@ -86,7 +78,7 @@ agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
 Then run:
 
 ```bash
-pai --agent custom_agent:agent "What's the weather today?"
+uvx clai --agent custom_agent:agent "What's the weather today?"
 ```
 
 The format must be `module:variable` where:
