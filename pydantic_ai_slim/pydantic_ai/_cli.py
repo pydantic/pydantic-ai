@@ -42,6 +42,15 @@ except ImportError as _import_error:
 __all__ = 'cli', 'cli_exit'
 
 
+PYDANTIC_AI_HOME = Path.home() / '.pydantic-ai'
+"""The home directory for PydanticAI CLI.
+
+This folder is used to store the prompt history and configuration.
+"""
+
+PROMPT_HISTORY_PATH = PYDANTIC_AI_HOME / 'prompt-history.txt'
+
+
 class SimpleCodeBlock(CodeBlock):
     """Customised code blocks in markdown.
 
@@ -167,9 +176,8 @@ Special prompts:
             pass
         return 0
 
-    history = Path.home() / f'.{prog_name}-prompt-history.txt'
     # doing this instead of `PromptSession[Any](history=` allows mocking of PromptSession in tests
-    session: PromptSession[Any] = PromptSession(history=FileHistory(str(history)))
+    session: PromptSession[Any] = PromptSession(history=FileHistory(str(PROMPT_HISTORY_PATH)))
     try:
         return asyncio.run(run_chat(session, stream, cli_agent, console, code_theme, prog_name))
     except KeyboardInterrupt:  # pragma: no cover
