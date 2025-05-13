@@ -44,6 +44,7 @@ nav:
           - mcp/client.md
           - mcp/server.md
           - mcp/run-python.md
+      - A2A: a2a.md
       - cli.md
   - Examples:
       - examples/index.md
@@ -93,6 +94,7 @@ nav:
       - api/pydantic_evals/reporting.md
       - api/pydantic_evals/otel.md
       - api/pydantic_evals/generation.md
+      - api/fasta2a.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
@@ -246,7 +248,6 @@ plugins:
           - cli.md
           - logfire.md
           - examples/*.md
-
 
 hooks:
   - "docs/.hooks/main.py"

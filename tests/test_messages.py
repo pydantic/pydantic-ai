@@ -1,6 +1,6 @@
 import pytest
 
-from pydantic_ai.messages import BinaryContent, DocumentUrl, ImageUrl, VideoUrl
+from pydantic_ai.messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, VideoUrl
 
 
 def test_image_url():
@@ -20,7 +20,7 @@ def test_video_url():
 
 
 def test_document_url():
-    with pytest.raises(RuntimeError, match='Unknown document file extension: https://example.com/document.potato'):
+    with pytest.raises(ValueError, match='Unknown document file extension: https://example.com/document.potato'):
         document_url = DocumentUrl(url='https://example.com/document.potato')
         document_url.media_type
 
@@ -93,3 +93,163 @@ def test_binary_content_document(media_type: str, format: str):
     binary_content = BinaryContent(data=b'Hello, world!', media_type=media_type)
     assert binary_content.is_document
     assert binary_content.format == format
+
+
+@pytest.mark.parametrize(
+    'audio_url,media_type,format',
+    [
+        pytest.param(AudioUrl('foobar.mp3'), 'audio/mpeg', 'mp3', id='mp3'),
+        pytest.param(AudioUrl('foobar.wav'), 'audio/wav', 'wav', id='wav'),
+    ],
+)
+def test_audio_url(audio_url: AudioUrl, media_type: str, format: str):
+    assert audio_url.media_type == media_type
+    assert audio_url.format == format
+
+
+def test_audio_url_invalid():
+    with pytest.raises(ValueError, match='Unknown audio file extension: foobar.potato'):
+        AudioUrl('foobar.potato').media_type
+
+
+@pytest.mark.parametrize(
+    'image_url,media_type,format',
+    [
+        pytest.param(ImageUrl('foobar.jpg'), 'image/jpeg', 'jpeg', id='jpg'),
+        pytest.param(ImageUrl('foobar.jpeg'), 'image/jpeg', 'jpeg', id='jpeg'),
+        pytest.param(ImageUrl('foobar.png'), 'image/png', 'png', id='png'),
+        pytest.param(ImageUrl('foobar.gif'), 'image/gif', 'gif', id='gif'),
+        pytest.param(ImageUrl('foobar.webp'), 'image/webp', 'webp', id='webp'),
+    ],
+)
+def test_image_url_formats(image_url: ImageUrl, media_type: str, format: str):
+    assert image_url.media_type == media_type
+    assert image_url.format == format
+
+
+def test_image_url_invalid():
+    with pytest.raises(ValueError, match='Unknown image file extension: foobar.potato'):
+        ImageUrl('foobar.potato').media_type
+
+    with pytest.raises(ValueError, match='Unknown image file extension: foobar.potato'):
+        ImageUrl('foobar.potato').format
+
+
+@pytest.mark.parametrize(
+    'document_url,media_type,format',
+    [
+        pytest.param(DocumentUrl('foobar.pdf'), 'application/pdf', 'pdf', id='pdf'),
+        pytest.param(DocumentUrl('foobar.txt'), 'text/plain', 'txt', id='txt'),
+        pytest.param(DocumentUrl('foobar.csv'), 'text/csv', 'csv', id='csv'),
+        pytest.param(
+            DocumentUrl('foobar.docx'),
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'docx',
+            id='docx',
+        ),
+        pytest.param(
+            DocumentUrl('foobar.xlsx'),
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'xlsx',
+            id='xlsx',
+        ),
+        pytest.param(DocumentUrl('foobar.html'), 'text/html', 'html', id='html'),
+        pytest.param(DocumentUrl('foobar.md'), 'text/markdown', 'md', id='md'),
+        pytest.param(DocumentUrl('foobar.xls'), 'application/vnd.ms-excel', 'xls', id='xls'),
+    ],
+)
+def test_document_url_formats(document_url: DocumentUrl, media_type: str, format: str):
+    assert document_url.media_type == media_type
+    assert document_url.format == format
+
+
+def test_document_url_invalid():
+    with pytest.raises(ValueError, match='Unknown document file extension: foobar.potato'):
+        DocumentUrl('foobar.potato').media_type
+
+    with pytest.raises(ValueError, match='Unknown document media type: text/x-python'):
+        DocumentUrl('foobar.py').format
+
+
+def test_binary_content_unknown_media_type():
+    with pytest.raises(ValueError, match='Unknown media type: application/custom'):
+        binary_content = BinaryContent(data=b'Hello, world!', media_type='application/custom')
+        binary_content.format
+
+
+def test_binary_content_is_methods():
+    # Test that is_X returns False for non-matching media types
+    audio_content = BinaryContent(data=b'Hello, world!', media_type='audio/wav')
+    assert audio_content.is_audio is True
+    assert audio_content.is_image is False
+    assert audio_content.is_video is False
+    assert audio_content.is_document is False
+    assert audio_content.format == 'wav'
+
+    audio_content = BinaryContent(data=b'Hello, world!', media_type='audio/wrong')
+    assert audio_content.is_audio is True
+    assert audio_content.is_image is False
+    assert audio_content.is_video is False
+    assert audio_content.is_document is False
+    with pytest.raises(ValueError, match='Unknown media type: audio/wrong'):
+        audio_content.format
+
+    audio_content = BinaryContent(data=b'Hello, world!', media_type='image/wrong')
+    assert audio_content.is_audio is False
+    assert audio_content.is_image is True
+    assert audio_content.is_video is False
+    assert audio_content.is_document is False
+    with pytest.raises(ValueError, match='Unknown media type: image/wrong'):
+        audio_content.format
+
+    image_content = BinaryContent(data=b'Hello, world!', media_type='image/jpeg')
+    assert image_content.is_audio is False
+    assert image_content.is_image is True
+    assert image_content.is_video is False
+    assert image_content.is_document is False
+    assert image_content.format == 'jpeg'
+
+    video_content = BinaryContent(data=b'Hello, world!', media_type='video/mp4')
+    assert video_content.is_audio is False
+    assert video_content.is_image is False
+    assert video_content.is_video is True
+    assert video_content.is_document is False
+    assert video_content.format == 'mp4'
+
+    video_content = BinaryContent(data=b'Hello, world!', media_type='video/wrong')
+    assert video_content.is_audio is False
+    assert video_content.is_image is False
+    assert video_content.is_video is True
+    assert video_content.is_document is False
+    with pytest.raises(ValueError, match='Unknown media type: video/wrong'):
+        video_content.format
+
+    document_content = BinaryContent(data=b'Hello, world!', media_type='application/pdf')
+    assert document_content.is_audio is False
+    assert document_content.is_image is False
+    assert document_content.is_video is False
+    assert document_content.is_document is True
+    assert document_content.format == 'pdf'
+
+
+@pytest.mark.parametrize(
+    'video_url,media_type,format',
+    [
+        pytest.param(VideoUrl('foobar.mp4'), 'video/mp4', 'mp4', id='mp4'),
+        pytest.param(VideoUrl('foobar.mov'), 'video/quicktime', 'mov', id='mov'),
+        pytest.param(VideoUrl('foobar.mkv'), 'video/x-matroska', 'mkv', id='mkv'),
+        pytest.param(VideoUrl('foobar.webm'), 'video/webm', 'webm', id='webm'),
+        pytest.param(VideoUrl('foobar.flv'), 'video/x-flv', 'flv', id='flv'),
+        pytest.param(VideoUrl('foobar.mpeg'), 'video/mpeg', 'mpeg', id='mpeg'),
+        pytest.param(VideoUrl('foobar.wmv'), 'video/x-ms-wmv', 'wmv', id='wmv'),
+        pytest.param(VideoUrl('foobar.three_gp'), 'video/3gpp', 'three_gp', id='three_gp'),
+    ],
+)
+def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
+    assert video_url.media_type == media_type
+    assert video_url.format == format
+
+
+def test_video_url_invalid():
+    with pytest.raises(ValueError, match='Unknown video file extension: foobar.potato'):
+        VideoUrl('foobar.potato').media_type

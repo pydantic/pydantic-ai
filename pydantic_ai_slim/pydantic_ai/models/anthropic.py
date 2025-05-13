@@ -284,7 +284,7 @@ class AnthropicModel(Model):
 
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
-        system_prompt: str = ''
+        system_prompt_parts: list[str] = []
         anthropic_messages: list[MessageParam] = []
         for m in messages:
             if isinstance(m, ModelRequest):
@@ -293,7 +293,7 @@ class AnthropicModel(Model):
                 ] = []
                 for request_part in m.parts:
                     if isinstance(request_part, SystemPromptPart):
-                        system_prompt += request_part.content
+                        system_prompt_parts.append(request_part.content)
                     elif isinstance(request_part, UserPromptPart):
                         async for content in self._map_user_prompt(request_part):
                             user_content_params.append(content)
@@ -333,6 +333,7 @@ class AnthropicModel(Model):
                 anthropic_messages.append(MessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
+        system_prompt = '\n\n'.join(system_prompt_parts)
         if instructions := self._get_instructions(messages):
             system_prompt = f'{instructions}\n\n{system_prompt}'
         return system_prompt, anthropic_messages
