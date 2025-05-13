@@ -109,11 +109,11 @@ The direct API is ideal when:
 2. You want to implement custom behavior around model requests
 3. You're building your own abstractions on top of model interactions
 
-For most application use cases, the higher-level [`Agent`][pydantic_ai.Agent] API provides a more convenient interface with additional features such as built-in tool execution, retring, structured output parsing, and more.
+For most application use cases, the higher-level [`Agent`][pydantic_ai.Agent] API provides a more convenient interface with additional features such as built-in tool execution, retrying, structured output parsing, and more.
 
 ## OpenTelemetry Instrumentation
 
-As with [agents][pydantic_ai.Agent], you can enable OpenTelemetry/logfire instrumentation with just a few extra lines
+As with [agents][pydantic_ai.Agent], you can enable OpenTelemetry/Logfire instrumentation with just a few extra lines
 
 ```python {title="direct_instrumented.py" hl_lines="1 6 7"}
 import logfire
@@ -157,4 +157,4 @@ print(model_response.parts[0].content)
 #> Paris
 ```
 
-See [Debugging and Monitoring](logfire.md) for more details.
+See [Debugging and Monitoring](logfire.md) for more details, including how to instrument with plain OpenTelemetry without logfire.
