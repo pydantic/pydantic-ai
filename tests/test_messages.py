@@ -96,14 +96,15 @@ def test_binary_content_document(media_type: str, format: str):
 
 
 @pytest.mark.parametrize(
-    'audio_url,media_type',
+    'audio_url,media_type,format',
     [
-        pytest.param(AudioUrl('foobar.mp3'), 'audio/mpeg', id='mp3'),
-        pytest.param(AudioUrl('foobar.wav'), 'audio/wav', id='wav'),
+        pytest.param(AudioUrl('foobar.mp3'), 'audio/mpeg', 'mp3', id='mp3'),
+        pytest.param(AudioUrl('foobar.wav'), 'audio/wav', 'wav', id='wav'),
     ],
 )
-def test_audio_url(audio_url: AudioUrl, media_type: str):
+def test_audio_url(audio_url: AudioUrl, media_type: str, format: str):
     assert audio_url.media_type == media_type
+    assert audio_url.format == format
 
 
 def test_audio_url_invalid():
@@ -198,7 +199,7 @@ def test_binary_content_is_methods():
     assert audio_content.is_image is True
     assert audio_content.is_video is False
     assert audio_content.is_document is False
-    with pytest.raises(ValueError, match='Unknown image media type: image/wrong'):
+    with pytest.raises(ValueError, match='Unknown media type: image/wrong'):
         audio_content.format
 
     image_content = BinaryContent(data=b'Hello, world!', media_type='image/jpeg')
@@ -220,7 +221,7 @@ def test_binary_content_is_methods():
     assert video_content.is_image is False
     assert video_content.is_video is True
     assert video_content.is_document is False
-    with pytest.raises(ValueError, match='Unknown video media type: video/wrong'):
+    with pytest.raises(ValueError, match='Unknown media type: video/wrong'):
         video_content.format
 
     document_content = BinaryContent(data=b'Hello, world!', media_type='application/pdf')

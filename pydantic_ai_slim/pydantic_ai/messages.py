@@ -110,7 +110,7 @@ class VideoUrl:
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _video_format(self.media_type)
+        return _video_format_lookup[self.media_type]
 
 
 @dataclass
@@ -132,6 +132,11 @@ class AudioUrl:
             return 'audio/wav'
         else:
             raise ValueError(f'Unknown audio file extension: {self.url}')
+
+    @property
+    def format(self) -> AudioFormat:
+        """The file format of the audio file."""
+        return _audio_format_lookup[self.media_type]
 
 
 @dataclass
@@ -164,7 +169,7 @@ class ImageUrl:
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _image_format(self.media_type)
+        return _image_format_lookup[self.media_type]
 
 
 @dataclass
@@ -191,7 +196,11 @@ class DocumentUrl:
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _document_format(self.media_type)
+        media_type = self.media_type
+        try:
+            return _document_format_lookup[media_type]
+        except KeyError as e:
+            raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
 @dataclass
@@ -230,18 +239,17 @@ class BinaryContent:
     @property
     def format(self) -> str:
         """The file format of the binary content."""
-        if self.is_audio:
-            if self.media_type == 'audio/mpeg':
-                return 'mp3'
-            elif self.media_type == 'audio/wav':
-                return 'wav'
-        elif self.is_image:
-            return _image_format(self.media_type)
-        elif self.is_document:
-            return _document_format(self.media_type)
-        elif self.is_video:
-            return _video_format(self.media_type)
-        raise ValueError(f'Unknown media type: {self.media_type}')
+        try:
+            if self.is_audio:
+                return _audio_format_lookup[self.media_type]
+            elif self.is_image:
+                return _image_format_lookup[self.media_type]
+            elif self.is_video:
+                return _video_format_lookup[self.media_type]
+            else:
+                return _document_format_lookup[self.media_type]
+        except KeyError as e:
+            raise ValueError(f'Unknown media type: {self.media_type}') from e
 
 
 UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
@@ -258,30 +266,16 @@ _document_format_lookup: dict[str, DocumentFormat] = {
     'text/markdown': 'md',
     'application/vnd.ms-excel': 'xls',
 }
-
-
-def _document_format(media_type: str) -> DocumentFormat:
-    try:
-        return _document_format_lookup[media_type]
-    except KeyError as e:
-        raise ValueError(f'Unknown document media type: {media_type}') from e
-
-
+_audio_format_lookup: dict[str, AudioFormat] = {
+    'audio/mpeg': 'mp3',
+    'audio/wav': 'wav',
+}
 _image_format_lookup: dict[str, ImageFormat] = {
     'image/jpeg': 'jpeg',
     'image/png': 'png',
     'image/gif': 'gif',
     'image/webp': 'webp',
 }
-
-
-def _image_format(media_type: str) -> ImageFormat:
-    try:
-        return _image_format_lookup[media_type]
-    except KeyError as e:
-        raise ValueError(f'Unknown image media type: {media_type}') from e
-
-
 _video_format_lookup: dict[str, VideoFormat] = {
     'video/x-matroska': 'mkv',
     'video/quicktime': 'mov',
@@ -292,13 +286,6 @@ _video_format_lookup: dict[str, VideoFormat] = {
     'video/x-ms-wmv': 'wmv',
     'video/3gpp': 'three_gp',
 }
-
-
-def _video_format(media_type: str) -> VideoFormat:
-    try:
-        return _video_format_lookup[media_type]
-    except KeyError as e:
-        raise ValueError(f'Unknown video media type: {media_type}') from e
 
 
 @dataclass
