@@ -96,6 +96,13 @@ print(dice_result.all_messages())
                 part_kind='tool-call',
             )
         ],
+        usage=Usage(
+            requests=1,
+            request_tokens=90,
+            response_tokens=2,
+            total_tokens=92,
+            details=None,
+        ),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
         kind='response',
@@ -122,6 +129,13 @@ print(dice_result.all_messages())
                 part_kind='tool-call',
             )
         ],
+        usage=Usage(
+            requests=1,
+            request_tokens=91,
+            response_tokens=4,
+            total_tokens=95,
+            details=None,
+        ),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
         kind='response',
@@ -146,6 +160,13 @@ print(dice_result.all_messages())
                 part_kind='text',
             )
         ],
+        usage=Usage(
+            requests=1,
+            request_tokens=92,
+            response_tokens=12,
+            total_tokens=104,
+            details=None,
+        ),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
         kind='response',

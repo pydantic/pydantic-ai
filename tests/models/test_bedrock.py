@@ -75,6 +75,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                         content="Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=7, response_tokens=30, total_tokens=37),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -132,6 +133,7 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
                         tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
                     ),
                 ],
+                usage=Usage(requests=1, request_tokens=551, response_tokens=132, total_tokens=683),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -156,6 +158,7 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
                         tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                     ),
                 ],
+                usage=Usage(requests=1, request_tokens=685, response_tokens=166, total_tokens=851),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -255,6 +258,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
                     ),
                 ],
+                usage=Usage(requests=1, request_tokens=417, response_tokens=69, total_tokens=486),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -278,6 +282,7 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
 """
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=509, response_tokens=108, total_tokens=617),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -358,7 +363,7 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
         Args:
             city: The city name.
         """
-        return '30°C'  # pragma: no cover
+        return '30°C'
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='What is the temperature of the capital of France?') as agent_run:
@@ -544,6 +549,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                         content='The capital of France is Paris. Paris is not only the political and economic hub of the country but also a major center for culture, fashion, art, and tourism. It is renowned for its rich history, iconic landmarks such as the Eiffel Tower, Notre-Dame Cathedral, and the Louvre Museum, as well as its influence on global culture and cuisine.'
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=13, response_tokens=71, total_tokens=84),
                 model_name='us.amazon.nova-pro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -580,4 +586,46 @@ async def test_bedrock_multiple_documents_in_history(
 
     assert result.output == snapshot(
         'Based on the documents you\'ve shared, both Document 1.pdf and Document 2.pdf contain the text "Dummy PDF file". These appear to be placeholder or sample PDF documents rather than files with substantial content.'
+    )
+
+
+async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: BedrockProvider):
+    """
+    Test that consecutive ToolReturnPart objects are grouped into a single user message for Bedrock.
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+    # Create a ModelRequest with 3 consecutive ToolReturnParts
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Hello'])]),
+        ModelResponse(parts=[TextPart(content='Hi')]),
+        ModelRequest(parts=[UserPromptPart(content=['How are you?'])]),
+        ModelResponse(parts=[TextPart(content='Cloudy')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='tool1', content='result1', tool_call_id='id1', timestamp=now),
+                ToolReturnPart(tool_name='tool2', content='result2', tool_call_id='id2', timestamp=now),
+                ToolReturnPart(tool_name='tool3', content='result3', tool_call_id='id3', timestamp=now),
+            ]
+        ),
+    ]
+
+    # Call the mapping function directly
+    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Hello'}]},
+            {'role': 'assistant', 'content': [{'text': 'Hi'}]},
+            {'role': 'user', 'content': [{'text': 'How are you?'}]},
+            {'role': 'assistant', 'content': [{'text': 'Cloudy'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'text': 'result1'}], 'status': 'success'}},
+                    {'toolResult': {'toolUseId': 'id2', 'content': [{'text': 'result2'}], 'status': 'success'}},
+                    {'toolResult': {'toolUseId': 'id3', 'content': [{'text': 'result3'}], 'status': 'success'}},
+                ],
+            },
+        ]
     )

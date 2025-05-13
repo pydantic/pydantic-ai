@@ -89,6 +89,7 @@ def test_result_pydantic_model_retry():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": "wrong", "b": "foo"}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=7, total_tokens=58),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -111,6 +112,7 @@ def test_result_pydantic_model_retry():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=87, response_tokens=14, total_tokens=101),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -210,6 +212,7 @@ def test_output_validator():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 41, "b": "foo"}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=7, total_tokens=58),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -225,6 +228,7 @@ def test_output_validator():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=63, response_tokens=14, total_tokens=77),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -266,6 +270,7 @@ def test_plain_response_then_tuple():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='hello')],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=1, total_tokens=52),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -282,6 +287,7 @@ def test_plain_response_then_tuple():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
                 ],
+                usage=Usage(requests=1, request_tokens=72, response_tokens=8, total_tokens=80),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -545,6 +551,7 @@ def test_run_with_history_new():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -556,7 +563,10 @@ def test_run_with_history_new():
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -573,6 +583,7 @@ def test_run_with_history_new():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -584,11 +595,17 @@ def test_run_with_history_new():
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                usage=Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -625,6 +642,7 @@ def test_run_with_history_new():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -636,11 +654,17 @@ def test_run_with_history_new():
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                usage=Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -675,6 +699,7 @@ def test_run_with_history_new_structured():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -693,6 +718,7 @@ def test_run_with_history_new_structured():
                         tool_call_id=IsStr(),
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -720,6 +746,7 @@ def test_run_with_history_new_structured():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -732,6 +759,7 @@ def test_run_with_history_new_structured():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'a': 0}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -753,6 +781,7 @@ def test_run_with_history_new_structured():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'a': 0}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=59, response_tokens=13, total_tokens=72),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -814,6 +843,7 @@ def test_unknown_tool():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=2, total_tokens=53),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -829,6 +859,7 @@ def test_unknown_tool():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=65, response_tokens=4, total_tokens=69),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -852,6 +883,7 @@ def test_unknown_tool_fix():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=2, total_tokens=53),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -867,6 +899,7 @@ def test_unknown_tool_fix():
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
+                usage=Usage(requests=1, request_tokens=65, response_tokens=3, total_tokens=68),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1001,7 +1034,7 @@ class TestMultipleToolCalls:
                     ToolCallPart('final_result', {'value': 'final'}),
                     ToolCallPart('regular_tool', {'x': 1}),
                     ToolCallPart('another_tool', {'y': 2}),
-                ]
+                ],
             )
 
         agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
@@ -1057,7 +1090,7 @@ class TestMultipleToolCalls:
                 parts=[
                     ToolCallPart('final_result', {'value': 'first'}),
                     ToolCallPart('final_result', {'value': 'second'}),
-                ]
+                ],
             )
 
         agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
@@ -1097,7 +1130,7 @@ class TestMultipleToolCalls:
                     ToolCallPart('another_tool', {'y': 2}),
                     ToolCallPart('final_result', {'value': 'second'}),
                     ToolCallPart('unknown_tool', {'value': '???'}),
-                ]
+                ],
             )
 
         agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='exhaustive')
@@ -1136,6 +1169,7 @@ class TestMultipleToolCalls:
                         ToolCallPart(tool_name='final_result', args={'value': 'second'}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
                     ],
+                    usage=Usage(requests=1, request_tokens=53, response_tokens=23, total_tokens=76),
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -1185,7 +1219,7 @@ class TestMultipleToolCalls:
                     ToolCallPart('final_result', {'value': 'final'}),
                     ToolCallPart('another_tool', {'y': 2}),
                     ToolCallPart('unknown_tool', {'value': '???'}),
-                ]
+                ],
             )
 
         agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
@@ -1224,6 +1258,7 @@ class TestMultipleToolCalls:
                         ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
                     ],
+                    usage=Usage(requests=1, request_tokens=58, response_tokens=18, total_tokens=76),
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -1284,7 +1319,7 @@ class TestMultipleToolCalls:
                 parts=[
                     ToolCallPart('final_result', {'bad_value': 'first'}, tool_call_id='first'),
                     ToolCallPart('final_result', {'value': 'second'}, tool_call_id='second'),
-                ]
+                ],
             )
 
         agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
@@ -1333,7 +1368,7 @@ async def test_empty_text_part():
             parts=[
                 TextPart(''),
                 ToolCallPart(info.output_tools[0].name, args_json),
-            ]
+            ],
         )
 
     agent = Agent(FunctionModel(return_empty_text), output_type=tuple[str, str])
@@ -1373,6 +1408,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                     TextPart(content='foo'),
                     ToolCallPart(tool_name='get_location', args={'loc_name': 'London'}, tool_call_id=IsStr()),
                 ],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=6, total_tokens=57),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1388,6 +1424,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(requests=1, request_tokens=56, response_tokens=8, total_tokens=64),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1417,7 +1454,10 @@ def test_nested_capture_run_messages() -> None:
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='success (no tool calls)')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -1437,7 +1477,10 @@ def test_double_capture_run_messages() -> None:
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='success (no tool calls)')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -1473,6 +1516,7 @@ def test_dynamic_false_no_reevaluate():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=4, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -1500,6 +1544,7 @@ def test_dynamic_false_no_reevaluate():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=4, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -1510,6 +1555,7 @@ def test_dynamic_false_no_reevaluate():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                usage=Usage(requests=1, request_tokens=54, response_tokens=8, total_tokens=62),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -1551,6 +1597,7 @@ def test_dynamic_true_reevaluate_system_prompt():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=4, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -1579,6 +1626,7 @@ def test_dynamic_true_reevaluate_system_prompt():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=4, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -1589,6 +1637,7 @@ def test_dynamic_true_reevaluate_system_prompt():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                usage=Usage(requests=1, request_tokens=54, response_tokens=8, total_tokens=62),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -1615,6 +1664,7 @@ def test_capture_run_messages_tool_agent() -> None:
             ModelRequest(parts=[UserPromptPart(content='foobar', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=5, total_tokens=56),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1630,6 +1680,7 @@ def test_capture_run_messages_tool_agent() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='{"foobar":"inner agent result"}')],
+                usage=Usage(requests=1, request_tokens=54, response_tokens=11, total_tokens=65),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1696,6 +1747,13 @@ def test_binary_content_all_messages_json():
             },
             {
                 'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text'}],
+                'usage': {
+                    'requests': 1,
+                    'request_tokens': 56,
+                    'response_tokens': 4,
+                    'total_tokens': 60,
+                    'details': None,
+                },
                 'model_name': 'test',
                 'timestamp': IsStr(),
                 'kind': 'response',
@@ -1809,6 +1867,7 @@ def test_instructions_with_message_history():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
+                usage=Usage(requests=1, request_tokens=56, response_tokens=4, total_tokens=60),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1859,6 +1918,7 @@ def test_empty_final_response():
                     TextPart(content='foo'),
                     ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id=IsStr()),
                 ],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=5, total_tokens=56),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1874,6 +1934,7 @@ def test_empty_final_response():
                     TextPart(content='bar'),
                     ToolCallPart(tool_name='my_tool', args={'x': 2}, tool_call_id=IsStr()),
                 ],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=10, total_tokens=62),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1884,7 +1945,12 @@ def test_empty_final_response():
                     )
                 ]
             ),
-            ModelResponse(parts=[], model_name='function:llm:', timestamp=IsNow(tz=timezone.utc)),
+            ModelResponse(
+                parts=[],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=10, total_tokens=63),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
         ]
     )
 

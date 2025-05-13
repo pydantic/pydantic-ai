@@ -104,7 +104,7 @@ def test_handle_tool_call_deltas():
         PartDeltaEvent(
             index=0,
             delta=ToolCallPartDelta(
-                tool_name_delta='1', args_delta=None, tool_call_id=None, part_delta_kind='tool_call'
+                tool_name_delta='1', args_delta=None, tool_call_id=IsStr(), part_delta_kind='tool_call'
             ),
             event_kind='part_delta',
         )
@@ -118,7 +118,7 @@ def test_handle_tool_call_deltas():
         PartDeltaEvent(
             index=0,
             delta=ToolCallPartDelta(
-                tool_name_delta=None, args_delta='"value1"}', tool_call_id=None, part_delta_kind='tool_call'
+                tool_name_delta=None, args_delta='"value1"}', tool_call_id=IsStr(), part_delta_kind='tool_call'
             ),
             event_kind='part_delta',
         )
@@ -196,7 +196,7 @@ def test_handle_tool_call_part():
         PartDeltaEvent(
             index=0,
             delta=ToolCallPartDelta(
-                tool_name_delta=None, args_delta='"value1"}', tool_call_id=None, part_delta_kind='tool_call'
+                tool_name_delta=None, args_delta='"value1"}', tool_call_id=IsStr(), part_delta_kind='tool_call'
             ),
             event_kind='part_delta',
         )

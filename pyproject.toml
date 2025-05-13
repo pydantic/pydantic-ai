@@ -60,14 +60,13 @@ Documentation = "https://ai.pydantic.dev"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.scripts]
-pai = "pydantic_ai._cli:app"
+pai = "pydantic_ai._cli:cli_exit"  # TODO remove this when clai has been out for a while
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
-mcp-run-python = { workspace = true }
 
 [tool.uv.workspace]
 members = [
@@ -75,6 +74,7 @@ members = [
     "pydantic_evals",
     "pydantic_graph",
     "mcp-run-python",
+    "clai",
     "examples",
 ]
 
@@ -106,6 +106,7 @@ include = [
     "pydantic_graph/**/*.py",
     "mcp-run-python/**/*.py",
     "examples/**/*.py",
+    "clai/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
 ]
@@ -114,7 +115,7 @@ include = [
 extend-select = [
     "Q",
     "RUF100",
-    "RUF018",  # https://docs.astral.sh/ruff/rules/assignment-in-assert/
+    "RUF018", # https://docs.astral.sh/ruff/rules/assignment-in-assert/
     "C90",
     "UP",
     "I",
@@ -163,6 +164,7 @@ include = [
     "mcp-run-python",
     "tests",
     "examples",
+    "clai",
 ]
 venvPath = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
@@ -193,7 +195,7 @@ filterwarnings = [
     "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
     # random resource warnings; I suspect these are coming from vendor SDKs when running examples..
     "ignore:unclosed <socket:ResourceWarning",
-    "ignore:unclosed event loop:ResourceWarning"
+    "ignore:unclosed event loop:ResourceWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
@@ -215,7 +217,10 @@ show_missing = true
 ignore_errors = true
 precision = 2
 exclude_lines = [
+    # `# pragma: no cover` is standard marker for code that's not covered, this will error if code is covered
     'pragma: no cover',
+    # use `# pragma: lax no cover` if you want to ignore cases where (some of) the code is covered
+    'pragma: lax no cover',
     'raise NotImplementedError',
     'if TYPE_CHECKING:',
     'if typing.TYPE_CHECKING:',
