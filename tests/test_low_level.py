@@ -6,7 +6,6 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.low_level import (
-    LowLevelModelResponse,
     _prepare_model,  # pyright: ignore[reportPrivateUsage]
     model_request,
     model_request_stream,
@@ -14,6 +13,7 @@ from pydantic_ai.low_level import (
 )
 from pydantic_ai.messages import (
     ModelRequest,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
     TextPart,
@@ -34,7 +34,7 @@ pytestmark = pytest.mark.anyio
 async def test_model_request():
     model_response = await model_request('test', [ModelRequest.user_text_prompt('x')])
     assert model_response == snapshot(
-        LowLevelModelResponse(
+        ModelResponse(
             parts=[TextPart(content='success (no tool calls)')],
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
@@ -53,7 +53,7 @@ async def test_model_request_tool_call():
         ),
     )
     assert model_response == snapshot(
-        LowLevelModelResponse(
+        ModelResponse(
             parts=[ToolCallPart(tool_name='tool_name', args='a', tool_call_id=IsStr(regex='pyd_ai_.*'))],
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
@@ -65,7 +65,7 @@ async def test_model_request_tool_call():
 def test_model_request_sync():
     model_response = model_request_sync('test', [ModelRequest.user_text_prompt('x')])
     assert model_response == snapshot(
-        LowLevelModelResponse(
+        ModelResponse(
             parts=[TextPart(content='success (no tool calls)')],
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),

@@ -76,7 +76,7 @@ async def main():
     )
     print(model_response)
     """
-    LowLevelModelResponse(
+    ModelResponse(
         parts=[
             ToolCallPart(
                 tool_name='divide',
@@ -85,9 +85,6 @@ async def main():
                 part_kind='tool-call',
             )
         ],
-        model_name='gpt-4.1-nano',
-        timestamp=datetime.datetime(...),
-        kind='response',
         usage=Usage(
             requests=1,
             request_tokens=55,
@@ -95,6 +92,9 @@ async def main():
             total_tokens=62,
             details=None,
         ),
+        model_name='gpt-4.1-nano',
+        timestamp=datetime.datetime(...),
+        kind='response',
     )
     """
 ```

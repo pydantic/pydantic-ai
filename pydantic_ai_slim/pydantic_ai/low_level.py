@@ -8,25 +8,15 @@ These methods are thin wrappers around [`Model`][pydantic_ai.models.Model] imple
 
 from __future__ import annotations as _annotations
 
-import dataclasses
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from pydantic_graph._utils import get_event_loop as _get_event_loop
 
-from . import agent, messages, models, settings, usage
+from . import agent, messages, models, settings
 from .models import instrumented as instrumented_models
 
-__all__ = 'LowLevelModelResponse', 'model_request', 'model_request_sync', 'model_request_stream'
-
-
-@dataclasses.dataclass
-class LowLevelModelResponse(messages.ModelResponse):
-    """Subclass of [`ModelResponse`][pydantic_ai.messages.ModelResponse] that includes usage information."""
-
-    # the default_factor is required here to passify dataclasses since `ModelResponse` has fields with defaults :-(
-    usage: usage.Usage = dataclasses.field(default_factory=usage.Usage)
-    """Usage information for the request."""
+__all__ = 'model_request', 'model_request_sync', 'model_request_stream'
 
 
 async def model_request(
@@ -36,7 +26,7 @@ async def model_request(
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
     instrument: instrumented_models.InstrumentationSettings | bool | None = None,
-) -> LowLevelModelResponse:
+) -> messages.ModelResponse:
     """Make a non-streamed request to a model.
 
     ```py title="model_request_example.py"
@@ -51,11 +41,8 @@ async def model_request(
         )
         print(model_response)
         '''
-        LowLevelModelResponse(
+        ModelResponse(
             parts=[TextPart(content='Paris', part_kind='text')],
-            model_name='claude-3-5-haiku-latest',
-            timestamp=datetime.datetime(...),
-            kind='response',
             usage=Usage(
                 requests=1,
                 request_tokens=56,
@@ -63,6 +50,9 @@ async def model_request(
                 total_tokens=57,
                 details=None,
             ),
+            model_name='claude-3-5-haiku-latest',
+            timestamp=datetime.datetime(...),
+            kind='response',
         )
         '''
     ```
@@ -83,17 +73,10 @@ async def model_request(
         The model response and token usage associated with the request.
     """
     model_instance = _prepare_model(model, instrument)
-    model_response, usage = await model_instance.request(
+    return await model_instance.request(
         messages,
         model_settings,
         model_instance.customize_request_parameters(model_request_parameters or models.ModelRequestParameters()),
-    )
-    usage.requests += 1
-    return LowLevelModelResponse(
-        parts=model_response.parts,
-        model_name=model_response.model_name,
-        timestamp=model_response.timestamp,
-        usage=usage,
     )
 
 
@@ -104,7 +87,7 @@ def model_request_sync(
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
     instrument: instrumented_models.InstrumentationSettings | bool | None = None,
-) -> LowLevelModelResponse:
+) -> messages.ModelResponse:
     """Make a Synchronous, non-streamed request to a model.
 
     This is a convenience method that wraps [`model_request`][pydantic_ai.low_level.model_request] with
@@ -120,14 +103,14 @@ def model_request_sync(
     )
     print(model_response)
     '''
-    LowLevelModelResponse(
+    ModelResponse(
         parts=[TextPart(content='Paris', part_kind='text')],
-        model_name='claude-3-5-haiku-latest',
-        timestamp=datetime.datetime(...),
-        kind='response',
         usage=Usage(
             requests=1, request_tokens=56, response_tokens=1, total_tokens=57, details=None
         ),
+        model_name='claude-3-5-haiku-latest',
+        timestamp=datetime.datetime(...),
+        kind='response',
     )
     '''
     ```
