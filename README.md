@@ -66,7 +66,13 @@ Provides the ability to [stream](https://ai.pydantic.dev/output/#streamed-result
 Here's a minimal example of PydanticAI:
 
 ```python
+import os
 from pydantic_ai import Agent
+
+# Ensure the GEMINI_API_KEY environment variable is set before running the agent
+gemini_api_key = os.getenv("GEMINI_API_KEY")
+if gemini_api_key is None:
+    raise ValueError("Please set the GEMINI_API_KEY environment variable.")
 
 # Define a very simple agent including the model to use, you can also set the model when running the agent.
 agent = Agent(
