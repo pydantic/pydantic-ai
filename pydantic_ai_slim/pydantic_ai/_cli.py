@@ -13,6 +13,9 @@ from typing import Any, cast
 
 from typing_inspection.introspection import get_literal_values
 
+from pydantic_ai.result import OutputDataT
+from pydantic_ai.tools import AgentDepsT
+
 from . import __version__
 from .agent import Agent
 from .exceptions import UserError
@@ -98,7 +101,13 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', agent: Agent[None, str] = cli_agent) -> int:
+def cli(
+    args_list: Sequence[str] | None = None,
+    *,
+    prog_name: str = 'pai',
+    agent: Agent[AgentDepsT, OutputDataT] = cli_agent,
+    deps: AgentDepsT = None,
+) -> int:
     """Run the CLI and return the exit code for the process."""
     parser = argparse.ArgumentParser(
         prog=prog_name,
@@ -191,7 +200,7 @@ Special prompts:
 
     if prompt := cast(str, args.prompt):
         try:
-            asyncio.run(ask_agent(agent, prompt, stream, console, code_theme))
+            asyncio.run(ask_agent(agent, prompt, stream, console, code_theme, deps))
         except KeyboardInterrupt:
             pass
         return 0
@@ -199,13 +208,19 @@ Special prompts:
     # doing this instead of `PromptSession[Any](history=` allows mocking of PromptSession in tests
     session: PromptSession[Any] = PromptSession(history=FileHistory(str(PROMPT_HISTORY_PATH)))
     try:
-        return asyncio.run(run_chat(session, stream, agent, console, code_theme, prog_name))
+        return asyncio.run(run_chat(session, stream, agent, console, code_theme, prog_name, deps))
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 
 
 async def run_chat(
-    session: PromptSession[Any], stream: bool, agent: Agent, console: Console, code_theme: str, prog_name: str
+    session: PromptSession[Any],
+    stream: bool,
+    agent: Agent[AgentDepsT, OutputDataT],
+    console: Console,
+    code_theme: str,
+    prog_name: str,
+    deps: AgentDepsT = None,
 ) -> int:
     multiline = False
     messages: list[ModelMessage] = []
@@ -227,30 +242,31 @@ async def run_chat(
                 return exit_value
         else:
             try:
-                messages = await ask_agent(agent, text, stream, console, code_theme, messages)
+                messages = await ask_agent(agent, text, stream, console, code_theme, deps, messages)
             except CancelledError:  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
 
 
 async def ask_agent(
-    agent: Agent,
+    agent: Agent[AgentDepsT, OutputDataT],
     prompt: str,
     stream: bool,
     console: Console,
     code_theme: str,
+    deps: AgentDepsT,
     messages: list[ModelMessage] | None = None,
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
     if not stream:
         with status:
-            result = await agent.run(prompt, message_history=messages)
-        content = result.output
+            result = await agent.run(prompt, message_history=messages, deps=deps)
+        content = str(result.output)
         console.print(Markdown(content, code_theme=code_theme))
         return result.all_messages()
 
     with status, ExitStack() as stack:
-        async with agent.iter(prompt, message_history=messages) as agent_run:
+        async with agent.iter(prompt, message_history=messages, deps=deps) as agent_run:
             live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
             async for node in agent_run:
                 if Agent.is_model_request_node(node):

@@ -77,13 +77,42 @@ uvx --from pydantic-ai pai
 
 You can specify a custom agent using the `--agent` flag with a module path and variable name:
 
+```python {title="custom_agent.py" test="skip"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
+```
+
+Then run:
+
 ```bash
-pai --agent mymodule.submodule:my_agent "What's the weather today?"
+pai --agent custom_agent:agent "What's the weather today?"
 ```
 
 The format must be `module:variable` where:
+
 - `module` is the importable Python module path
 - `variable` is the name of the Agent instance in that module
 
 
-Additionally, you can directly launch CLI mode from an `Agent` instance using `Agent.run_cli()`.
+Additionally, you can directly launch CLI mode from an `Agent` instance using `Agent.to_cli_sync()`:
+
+```python {title="agent_to_cli_sync.py" test="skip" hl_lines=4}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
+agent.to_cli_sync()
+```
+
+You can also use the async interface with `Agent.to_cli()`:
+
+```python {title="agent_to_cli.py" test="skip" hl_lines=6}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
+
+async def main():
+    await agent.to_cli()
+```
+
+_(You'll need to add `asyncio.run(main())` to run `main`)_
