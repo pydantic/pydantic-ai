@@ -546,6 +546,7 @@ from typing import Union
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.models.test import TestModel
 
 
 async def turn_on_strict_if_openai(
@@ -555,27 +556,65 @@ async def turn_on_strict_if_openai(
         return [replace(tool_def, strict=True) for tool_def in tools_def]
     return tools_def
 
-agent = Agent('openai:gpt-4o', prepare_tools=turn_on_strict_if_openai)
+
+test_model = TestModel()
+agent = Agent(test_model, prepare_tools=turn_on_strict_if_openai)
+
+
+@agent.tool_plain
+def echo(message: str) -> str:
+    return message
+
+
+agent.run_sync('testing...')
+assert test_model.last_model_request_parameters.function_tools[0].strict is None
+
+# Set the system attribute of the test_model to 'openai'
+test_model._system = 'openai'
+
+agent.run_sync('testing with openai...')
+assert test_model.last_model_request_parameters.function_tools[0].strict
 ```
 
-Here's another example that conditionally filters out the tools from a given list if the dependency (`ctx.deps`) is `True`:
+_(This example is complete, it can be run "as is")_
+
+Here's another example that conditionally filters out the tools by name if the dependency (`ctx.deps`) is `True`:
 
 ```python {title="agent_prepare_tools_filter_out.py" noqa="I001"}
 from typing import Union
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import Tool, ToolDefinition
 
 
-TOOLS_TO_FILTER_OUT = ['git_push', 'git_delete_branch']
+def launch_potato(target: str) -> str:
+    return f'Potato launched at {target}!'
 
-async def filter_out_tools_by_name(ctx: RunContext[bool], tool_defs: list[ToolDefinition]) -> Union[list[ToolDefinition], None]:
+
+async def filter_out_tools_by_name(
+    ctx: RunContext[bool], tool_defs: list[ToolDefinition]
+) -> Union[list[ToolDefinition], None]:
     if ctx.deps:
-        return [tool_def for tool_def in tool_defs if tool_def.name not in TOOLS_TO_FILTER_OUT]
+        return [tool_def for tool_def in tool_defs if tool_def.name != 'launch_potato']
     return tool_defs
 
-agent = Agent('openai:gpt-4o', prepare_tools=filter_out_tools_by_name)
+
+agent = Agent(
+    'test',
+    tools=[Tool(launch_potato)],
+    prepare_tools=filter_out_tools_by_name,
+    deps_type=bool,
+)
+
+result = agent.run_sync('testing...', deps=False)
+print(result.output)
+#> {"launch_potato":"Potato launched at a!"}
+result = agent.run_sync('testing...', deps=True)
+print(result.output)
+#> success (no tool calls)
 ```
+
+_(This example is complete, it can be run "as is")_
 
 You can use `prepare_tools` to:
 
