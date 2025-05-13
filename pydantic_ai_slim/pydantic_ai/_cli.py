@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import argparse
 import asyncio
 import importlib
+import os
 import sys
 from asyncio import CancelledError
 from collections.abc import Sequence
@@ -167,6 +168,9 @@ Special prompts:
     agent: Agent[None, str] = cli_agent
     if args.agent:
         try:
+            current_path = os.getcwd()
+            sys.path.append(current_path)
+
             module_path, variable_name = args.agent.split(':')
             module = importlib.import_module(module_path)
             agent = getattr(module, variable_name)
