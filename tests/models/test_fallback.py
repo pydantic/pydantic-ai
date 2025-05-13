@@ -127,7 +127,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
-                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "preferred_output_mode": null, "allow_text_output": true, "output_tools": [], "output_object": null}',
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:success_response:',
                     'gen_ai.system': 'function',
@@ -200,7 +200,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                 'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
-                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "preferred_output_mode": null, "allow_text_output": true, "output_tools": [], "output_object": null}',
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
                     'gen_ai.system': 'function',
@@ -272,7 +272,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'fallback:function,function',
                     'gen_ai.request.model': 'fallback:function:failure_response:,function:failure_response:',
-                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "preferred_output_mode": null, "allow_text_output": true, "output_tools": [], "output_object": null}',
                     'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:failure_response:',

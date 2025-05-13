@@ -21,6 +21,7 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    OutputPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -320,7 +321,7 @@ class AnthropicModel(Model):
             elif isinstance(m, ModelResponse):
                 assistant_content_params: list[TextBlockParam | ToolUseBlockParam] = []
                 for response_part in m.parts:
-                    if isinstance(response_part, TextPart):
+                    if isinstance(response_part, (TextPart, OutputPart)):
                         assistant_content_params.append(TextBlockParam(text=response_part.content, type='text'))
                     else:
                         tool_use_block_param = ToolUseBlockParam(

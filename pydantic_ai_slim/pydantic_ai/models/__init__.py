@@ -16,6 +16,7 @@ from functools import cache
 import httpx
 from typing_extensions import Literal, TypeAliasType
 
+from .._output import OutputMode, OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent
@@ -261,8 +262,11 @@ class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition]
-    allow_text_output: bool
+
+    output_mode: OutputMode | None
+    output_object: OutputObjectDefinition | None
     output_tools: list[ToolDefinition]
+    allow_text_output: bool
 
 
 class Model(ABC):
@@ -329,6 +333,16 @@ class Model(ABC):
         for message in reversed(messages):
             if isinstance(message, ModelRequest):
                 return message.instructions
+
+    @property
+    def supported_output_modes(self) -> set[OutputMode]:
+        """The supported output modes for the model."""
+        return {'tool'}  # TODO: Support manual_json on all
+
+    @property
+    def default_output_mode(self) -> OutputMode:
+        """The default output mode for the model."""
+        return 'tool'
 
 
 @dataclass

@@ -91,6 +91,8 @@ class ModelResponsePartsManager:
         """
         existing_text_part_and_index: tuple[TextPart, int] | None = None
 
+        # TODO: Parse out structured output or manual JSON, with a separate message?
+
         if vendor_part_id is None:
             # If the vendor_part_id is None, check if the latest part is a TextPart to update
             if self._parts:
