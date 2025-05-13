@@ -150,7 +150,7 @@ class TestModel(Model):
         elif model_request_parameters.output_tools:
             return _WrappedToolOutput(None)
         else:
-            return _WrappedTextOutput(None)  # pragma: no cover
+            return _WrappedTextOutput(None)
 
     def _request(
         self,

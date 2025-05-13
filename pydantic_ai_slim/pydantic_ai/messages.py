@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import base64
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
@@ -82,7 +83,7 @@ class VideoUrl:
     """Type identifier, this is available on all parts as a discriminator."""
 
     @property
-    def media_type(self) -> VideoMediaType:  # pragma: lax no cover
+    def media_type(self) -> VideoMediaType:
         """Return the media type of the video, based on the url."""
         if self.url.endswith('.mkv'):
             return 'video/x-matroska'
@@ -109,7 +110,7 @@ class VideoUrl:
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _video_format(self.media_type)
+        return _video_format_lookup[self.media_type]
 
 
 @dataclass
@@ -131,6 +132,11 @@ class AudioUrl:
             return 'audio/wav'
         else:
             raise ValueError(f'Unknown audio file extension: {self.url}')
+
+    @property
+    def format(self) -> AudioFormat:
+        """The file format of the audio file."""
+        return _audio_format_lookup[self.media_type]
 
 
 @dataclass
@@ -163,7 +169,7 @@ class ImageUrl:
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _image_format(self.media_type)
+        return _image_format_lookup[self.media_type]
 
 
 @dataclass
@@ -181,7 +187,7 @@ class DocumentUrl:
         """Return the media type of the document, based on the url."""
         type_, _ = guess_type(self.url)
         if type_ is None:
-            raise RuntimeError(f'Unknown document file extension: {self.url}')
+            raise ValueError(f'Unknown document file extension: {self.url}')
         return type_
 
     @property
@@ -190,7 +196,11 @@ class DocumentUrl:
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _document_format(self.media_type)
+        media_type = self.media_type
+        try:
+            return _document_format_lookup[media_type]
+        except KeyError as e:
+            raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
 @dataclass
@@ -224,93 +234,58 @@ class BinaryContent:
     @property
     def is_document(self) -> bool:
         """Return `True` if the media type is a document type."""
-        return self.media_type in {
-            'application/pdf',
-            'text/plain',
-            'text/csv',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'text/html',
-            'text/markdown',
-            'application/vnd.ms-excel',
-        }
+        return self.media_type in _document_format_lookup
 
     @property
     def format(self) -> str:
         """The file format of the binary content."""
-        if self.is_audio:
-            if self.media_type == 'audio/mpeg':
-                return 'mp3'
-            elif self.media_type == 'audio/wav':
-                return 'wav'
-        elif self.is_image:
-            return _image_format(self.media_type)
-        elif self.is_document:
-            return _document_format(self.media_type)
-        elif self.is_video:
-            return _video_format(self.media_type)
-        raise ValueError(f'Unknown media type: {self.media_type}')
+        try:
+            if self.is_audio:
+                return _audio_format_lookup[self.media_type]
+            elif self.is_image:
+                return _image_format_lookup[self.media_type]
+            elif self.is_video:
+                return _video_format_lookup[self.media_type]
+            else:
+                return _document_format_lookup[self.media_type]
+        except KeyError as e:
+            raise ValueError(f'Unknown media type: {self.media_type}') from e
 
 
 UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
 
 # Ideally this would be a Union of types, but Python 3.9 requires it to be a string, and strings don't work with `isinstance``.
 MultiModalContentTypes = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
-
-
-def _document_format(media_type: str) -> DocumentFormat:
-    if media_type == 'application/pdf':
-        return 'pdf'
-    elif media_type == 'text/plain':
-        return 'txt'
-    elif media_type == 'text/csv':
-        return 'csv'
-    elif media_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-        return 'docx'
-    elif media_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
-        return 'xlsx'
-    elif media_type == 'text/html':
-        return 'html'
-    elif media_type == 'text/markdown':
-        return 'md'
-    elif media_type == 'application/vnd.ms-excel':
-        return 'xls'
-    else:
-        raise ValueError(f'Unknown document media type: {media_type}')
-
-
-def _image_format(media_type: str) -> ImageFormat:
-    if media_type == 'image/jpeg':
-        return 'jpeg'
-    elif media_type == 'image/png':
-        return 'png'
-    elif media_type == 'image/gif':
-        return 'gif'
-    elif media_type == 'image/webp':
-        return 'webp'
-    else:
-        raise ValueError(f'Unknown image media type: {media_type}')
-
-
-def _video_format(media_type: str) -> VideoFormat:
-    if media_type == 'video/x-matroska':
-        return 'mkv'
-    elif media_type == 'video/quicktime':
-        return 'mov'
-    elif media_type == 'video/mp4':
-        return 'mp4'
-    elif media_type == 'video/webm':
-        return 'webm'
-    elif media_type == 'video/x-flv':
-        return 'flv'
-    elif media_type == 'video/mpeg':
-        return 'mpeg'
-    elif media_type == 'video/x-ms-wmv':
-        return 'wmv'
-    elif media_type == 'video/3gpp':
-        return 'three_gp'
-    else:  # pragma: no cover
-        raise ValueError(f'Unknown video media type: {media_type}')
+_document_format_lookup: dict[str, DocumentFormat] = {
+    'application/pdf': 'pdf',
+    'text/plain': 'txt',
+    'text/csv': 'csv',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'text/html': 'html',
+    'text/markdown': 'md',
+    'application/vnd.ms-excel': 'xls',
+}
+_audio_format_lookup: dict[str, AudioFormat] = {
+    'audio/mpeg': 'mp3',
+    'audio/wav': 'wav',
+}
+_image_format_lookup: dict[str, ImageFormat] = {
+    'image/jpeg': 'jpeg',
+    'image/png': 'png',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+}
+_video_format_lookup: dict[str, VideoFormat] = {
+    'video/x-matroska': 'mkv',
+    'video/quicktime': 'mov',
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'video/x-flv': 'flv',
+    'video/mpeg': 'mpeg',
+    'video/x-ms-wmv': 'wmv',
+    'video/3gpp': 'three_gp',
+}
 
 
 @dataclass
@@ -341,6 +316,9 @@ class UserPromptPart:
                     content.append(part)
                 elif isinstance(part, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
                     content.append({'kind': part.kind, 'url': part.url})
+                elif isinstance(part, BinaryContent):
+                    base64_data = base64.b64encode(part.data).decode()
+                    content.append({'kind': part.kind, 'content': base64_data, 'media_type': part.media_type})
                 else:
                     content.append({'kind': part.kind})
         return Event('gen_ai.user.message', body={'content': content, 'role': 'user'})
@@ -473,6 +451,11 @@ class ModelRequest:
 
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
+
+    @classmethod
+    def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
+        """Create a `ModelRequest` with a single user prompt as text."""
+        return cls(parts=[UserPromptPart(user_prompt)], instructions=instructions)
 
 
 @dataclass

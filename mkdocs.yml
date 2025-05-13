@@ -38,11 +38,13 @@ nav:
       - graph.md
       - evals.md
       - input.md
+      - direct.md
       - MCP:
           - mcp/index.md
           - mcp/client.md
           - mcp/server.md
           - mcp/run-python.md
+      - A2A: a2a.md
       - cli.md
   - Examples:
       - examples/index.md
@@ -67,6 +69,7 @@ nav:
       - api/usage.md
       - api/mcp.md
       - api/format_as_xml.md
+      - api/direct.md
       - api/models/base.md
       - api/models/openai.md
       - api/models/anthropic.md
@@ -91,6 +94,7 @@ nav:
       - api/pydantic_evals/reporting.md
       - api/pydantic_evals/otel.md
       - api/pydantic_evals/generation.md
+      - api/fasta2a.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
@@ -208,6 +212,7 @@ plugins:
             # 3 because docs are in pages with an H2 just above them
             heading_level: 3
           import:
+            - url: https://logfire.pydantic.dev/docs/objects.inv
             - url: https://docs.python.org/3/objects.inv
             - url: https://docs.pydantic.dev/latest/objects.inv
             - url: https://dirty-equals.helpmanual.io/latest/objects.inv
@@ -243,7 +248,6 @@ plugins:
           - cli.md
           - logfire.md
           - examples/*.md
-
 
 hooks:
   - "docs/.hooks/main.py"

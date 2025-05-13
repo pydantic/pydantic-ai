@@ -26,6 +26,8 @@ from ..settings import ModelSettings
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
+__all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
+
 MODEL_SETTING_ATTRIBUTES: tuple[
     Literal[
         'max_tokens',
@@ -46,6 +48,17 @@ MODEL_SETTING_ATTRIBUTES: tuple[
 )
 
 ANY_ADAPTER = TypeAdapter[Any](Any)
+
+
+def instrument_model(model: Model, instrument: InstrumentationSettings | bool) -> Model:
+    """Instrument a model with OpenTelemetry/logfire."""
+    if instrument and not isinstance(model, InstrumentedModel):
+        if instrument is True:
+            instrument = InstrumentationSettings()
+
+        model = InstrumentedModel(model, instrument)
+
+    return model
 
 
 @dataclass(init=False)
