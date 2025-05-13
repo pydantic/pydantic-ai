@@ -225,16 +225,7 @@ class BinaryContent:
     @property
     def is_document(self) -> bool:
         """Return `True` if the media type is a document type."""
-        return self.media_type in {
-            'application/pdf',
-            'text/plain',
-            'text/csv',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'text/html',
-            'text/markdown',
-            'application/vnd.ms-excel',
-        }
+        return self.media_type in _document_format_lookup
 
     @property
     def format(self) -> str:
@@ -257,61 +248,57 @@ UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | B
 
 # Ideally this would be a Union of types, but Python 3.9 requires it to be a string, and strings don't work with `isinstance``.
 MultiModalContentTypes = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
+_document_format_lookup: dict[str, DocumentFormat] = {
+    'application/pdf': 'pdf',
+    'text/plain': 'txt',
+    'text/csv': 'csv',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'text/html': 'html',
+    'text/markdown': 'md',
+    'application/vnd.ms-excel': 'xls',
+}
 
 
 def _document_format(media_type: str) -> DocumentFormat:
-    if media_type == 'application/pdf':
-        return 'pdf'
-    elif media_type == 'text/plain':
-        return 'txt'
-    elif media_type == 'text/csv':
-        return 'csv'
-    elif media_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-        return 'docx'
-    elif media_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
-        return 'xlsx'
-    elif media_type == 'text/html':
-        return 'html'
-    elif media_type == 'text/markdown':
-        return 'md'
-    elif media_type == 'application/vnd.ms-excel':
-        return 'xls'
-    else:
-        raise ValueError(f'Unknown document media type: {media_type}')
+    try:
+        return _document_format_lookup[media_type]
+    except KeyError as e:
+        raise ValueError(f'Unknown document media type: {media_type}') from e
+
+
+_image_format_lookup: dict[str, ImageFormat] = {
+    'image/jpeg': 'jpeg',
+    'image/png': 'png',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+}
 
 
 def _image_format(media_type: str) -> ImageFormat:
-    if media_type == 'image/jpeg':
-        return 'jpeg'
-    elif media_type == 'image/png':
-        return 'png'
-    elif media_type == 'image/gif':
-        return 'gif'
-    elif media_type == 'image/webp':
-        return 'webp'
-    else:
-        raise ValueError(f'Unknown image media type: {media_type}')
+    try:
+        return _image_format_lookup[media_type]
+    except KeyError as e:
+        raise ValueError(f'Unknown image media type: {media_type}') from e
+
+
+_video_format_lookup: dict[str, VideoFormat] = {
+    'video/x-matroska': 'mkv',
+    'video/quicktime': 'mov',
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'video/x-flv': 'flv',
+    'video/mpeg': 'mpeg',
+    'video/x-ms-wmv': 'wmv',
+    'video/3gpp': 'three_gp',
+}
 
 
 def _video_format(media_type: str) -> VideoFormat:
-    if media_type == 'video/x-matroska':
-        return 'mkv'
-    elif media_type == 'video/quicktime':
-        return 'mov'
-    elif media_type == 'video/mp4':
-        return 'mp4'
-    elif media_type == 'video/webm':
-        return 'webm'
-    elif media_type == 'video/x-flv':
-        return 'flv'
-    elif media_type == 'video/mpeg':
-        return 'mpeg'
-    elif media_type == 'video/x-ms-wmv':
-        return 'wmv'
-    elif media_type == 'video/3gpp':
-        return 'three_gp'
-    else:
-        raise ValueError(f'Unknown video media type: {media_type}')
+    try:
+        return _video_format_lookup[media_type]
+    except KeyError as e:
+        raise ValueError(f'Unknown video media type: {media_type}') from e
 
 
 @dataclass
