@@ -5,7 +5,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.low_level import (
+from pydantic_ai.direct import (
     _prepare_model,  # pyright: ignore[reportPrivateUsage]
     model_request,
     model_request_stream,

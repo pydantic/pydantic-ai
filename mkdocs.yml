@@ -38,7 +38,7 @@ nav:
       - graph.md
       - evals.md
       - input.md
-      - low_level.md
+      - direct.md
       - MCP:
           - mcp/index.md
           - mcp/client.md
@@ -68,7 +68,7 @@ nav:
       - api/usage.md
       - api/mcp.md
       - api/format_as_xml.md
-      - api/low_level.md
+      - api/direct.md
       - api/models/base.md
       - api/models/openai.md
       - api/models/anthropic.md

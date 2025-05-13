@@ -1,7 +1,7 @@
-"""Low-level methods to make requests directly to models with minimal abstraction.
+"""Methods for making imperative requests to language models with minimal abstraction.
 
 These methods allow you to make requests to LLMs where the only abstraction is input and output schema
-translation so you can request all models with the same API.
+translation so you can use all models with the same API.
 
 These methods are thin wrappers around [`Model`][pydantic_ai.models.Model] implementations.
 """
@@ -30,7 +30,7 @@ async def model_request(
     """Make a non-streamed request to a model.
 
     ```py title="model_request_example.py"
-    from pydantic_ai.low_level import model_request
+    from pydantic_ai.direct import model_request
     from pydantic_ai.messages import ModelRequest
 
 
@@ -90,11 +90,11 @@ def model_request_sync(
 ) -> messages.ModelResponse:
     """Make a Synchronous, non-streamed request to a model.
 
-    This is a convenience method that wraps [`model_request`][pydantic_ai.low_level.model_request] with
+    This is a convenience method that wraps [`model_request`][pydantic_ai.direct.model_request] with
     `loop.run_until_complete(...)`. You therefore can't use this method inside async code or if there's an active event loop.
 
     ```py title="model_request_sync_example.py"
-    from pydantic_ai.low_level import model_request_sync
+    from pydantic_ai.direct import model_request_sync
     from pydantic_ai.messages import ModelRequest
 
     model_response = model_request_sync(
@@ -150,7 +150,7 @@ async def model_request_stream(
 
     ```py {title="model_request_stream_example.py"}
 
-    from pydantic_ai.low_level import model_request_stream
+    from pydantic_ai.direct import model_request_stream
     from pydantic_ai.messages import ModelRequest
 
 
