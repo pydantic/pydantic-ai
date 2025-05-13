@@ -36,7 +36,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import Usage
 
-from ..conftest import try_import
+from ..conftest import IsStr, try_import
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
@@ -796,7 +796,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
                 'event.name': 'gen_ai.user.message',
             },
             {
-                'content': ['user_prompt6', {'kind': 'binary'}],
+                'content': ['user_prompt6', {'kind': 'binary', 'content': IsStr(), 'media_type': 'application/pdf'}],
                 'role': 'user',
                 'gen_ai.message.index': 5,
                 'event.name': 'gen_ai.user.message',
