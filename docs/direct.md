@@ -157,4 +157,4 @@ print(model_response.parts[0].content)
 #> Paris
 ```
 
-See [Debugging and Monitoring](logfire.md) for more details, including how to instrument with plain OpenTelemetry without logfire.
+See [Debugging and Monitoring](logfire.md) for more details, including how to instrument with plain OpenTelemetry without Logfire.

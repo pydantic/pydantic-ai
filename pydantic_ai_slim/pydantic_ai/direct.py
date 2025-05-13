@@ -66,7 +66,7 @@ async def model_request(
         messages: Messages to send to the model
         model_settings: optional model settings
         model_request_parameters: optional model request parameters
-        instrument: Whether to instrument the request with OpenTelemetry/logfire, if `None` the value from
+        instrument: Whether to instrument the request with OpenTelemetry/Logfire, if `None` the value from
             [`logfire.instrument_pydantic_ai`][logfire.Logfire.instrument_pydantic_ai] is used.
 
     Returns:
@@ -120,7 +120,7 @@ def model_request_sync(
         messages: Messages to send to the model
         model_settings: optional model settings
         model_request_parameters: optional model request parameters
-        instrument: Whether to instrument the request with OpenTelemetry/logfire, if `None` the value from
+        instrument: Whether to instrument the request with OpenTelemetry/Logfire, if `None` the value from
             [`logfire.instrument_pydantic_ai`][logfire.Logfire.instrument_pydantic_ai] is used.
 
     Returns:
@@ -189,7 +189,7 @@ async def model_request_stream(
         messages: Messages to send to the model
         model_settings: optional model settings
         model_request_parameters: optional model request parameters
-        instrument: Whether to instrument the request with OpenTelemetry/logfire, if `None` the value from
+        instrument: Whether to instrument the request with OpenTelemetry/Logfire, if `None` the value from
             [`logfire.instrument_pydantic_ai`][logfire.Logfire.instrument_pydantic_ai] is used.
 
     Returns:
