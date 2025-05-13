@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final,
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import Literal, Never, TypeIs, TypeVar, deprecated
+from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
@@ -1687,6 +1687,51 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             yield
         finally:
             await exit_stack.aclose()
+
+    async def to_cli(self: Self, deps: AgentDepsT = None) -> None:
+        """Run the agent in a CLI chat interface.
+
+        Example:
+        ```python {title="agent_to_cli.py" test="skip"}
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
+
+        async def main():
+            await agent.to_cli()
+        ```
+        """
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.history import FileHistory
+        from rich.console import Console
+
+        from pydantic_ai._cli import PROMPT_HISTORY_PATH, run_chat
+
+        # TODO(Marcelo): We need to refactor the CLI code to be able to be able to just pass `agent`, `deps` and
+        # `prog_name` from here.
+
+        session: PromptSession[Any] = PromptSession(history=FileHistory(str(PROMPT_HISTORY_PATH)))
+        await run_chat(
+            session=session,
+            stream=True,
+            agent=self,
+            deps=deps,
+            console=Console(),
+            code_theme='monokai',
+            prog_name='pydantic-ai',
+        )
+
+    def to_cli_sync(self: Self, deps: AgentDepsT = None) -> None:
+        """Run the agent in a CLI chat interface with the non-async interface.
+
+        ```python {title="agent_to_cli_sync.py" test="skip"}
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
+        agent.to_cli_sync()
+        ```
+        """
+        return get_event_loop().run_until_complete(self.to_cli(deps=deps))
 
 
 @dataclasses.dataclass(repr=False)

@@ -53,7 +53,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 ## Help
 
 ```
-usage: clai [-h] [-m [MODEL]] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]
+usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]
 
 PydanticAI CLI v...
 
@@ -69,6 +69,8 @@ options:
   -h, --help            show this help message and exit
   -m [MODEL], --model [MODEL]
                         Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o" or "anthropic:claude-3-7-sonnet-latest". Defaults to "openai:gpt-4o".
+  -a AGENT, --agent AGENT
+                        Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"
   -l, --list-models     List all available models and exit
   -t [CODE_THEME], --code-theme [CODE_THEME]
                         Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
