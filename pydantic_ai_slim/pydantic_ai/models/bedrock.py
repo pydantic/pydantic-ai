@@ -423,6 +423,8 @@ class BedrockConverseModel(Model):
                 content: list[ContentBlockOutputTypeDef] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
+                        if not item.content.strip():
+                            continue
                         content.append({'text': item.content})
                     else:
                         assert isinstance(item, ToolCallPart)
