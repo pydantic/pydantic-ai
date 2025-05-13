@@ -8,8 +8,7 @@ These methods are thin wrappers around [`Model`][pydantic_ai.models.Model] imple
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager
 
 from pydantic_graph._utils import get_event_loop as _get_event_loop
 
@@ -104,7 +103,7 @@ def model_request_sync(
     ModelResponse(
         parts=[TextPart(content='Paris', part_kind='text')],
         usage=Usage(
-            requests=1, request_tokens=56, response_tokens=1, total_tokens=57, details=None,
+            requests=1, request_tokens=56, response_tokens=1, total_tokens=57, details=None
         ),
         model_name='claude-3-5-haiku-latest',
         timestamp=datetime.datetime(...),
@@ -135,15 +134,14 @@ def model_request_sync(
     )
 
 
-@asynccontextmanager
-async def model_request_stream(
+def model_request_stream(
     model: models.Model | models.KnownModelName | str,
     messages: list[messages.ModelMessage],
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
     instrument: instrumented_models.InstrumentationSettings | bool | None = None,
-) -> AsyncIterator[models.StreamedResponse]:
+) -> AbstractAsyncContextManager[models.StreamedResponse]:
     """Make a streamed async request to a model.
 
     ```py {title="model_request_stream_example.py"}
