@@ -111,7 +111,7 @@ The direct API is ideal when:
 
 For most application use cases, the higher-level [`Agent`][pydantic_ai.Agent] API provides a more convenient interface with additional features such as built-in tool execution, retrying, structured output parsing, and more.
 
-## OpenTelemetry Instrumentation
+## OpenTelemetry or Logfire Instrumentation
 
 As with [agents][pydantic_ai.Agent], you can enable OpenTelemetry/Logfire instrumentation with just a few extra lines
 
