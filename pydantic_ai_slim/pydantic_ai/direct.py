@@ -59,8 +59,6 @@ async def model_request(
 
     1. See [`ModelRequest.user_text_prompt`][pydantic_ai.messages.ModelRequest.user_text_prompt] for details.
 
-    Then
-
     Args:
         model: The model to make a request to. We allow `str` here since the actual list of allowed models changes frequently.
         messages: Messages to send to the model
@@ -106,7 +104,7 @@ def model_request_sync(
     ModelResponse(
         parts=[TextPart(content='Paris', part_kind='text')],
         usage=Usage(
-            requests=1, request_tokens=56, response_tokens=1, total_tokens=57, details=None
+            requests=1, request_tokens=56, response_tokens=1, total_tokens=57, details=None,
         ),
         model_name='claude-3-5-haiku-latest',
         timestamp=datetime.datetime(...),
@@ -196,13 +194,11 @@ async def model_request_stream(
         A [stream response][pydantic_ai.models.StreamedResponse] async context manager.
     """
     model_instance = _prepare_model(model, instrument)
-    stream_cxt_mgr = model_instance.request_stream(
+    return model_instance.request_stream(
         messages,
         model_settings,
         model_instance.customize_request_parameters(model_request_parameters or models.ModelRequestParameters()),
     )
-    async with stream_cxt_mgr as streamed_response:
-        yield streamed_response
 
 
 def _prepare_model(
