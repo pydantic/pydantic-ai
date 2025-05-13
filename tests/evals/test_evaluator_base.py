@@ -172,10 +172,11 @@ async def test_evaluator_async():
     assert result is True
 
 
-async def test_evaluator_name():
+async def test_evaluation_name():
     """Test evaluator name method."""
     evaluator = SimpleEvaluator()
-    assert evaluator.name() == 'SimpleEvaluator'
+    assert evaluator.get_serialization_name() == 'SimpleEvaluator'
+    assert evaluator.get_default_evaluation_name() == 'SimpleEvaluator'
 
 
 async def test_evaluator_serialization():

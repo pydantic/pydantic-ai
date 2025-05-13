@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -275,7 +275,8 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
 
     # Test without input, with custom model_settings
     evaluator_no_input = LLMJudge(rubric='Greeting with custom settings', model_settings=custom_model_settings)
-    result_no_input = await evaluator_no_input.evaluate(ctx)
+    result_no_input = cast(Any, await evaluator_no_input.evaluate(ctx))['LLMJudge']
+    assert isinstance(result_no_input, EvaluationReason)
     assert result_no_input.value is True
     assert result_no_input.reason == 'Test passed with settings'
     mock_judge_output.assert_called_once_with(
@@ -289,7 +290,8 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
         model='openai:gpt-3.5-turbo',
         model_settings=custom_model_settings,
     )
-    result_with_input = await evaluator_with_input.evaluate(ctx)
+    result_with_input = cast(Any, await evaluator_with_input.evaluate(ctx))['LLMJudge']
+    assert isinstance(result_with_input, EvaluationReason)
     assert result_with_input.value is True
     assert result_with_input.reason == 'Test passed with settings'
     mock_judge_input_output.assert_called_once_with(

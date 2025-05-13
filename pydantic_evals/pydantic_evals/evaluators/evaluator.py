@@ -12,7 +12,7 @@ from pydantic import (
 )
 from pydantic_core import to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo
-from typing_extensions import TypeVar
+from typing_extensions import TypeVar, deprecated
 
 from .._utils import get_event_loop
 from ._spec import EvaluatorSpec
@@ -146,16 +146,37 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
     __pydantic_config__ = ConfigDict(arbitrary_types_allowed=True)
 
     @classmethod
-    def name(cls) -> str:
+    def get_serialization_name(cls) -> str:
         """Return the 'name' of this Evaluator to use during serialization.
 
         Returns:
             The name of the Evaluator, which is typically the class name.
         """
-        # Note: if we wanted to prefer snake_case, we could use:
-        # from pydantic.alias_generators import to_snake
-        # return to_snake(cls.__name__)
         return cls.__name__
+
+    @classmethod
+    @deprecated('`name` has been renamed, use `get_serialization_name` instead.')
+    def name(cls) -> str:
+        """`name` has been renamed, use `get_serialization_name` instead."""
+        return cls.get_serialization_name()
+
+    def get_default_evaluation_name(self) -> str:
+        """Return the default name to use in reports for the output of this evaluator.
+
+        By default, if the evaluator has an attribute called `evaluation_name` of type string, that will be used.
+        Otherwise, the serialization name of the evaluator (which is usually the class name) will be used.
+
+        This can be overridden to get a more descriptive name in evaluation reports, e.g. using instance information.
+
+        Note that evaluators that return a mapping of results will always use the keys of that mapping as the names
+        of the associated evaluation results.
+        """
+        evaluation_name = getattr(self, 'evaluation_name', None)
+        if isinstance(evaluation_name, str):
+            # If the evaluator has an attribute `name` of type string, use that
+            return evaluation_name
+
+        return self.get_serialization_name()
 
     @abstractmethod
     def evaluate(
@@ -233,7 +254,9 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
         else:
             arguments = raw_arguments
         return to_jsonable_python(
-            EvaluatorSpec(name=self.name(), arguments=arguments), context=info.context, serialize_unknown=True
+            EvaluatorSpec(name=self.get_serialization_name(), arguments=arguments),
+            context=info.context,
+            serialize_unknown=True,
         )
 
     def build_serialization_arguments(self) -> dict[str, Any]:
