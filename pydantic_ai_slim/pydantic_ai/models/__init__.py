@@ -520,7 +520,6 @@ def _get_transport_for_loop() -> _PerLoopTransport:
     return _PerLoopTransport()
 
 
-# transport._pool._connections[0]._connection._network_stream._stream.transport_stream._transport._loop
 class _PerLoopTransport(httpx.AsyncBaseTransport):
     def __init__(self):
         self.transports: MutableMapping[asyncio.AbstractEventLoop, httpx.AsyncHTTPTransport] = (
