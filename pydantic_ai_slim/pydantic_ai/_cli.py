@@ -101,13 +101,7 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(
-    args_list: Sequence[str] | None = None,
-    *,
-    prog_name: str = 'pai',
-    agent: Agent[AgentDepsT, OutputDataT] = cli_agent,
-    deps: AgentDepsT = None,
-) -> int:
+def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai') -> int:
     """Run the CLI and return the exit code for the process."""
     parser = argparse.ArgumentParser(
         prog=prog_name,
@@ -170,7 +164,7 @@ Special prompts:
             console.print(f'  {model}', highlight=False)
         return 0
 
-    # Load custom agent if specified
+    agent: Agent[None, str] = cli_agent
     if args.agent:
         try:
             module_path, variable_name = args.agent.split(':')
@@ -200,7 +194,7 @@ Special prompts:
 
     if prompt := cast(str, args.prompt):
         try:
-            asyncio.run(ask_agent(agent, prompt, stream, console, code_theme, deps))
+            asyncio.run(ask_agent(agent, prompt, stream, console, code_theme))
         except KeyboardInterrupt:
             pass
         return 0
@@ -208,7 +202,7 @@ Special prompts:
     # doing this instead of `PromptSession[Any](history=` allows mocking of PromptSession in tests
     session: PromptSession[Any] = PromptSession(history=FileHistory(str(PROMPT_HISTORY_PATH)))
     try:
-        return asyncio.run(run_chat(session, stream, agent, console, code_theme, prog_name, deps))
+        return asyncio.run(run_chat(session, stream, agent, console, code_theme, prog_name))
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 
@@ -253,7 +247,7 @@ async def ask_agent(
     stream: bool,
     console: Console,
     code_theme: str,
-    deps: AgentDepsT,
+    deps: AgentDepsT = None,
     messages: list[ModelMessage] | None = None,
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
