@@ -203,6 +203,10 @@ Special prompts:
             pass
         return 0
 
+    # Ensure the history directory and file exist
+    PROMPT_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PROMPT_HISTORY_PATH.touch(exist_ok=True)
+
     # doing this instead of `PromptSession[Any](history=` allows mocking of PromptSession in tests
     session: PromptSession[Any] = PromptSession(history=FileHistory(str(PROMPT_HISTORY_PATH)))
     try:
