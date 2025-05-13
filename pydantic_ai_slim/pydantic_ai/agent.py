@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final,
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import Literal, Never, TypeGuard, TypeVar, deprecated
+from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
@@ -52,6 +52,14 @@ ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
 
 if TYPE_CHECKING:
+    from starlette.middleware import Middleware
+    from starlette.routing import Route
+    from starlette.types import ExceptionHandler, Lifespan
+
+    from fasta2a.applications import FastA2A
+    from fasta2a.broker import Broker
+    from fasta2a.schema import Provider, Skill
+    from fasta2a.storage import Storage
     from pydantic_ai.mcp import MCPServer
 
 
@@ -459,7 +467,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None = None,
+        output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -468,7 +476,23 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
         **_deprecated_kwargs: Never,
-    ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, Any]]: ...
+    ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
+
+    @overload
+    def iter(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None,
+        *,
+        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT],
+        message_history: list[_messages.ModelMessage] | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.Usage | None = None,
+        infer_name: bool = True,
+        **_deprecated_kwargs: Never,
+    ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @overload
     @deprecated('`result_type` is deprecated, use `output_type` instead.')
@@ -551,6 +575,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 CallToolsNode(
                     model_response=ModelResponse(
                         parts=[TextPart(content='Paris', part_kind='text')],
+                        usage=Usage(
+                            requests=1,
+                            request_tokens=56,
+                            response_tokens=1,
+                            total_tokens=57,
+                            details=None,
+                        ),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
                         kind='response',
@@ -1614,7 +1645,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @staticmethod
     def is_model_request_node(
         node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
-    ) -> TypeGuard[_agent_graph.ModelRequestNode[T, S]]:
+    ) -> TypeIs[_agent_graph.ModelRequestNode[T, S]]:
         """Check if the node is a `ModelRequestNode`, narrowing the type if it is.
 
         This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
@@ -1624,7 +1655,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @staticmethod
     def is_call_tools_node(
         node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
-    ) -> TypeGuard[_agent_graph.CallToolsNode[T, S]]:
+    ) -> TypeIs[_agent_graph.CallToolsNode[T, S]]:
         """Check if the node is a `CallToolsNode`, narrowing the type if it is.
 
         This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
@@ -1634,7 +1665,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @staticmethod
     def is_user_prompt_node(
         node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
-    ) -> TypeGuard[_agent_graph.UserPromptNode[T, S]]:
+    ) -> TypeIs[_agent_graph.UserPromptNode[T, S]]:
         """Check if the node is a `UserPromptNode`, narrowing the type if it is.
 
         This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
@@ -1644,7 +1675,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @staticmethod
     def is_end_node(
         node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
-    ) -> TypeGuard[End[result.FinalResult[S]]]:
+    ) -> TypeIs[End[result.FinalResult[S]]]:
         """Check if the node is a `End`, narrowing the type if it is.
 
         This method preserves the generic parameters while narrowing the type, unlike a direct call to `isinstance`.
@@ -1664,6 +1695,107 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             yield
         finally:
             await exit_stack.aclose()
+
+    def to_a2a(
+        self,
+        *,
+        storage: Storage | None = None,
+        broker: Broker | None = None,
+        # Agent card
+        name: str | None = None,
+        url: str = 'http://localhost:8000',
+        version: str = '1.0.0',
+        description: str | None = None,
+        provider: Provider | None = None,
+        skills: list[Skill] | None = None,
+        # Starlette
+        debug: bool = False,
+        routes: Sequence[Route] | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        exception_handlers: dict[Any, ExceptionHandler] | None = None,
+        lifespan: Lifespan[FastA2A] | None = None,
+    ) -> FastA2A:
+        """Convert the agent to a FastA2A application.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-4o')
+        app = agent.to_a2a()
+        ```
+
+        The `app` is an ASGI application that can be used with any ASGI server.
+
+        To run the application, you can use the following command:
+
+        ```bash
+        uvicorn app:app --host 0.0.0.0 --port 8000
+        ```
+        """
+        from ._a2a import agent_to_a2a
+
+        return agent_to_a2a(
+            self,
+            storage=storage,
+            broker=broker,
+            name=name,
+            url=url,
+            version=version,
+            description=description,
+            provider=provider,
+            skills=skills,
+            debug=debug,
+            routes=routes,
+            middleware=middleware,
+            exception_handlers=exception_handlers,
+            lifespan=lifespan,
+        )
+
+    async def to_cli(self: Self, deps: AgentDepsT = None) -> None:
+        """Run the agent in a CLI chat interface.
+
+        Example:
+        ```python {title="agent_to_cli.py" test="skip"}
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
+
+        async def main():
+            await agent.to_cli()
+        ```
+        """
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.history import FileHistory
+        from rich.console import Console
+
+        from pydantic_ai._cli import PROMPT_HISTORY_PATH, run_chat
+
+        # TODO(Marcelo): We need to refactor the CLI code to be able to be able to just pass `agent`, `deps` and
+        # `prog_name` from here.
+
+        session: PromptSession[Any] = PromptSession(history=FileHistory(str(PROMPT_HISTORY_PATH)))
+        await run_chat(
+            session=session,
+            stream=True,
+            agent=self,
+            deps=deps,
+            console=Console(),
+            code_theme='monokai',
+            prog_name='pydantic-ai',
+        )
+
+    def to_cli_sync(self: Self, deps: AgentDepsT = None) -> None:
+        """Run the agent in a CLI chat interface with the non-async interface.
+
+        ```python {title="agent_to_cli_sync.py" test="skip"}
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
+        agent.to_cli_sync()
+        ```
+        """
+        return get_event_loop().run_until_complete(self.to_cli(deps=deps))
 
 
 @dataclasses.dataclass(repr=False)
@@ -1715,6 +1847,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='Paris', part_kind='text')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=56,
+                        response_tokens=1,
+                        total_tokens=57,
+                        details=None,
+                    ),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                     kind='response',
@@ -1853,6 +1992,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     CallToolsNode(
                         model_response=ModelResponse(
                             parts=[TextPart(content='Paris', part_kind='text')],
+                            usage=Usage(
+                                requests=1,
+                                request_tokens=56,
+                                response_tokens=1,
+                                total_tokens=57,
+                                details=None,
+                            ),
                             model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
                             kind='response',
