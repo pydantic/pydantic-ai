@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 else:
     try:
         from yaml import CDumper as Dumper
-    except ImportError:
+    except ImportError:  # pragma: no cover
         from yaml import Dumper
 
 FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
@@ -45,7 +45,7 @@ def deserialize(cassette_string: str):
     return cassette_dict
 
 
-def serialize(cassette_dict: Any):
+def serialize(cassette_dict: Any):  # pragma: lax no cover
     for interaction in cassette_dict['interactions']:
         for _kind, data in interaction.items():
             headers: dict[str, list[str]] = data.get('headers', {})
