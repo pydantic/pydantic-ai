@@ -558,10 +558,10 @@ class ReportCaseRenderer:
             row.append(self.input_renderer.render_value(None, case.inputs) or EMPTY_CELL_STR)
 
         if self.include_metadata:
-            row.append(self.input_renderer.render_value(None, case.metadata) or EMPTY_CELL_STR)
+            row.append(self.metadata_renderer.render_value(None, case.metadata) or EMPTY_CELL_STR)
 
         if self.include_expected_output:
-            row.append(self.input_renderer.render_value(None, case.expected_output) or EMPTY_CELL_STR)
+            row.append(self.output_renderer.render_value(None, case.expected_output) or EMPTY_CELL_STR)
 
         if self.include_output:
             row.append(self.output_renderer.render_value(None, case.output) or EMPTY_CELL_STR)
