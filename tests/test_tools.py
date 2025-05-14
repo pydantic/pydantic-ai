@@ -957,18 +957,18 @@ def test_tool_parameters_with_attribute_docstrings():
 
 
 def test_dynamic_tools_agent_wide():
-    async def prepare_tools_def(
-        ctx: RunContext[int], tools_def: list[ToolDefinition]
+    async def prepare_tool_defs(
+        ctx: RunContext[int], tool_defs: list[ToolDefinition]
     ) -> Union[list[ToolDefinition], None]:
         if ctx.deps == 42:
             return []
         elif ctx.deps == 43:
             return None
         elif ctx.deps == 21:
-            return [replace(tool_def, strict=True) for tool_def in tools_def]
-        return tools_def
+            return [replace(tool_def, strict=True) for tool_def in tool_defs]
+        return tool_defs
 
-    agent = Agent('test', deps_type=int, prepare_tools=prepare_tools_def)
+    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
 
     @agent.tool
     def foobar(ctx: RunContext[int], x: int, y: str) -> str:
