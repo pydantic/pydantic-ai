@@ -17,11 +17,13 @@ from pydantic_ai.models.test import TestModel
 from .conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
+    from openai import OpenAIError
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
     from pydantic_ai._cli import cli, cli_agent, handle_slash_command
+    from pydantic_ai.models.openai import OpenAIModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
 
@@ -80,11 +82,6 @@ def test_agent_flag(
 
 
 def test_agent_flag_no_model(env: TestEnv, create_test_module: Callable[..., None]):
-    try:
-        from openai import OpenAIError
-    except ImportError:
-        pytest.skip('OpenAIError not available')
-
     env.remove('OPENAI_API_KEY')
     test_agent = Agent()
     create_test_module(custom_agent=test_agent)
@@ -100,11 +97,6 @@ def test_agent_flag_set_model(
     env: TestEnv,
     create_test_module: Callable[..., None],
 ):
-    try:
-        from pydantic_ai.models.openai import OpenAIModel
-    except ImportError:
-        pytest.skip('OpenAIError not available')
-
     env.set('OPENAI_API_KEY', 'xxx')
 
     custom_agent = Agent(TestModel(custom_output_text='Hello from custom agent'))
