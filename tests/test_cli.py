@@ -6,7 +6,6 @@ from typing import Any, Callable
 import pytest
 from dirty_equals import IsInstance, IsStr
 from inline_snapshot import snapshot
-from openai import OpenAIError
 from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
@@ -88,10 +87,16 @@ def test_agent_flag(
 
 
 def test_agent_flag_no_model(env: TestEnv, create_test_module: Callable[..., None]):
+    try:
+        from openai import OpenAIError
+    except ImportError:
+        pytest.skip('OpenAIError not available')
+
     env.remove('OPENAI_API_KEY')
     # Create and add agent to the module
     test_agent = Agent()
     create_test_module(custom_agent=test_agent)
+
     with pytest.raises(OpenAIError):
         cli(['--agent', 'test_module:custom_agent', 'hello'])
 
