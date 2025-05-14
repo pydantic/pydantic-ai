@@ -22,6 +22,7 @@ __all__ = (
     'LLMJudge',
     'HasMatchingSpan',
     'Python',
+    'OutputConfig',
 )
 
 
@@ -162,6 +163,8 @@ class MaxDuration(Evaluator[object, object, object]):
 
 
 class OutputConfig(TypedDict, total=False):
+    """Configuration for the score and assertion outputs of the LLMJudge evaluator."""
+
     evaluation_name: str
     include_reason: bool
 

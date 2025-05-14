@@ -26,6 +26,7 @@ with try_import() as imports_successful:
         IsInstance,
         LLMJudge,
         MaxDuration,
+        OutputConfig,
         Python,
     )
     from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
@@ -195,6 +196,7 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     """Test LLMJudge evaluator."""
     # Create a mock GradingOutput
     mock_grading_output = mocker.MagicMock()
+    mock_grading_output.score = 1.0
     mock_grading_output.pass_ = True
     mock_grading_output.reason = 'Test passed'
 
@@ -237,10 +239,24 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     )
 
     # Test with failing result
+    mock_grading_output.score = 0.0
     mock_grading_output.pass_ = False
     mock_grading_output.reason = 'Test failed'
     assert to_jsonable_python(await evaluator.evaluate(ctx)) == snapshot(
         {'LLMJudge': {'value': False, 'reason': 'Test failed'}}
+    )
+
+    # Test with overridden configs
+    evaluator = LLMJudge(rubric='Mock rubric', assertion=False)
+    assert to_jsonable_python(await evaluator.evaluate(ctx)) == snapshot({})
+
+    evaluator = LLMJudge(
+        rubric='Mock rubric',
+        score=OutputConfig(evaluation_name='my_score', include_reason=True),
+        assertion=OutputConfig(evaluation_name='my_assertion'),
+    )
+    assert to_jsonable_python(await evaluator.evaluate(ctx)) == snapshot(
+        {'my_assertion': False, 'my_score': {'reason': 'Test failed', 'value': 0.0}}
     )
 
 
