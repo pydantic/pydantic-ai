@@ -231,20 +231,36 @@ async def test_custom_evaluator(test_context: EvaluatorContext[TaskInput, TaskOu
 
 
 async def test_custom_evaluator_name(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
-    """Test error handling in evaluators."""
-
     @dataclass
-    class CustomNameEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+    class CustomNameFieldEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
         result: int
         evaluation_name: str
 
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
             return self.result
 
-    evaluator = CustomNameEvaluator(result=123, evaluation_name='abc')
+    evaluator = CustomNameFieldEvaluator(result=123, evaluation_name='abc')
 
     assert to_jsonable_python(await run_evaluator(evaluator, test_context)) == snapshot(
         [{'name': 'abc', 'reason': None, 'source': {'evaluation_name': 'abc', 'result': 123}, 'value': 123}]
+    )
+
+    @dataclass
+    class CustomNamePropertyEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        result: int
+        my_name: str
+
+        @property
+        def evaluation_name(self) -> str:
+            return f'hello {self.my_name}'
+
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
+            return self.result
+
+    evaluator = CustomNamePropertyEvaluator(result=123, my_name='marcelo')
+
+    assert to_jsonable_python(await run_evaluator(evaluator, test_context)) == snapshot(
+        [{'name': 'hello marcelo', 'reason': None, 'source': {'my_name': 'marcelo', 'result': 123}, 'value': 123}]
     )
 
 
