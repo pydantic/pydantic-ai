@@ -1,5 +1,7 @@
 import sys
+import tempfile
 from io import StringIO
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -251,3 +253,115 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
         prog_name='pydantic-ai',
         deps=None,
     )
+
+
+def test_prompt_history_env_var(mocker: MockerFixture, env: TestEnv, monkeypatch: pytest.MonkeyPatch):
+    """Ensure environment variable overrides default prompt history path."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    with tempfile.TemporaryDirectory() as env_dir:
+        env_history_path = Path(env_dir) / 'custom-history.txt'
+
+        # Simulate setting the environment variable
+        monkeypatch.setenv('PYDANTIC_AI_HISTORY_PATH', str(env_history_path))
+
+        # We need to reload the module to pick up the environment variable
+        import importlib
+
+        import pydantic_ai._cli
+
+        importlib.reload(pydantic_ai._cli)
+
+        from pydantic_ai._cli import PROMPT_HISTORY_PATH as env_reloaded_path
+
+        assert str(env_reloaded_path) == str(env_history_path)
+
+        assert cli([]) == 0
+
+        assert env_history_path.exists()
+        assert env_history_path.parent.exists()
+
+
+def test_prompt_history_short_flag_o(mocker: MockerFixture, env: TestEnv):
+    """Test that the -o short flag correctly sets the prompt history path."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat', return_value=0)
+    # Mock FileHistory to check its instantiation
+    mock_file_history_cls = mocker.patch('pydantic_ai._cli.FileHistory')
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_history_file = Path(temp_dir) / 'short-o-history.txt'
+        temp_history_path_str = str(temp_history_file)
+
+        assert cli(['-o', temp_history_path_str]) == 0
+
+        mock_file_history_cls.assert_called_once_with(temp_history_path_str)
+        mock_run_chat.assert_called_once()
+
+        # Check that the session passed to run_chat has the correct history object
+        # (the instance returned by our mocked FileHistory)
+        session_arg = mock_run_chat.call_args[0][0]
+        assert isinstance(session_arg, PromptSession)
+        assert session_arg.history is mock_file_history_cls.return_value
+
+        assert temp_history_file.parent.exists()
+        assert temp_history_file.exists()
+
+
+def test_prompt_history_cli_flag(mocker: MockerFixture, env: TestEnv):
+    """Test custom prompt history path via CLI long flag."""
+    env.set('OPENAI_API_KEY', 'test')
+
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat', return_value=0)
+    mock_file_history_cls = mocker.patch('pydantic_ai._cli.FileHistory')
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_history_file = Path(temp_dir) / 'cli-flag-history.txt'
+        temp_history_path_str = str(temp_history_file)
+
+        assert cli(['--prompt-history', temp_history_path_str]) == 0
+
+        mock_file_history_cls.assert_called_once_with(temp_history_path_str)
+        mock_run_chat.assert_called_once()
+
+        session_arg = mock_run_chat.call_args[0][0]
+        assert isinstance(session_arg, PromptSession)
+        assert session_arg.history is mock_file_history_cls.return_value
+
+        assert temp_history_file.parent.exists()
+        assert temp_history_file.exists()
+
+
+def test_prompt_history_precedence(mocker: MockerFixture, env: TestEnv, monkeypatch: pytest.MonkeyPatch):
+    env.set('OPENAI_API_KEY', 'test')
+
+    with (
+        tempfile.TemporaryDirectory() as env_dir,
+        tempfile.TemporaryDirectory() as cli_dir,
+    ):
+        env_history_path = Path(env_dir) / 'env-history.txt'
+        cli_history_path = Path(cli_dir) / 'cli-flag-history.txt'
+
+        monkeypatch.setenv('PYDANTIC_AI_HISTORY_PATH', str(env_history_path))
+
+        # We need to reload the module to pick up the environment variable
+        import importlib
+
+        import pydantic_ai._cli
+
+        importlib.reload(pydantic_ai._cli)
+
+        from pydantic_ai._cli import PROMPT_HISTORY_PATH as env_reloaded_path
+
+        assert str(env_reloaded_path) == str(env_history_path)
+
+        # Call the CLI with the custom history path
+        assert cli(['--prompt-history', str(cli_history_path)]) == 0
+
+        # Test precedence: CLI flag for history_path overrides environment variable.
+        # CLI history path should exist, while env history path should not.
+        assert cli_history_path.parent.exists()
+        assert cli_history_path.exists()
+
+        assert not env_history_path.exists()
