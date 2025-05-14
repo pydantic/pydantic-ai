@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Generic, Union, cast
+from typing import TYPE_CHECKING, Generic, Union, cast, get_type_hints
 
 from typing_extensions import TypeVar, assert_type, deprecated, overload
 
@@ -60,38 +60,65 @@ class ToolOutput(Generic[OutputDataT]):
     """Marker class to use tools for structured outputs, and customize the tool."""
 
     output_type: type[OutputDataT]
-    # TODO: Add `output_call` support, for calling a function to get the output
-    # output_call: Callable[..., OutputDataT] | None
+    call: Callable[..., OutputDataT | Awaitable[OutputDataT]] | None
     name: str
     description: str | None
     max_retries: int | None
     strict: bool | None
 
+    @overload
     def __init__(
         self,
         *,
         type_: type[OutputDataT],
-        # call: Callable[..., OutputDataT] | None = None,
+        name: str = 'final_result',
+        description: str | None = None,
+        max_retries: int | None = None,
+        strict: bool | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        call: Callable[..., OutputDataT | Awaitable[OutputDataT]],
+        type_: type[OutputDataT] | _utils.Unset = _utils.UNSET,
+        name: str = 'final_result',
+        description: str | None = None,
+        max_retries: int | None = None,
+        strict: bool | None = None,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        *,
+        type_: type[OutputDataT] | _utils.Unset = _utils.UNSET,
+        call: Callable[..., OutputDataT | Awaitable[OutputDataT]] | None = None,
         name: str = 'final_result',
         description: str | None = None,
         max_retries: int | None = None,
         strict: bool | None = None,
     ):
-        self.output_type = type_
         self.name = name
         self.description = description
         self.max_retries = max_retries
         self.strict = strict
 
-        # TODO: add support for call and make type_ optional, with the following logic:
-        # if type_ is None and call is None:
-        #     raise ValueError('Either type_ or call must be provided')
-        # if call is not None:
-        #     if type_ is None:
-        #         type_ = get_type_hints(call).get('return')
-        #         if type_ is None:
-        #             raise ValueError('Unable to determine type_ from call signature; please provide it explicitly')
-        # self.output_call = call
+        if not _utils.is_set(type_):
+            if call is None:
+                raise ValueError('Either type_ or call must be provided')
+            else:
+                try:
+                    type_ = get_type_hints(call).get('return', _utils.UNSET)
+                    if not _utils.is_set(type_):
+                        raise ValueError('Unable to determine type_ from call signature; please provide it explicitly')
+                except Exception as e:
+                    raise ValueError(
+                        'Unable to determine type_ from call signature; please provide it explicitly'
+                    ) from e
+
+        self.output_type = type_
+        self.call = call
 
 
 @dataclass
@@ -152,7 +179,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 )
 
             call, output_tool = match
-            result_data = output_tool.validate(call, allow_partial=allow_partial, wrap_validation_errors=False)
+            result_data = await output_tool.execute(call, allow_partial=allow_partial, wrap_validation_errors=False)
 
             for validator in self._output_validators:
                 result_data = await validator.validate(result_data, call, self._run_ctx)
@@ -466,7 +493,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 )
 
             call, output_tool = match
-            result_data = output_tool.validate(call, allow_partial=allow_partial, wrap_validation_errors=False)
+            result_data = await output_tool.execute(call, allow_partial=allow_partial, wrap_validation_errors=False)
 
             for validator in self._output_validators:
                 result_data = await validator.validate(result_data, call, self._run_ctx)
