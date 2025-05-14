@@ -52,8 +52,15 @@ PYDANTIC_AI_HOME = Path.home() / '.pydantic-ai'
 
 This folder is used to store the prompt history and configuration.
 """
-
-PROMPT_HISTORY_PATH = PYDANTIC_AI_HOME / 'prompt-history.txt'
+DEFAULT_PROMPT_HISTORY_FILE_NAME = 'prompt-history.txt'
+DEFAULT_PROMPT_HISTORY_FILE_PATH = PYDANTIC_AI_HOME / DEFAULT_PROMPT_HISTORY_FILE_NAME
+"""Default prompt history file path."""
+PYDANTIC_AI_HISTORY_PATH_ENV = 'PYDANTIC_AI_HISTORY_PATH'
+"""Environment variable for the prompt history file path."""
+# Determine prompt history path, ignoring empty env var
+_env_val = os.getenv(PYDANTIC_AI_HISTORY_PATH_ENV)
+PROMPT_HISTORY_PATH = Path(_env_val) if _env_val else DEFAULT_PROMPT_HISTORY_FILE_PATH
+"""The prompt history file path, using env var if set and non-empty, otherwise the default."""
 
 
 class SimpleCodeBlock(CodeBlock):
@@ -147,6 +154,12 @@ Special prompts:
         default='dark',
     )
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
+    parser.add_argument(
+        '-o',
+        '--prompt-history',
+        help='Custom path for storing prompt history. Overrides PYDANTIC_AI_HISTORY_PATH environment variable.',
+        metavar='PATH',
+    )
     parser.add_argument('--version', action='store_true', help='Show version and exit')
 
     argcomplete.autocomplete(parser)
@@ -203,12 +216,21 @@ Special prompts:
             pass
         return 0
 
+    # Determine final prompt history path: CLI flag > environment variable > default
+    prompt_history_path = Path(args.prompt_history) if args.prompt_history else PROMPT_HISTORY_PATH
+    if args.prompt_history:
+        console.print(f'[dim]Prompt history overridden via CLI:[/dim] [cyan]{args.prompt_history}[/cyan]')
+    elif os.getenv(PYDANTIC_AI_HISTORY_PATH_ENV, None):
+        console.print(
+            f'[dim]Prompt history overridden via PYDANTIC_AI_HISTORY_PATH:[/dim] [cyan]{prompt_history_path}[/cyan]'
+        )
+
     # Ensure the history directory and file exist
-    PROMPT_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PROMPT_HISTORY_PATH.touch(exist_ok=True)
+    prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_history_path.touch(exist_ok=True)
 
     # doing this instead of `PromptSession[Any](history=` allows mocking of PromptSession in tests
-    session: PromptSession[Any] = PromptSession(history=FileHistory(str(PROMPT_HISTORY_PATH)))
+    session: PromptSession[Any] = PromptSession(history=FileHistory(str(prompt_history_path)))
     try:
         return asyncio.run(run_chat(session, stream, agent, console, code_theme, prog_name))
     except KeyboardInterrupt:  # pragma: no cover

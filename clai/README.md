@@ -53,7 +53,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 ## Help
 
 ```
-usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]
+usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [-o PATH] [--version] [prompt]
 
 PydanticAI CLI v...
 
@@ -75,5 +75,7 @@ options:
   -t [CODE_THEME], --code-theme [CODE_THEME]
                         Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
   --no-stream           Disable streaming from the model
+  -o PATH, --prompt-history PATH
+                        Custom path for storing prompt history. Overrides PYDANTIC_AI_HISTORY_PATH environment variable.
   --version             Show version and exit
 ```
