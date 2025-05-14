@@ -40,18 +40,13 @@ def test_invalid_model(capfd: CaptureFixture[str]):
 
 @pytest.fixture
 def create_test_module():
-    test_module_set = False
-
     def _create_test_module(**namespace: Any) -> None:
-        nonlocal test_module_set
-        assert not test_module_set
-        test_module_set = True
+        assert 'test_module' not in sys.modules
 
         test_module = types.ModuleType('test_module')
         for key, value in namespace.items():
             setattr(test_module, key, value)
 
-        # Register the module in sys.modules
         sys.modules['test_module'] = test_module
 
     try:
@@ -68,7 +63,7 @@ def test_agent_flag(
     create_test_module: Callable[..., None],
 ):
     env.remove('OPENAI_API_KEY')
-    # Create and add agent to the module
+
     test_agent = Agent(TestModel(custom_output_text='Hello from custom agent'))
     create_test_module(custom_agent=test_agent)
 
@@ -93,11 +88,11 @@ def test_agent_flag_no_model(env: TestEnv, create_test_module: Callable[..., Non
         pytest.skip('OpenAIError not available')
 
     env.remove('OPENAI_API_KEY')
-    # Create and add agent to the module
     test_agent = Agent()
     create_test_module(custom_agent=test_agent)
 
-    with pytest.raises(OpenAIError):
+    msg = 'The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable'
+    with pytest.raises(OpenAIError, match=msg):
         cli(['--agent', 'test_module:custom_agent', 'hello'])
 
 
