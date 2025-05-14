@@ -1,10 +1,12 @@
 import sys
+import types
 from io import StringIO
-from typing import Any
+from typing import Any, Callable
 
 import pytest
 from dirty_equals import IsInstance, IsStr
 from inline_snapshot import snapshot
+from openai import OpenAIError
 from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
@@ -37,40 +39,61 @@ def test_invalid_model(capfd: CaptureFixture[str]):
     )
 
 
-def test_agent_flag(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
-    env.set('OPENAI_API_KEY', 'test')
+@pytest.fixture
+def create_test_module():
+    test_module_set = False
 
-    # Create a dynamic module using types.ModuleType
-    import types
+    def _create_test_module(**namespace: Any) -> None:
+        nonlocal test_module_set
+        assert not test_module_set
+        test_module_set = True
 
-    test_module = types.ModuleType('test_module')
+        test_module = types.ModuleType('test_module')
+        for key, value in namespace.items():
+            setattr(test_module, key, value)
 
-    # Create and add agent to the module
-    test_agent = Agent()
-    test_agent.model = TestModel(custom_output_text='Hello from custom agent')
-    setattr(test_module, 'custom_agent', test_agent)
-
-    # Register the module in sys.modules
-    sys.modules['test_module'] = test_module
+        # Register the module in sys.modules
+        sys.modules['test_module'] = test_module
 
     try:
-        # Mock ask_agent to avoid actual execution but capture the agent
-        mock_ask = mocker.patch('pydantic_ai._cli.ask_agent')
-
-        # Test CLI with custom agent
-        assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
-
-        # Verify the output contains the custom agent message
-        assert 'Using custom agent: test_module:custom_agent' in capfd.readouterr().out
-
-        # Verify ask_agent was called with our custom agent
-        mock_ask.assert_called_once()
-        assert mock_ask.call_args[0][0] is test_agent
-
+        yield _create_test_module
     finally:
-        # Clean up by removing the module from sys.modules
         if 'test_module' in sys.modules:
             del sys.modules['test_module']
+
+
+def test_agent_flag(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    create_test_module: Callable[..., None],
+):
+    env.remove('OPENAI_API_KEY')
+    # Create and add agent to the module
+    test_agent = Agent(TestModel(custom_output_text='Hello from custom agent'))
+    create_test_module(custom_agent=test_agent)
+
+    # Mock ask_agent to avoid actual execution but capture the agent
+    mock_ask = mocker.patch('pydantic_ai._cli.ask_agent')
+
+    # Test CLI with custom agent
+    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
+
+    # Verify the output contains the custom agent message
+    assert 'Using custom agent: test_module:custom_agent' in capfd.readouterr().out
+
+    # Verify ask_agent was called with our custom agent
+    mock_ask.assert_called_once()
+    assert mock_ask.call_args[0][0] is test_agent
+
+
+def test_agent_flag_no_model(env: TestEnv, create_test_module: Callable[..., None]):
+    env.remove('OPENAI_API_KEY')
+    # Create and add agent to the module
+    test_agent = Agent()
+    create_test_module(custom_agent=test_agent)
+    with pytest.raises(OpenAIError):
+        cli(['--agent', 'test_module:custom_agent', 'hello'])
 
 
 def test_agent_flag_non_agent(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
@@ -250,4 +273,12 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
         code_theme='monokai',
         prog_name='pydantic-ai',
         deps=None,
+    )
+
+
+def test_infer_model(mocker: MockerFixture, env: TestEnv):
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+    cli(['--code-theme=light'])
+    mock_run_chat.assert_awaited_once_with(
+        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'default', 'pai'
     )

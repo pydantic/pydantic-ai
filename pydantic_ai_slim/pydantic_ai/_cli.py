@@ -182,11 +182,12 @@ Special prompts:
             console.print('[red]Error: Agent must be specified in "module:variable" format[/red]')
             return 1
 
-    try:
-        agent.model = infer_model(args.model)
-    except UserError as e:
-        console.print(f'Error initializing [magenta]{args.model}[/magenta]:\n[red]{e}[/red]')
-        return 1
+    if agent.model is None:
+        try:
+            agent.model = infer_model(args.model)
+        except UserError as e:
+            console.print(f'Error initializing [magenta]{args.model}[/magenta]:\n[red]{e}[/red]')
+            return 1
 
     stream = not args.no_stream
     if args.code_theme == 'light':
