@@ -550,11 +550,11 @@ from pydantic_ai.models.test import TestModel
 
 
 async def turn_on_strict_if_openai(
-    ctx: RunContext[None], tools_defs: list[ToolDefinition]
+    ctx: RunContext[None], tool_defs: list[ToolDefinition]
 ) -> Union[list[ToolDefinition], None]:
     if ctx.model.system == 'openai':
-        return [replace(tool_def, strict=True) for tool_def in tools_defs]
-    return tools_defs
+        return [replace(tool_def, strict=True) for tool_def in tool_defs]
+    return tool_defs
 
 
 test_model = TestModel()
