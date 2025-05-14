@@ -85,24 +85,30 @@ class VideoUrl:
     @property
     def media_type(self) -> VideoMediaType:
         """Return the media type of the video, based on the url."""
-        if self.url.endswith('.mkv'):
+        # For GCS URLs (gs://), look at the file extension
+        if self.url.startswith('gs://'):
+            url_path = self.url.split('/')[-1]
+        else:
+            url_path = self.url
+            
+        if url_path.endswith('.mkv'):
             return 'video/x-matroska'
-        elif self.url.endswith('.mov'):
+        elif url_path.endswith('.mov'):
             return 'video/quicktime'
-        elif self.url.endswith('.mp4'):
+        elif url_path.endswith('.mp4'):
             return 'video/mp4'
-        elif self.url.endswith('.webm'):
+        elif url_path.endswith('.webm'):
             return 'video/webm'
-        elif self.url.endswith('.flv'):
+        elif url_path.endswith('.flv'):
             return 'video/x-flv'
-        elif self.url.endswith(('.mpeg', '.mpg')):
+        elif url_path.endswith(('.mpeg', '.mpg')):
             return 'video/mpeg'
-        elif self.url.endswith('.wmv'):
+        elif url_path.endswith('.wmv'):
             return 'video/x-ms-wmv'
-        elif self.url.endswith('.three_gp'):
+        elif url_path.endswith('.three_gp'):
             return 'video/3gpp'
         else:
-            raise ValueError(f'Unknown video file extension: {self.url}')
+            raise ValueError(f'Unknown video file extension: {url_path}')
 
     @property
     def format(self) -> VideoFormat:

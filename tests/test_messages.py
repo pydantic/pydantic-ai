@@ -243,6 +243,8 @@ def test_binary_content_is_methods():
         pytest.param(VideoUrl('foobar.mpeg'), 'video/mpeg', 'mpeg', id='mpeg'),
         pytest.param(VideoUrl('foobar.wmv'), 'video/x-ms-wmv', 'wmv', id='wmv'),
         pytest.param(VideoUrl('foobar.three_gp'), 'video/3gpp', 'three_gp', id='three_gp'),
+        # Add GCS URL test
+        pytest.param(VideoUrl('gs://bucket/foobar.mp4'), 'video/mp4', 'mp4', id='gcs-mp4'),
     ],
 )
 def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
