@@ -58,7 +58,7 @@ if TYPE_CHECKING:
 
     from fasta2a.applications import FastA2A
     from fasta2a.broker import Broker
-    from fasta2a.schema import Provider, Skill
+    from fasta2a.schema import Provider, Skill, Capabilities
     from fasta2a.storage import Storage
     from pydantic_ai.mcp import MCPServer
 
@@ -1702,6 +1702,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         description: str | None = None,
         provider: Provider | None = None,
         skills: list[Skill] | None = None,
+        capabilities: Capabilities | None = None,
         # Starlette
         debug: bool = False,
         routes: Sequence[Route] | None = None,
@@ -1739,6 +1740,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             description=description,
             provider=provider,
             skills=skills,
+            capabilities=capabilities,
             debug=debug,
             routes=routes,
             middleware=middleware,

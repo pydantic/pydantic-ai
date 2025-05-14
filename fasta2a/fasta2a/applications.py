@@ -12,7 +12,7 @@ from starlette.routing import Route
 from starlette.types import ExceptionHandler, Lifespan, Receive, Scope, Send
 
 from .broker import Broker
-from .schema import AgentCard, Provider, Skill, a2a_request_ta, a2a_response_ta, agent_card_ta
+from .schema import AgentCard, Provider, Skill, a2a_request_ta, a2a_response_ta, agent_card_ta, Capabilities
 from .storage import Storage
 from .task_manager import TaskManager
 
@@ -32,6 +32,7 @@ class FastA2A(Starlette):
         description: str | None = None,
         provider: Provider | None = None,
         skills: list[Skill] | None = None,
+        capabilities: Capabilities | None = None,
         # Starlette
         debug: bool = False,
         routes: Sequence[Route] | None = None,
@@ -56,6 +57,7 @@ class FastA2A(Starlette):
         self.description = description
         self.provider = provider
         self.skills = skills or []
+        self.capabilities = capabilities or Capabilities(streaming=True, push_notifications=True)
         # NOTE: For now, I don't think there's any reason to support any other input/output modes.
         self.default_input_modes = ['application/json']
         self.default_output_modes = ['application/json']
@@ -79,6 +81,7 @@ class FastA2A(Starlette):
                 url=self.url,
                 version=self.version,
                 skills=self.skills,
+                capabilities=self.capabilities,
                 default_input_modes=self.default_input_modes,
                 default_output_modes=self.default_output_modes,
             )

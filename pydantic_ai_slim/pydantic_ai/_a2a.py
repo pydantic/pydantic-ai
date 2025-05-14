@@ -41,6 +41,7 @@ try:
         TaskIdParams,
         TaskSendParams,
         TextPart as A2ATextPart,
+        Capabilities
     )
     from fasta2a.storage import InMemoryStorage, Storage
     from fasta2a.worker import Worker
@@ -74,6 +75,7 @@ def agent_to_a2a(
     description: str | None = None,
     provider: Provider | None = None,
     skills: list[Skill] | None = None,
+    capabilities: Capabilities | None = None,
     # Starlette
     debug: bool = False,
     routes: Sequence[Route] | None = None,
@@ -97,6 +99,7 @@ def agent_to_a2a(
         description=description,
         provider=provider,
         skills=skills,
+        capabilities=capabilities,
         debug=debug,
         routes=routes,
         middleware=middleware,
