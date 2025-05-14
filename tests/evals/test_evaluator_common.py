@@ -1,10 +1,11 @@
 from __future__ import annotations as _annotations
 
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
 from pydantic_ai.settings import ModelSettings
@@ -219,19 +220,17 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
 
     # Test without input
     evaluator = LLMJudge(rubric='Content contains a greeting')
-    result = cast(Any, await evaluator.evaluate(ctx))['LLMJudge']
-    assert isinstance(result, EvaluationReason)
-    assert result.value is True
-    assert result.reason == 'Test passed'
+    assert to_jsonable_python(await evaluator.evaluate(ctx)) == snapshot(
+        {'LLMJudge': {'value': True, 'reason': 'Test passed'}}
+    )
 
     mock_judge_output.assert_called_once_with('Hello world', 'Content contains a greeting', None, None)
 
     # Test with input
     evaluator = LLMJudge(rubric='Output contains input', include_input=True, model='openai:gpt-4o')
-    result = cast(Any, await evaluator.evaluate(ctx))['LLMJudge']
-    assert isinstance(result, EvaluationReason)
-    assert result.value is True
-    assert result.reason == 'Test passed'
+    assert to_jsonable_python(await evaluator.evaluate(ctx)) == snapshot(
+        {'LLMJudge': {'value': True, 'reason': 'Test passed'}}
+    )
 
     mock_judge_input_output.assert_called_once_with(
         {'prompt': 'Hello'}, 'Hello world', 'Output contains input', 'openai:gpt-4o', None
@@ -240,10 +239,9 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     # Test with failing result
     mock_grading_output.pass_ = False
     mock_grading_output.reason = 'Test failed'
-    result = cast(Any, await evaluator.evaluate(ctx))['LLMJudge']
-    assert isinstance(result, EvaluationReason)
-    assert result.value is False
-    assert result.reason == 'Test failed'
+    assert to_jsonable_python(await evaluator.evaluate(ctx)) == snapshot(
+        {'LLMJudge': {'value': False, 'reason': 'Test failed'}}
+    )
 
 
 @pytest.mark.anyio
@@ -275,10 +273,9 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
 
     # Test without input, with custom model_settings
     evaluator_no_input = LLMJudge(rubric='Greeting with custom settings', model_settings=custom_model_settings)
-    result_no_input = cast(Any, await evaluator_no_input.evaluate(ctx))['LLMJudge']
-    assert isinstance(result_no_input, EvaluationReason)
-    assert result_no_input.value is True
-    assert result_no_input.reason == 'Test passed with settings'
+    assert to_jsonable_python(await evaluator_no_input.evaluate(ctx)) == snapshot(
+        {'LLMJudge': {'value': True, 'reason': 'Test passed with settings'}}
+    )
     mock_judge_output.assert_called_once_with(
         'Hello world custom settings', 'Greeting with custom settings', None, custom_model_settings
     )
@@ -290,10 +287,9 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
         model='openai:gpt-3.5-turbo',
         model_settings=custom_model_settings,
     )
-    result_with_input = cast(Any, await evaluator_with_input.evaluate(ctx))['LLMJudge']
-    assert isinstance(result_with_input, EvaluationReason)
-    assert result_with_input.value is True
-    assert result_with_input.reason == 'Test passed with settings'
+    assert to_jsonable_python(await evaluator_with_input.evaluate(ctx)) == snapshot(
+        {'LLMJudge': {'value': True, 'reason': 'Test passed with settings'}}
+    )
     mock_judge_input_output.assert_called_once_with(
         {'prompt': 'Hello Custom'},
         'Hello world custom settings',
