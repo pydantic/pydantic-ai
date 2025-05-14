@@ -338,7 +338,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._default_retries = retries
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._mcp_servers = mcp_servers
-        self.prepare_tools = prepare_tools
+        self._prepare_tools = prepare_tools
         for tool in tools:
             if isinstance(tool, Tool):
                 self._register_tool(tool)
@@ -673,7 +673,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             mcp_servers=self._mcp_servers,
             default_retries=self._default_retries,
             tracer=tracer,
-            prepare_tools=self.prepare_tools,
+            prepare_tools=self._prepare_tools,
             get_instructions=get_instructions,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
