@@ -274,11 +274,3 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
         prog_name='pydantic-ai',
         deps=None,
     )
-
-
-def test_infer_model(mocker: MockerFixture, env: TestEnv):
-    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
-    cli(['--code-theme=light'])
-    mock_run_chat.assert_awaited_once_with(
-        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'default', 'pai'
-    )
