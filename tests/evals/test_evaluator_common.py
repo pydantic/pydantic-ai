@@ -219,7 +219,7 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
 
     # Test without input
     evaluator = LLMJudge(rubric='Content contains a greeting')
-    result = await evaluator.evaluate(ctx)
+    result = cast(Any, await evaluator.evaluate(ctx))['LLMJudge']
     assert isinstance(result, EvaluationReason)
     assert result.value is True
     assert result.reason == 'Test passed'
@@ -228,7 +228,7 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
 
     # Test with input
     evaluator = LLMJudge(rubric='Output contains input', include_input=True, model='openai:gpt-4o')
-    result = await evaluator.evaluate(ctx)
+    result = cast(Any, await evaluator.evaluate(ctx))['LLMJudge']
     assert isinstance(result, EvaluationReason)
     assert result.value is True
     assert result.reason == 'Test passed'
@@ -240,7 +240,7 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     # Test with failing result
     mock_grading_output.pass_ = False
     mock_grading_output.reason = 'Test failed'
-    result = await evaluator.evaluate(ctx)
+    result = cast(Any, await evaluator.evaluate(ctx))['LLMJudge']
     assert isinstance(result, EvaluationReason)
     assert result.value is False
     assert result.reason == 'Test failed'
