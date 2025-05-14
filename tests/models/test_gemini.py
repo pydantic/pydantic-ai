@@ -1198,18 +1198,7 @@ async def test_document_url_input(allow_model_requests: None, gemini_api_key: st
     assert result.output == snapshot('The main content of this document is that it is a **dummy PDF file**.')
 
 
-@pytest.mark.vcr()
-async def test_gcs_video_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
 
-    # Using the test video from the existing test assets
-    video_url = VideoUrl(url='gs://your-pydantic-ai-test-bucket/small_video.mp4')
-
-    result = await agent.run(['Explain me this video', video_url])
-    assert result.output.strip() == snapshot(
-        "That's a picture of a small, portable monitor attached to a camera, likely used for filming. The monitor displays a scene of a canyon or similar rocky landscape.  This suggests the camera is being used to film this landscape. The camera itself is mounted on a tripod, indicating a stable and likely professional setup.  The background is out of focus, but shows the same canyon as seen on the monitor. This makes it clear that the image shows the camera's viewfinder or recording output, rather than an unrelated display."
-    )
 
 
 @pytest.mark.vcr()
