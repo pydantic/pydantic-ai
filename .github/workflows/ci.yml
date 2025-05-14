@@ -89,6 +89,9 @@ jobs:
           name: site
           path: site
 
+      # check all docs images are tinified, You'll need an API key from https://tinify.com/ to fix this if it fails
+      - run: uvx tinicly docs --check
+
   test-live:
     runs-on: ubuntu-latest
     timeout-minutes: 5
