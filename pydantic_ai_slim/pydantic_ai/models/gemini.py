@@ -348,9 +348,7 @@ class GeminiModel(Model):
                     # For GCS URLs, use Google's file_data format instead of inline_data
                     if item.url.startswith('gs://'):
                         content.append(
-                            _GeminiFileDataPart(
-                                file_data={'file_uri': item.url, 'mime_type': item.media_type}
-                            )
+                            _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         )
                     else:
                         # For HTTP URLs, fetch and convert to inline data as before

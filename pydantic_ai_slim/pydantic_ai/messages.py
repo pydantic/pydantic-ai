@@ -90,7 +90,7 @@ class VideoUrl:
             url_path = self.url.split('/')[-1]
         else:
             url_path = self.url
-            
+
         if url_path.endswith('.mkv'):
             return 'video/x-matroska'
         elif url_path.endswith('.mov'):
