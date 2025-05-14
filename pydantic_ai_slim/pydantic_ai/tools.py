@@ -152,11 +152,11 @@ from pydantic_ai.tools import ToolDefinition
 
 
 async def turn_on_strict_if_openai(
-    ctx: RunContext[None], tools_def: list[ToolDefinition]
+    ctx: RunContext[None], tools_defs: list[ToolDefinition]
 ) -> Union[list[ToolDefinition], None]:
     if ctx.model.system == 'openai':
-        return [replace(tool_def, strict=True) for tool_def in tools_def]
-    return tools_def
+        return [replace(tool_def, strict=True) for tool_def in tools_defs]
+    return tools_defs
 
 agent = Agent('openai:gpt-4o', prepare_tools=turn_on_strict_if_openai)
 ```
