@@ -3,8 +3,10 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from aiolimiter import AsyncLimiter
 from tenacity import AsyncRetrying, RetryError, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from pydantic_ai.messages import (
@@ -153,7 +155,7 @@ pytestmark = [pytest.mark.anyio]
 
 
 async def test_rate_limited_model_basic():
-    """Test basic functionality of RateLimitedModel with a simple model."""
+    """Test basic functionality of RateLimitedModel with a simple model with only retryer."""
     # Create a simple model wrapped with rate limiting but no retries
     simple_model = SimpleModel()
     retry_config = AsyncRetrying(
@@ -161,7 +163,7 @@ async def test_rate_limited_model_basic():
         wait=wait_fixed(0.1),
     )
 
-    rate_limited_model = RateLimitedModel(simple_model, retry_config)
+    rate_limited_model = RateLimitedModel(simple_model, retryer=retry_config)
 
     # Check properties are passed through
     assert rate_limited_model.system == 'simple_system'
@@ -204,7 +206,7 @@ async def test_rate_limited_model_stream():
         wait=wait_fixed(0.1),
     )
 
-    rate_limited_model = RateLimitedModel(simple_model, retry_config)
+    rate_limited_model = RateLimitedModel(simple_model, retryer=retry_config)
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -253,7 +255,7 @@ async def test_rate_limited_model_retry():
         wait=wait_fixed(0.1),
     )
 
-    rate_limited_model = RateLimitedModel(failing_model, retry_config)
+    rate_limited_model = RateLimitedModel(failing_model, retryer=retry_config)
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -291,7 +293,7 @@ async def test_rate_limited_model_stream_retry():
         wait=wait_fixed(0.1),
     )
 
-    rate_limited_model = RateLimitedModel(failing_model, retry_config)
+    rate_limited_model = RateLimitedModel(failing_model, retryer=retry_config)
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -332,7 +334,7 @@ async def test_rate_limited_model_max_retries_exceeded():
         wait=wait_fixed(0.1),
     )
 
-    rate_limited_model = RateLimitedModel(failing_model, retry_config)
+    rate_limited_model = RateLimitedModel(failing_model, retryer=retry_config)
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -358,3 +360,246 @@ async def test_rate_limited_model_max_retries_exceeded():
     assert 'ValueError' in str(exc_info.value)
     # And the failing model should have been called 3 times
     assert failing_model.attempt_count == 3  # Original + 2 retries
+
+
+async def test_rate_limited_model_limiter_only():
+    """Test RateLimitedModel with just a rate limiter (no retryer)."""
+    # Create a simple model with rate limiting
+    simple_model = SimpleModel()
+    
+    # Create a rate limiter with a mocked acquire method for easy testing
+    limiter = AsyncLimiter(1, 1)  # 1 request per second
+    with patch.object(limiter, 'acquire', new=AsyncMock()) as mock_acquire:
+        rate_limited_model = RateLimitedModel(simple_model, limiter=limiter)
+        
+        messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart('user prompt with rate limiting'),
+                ]
+            ),
+        ]
+        
+        # Make a request
+        response = await rate_limited_model.request(
+            messages,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(
+                function_tools=[],
+                allow_text_output=True,
+                output_tools=[],
+            ),
+        )
+        
+        # Check response is correct
+        assert response.model_name == 'simple_model'
+        assert len(response.parts) == 1
+        assert response.parts[0].content == 'simple response'
+        
+        # Check that limiter.acquire was called once
+        mock_acquire.assert_called_once()
+        
+        # Now test with streaming
+        async with rate_limited_model.request_stream(
+            messages,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(
+                function_tools=[],
+                allow_text_output=True,
+                output_tools=[],
+            ),
+        ) as response_stream:
+            events = [event async for event in response_stream]
+            
+            # Verify events
+            assert len(events) == 2
+            assert isinstance(events[0], PartStartEvent)
+            assert events[0].part.content == 'stream part 1'
+        
+        # Check acquire was called again
+        assert mock_acquire.call_count == 2
+
+
+async def test_rate_limited_model_both_limiter_and_retryer():
+    """Test RateLimitedModel with both a rate limiter and retryer."""
+    # Create a failing model that succeeds after 2 retries
+    failing_model = FailingModel(fail_count=2)
+    
+    # Configure the limiter and retryer
+    limiter = AsyncLimiter(1, 1)  # 1 request per second
+    retry_config = AsyncRetrying(
+        retry=retry_if_exception_type(ValueError),
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(0.1),
+    )
+    
+    # Mock the limiter's acquire method
+    with patch.object(limiter, 'acquire', new=AsyncMock()) as mock_acquire:
+        rate_limited_model = RateLimitedModel(
+            failing_model, 
+            limiter=limiter,
+            retryer=retry_config
+        )
+        
+        messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart('user prompt with rate limiting and retries'),
+                ]
+            ),
+        ]
+        
+        # Make a request - should succeed after retries
+        response = await rate_limited_model.request(
+            messages,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(
+                function_tools=[],
+                allow_text_output=True,
+                output_tools=[],
+            ),
+        )
+        
+        # Check response is correct
+        assert response.parts[0].content == 'success after retries'
+        
+        # Limiter should be acquired for each retry attempt
+        assert mock_acquire.call_count == 3
+        
+        # Verify the model was called the right number of times
+        assert failing_model.attempt_count == 3
+        
+        # Reset for streaming test
+        failing_model.attempt_count = 0
+        mock_acquire.reset_mock()
+        
+        # Test with streaming - should also succeed after retries
+        async with rate_limited_model.request_stream(
+            messages,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(
+                function_tools=[],
+                allow_text_output=True,
+                output_tools=[],
+            ),
+        ) as response_stream:
+            events = [event async for event in response_stream]
+            
+            # Verify events exist
+            assert len(events) > 0
+        
+        # Limiter should be acquired for each retry attempt
+        assert mock_acquire.call_count == 3
+        
+        # Verify the model was called the right number of times
+        assert failing_model.attempt_count == 3
+
+
+async def test_rate_limited_model_concurrent_requests():
+    """Test RateLimitedModel with concurrent requests."""
+    import asyncio
+    
+    # Create several simple model instances
+    simple_model = SimpleModel()
+    
+    # Create a real rate limiter that will allow 2 requests per second
+    limiter = AsyncLimiter(2, 1)  # 2 requests per second
+    
+    rate_limited_model = RateLimitedModel(simple_model, limiter=limiter)
+    
+    # Create the message for all requests
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('concurrent request test'),
+            ]
+        ),
+    ]
+    
+    # Define a function to make a request and record the time
+    async def make_request():
+        start_time = asyncio.get_event_loop().time()
+        
+        response = await rate_limited_model.request(
+            messages,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(
+                function_tools=[],
+                allow_text_output=True,
+                output_tools=[],
+            ),
+        )
+        
+        end_time = asyncio.get_event_loop().time()
+        assert response.model_name == 'simple_model'
+        return end_time - start_time
+    
+    # Run 4 requests concurrently
+    durations = await asyncio.gather(
+        make_request(),
+        make_request(),
+        make_request(),
+        make_request(),
+    )
+    
+    # The first two requests should complete quickly,
+    # but the next two should be delayed due to rate limiting
+    durations_sorted = sorted(durations)
+    
+    # Make a lenient assertion to avoid test flakiness:
+    # - The faster two requests should complete quickly (under 0.3s is a reasonable expectation)
+    # - The slower two requests should be noticeably delayed due to the rate limit
+    assert durations_sorted[0] < 0.3
+    assert durations_sorted[1] < 0.3
+    assert durations_sorted[2] > durations_sorted[0]
+    assert durations_sorted[3] > durations_sorted[1]
+
+
+async def test_rate_limited_model_neither_limiter_nor_retryer():
+    """Test RateLimitedModel with neither limiter nor retryer."""
+    # Create a simple model
+    simple_model = SimpleModel()
+    
+    # Create a rate limited model with no limiter or retryer
+    rate_limited_model = RateLimitedModel(simple_model)
+    
+    # Check that it acts as a simple pass-through
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('simple pass-through test'),
+            ]
+        ),
+    ]
+    
+    # Check normal request
+    response = await rate_limited_model.request(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            allow_text_output=True,
+            output_tools=[],
+        ),
+    )
+    
+    # Verify the response
+    assert response.model_name == 'simple_model'
+    assert response.parts[0].content == 'simple response'
+    
+    # Check streaming request
+    async with rate_limited_model.request_stream(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            allow_text_output=True,
+            output_tools=[],
+        ),
+    ) as response_stream:
+        events = [event async for event in response_stream]
+        
+        # Verify events
+        assert len(events) == 2
+        assert isinstance(events[0], PartStartEvent)
+        assert events[0].part.content == 'stream part 1'
