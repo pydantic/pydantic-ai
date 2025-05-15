@@ -28,15 +28,17 @@ class RateLimitedModel(WrapperModel):
     Usage:
 
     ```python
-    from pydantic_ai import Agent, RateLimitedModel
     from aiolimiter import AsyncLimiter
     from tenacity import AsyncRetrying, stop_after_attempt
 
+    from pydantic_ai import Agent, RateLimitedModel
+
     model = RateLimitedModel(
-        "anthropic:claude-3-7-sonnet-latest",
+        'anthropic:claude-3-7-sonnet-latest',
         limiter=AsyncLimiter(1, 1),
         retryer=AsyncRetrying(stop=stop_after_attempt(3)),
     )
+
     agent = Agent(model=model)
     ```
     """
