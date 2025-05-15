@@ -21,7 +21,21 @@ from .wrapper import WrapperModel
 
 @dataclass
 class RateLimitedModel(WrapperModel):
-    """Model which wraps another model such that requests are rate limited with tenacity."""
+    """Model which wraps another model such that requests are rate limited with aiolimiter.
+
+    If retryer is provided it also retries requests with tenacity.
+
+    Usage:
+
+    ```python
+    model = RateLimitedModel(
+        "anthropic:claude-3-7-sonnet-latest",
+        limiter=AsyncLimiter(1, 1),
+        retryer=AsyncRetrying(stop=stop_after_attempt(3)),
+    )
+    agent = Agent(model=model)
+    ```
+    """
 
     def __init__(
         self,
