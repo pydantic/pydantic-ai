@@ -238,6 +238,7 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
     )
 
 
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_instructions_with_structured_output(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
     @dataclass
     class MyOutput:
