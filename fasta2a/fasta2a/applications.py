@@ -12,7 +12,7 @@ from starlette.routing import Route
 from starlette.types import ExceptionHandler, Lifespan, Receive, Scope, Send
 
 from .broker import Broker
-from .schema import AgentCard, Provider, Skill, a2a_request_ta, a2a_response_ta, agent_card_ta
+from .schema import AgentCard, Capabilities, Provider, Skill, a2a_request_ta, a2a_response_ta, agent_card_ta
 from .storage import Storage
 from .task_manager import TaskManager
 
@@ -81,6 +81,7 @@ class FastA2A(Starlette):
                 skills=self.skills,
                 default_input_modes=self.default_input_modes,
                 default_output_modes=self.default_output_modes,
+                capabilities=Capabilities(streaming=False, push_notifications=False, state_transition_history=False),
             )
             if self.description is not None:
                 agent_card['description'] = self.description
