@@ -245,13 +245,12 @@ async def _prepare_request_parameters(
     output_mode = None
     output_object = None
     output_tools = []
-    allow_text_output = _output.allow_text_output(output_schema)
+    require_tool_use = False
     if output_schema:
         output_mode = output_schema.forced_mode or model.default_output_mode
         output_object = output_schema.object_schema.definition
         output_tools = output_schema.tool_defs()
-        if output_mode != 'tool':
-            allow_text_output = False
+        require_tool_use = output_mode == 'tool' and not output_schema.allow_plain_text_output
 
         supported_modes = model.supported_output_modes
         if output_mode not in supported_modes:
@@ -262,7 +261,7 @@ async def _prepare_request_parameters(
         output_mode=output_mode,
         output_object=output_object,
         output_tools=output_tools,
-        allow_text_output=allow_text_output,
+        require_tool_use=require_tool_use,
     )
 
 
@@ -413,7 +412,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         async for _event in stream:
             pass
 
-    async def _run_stream(  # noqa: C901
+    async def _run_stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         if self._events_iterator is None:
@@ -421,16 +420,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:
                 texts: list[str] = []
-                outputs: list[str] = []
                 tool_calls: list[_messages.ToolCallPart] = []
                 for part in self.model_response.parts:
                     if isinstance(part, _messages.TextPart):
                         # ignore empty content for text parts, see #437
                         if part.content:
                             texts.append(part.content)
-                    elif isinstance(part, _messages.OutputPart):
-                        if part.content:
-                            outputs.append(part.content)
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
                     else:
@@ -443,9 +438,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 if tool_calls:
                     async for event in self._handle_tool_calls(ctx, tool_calls):
                         yield event
-                elif outputs:  # TODO: Can we have tool calls and structured output? Should we handle both?
-                    # No events are emitted during the handling of structured outputs, so we don't need to yield anything
-                    self._next_node = await self._handle_outputs(ctx, outputs)
                 elif texts:
                     # No events are emitted during the handling of text responses, so we don't need to yield anything
                     self._next_node = await self._handle_text_response(ctx, texts)
@@ -537,42 +529,18 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_schema = ctx.deps.output_schema
 
         text = '\n\n'.join(texts)
-        if _output.allow_text_output(output_schema):
-            # The following cast is safe because we know `str` is an allowed result type
-            result_data_input = cast(NodeRunEndT, text)
-            try:
-                result_data = await _validate_output(result_data_input, ctx, None)
-            except _output.ToolRetryError as e:
-                ctx.state.increment_retries(ctx.deps.max_result_retries)
-                return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
-            else:
-                return self._handle_final_result(ctx, result.FinalResult(result_data, None, None), [])
-        else:
-            ctx.state.increment_retries(ctx.deps.max_result_retries)
-            return ModelRequestNode[DepsT, NodeRunEndT](
-                _messages.ModelRequest(
-                    parts=[
-                        _messages.RetryPromptPart(
-                            content='Plain text responses are not permitted, please include your response in a tool call',
-                        )
-                    ]
-                )
-            )
-
-    async def _handle_outputs(
-        self,
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        outputs: list[str],
-    ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
-        if len(outputs) != 1:
-            raise exceptions.UnexpectedModelBehavior('Received multiple structured outputs in a single response')
-        output_schema = ctx.deps.output_schema
-        if not output_schema:
-            raise exceptions.UnexpectedModelBehavior('Must specify a non-str result_type when using structured outputs')
-
-        structured_output = outputs[0]
         try:
-            result_data = output_schema.validate(structured_output)
+            if output_schema is None or output_schema.allow_plain_text_output:
+                # The following cast is safe because we know `str` is an allowed result type
+                result_data = cast(NodeRunEndT, text)
+            elif output_schema.allow_json_text_output:
+                result_data = output_schema.validate(text)
+            else:
+                m = _messages.RetryPromptPart(
+                    content='Plain text responses are not permitted, please include your response in a tool call',
+                )
+                raise _output.ToolRetryError(m)
+
             result_data = await _validate_output(result_data, ctx, None)
         except _output.ToolRetryError as e:
             ctx.state.increment_retries(ctx.deps.max_result_retries)

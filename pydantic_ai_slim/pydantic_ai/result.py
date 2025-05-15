@@ -80,6 +80,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         self, message: _messages.ModelResponse, output_tool_name: str | None, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
+        call = None
         if self._output_schema is not None and output_tool_name is not None:
             match = self._output_schema.find_named_tool(message.parts, output_tool_name)
             if match is None:
@@ -89,32 +90,20 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
             call, output_tool = match
             result_data = output_tool.validate(call, allow_partial=allow_partial, wrap_validation_errors=False)
-
-            for validator in self._output_validators:
-                result_data = await validator.validate(result_data, call, self._run_ctx)
-            return result_data
-        elif (
-            self._output_schema is not None
-            and len(message.parts) > 0
-            and (part := message.parts[0])
-            and isinstance(part, _messages.OutputPart)
-        ):
-            result_data = self._output_schema.validate(
-                part.content, allow_partial=allow_partial, wrap_validation_errors=False
-            )
-            for validator in self._output_validators:
-                result_data = await validator.validate(result_data, None, self._run_ctx)
-            return result_data
         else:
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
-            for validator in self._output_validators:
-                text = await validator.validate(
-                    text,
-                    None,
-                    self._run_ctx,
+
+            if self._output_schema is None or self._output_schema.allow_plain_text_output:
+                # The following cast is safe because we know `str` is an allowed output type
+                result_data = cast(OutputDataT, text)
+            else:
+                result_data = self._output_schema.validate(
+                    text, allow_partial=allow_partial, wrap_validation_errors=False
                 )
-            # Since there is no output tool, we can assume that str is compatible with OutputDataT
-            return cast(OutputDataT, text)
+
+        for validator in self._output_validators:
+            result_data = await validator.validate(result_data, call, self._run_ctx)
+        return result_data
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
@@ -139,9 +128,6 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                                 return _messages.FinalResultEvent(
                                     tool_name=call.tool_name, tool_call_id=call.tool_call_id
                                 )
-                    elif isinstance(new_part, _messages.OutputPart):
-                        if output_schema:
-                            return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
                     elif _output.allow_text_output(output_schema):
                         assert_type(e, _messages.PartStartEvent)
                         return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
@@ -330,7 +316,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
-        if self._output_schema and not self._output_schema.allow_text_output:
+        if self._output_schema and not self._output_schema.allow_plain_text_output:
             raise exceptions.UserError('stream_text() can only be used with text responses')
 
         if delta:
@@ -408,6 +394,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
+        call = None
         if self._output_schema is not None and self._output_tool_name is not None:
             match = self._output_schema.find_named_tool(message.parts, self._output_tool_name)
             if match is None:
@@ -417,32 +404,20 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
             call, output_tool = match
             result_data = output_tool.validate(call, allow_partial=allow_partial, wrap_validation_errors=False)
-
-            for validator in self._output_validators:
-                result_data = await validator.validate(result_data, call, self._run_ctx)
-            return result_data
-        elif (
-            self._output_schema is not None
-            and len(message.parts) > 0
-            and (part := message.parts[0])
-            and isinstance(part, _messages.OutputPart)
-        ):
-            result_data = self._output_schema.validate(
-                part.content, allow_partial=allow_partial, wrap_validation_errors=False
-            )
-            for validator in self._output_validators:
-                result_data = await validator.validate(result_data, None, self._run_ctx)
-            return result_data
         else:
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
-            for validator in self._output_validators:
-                text = await validator.validate(
-                    text,
-                    None,
-                    self._run_ctx,
+
+            if self._output_schema is None or self._output_schema.allow_plain_text_output:
+                # The following cast is safe because we know `str` is an allowed output type
+                result_data = cast(OutputDataT, text)
+            else:
+                result_data = self._output_schema.validate(
+                    text, allow_partial=allow_partial, wrap_validation_errors=False
                 )
-            # Since there is no output tool, we can assume that str is compatible with OutputDataT
-            return cast(OutputDataT, text)
+
+        for validator in self._output_validators:
+            result_data = await validator.validate(result_data, call, self._run_ctx)
+        return result_data
 
     async def _validate_text_output(self, text: str) -> str:
         for validator in self._output_validators:

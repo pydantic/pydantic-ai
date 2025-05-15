@@ -22,7 +22,6 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
-    OutputPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -284,7 +283,7 @@ class MistralModel(Model):
         """
         if not model_request_parameters.function_tools and not model_request_parameters.output_tools:
             return None
-        elif not model_request_parameters.allow_text_output:
+        elif model_request_parameters.require_tool_use:
             return 'required'
         else:
             return 'auto'
@@ -478,7 +477,7 @@ class MistralModel(Model):
                 tool_calls: list[MistralToolCall] = []
 
                 for part in message.parts:
-                    if isinstance(part, (TextPart, OutputPart)):
+                    if isinstance(part, TextPart):
                         content_chunks.append(MistralTextChunk(text=part.content))
                     elif isinstance(part, ToolCallPart):
                         tool_calls.append(self._map_tool_call(part))

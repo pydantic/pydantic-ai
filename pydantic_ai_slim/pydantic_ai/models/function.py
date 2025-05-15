@@ -21,7 +21,6 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponseStreamEvent,
-    OutputPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -92,7 +91,7 @@ class FunctionModel(Model):
     ) -> ModelResponse:
         agent_info = AgentInfo(
             model_request_parameters.function_tools,
-            model_request_parameters.allow_text_output,
+            not model_request_parameters.require_tool_use,
             model_request_parameters.output_tools,
             model_settings,
         )
@@ -121,7 +120,7 @@ class FunctionModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         agent_info = AgentInfo(
             model_request_parameters.function_tools,
-            model_request_parameters.allow_text_output,
+            not model_request_parameters.require_tool_use,
             model_request_parameters.output_tools,
             model_settings,
         )
@@ -267,7 +266,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
                     assert_never(part)
         elif isinstance(message, ModelResponse):
             for part in message.parts:
-                if isinstance(part, (TextPart, OutputPart)):
+                if isinstance(part, TextPart):
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolCallPart):
                     call = part

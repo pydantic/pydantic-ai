@@ -26,7 +26,6 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
-    OutputPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -263,14 +262,10 @@ class OpenAIModel(Model):
         openai_messages = await self._map_messages(messages)
 
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        tool_choice: Literal['none', 'required', 'auto'] | NotGiven = NOT_GIVEN
-        response_format: chat.completion_create_params.ResponseFormat | NotGiven = NOT_GIVEN
+        response_format: chat.completion_create_params.ResponseFormat | None = None
 
         if model_request_parameters.output_mode == 'tool':
             tools.extend(self._map_tool_definition(r) for r in model_request_parameters.output_tools)
-
-            if not model_request_parameters.allow_text_output:
-                tool_choice = 'required'
         elif output_object := model_request_parameters.output_object:
             if model_request_parameters.output_mode == 'json_schema':
                 response_format = self._map_output_object_definition(output_object)
@@ -281,6 +276,13 @@ class OpenAIModel(Model):
                         content=output_object.manual_json_instructions, role='system'
                     ),
                 )
+
+        if not tools:
+            tool_choice: Literal['none', 'required', 'auto'] | None = None
+        elif model_request_parameters.require_tool_use:
+            tool_choice = 'required'
+        else:
+            tool_choice = 'auto'
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -299,7 +301,7 @@ class OpenAIModel(Model):
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
-                response_format=response_format,
+                response_format=response_format or NOT_GIVEN,
                 seed=model_settings.get('seed', NOT_GIVEN),
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
@@ -322,11 +324,7 @@ class OpenAIModel(Model):
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         if choice.message.content is not None:
-            if model_request_parameters.output_mode in {'json_schema', 'manual_json'}:
-                # TODO: Strip Markdown fence and text before/after
-                items.append(OutputPart(choice.message.content))
-            else:
-                items.append(TextPart(choice.message.content))
+            items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
@@ -362,7 +360,7 @@ class OpenAIModel(Model):
                 texts: list[str] = []
                 tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
                 for item in message.parts:
-                    if isinstance(item, (TextPart, OutputPart)):
+                    if isinstance(item, TextPart):
                         texts.append(item.content)
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
@@ -599,11 +597,7 @@ class OpenAIResponsesModel(Model):
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created_at, tz=timezone.utc)
         items: list[ModelResponsePart] = []
-        # TODO: Parse out manual JSON, a la split_content_into_text_and_thinking
-        if model_request_parameters.output_mode == 'json_schema':
-            items.append(OutputPart(response.output_text))
-        else:
-            items.append(TextPart(response.output_text))
+        items.append(TextPart(response.output_text))
         for item in response.output:
             if item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
@@ -656,7 +650,7 @@ class OpenAIResponsesModel(Model):
         # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
+        elif model_request_parameters.require_tool_use:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -755,7 +749,7 @@ class OpenAIResponsesModel(Model):
                         assert_never(part)
             elif isinstance(message, ModelResponse):
                 for item in message.parts:
-                    if isinstance(item, (TextPart, OutputPart)):
+                    if isinstance(item, TextPart):
                         openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
@@ -1146,5 +1140,5 @@ def _customize_request_parameters(model_request_parameters: ModelRequestParamete
         if model_request_parameters.output_object
         else None,
         output_tools=[_customize_tool_def(tool) for tool in model_request_parameters.output_tools],
-        allow_text_output=model_request_parameters.allow_text_output,
+        require_tool_use=model_request_parameters.require_tool_use,
     )

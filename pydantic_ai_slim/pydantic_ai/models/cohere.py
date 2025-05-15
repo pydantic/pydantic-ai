@@ -13,7 +13,6 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
-    OutputPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -206,7 +205,7 @@ class CohereModel(Model):
                 texts: list[str] = []
                 tool_calls: list[ToolCallV2] = []
                 for item in message.parts:
-                    if isinstance(item, (TextPart, OutputPart)):
+                    if isinstance(item, TextPart):
                         texts.append(item.content)
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))

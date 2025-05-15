@@ -266,7 +266,7 @@ class ModelRequestParameters:
     output_mode: OutputMode | None
     output_object: OutputObjectDefinition | None
     output_tools: list[ToolDefinition]
-    allow_text_output: bool
+    require_tool_use: bool
 
 
 class Model(ABC):

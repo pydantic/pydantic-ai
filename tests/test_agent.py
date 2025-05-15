@@ -12,6 +12,7 @@ from pydantic import BaseModel, TypeAdapter, field_validator
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
+from pydantic_ai._output import ToolOutput
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.messages import (
     BinaryContent,
@@ -260,7 +261,7 @@ def test_plain_response_then_tuple():
             args_json = '{"response": ["foo", "bar"]}'
             return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_tuple), output_type=tuple[str, str])
+    agent = Agent(FunctionModel(return_tuple), output_type=ToolOutput(type_=tuple[str, str]))
 
     result = agent.run_sync('Hello')
     assert result.output == ('foo', 'bar')
@@ -352,14 +353,14 @@ def test_response_tuple():
     m = TestModel()
 
     agent = Agent(m, output_type=tuple[str, str])
-    assert agent._output_schema.allow_text_output is False  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
+    assert agent._output_schema.allow_plain_text_output is False  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(('a', 'a'))
 
     assert m.last_model_request_parameters is not None
     assert m.last_model_request_parameters.function_tools == snapshot([])
-    assert m.last_model_request_parameters.allow_text_output is False
+    assert m.last_model_request_parameters.require_tool_use is True
 
     assert m.last_model_request_parameters.output_tools is not None
     assert len(m.last_model_request_parameters.output_tools) == 1
@@ -409,7 +410,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         got_tool_call_name = ctx.tool_name
         return o
 
-    assert agent._output_schema.allow_text_output is True  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
+    assert agent._output_schema.allow_plain_text_output is True  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot('success (no tool calls)')
@@ -417,7 +418,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
 
     assert m.last_model_request_parameters is not None
     assert m.last_model_request_parameters.function_tools == snapshot([])
-    assert m.last_model_request_parameters.allow_text_output is True
+    assert m.last_model_request_parameters.require_tool_use is False
 
     assert m.last_model_request_parameters.output_tools is not None
     assert len(m.last_model_request_parameters.output_tools) == 1
@@ -493,7 +494,7 @@ class Bar(BaseModel):
 
     assert m.last_model_request_parameters is not None
     assert m.last_model_request_parameters.function_tools == snapshot([])
-    assert m.last_model_request_parameters.allow_text_output is False
+    assert m.last_model_request_parameters.require_tool_use is True
 
     assert m.last_model_request_parameters.output_tools is not None
     assert len(m.last_model_request_parameters.output_tools) == 2

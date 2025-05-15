@@ -997,8 +997,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                     elif isinstance(new_part, _messages.ToolCallPart) and output_schema:
                                         for call, _ in output_schema.find_tool([new_part]):
                                             return FinalResult(s, call.tool_name, call.tool_call_id)
-                                    elif isinstance(new_part, _messages.OutputPart) and output_schema:
-                                        return FinalResult(s, None, None)
                             return None
 
                         final_result_details = await stream_to_final(streamed_response)

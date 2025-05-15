@@ -220,7 +220,8 @@ class OutputSchema(Generic[OutputDataT]):
     forced_mode: OutputMode | None
     object_schema: OutputObjectSchema[OutputDataT]
     tools: dict[str, OutputTool[OutputDataT]]
-    allow_text_output: bool  # TODO: Verify structured output works correctly with string as a union member
+    allow_plain_text_output: bool
+    allow_json_text_output: bool  # TODO: Turn into allowed_text_output: Literal['plain', 'json'] | None
 
     @classmethod
     def build(
@@ -235,11 +236,14 @@ class OutputSchema(Generic[OutputDataT]):
             return None
 
         forced_mode = None
+        allow_json_text_output = True
+        allow_plain_text_output = False
         tool_output_type = None
-        allow_text_output = False
         if isinstance(output_type, ToolOutput):
-            # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
             forced_mode = 'tool'
+            allow_json_text_output = False
+
+            # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
             name = output_type.name
             description = output_type.description
             output_type_ = output_type.output_type
@@ -255,12 +259,15 @@ class OutputSchema(Generic[OutputDataT]):
             name = output_type.name
             description = output_type.description
             output_type_ = output_type.output_type
-        else:
+        elif output_type_other_than_str := extract_str_from_union(output_type):
+            forced_mode = 'tool'
             output_type_ = output_type
 
-            if output_type_other_than_str := extract_str_from_union(output_type):
-                allow_text_output = True
-                tool_output_type = output_type_other_than_str.value
+            allow_json_text_output = False
+            allow_plain_text_output = True
+            tool_output_type = output_type_other_than_str.value
+        else:
+            output_type_ = output_type
 
         output_object_schema = OutputObjectSchema(
             output_type=output_type_, name=name, description=description, strict=strict
@@ -292,7 +299,8 @@ class OutputSchema(Generic[OutputDataT]):
             forced_mode=forced_mode,
             object_schema=output_object_schema,
             tools=tools,
-            allow_text_output=allow_text_output,
+            allow_plain_text_output=allow_plain_text_output,
+            allow_json_text_output=allow_json_text_output,
         )
 
     def find_named_tool(
@@ -341,8 +349,7 @@ class OutputSchema(Generic[OutputDataT]):
 
 
 def allow_text_output(output_schema: OutputSchema[Any] | None) -> bool:
-    """Check if the result schema allows text results."""
-    return output_schema is None or output_schema.allow_text_output
+    return output_schema is None or output_schema.allow_plain_text_output or output_schema.allow_json_text_output
 
 
 @dataclass

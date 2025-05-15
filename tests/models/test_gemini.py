@@ -64,7 +64,7 @@ async def test_model_simple(allow_model_requests: None):
     assert 'x-goog-api-key' in m.client.headers
 
     mrp = ModelRequestParameters(
-        function_tools=[], allow_text_output=True, output_tools=[], output_mode=None, output_object=None
+        function_tools=[], require_tool_use=False, output_tools=[], output_mode=None, output_object=None
     )
     mrp = m.customize_request_parameters(mrp)
     tools = m._get_tools(mrp)
@@ -100,7 +100,7 @@ async def test_model_tools(allow_model_requests: None):
 
     mrp = ModelRequestParameters(
         function_tools=tools,
-        allow_text_output=True,
+        require_tool_use=False,
         output_tools=[output_tool],
         output_mode=None,
         output_object=None,
@@ -148,7 +148,7 @@ async def test_require_response_tool(allow_model_requests: None):
     )
     mrp = ModelRequestParameters(
         function_tools=[],
-        allow_text_output=False,
+        require_tool_use=True,
         output_tools=[output_tool],
         output_mode=None,
         output_object=None,
@@ -235,7 +235,7 @@ async def test_json_def_replaced(allow_model_requests: None):
     )
     mrp = ModelRequestParameters(
         function_tools=[],
-        allow_text_output=True,
+        require_tool_use=False,
         output_tools=[output_tool],
         output_mode=None,
         output_object=None,
@@ -321,7 +321,7 @@ async def test_json_def_enum(allow_model_requests: None):
     mrp = ModelRequestParameters(
         function_tools=[],
         output_mode=None,
-        allow_text_output=True,
+        require_tool_use=False,
         output_tools=[output_tool],
         output_object=None,
     )
@@ -368,7 +368,7 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
     )
     mrp = ModelRequestParameters(
         function_tools=[],
-        allow_text_output=True,
+        require_tool_use=False,
         output_tools=[output_tool],
         output_mode=None,
         output_object=None,
@@ -438,7 +438,7 @@ async def test_json_def_recursive(allow_model_requests: None):
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
         mrp = ModelRequestParameters(
             function_tools=[],
-            allow_text_output=True,
+            require_tool_use=False,
             output_tools=[output_tool],
             output_mode=None,
             output_object=None,
@@ -477,7 +477,7 @@ async def test_json_def_date(allow_model_requests: None):
     )
     mrp = ModelRequestParameters(
         function_tools=[],
-        allow_text_output=True,
+        require_tool_use=False,
         output_tools=[output_tool],
         output_mode=None,
         output_object=None,
