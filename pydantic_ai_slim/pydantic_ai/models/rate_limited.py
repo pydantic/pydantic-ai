@@ -31,7 +31,8 @@ class RateLimitedModel(WrapperModel):
     from aiolimiter import AsyncLimiter
     from tenacity import AsyncRetrying, stop_after_attempt
 
-    from pydantic_ai import Agent, RateLimitedModel
+    from pydantic_ai import Agent
+    from pydantic_ai.models import RateLimitedModel
 
     model = RateLimitedModel(
         'anthropic:claude-3-7-sonnet-latest',
