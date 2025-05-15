@@ -143,9 +143,8 @@ async def send_message():
 Ensure that you call the main method using `asyncio.run` to execute the asynchronous code.
 
 We can use the `get_task` function to get the status and result from the task, however we need the result ID from the response in order to do so. Note that the task may still be in-progress on the agent's side while this is taking place.
-```python {hl_lines="3 11-14"}
+```python {hl_lines="3 17-20"}
 from fasta2a.client import A2AClient
-from fasta2a.schema import Message
 
 client = A2AClient(base_url='http://localhost:8000')
 
@@ -174,11 +173,10 @@ async def send_message(send_message_payload):
 ```
 
 In the case that you are debugging A2A using a client, you may want to add in a delay to retrieve the fulfilled response that you want from the agent.
-```python {hl_lines="5"}
+```python {hl_lines="10"}
 import time
 
 from fasta2a.client import A2AClient
-from fasta2a.schema import Message
 
 client = A2AClient(base_url='http://localhost:8000')
 
