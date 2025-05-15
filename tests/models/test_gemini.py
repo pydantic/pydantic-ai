@@ -15,7 +15,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 from typing_extensions import Literal, TypeAlias
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError, usage
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -42,8 +42,12 @@ from pydantic_ai.models.gemini import (
     _GeminiContent,
     _GeminiFunction,
     _GeminiFunctionCallingConfig,
+    _GeminiFunctionResponse,
+    _GeminiFunctionResponsePart,
+    _GeminiPartUnion,
     _GeminiResponse,
     _GeminiSafetyRating,
+    _GeminiTextPart,
     _GeminiToolConfig,
     _GeminiTools,
     _GeminiUsageMetaData,
@@ -1273,3 +1277,24 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
         assert result.output == snapshot(
             'I need a location dictionary to use the `get_temperature` function.  I cannot provide the temperature in Tokyo without more information.\n'
         )
+
+
+def test_process_response_from_parts_with_function_response():
+    """Test processing response parts that include a function response."""
+    # Function responses should raise an error since they are unexpected in model output
+    parts: list[_GeminiPartUnion] = [
+        _GeminiTextPart(text='Some text'),  # Properly typed text part
+        _GeminiFunctionResponsePart(
+            function_response=_GeminiFunctionResponse(name='test_tool', response={'result': 'success'})
+        ),
+    ]
+    model_name = 'gemini-1.5-pro'
+    usage_data = usage.Usage()
+
+    model = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='mock'))
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        model._process_response_from_parts(parts, model_name, usage_data)
+
+    assert 'Unsupported response from Gemini' in str(exc_info.value)
+    assert 'expected all parts to be function calls or text' in str(exc_info.value)
