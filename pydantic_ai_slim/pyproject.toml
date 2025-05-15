@@ -55,7 +55,8 @@ dependencies = [
     "exceptiongroup; python_version < '3.11'",
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
-    "tenacity>=9.1.2"
+    "tenacity>=9.1.2",
+    "aiolimiter>=1.2.1"
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
