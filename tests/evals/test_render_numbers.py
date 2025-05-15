@@ -21,8 +21,8 @@ pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-eval
     [
         (0, snapshot('0')),
         (0.0, snapshot('0.000')),
-        (17348, snapshot('17348')),
-        (-17348, snapshot('-17348')),
+        (17348, snapshot('17,348')),
+        (-17348, snapshot('-17,348')),
         (17347.0, snapshot('17,347.0')),
         (-17347.0, snapshot('-17,347.0')),
         (0.1234, snapshot('0.123')),
