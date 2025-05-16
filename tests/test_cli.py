@@ -1,6 +1,7 @@
 import sys
+import types
 from io import StringIO
-from typing import Any
+from typing import Any, Callable
 
 import pytest
 from dirty_equals import IsInstance, IsStr
@@ -16,11 +17,13 @@ from pydantic_ai.models.test import TestModel
 from .conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
+    from openai import OpenAIError
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
     from pydantic_ai._cli import cli, cli_agent, handle_slash_command
+    from pydantic_ai.models.openai import OpenAIModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
 
@@ -32,70 +35,90 @@ def test_cli_version(capfd: CaptureFixture[str]):
 
 def test_invalid_model(capfd: CaptureFixture[str]):
     assert cli(['--model', 'potato']) == 1
-    assert capfd.readouterr().out.splitlines() == snapshot(
-        [IsStr(), 'Error initializing potato:', 'Unknown model: potato']
-    )
+    assert capfd.readouterr().out.splitlines() == snapshot(['Error initializing potato:', 'Unknown model: potato'])
 
 
-def test_agent_flag(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
-    env.set('OPENAI_API_KEY', 'test')
+@pytest.fixture
+def create_test_module():
+    def _create_test_module(**namespace: Any) -> None:
+        assert 'test_module' not in sys.modules
 
-    # Create a dynamic module using types.ModuleType
-    import types
+        test_module = types.ModuleType('test_module')
+        for key, value in namespace.items():
+            setattr(test_module, key, value)
 
-    test_module = types.ModuleType('test_module')
+        sys.modules['test_module'] = test_module
 
-    # Create and add agent to the module
+    try:
+        yield _create_test_module
+    finally:
+        if 'test_module' in sys.modules:
+            del sys.modules['test_module']
+
+
+def test_agent_flag(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    create_test_module: Callable[..., None],
+):
+    env.remove('OPENAI_API_KEY')
+
+    test_agent = Agent(TestModel(custom_output_text='Hello from custom agent'))
+    create_test_module(custom_agent=test_agent)
+
+    # Mock ask_agent to avoid actual execution but capture the agent
+    mock_ask = mocker.patch('pydantic_ai._cli.ask_agent')
+
+    # Test CLI with custom agent
+    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
+
+    # Verify the output contains the custom agent message
+    assert 'using custom agent test_module:custom_agent' in capfd.readouterr().out
+
+    # Verify ask_agent was called with our custom agent
+    mock_ask.assert_called_once()
+    assert mock_ask.call_args[0][0] is test_agent
+
+
+def test_agent_flag_no_model(env: TestEnv, create_test_module: Callable[..., None]):
+    env.remove('OPENAI_API_KEY')
     test_agent = Agent()
-    test_agent.model = TestModel(custom_output_text='Hello from custom agent')
-    setattr(test_module, 'custom_agent', test_agent)
+    create_test_module(custom_agent=test_agent)
 
-    # Register the module in sys.modules
-    sys.modules['test_module'] = test_module
-
-    try:
-        # Mock ask_agent to avoid actual execution but capture the agent
-        mock_ask = mocker.patch('pydantic_ai._cli.ask_agent')
-
-        # Test CLI with custom agent
-        assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
-
-        # Verify the output contains the custom agent message
-        assert 'Using custom agent: test_module:custom_agent' in capfd.readouterr().out
-
-        # Verify ask_agent was called with our custom agent
-        mock_ask.assert_called_once()
-        assert mock_ask.call_args[0][0] is test_agent
-
-    finally:
-        # Clean up by removing the module from sys.modules
-        if 'test_module' in sys.modules:
-            del sys.modules['test_module']
+    msg = 'The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable'
+    with pytest.raises(OpenAIError, match=msg):
+        cli(['--agent', 'test_module:custom_agent', 'hello'])
 
 
-def test_agent_flag_non_agent(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
-    env.set('OPENAI_API_KEY', 'test')
+def test_agent_flag_set_model(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    create_test_module: Callable[..., None],
+):
+    env.set('OPENAI_API_KEY', 'xxx')
 
-    # Create a dynamic module using types.ModuleType
-    import types
+    custom_agent = Agent(TestModel(custom_output_text='Hello from custom agent'))
+    create_test_module(custom_agent=custom_agent)
 
-    test_module = types.ModuleType('test_module')
+    mocker.patch('pydantic_ai._cli.ask_agent')
 
-    # Create and add agent to the module
+    assert cli(['--agent', 'test_module:custom_agent', '--model', 'gpt-4o', 'hello']) == 0
+
+    assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out
+
+    assert isinstance(custom_agent.model, OpenAIModel)
+
+
+def test_agent_flag_non_agent(
+    capfd: CaptureFixture[str], mocker: MockerFixture, create_test_module: Callable[..., None]
+):
     test_agent = 'Not an Agent object'
-    setattr(test_module, 'custom_agent', test_agent)
+    create_test_module(custom_agent=test_agent)
 
-    # Register the module in sys.modules
-    sys.modules['test_module'] = test_module
-
-    try:
-        assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 1
-        assert 'is not an Agent' in capfd.readouterr().out
-
-    finally:
-        # Clean up by removing the module from sys.modules
-        if 'test_module' in sys.modules:
-            del sys.modules['test_module']
+    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 1
+    assert 'is not an Agent' in capfd.readouterr().out
 
 
 def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
@@ -106,7 +129,7 @@ def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker:
 def test_list_models(capfd: CaptureFixture[str]):
     assert cli(['--list-models']) == 0
     output = capfd.readouterr().out.splitlines()
-    assert output[:2] == snapshot([IsStr(regex='pai - PydanticAI CLI .* using openai:gpt-4o'), 'Available models:'])
+    assert output[:3] == snapshot([IsStr(regex='pai - PydanticAI CLI .*'), '', 'Available models:'])
 
     providers = (
         'openai',
@@ -119,7 +142,7 @@ def test_list_models(capfd: CaptureFixture[str]):
         'cohere',
         'deepseek',
     )
-    models = {line.strip().split(' ')[0] for line in output[2:]}
+    models = {line.strip().split(' ')[0] for line in output[3:]}
     for provider in providers:
         models = models - {model for model in models if model.startswith(provider)}
     assert models == set(), models
