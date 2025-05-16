@@ -1036,14 +1036,14 @@ def _get_registry(
             raise ValueError(
                 f'All custom evaluator classes must be decorated with `@dataclass`, but {evaluator_class} is not'
             )
-        name = evaluator_class.name()
+        name = evaluator_class.get_serialization_name()
         if name in registry:
             raise ValueError(f'Duplicate evaluator class name: {name!r}')
         registry[name] = evaluator_class
 
     for evaluator_class in DEFAULT_EVALUATORS:
         # Allow overriding the default evaluators with custom evaluators raising an error
-        registry.setdefault(evaluator_class.name(), evaluator_class)
+        registry.setdefault(evaluator_class.get_serialization_name(), evaluator_class)
 
     return registry
 
