@@ -366,6 +366,22 @@ class BedrockConverseModel(Model):
 
         return inference_config
 
+    def _map_model_response_messages(self, message: ModelResponse) -> list[ContentBlockOutputTypeDef]:
+        """Maps a `pydantic_ai.ModelResponse` to the Bedrock `ContentBlockOutputTypeDef`.
+
+        This is used to map the model response to the Bedrock format.
+        """
+        items: list[ContentBlockOutputTypeDef] = []
+        for item in message.parts:
+            if isinstance(item, TextPart):
+                if not item.content.strip():
+                    continue
+                items.append({'text': item.content})
+            else:
+                assert isinstance(item, ToolCallPart)
+                items.append(self._map_tool_call(item))
+        return items
+
     async def _map_messages(
         self, messages: list[ModelMessage]
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
@@ -420,15 +436,7 @@ class BedrockConverseModel(Model):
                                 }
                             )
             elif isinstance(message, ModelResponse):
-                content: list[ContentBlockOutputTypeDef] = []
-                for item in message.parts:
-                    if isinstance(item, TextPart):
-                        if not item.content.strip():
-                            continue
-                        content.append({'text': item.content})
-                    else:
-                        assert isinstance(item, ToolCallPart)
-                        content.append(self._map_tool_call(item))
+                content: list[ContentBlockOutputTypeDef] = self._map_model_response_messages(message)
                 bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
                 assert_never(message)
