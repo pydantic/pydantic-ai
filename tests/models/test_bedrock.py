@@ -670,14 +670,7 @@ async def test_bedrock_handles_empty_content_blocks(bedrock_provider: BedrockPro
                     {
                         'toolUse': {
                             'input': {
-                                'function': {
-                                    'arguments': {
-                                        'param': 'value',
-                                    },
-                                    'name': 'normal_tool',
-                                },
-                                'id': 'normal1',
-                                'type': 'function',
+                                'param': 'value',
                             },
                             'name': 'normal_tool',
                             'toolUseId': 'normal1',
