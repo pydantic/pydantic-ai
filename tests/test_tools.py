@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Annotated, Any, Callable, Literal, Union
 
 import pydantic_core
@@ -954,3 +954,37 @@ def test_tool_parameters_with_attribute_docstrings():
             'strict': None,
         }
     )
+
+
+def test_dynamic_tools_agent_wide():
+    async def prepare_tool_defs(
+        ctx: RunContext[int], tool_defs: list[ToolDefinition]
+    ) -> Union[list[ToolDefinition], None]:
+        if ctx.deps == 42:
+            return []
+        elif ctx.deps == 43:
+            return None
+        elif ctx.deps == 21:
+            return [replace(tool_def, strict=True) for tool_def in tool_defs]
+        return tool_defs
+
+    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
+
+    @agent.tool
+    def foobar(ctx: RunContext[int], x: int, y: str) -> str:
+        return f'{ctx.deps} {x} {y}'
+
+    result = agent.run_sync('', deps=42)
+    assert result.output == snapshot('success (no tool calls)')
+
+    result = agent.run_sync('', deps=43)
+    assert result.output == snapshot('success (no tool calls)')
+
+    with agent.override(model=FunctionModel(get_json_schema)):
+        result = agent.run_sync('', deps=21)
+        json_schema = json.loads(result.output)
+        assert agent._function_tools['foobar'].strict is None
+        assert json_schema['strict'] is True
+
+    result = agent.run_sync('', deps=1)
+    assert result.output == snapshot('{"foobar":"1 0 a"}')
