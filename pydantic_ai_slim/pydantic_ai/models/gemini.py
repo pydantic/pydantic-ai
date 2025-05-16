@@ -271,7 +271,22 @@ class GeminiModel(Model):
         parts = response['candidates'][0]['content']['parts']
         usage = _metadata_as_usage(response)
         usage.requests = 1
-        return _process_response_from_parts(parts, response.get('model_version', self._model_name), usage)
+        return self._process_response_from_parts(parts, response.get('model_version', self._model_name), usage)
+
+    def _process_response_from_parts(
+        self, parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, usage: usage.Usage
+    ) -> ModelResponse:
+        items: list[ModelResponsePart] = []
+        for part in parts:
+            if 'text' in part:
+                items.append(TextPart(content=part['text']))
+            elif 'function_call' in part:
+                items.append(ToolCallPart(tool_name=part['function_call']['name'], args=part['function_call']['args']))
+            elif 'function_response' in part:
+                raise UnexpectedModelBehavior(
+                    f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
+                )
+        return ModelResponse(parts=items, usage=usage, model_name=model_name)
 
     async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -345,17 +360,27 @@ class GeminiModel(Model):
                         _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
                     )
                 elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl, VideoUrl)):
-                    client = cached_async_http_client()
-                    response = await client.get(item.url, follow_redirects=True)
-                    response.raise_for_status()
-                    mime_type = response.headers['Content-Type'].split(';')[0]
-                    inline_data = _GeminiInlineDataPart(
-                        inline_data={'data': base64.b64encode(response.content).decode('utf-8'), 'mime_type': mime_type}
-                    )
-                    content.append(inline_data)
+                    # For GCS URLs, use Google's file_data format instead of inline_data
+                    if item.url.startswith('gs://'):
+                        content.append(
+                            _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
+                        )
+                    else:
+                        # For HTTP URLs, fetch and convert to inline data as before
+                        client = cached_async_http_client()
+                        response = await client.get(item.url, follow_redirects=True)
+                        response.raise_for_status()
+                        mime_type = response.headers['Content-Type'].split(';')[0]
+                        inline_data = _GeminiInlineDataPart(
+                            inline_data={
+                                'data': base64.b64encode(response.content).decode('utf-8'),
+                                'mime_type': mime_type,
+                            }
+                        )
+                        content.append(inline_data)
                 else:
                     assert_never(item)
-        return content
+            return content
 
 
 class AuthProtocol(Protocol):
@@ -558,6 +583,27 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
     return _GeminiContent(role='model', parts=parts)
 
 
+# First define the helper functions and part discriminator
+def _part_discriminator(v: Any) -> str:
+    if isinstance(v, dict):
+        if 'text' in v:
+            return 'text'
+        elif 'inlineData' in v:
+            return 'inline_data'
+        elif 'fileData' in v:
+            return 'file_data'
+        elif 'functionCall' in v or 'function_call' in v:
+            return 'function_call'
+        elif 'functionResponse' in v or 'function_response' in v:
+            return 'function_response'
+    return 'text'
+
+
+def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart:
+    return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args_as_dict()))
+
+
+# Then define all the part types
 class _GeminiTextPart(TypedDict):
     text: str
 
@@ -584,35 +630,22 @@ class _GeminiFileDataPart(TypedDict):
     file_data: Annotated[_GeminiFileData, pydantic.Field(alias='fileData')]
 
 
-class _GeminiFunctionCallPart(TypedDict):
-    function_call: Annotated[_GeminiFunctionCall, pydantic.Field(alias='functionCall')]
-
-
-def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart:
-    return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args_as_dict()))
-
-
-def _process_response_from_parts(
-    parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, usage: usage.Usage
-) -> ModelResponse:
-    items: list[ModelResponsePart] = []
-    for part in parts:
-        if 'text' in part:
-            items.append(TextPart(content=part['text']))
-        elif 'function_call' in part:
-            items.append(ToolCallPart(tool_name=part['function_call']['name'], args=part['function_call']['args']))
-        elif 'function_response' in part:
-            raise UnexpectedModelBehavior(
-                f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
-            )
-    return ModelResponse(parts=items, usage=usage, model_name=model_name)
-
-
 class _GeminiFunctionCall(TypedDict):
     """See <https://ai.google.dev/api/caching#FunctionCall>."""
 
     name: str
     args: dict[str, Any]
+
+
+class _GeminiFunctionCallPart(TypedDict):
+    function_call: Annotated[_GeminiFunctionCall, pydantic.Field(alias='functionCall')]
+
+
+class _GeminiFunctionResponse(TypedDict):
+    """See <https://ai.google.dev/api/caching#FunctionResponse>."""
+
+    name: str
+    response: dict[str, Any]
 
 
 class _GeminiFunctionResponsePart(TypedDict):
@@ -623,31 +656,7 @@ def _response_part_from_response(name: str, response: dict[str, Any]) -> _Gemini
     return _GeminiFunctionResponsePart(function_response=_GeminiFunctionResponse(name=name, response=response))
 
 
-class _GeminiFunctionResponse(TypedDict):
-    """See <https://ai.google.dev/api/caching#FunctionResponse>."""
-
-    name: str
-    response: dict[str, Any]
-
-
-def _part_discriminator(v: Any) -> str:
-    if isinstance(v, dict):
-        if 'text' in v:
-            return 'text'
-        elif 'inlineData' in v:
-            return 'inline_data'
-        elif 'fileData' in v:
-            return 'file_data'
-        elif 'functionCall' in v or 'function_call' in v:
-            return 'function_call'
-        elif 'functionResponse' in v or 'function_response' in v:
-            return 'function_response'
-    return 'text'
-
-
-# See <https://ai.google.dev/api/caching#Part>
-# we don't currently support other part types
-# TODO discriminator
+# Then define the union type using the discriminator
 _GeminiPartUnion = Annotated[
     Union[
         Annotated[_GeminiTextPart, pydantic.Tag('text')],
