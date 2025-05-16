@@ -371,16 +371,16 @@ class BedrockConverseModel(Model):
 
         This is used to map the model response to the Bedrock format.
         """
-        items: list[ContentBlockOutputTypeDef] = []
+        content: list[ContentBlockOutputTypeDef] = []
         for item in message.parts:
             if isinstance(item, TextPart):
                 if not item.content.strip():
                     continue
-                items.append({'text': item.content})
+                content.append({'text': item.content})
             else:
                 assert isinstance(item, ToolCallPart)
-                items.append(self._map_tool_call(item))
-        return items
+                content.append(self._map_tool_call(item))
+        return content
 
     async def _map_messages(
         self, messages: list[ModelMessage]
