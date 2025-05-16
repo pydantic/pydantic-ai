@@ -15,6 +15,7 @@ from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -670,3 +671,16 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
             ),
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_groq_model_web_search_tool(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m, builtin_tools=[WebSearchTool()])
+
+    result = await agent.run('What day is today?')
+    assert result.output == snapshot("""\
+To determine the current day, I would need to know the current date. However, I don't have have access to real-time information. But I can guide you on how to find out.
+
+You can use a calendar or a digital tool that displays the current date to find out what day it is today. Alternatively, if you provide me with the current date, I can tell you what day it is.\
+""")

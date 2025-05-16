@@ -1,0 +1,196 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '312'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 1024
+      messages:
+      - content:
+        - text: What day is today?
+          type: text
+        role: user
+      model: claude-3-5-sonnet-latest
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - allowed_domains: null
+        blocked_domains: null
+        name: web_search
+        type: web_search_20250305
+        user_location: null
+    uri: https://api.anthropic.com/v1/messages
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '25705'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: Let me search for today's date and any significant events.
+        type: text
+      - id: srvtoolu_01RhAr4gUKVGNh2F9DLT4WNY
+        input:
+          query: current date today May 14 2025 notable events
+        name: web_search
+        type: server_tool_use
+      - content:
+        - encrypted_content: EuwCCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDENTQOMiruuPOENZYxoMwVvlhptGQ/WfhkJKIjDA0aujpCVZ7CzE9fpfZ8vEfn2pfxg384zlVeCpdeU2njTaFx6shdbgS/Wvm/JH00Aq7wFjNSSAjwRFMBTp5zqyULRPar0riRk0kNRf7HUi+hIwTpvSJ4sLgFzMeeVHo/0BRBy1355ugtI/auSOnlXmPVgXp6wTaL35BJwJ+8AMRoF9hf2NAwBhPEmPmtomsxJPv5z+MHEzEhc3VlE3xaSZvdcMRaBaV4UYFv+iEjbtUnOX93j/WkyuaJdiC8JhQz05FRzYr06NHHIt0s4nZ8mV1DhLJcHT629gMTYcQ1WohEQR/k0IlOim2EcOlnOdQ9jydrrBqSZcXiFj1md/+araQ5qN7vCSBK8wt7eV0yiWaMNcnY1+1ID7eTerKQaZOdAoMhgD
+          page_age: null
+          title: May 14, 2025 Calendar with Holidays & Count Down - USA
+          type: web_search_result
+          url: https://www.wincalendar.com/Calendar/Date/May-14-2025
+        - encrypted_content: ErgLCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDJHVFtPE/ya+huasEhoMQSPb1dSwMrdh7YSIIjBNbA8bqpJm6SgBalw8iygcItghQyZny2MHi+KtOw6tATA27DwMSauaMAT8iyfL6FUquwoLofO1XezkCrC5RA8451ydQK1ehbA1eOiirPdywVtfH2WQ017pbT9+fNZCELd/Caxxuvu0yIgQs1X7/m2O/ijHxUUSW9PyszCz35KTGqlXXwTKlUxrp0tNApdrRu81bETresUb05CKQimiwN/9Jf4DgDUmIo5NiP9angpV1KiCv0oaepSWJ0BHmGAuASFfEoI7Dj7epTKSH/ieEn7/XzAjaXvQBK4ZU2lVbx+CTltGbnu9bi9tCfdPlyDSkGCYkkPezUvsA9MJhdS7dhO1lNN4Hb/8vd5O7itT5DgkBSwrV9KNNpvWNdojTDayc/ocf+tCp7lgf4dFkyLSkukCejxCJNeVc6XZIHitq2vpkjVoBbdwpa6ro7bJA5Fsib5u5oyD9s0G7hs40vRpz8q5CEnYLQpZmsxBCuQ3rt3M+7Y/kM29gY7tl0dG08v1gRtdc7XsrYxgLkVf04mjmoHCE8CK8Bh8X5oCrMs5KOTHIQoPh307AyPTo/t40MDjVwhmH1HmrraAQDD748dRqWCI8GWYwoYCFd9LCYrA+aMS1l9rbfI0bXso64OZxGu4mZLoci7s2DZF7xT4O2iVQD+kEEcxUCgkh6SnRljNlFsLq0i+JAnEoz2b5ryX12RgxMeIiSnntLZtikIOWED29tG6UaKxwT0vehfMSSb6U8bYWs3RvknRCMAxTC9xAvd1sC8JlBVaB/QUVhn+JsjVqleWG9o0d81gMO8JbKoTBoN8efbXNgFnAEhnAyrJxM9ighQct7EV3vDZvmKwkUZp4QW1qR2rJTZjWKScLms79U62WJLefB9LsDM87hb7aKWdGyO42vcy1TOWsa62EEIYO/2LYRvv9oXvKVTaq9HINybGXDaa2sOcw5uUsgnsdX80km7my44YsK/AK+NVXlsZyBEY7r6wRsosY0ThMO3w/RswV9mSzAV9wbZydVFZKsJGPcUYJGez8szdSkjec22gfqIrkSs9rxXej8rpjFF7qJZorWz9eLgQJHXbZGD+VvWfA5xOIehc0drEyKq1tv6+Xp7zMtK0I6my628dzj659W87kEyHtybQShffk8ot0skcqP4EVDdLfIJoe5pdmoCshJqkvsedbhZJRK77w5psP+V1i/ukLmiIwU/H7zY4gslfEqvgLU9maf+lagy48d7bCVAJqQbSkWl1i+M+/wS+74gTvkG2PTvqlCg9X5WKcyz78uejua/Cma6YE6aGdfZuNpUq7UFulyAWGX1hSi8+10rfxElABi/j6EC2eWeC8ohgZ8K+q3wy2jnQu0/tiGBcbhAn6qrd4E3mx0KKvv8JZ8T+4NPIoTq5gSXGU0BJElQHHe5u9jKC1CJyw1QFPCoLpFgRA1cfjyE/DsAIrplAd+krSQMrRaRA6mOkqa4t4ugYidqRipVrP5jfRgjuhyERU/v6qbCOsiFYpx3qL5Q9v4APZa1wLNC1eAZnQUXYXizJvfY4ZKXNZ3YXawzJwweGPZQUHIVnHD4mDKjUP7TY2rPONPTmI4CXhMLeCVOofGagXssAraRJOtLSTLHHReGqRTtyPgqvGKwgnM3rzFMGC9on4YoAdsmI4qQCXf28rURZLZPL4qMbEv4I6mLcPTN3tIuvZ/nWq7L7Auh2/tHshawDC51AGfDsTPaqAd+RNWCvIDlMUpz+ibhvyD1tvfi27vId6OakaBIztcHrQJAIkfndrkE6ExQzRAtWKpetHRU/YTEm1JqAEcBQpXzLfiFGAXKhd6kac6bx736BWgUpGGdrcR8IG+aIhio85P8jlVJSGAM=
+          page_age: null
+          title: How long ago was May 14th 2025? | howlongagogo.com
+          type: web_search_result
+          url: https://howlongagogo.com/date/2025/may/14
+        - encrypted_content: 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
+          page_age: null
+          title: What Happened On May 14, 2025 This Day In History
+          type: web_search_result
+          url: https://www.whathappenedtodayinhistory.com/?m=May&d=14&y=2025&go=Go
+        - encrypted_content: Er4JCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDIPPDjYA/kRS9AaiABoMGQoXNgkDmifibxmuIjDyhA1T2HToHbs4le4kGJ9Y//tBf4a93M1DW2pRJrnFhDRW/VcymcpSMAmnYA6d9xAqwQhSjL4AlMWcKjB94746Jyv88rDw2FNUosUYsTdwkNWtX73yG5LVqn9ez5zPkhcMTxmaRxT3wQ5N5aU3UslHDGoc1bFaHCmjHJAeybTvkVeC31wjpStzyPRLnEzh9BikImrnpu2HBfs9/i83mgFwteIun7LLk4Z3dsCfAjtvo0uRDqozXgUpUQVNQXKTMoCPI8bd2CmJelw7PF2opmb6LnyU0/g3ED62QToRbFkSAyUWAiuFX5VODjNeEnTNR8jSLn6llgqOFSl4D58o1D5TKEfLcwupwwuzfIo2PZxlyd+5ICFoWWw5gRJqT8z8sp5wADgwfCxZsHKeB3hhHrvaGchbxgR1vhtgc+U6vFuquyzibt9warZ01AZ2JjtGho9QKF1ahSjbwqcwJIVCN3iFQA0v8WL1NmDorH9Icy/8wmtLJNjP7bspAah7RNIhgKR1Lq0KmdBIdY0W5ri5cuTiRJwPjeF9zshX4PLKiWbDs4w5AR6ELQUj7S/VGW7eV0FXDcnxcA7u7lwlaHf9yf5XtplQ7x3SEHoJ1Ue0DFO4XI4EirD6W60YBZDtA4sh+a2F+Puxy3nHeNsMmB0XUXzqLQobOw7y4SnPTp3+7p0g3xzXmLmsyeNpAxRGjM1BDp4y6Ms184eUFhVUrisx9PMdEVj/Eypq2yoyoa9+ChmzqcaNLBGyzMv4vC3FO4Tmp4zLGERn9YAiOjNa73k9jcLV+WK+T+LVHwbCfA1EMGXBu6oqOLfPmpAbAp66Q/fizFzNcTbJcc+DbPU35WZMyYK3E3XhkDzvx5JhE0+yn5kYC5vPuQwXHaUdNVKieU1/r/pPBV9Y8X1jLk/p55t3HZON33EXT1kcv93Rbf42vnpgP4UzEZQbW578ruOwPQwIxNbVIjzDbQuMRxq4IgFhsRP5cd3XQl6UkAtQLj+mtMbHWezLg8CLBRj0K5gBYW61EM/DypbPaBerhXSloBVgxKZqgUdMcGuWlDQnVZmVvPFFAbrP2zPKmGY9mDHGan9WxvMWnRA71tu8LuPT+jTQwFMPMbeWCYh971VbBvSk+R14Q2dpl1XIqsACDUjaGVjYFx9qEIt+WsNtzclmTxDvK2Swy3spI37xyXU50IHZOEfBGL+RI77DyZFxYCzXXYZTYj7UKdqzupwYEtfKlAogOtwGcCZ3C1FOZ6nVlHuQgbLqPQk6J+nNlO9zYMywWVmlIYpU7xE5wh1emhjzUeIdkLQ6o+7Pc7C/DrQ+G0kSzG3dX8Sil7p6Ct140Cwoeu7kSD2uTcmoqkBF9UqxigtVWMhb4EZ1yzLAxyt+T7WMMG0hURKNytTLfxb3o4JyZ7vC2hEP/iqWEwrznV8m7l/stS9czZM18p7WYifHfTNq4XBsmV8EqFGBQn8MkaAkRT5v7L9Qi3TZabSrbld7Py6UF8xAiper68HbVXr9jqk641c4Wu6yNhcYAw==
+          page_age: January 1, 2019
+          title: Wednesday 14th May 2025 | There is a Day for that!
+          type: web_search_result
+          url: https://www.thereisadayforthat.com/calendars/2025/5/14
+        - encrypted_content: ErADCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMhOMyVwq2J/zkOd/hoMcqpamRXHCa4nWgbsIjA49SZ++sNY8IPe8sobpikWZQdV+rOyNYls+kUzAyRmS0d4lEa0PGCnrfmTl2WRZe8qswIWhFzP/ARu4qJSB4qRF73+r+0VI5X4gKHBoSSTJXF+1SpI7kzi1qu42Fmhp7rivBR5d2JJxd+GlRaSei+leN3gD5Ab51F3WTf9FWbFkS1UzUU14Ra52u87S7rVivBAjWFAA+Of9ShMY5Aiqt4AX/ka957jgvATMekL8qd0BVtGB12egrN94YVo8CEtb5Tn2Z4tazwziZ29uuSKKe0xnKwuHXIJeK3Gdc+SH5f+ig22ez2L1pumumJZkEuFodYH5WfOnyZqPaa6++35pXGUwNtv+XQB8OFbmMymmsDQnDJOZ+gex6gqoP2uafzoEqqkSqVSAR8pznVs8mWkDJMl5DBE8KylSAB1vKVyNHytUzYN+8aMWTfxtjUrl6gfuHarNc+l+Ta0zTR2ESjyOnkAs3YbHyXtGAM=
+          page_age: null
+          title: How many days until the end of 14th May 2025?
+          type: web_search_result
+          url: https://days.to/14-may/2025
+        - encrypted_content: ErwJCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDHslw9mNBIPhRDVdexoMfUzHqm0JhuxmTdSAIjCoew9gbwGPEz82g5AtA/ijcUGExYiRt64rH3n7weaW8VVW17pIwW0RV/gf2bQcJk4qvwhVUZWohvyyThYcpCvmHAFfwPVqrGIHMlMLHvgXRUIyOjYsu0836KECfhCLsJ/wspWAfVi5YYKkePYUAo3MUH5biPCW3I2BAUFTYkTYb3qD5I1OTQ/nbBwkTP3ZfjdLZyWA3ADTbUuDQ+LdipaqJr2eKJsqNjIhMLeRldbO1dvXMXDydBTvYnnN+Dqn2z0maYy5+M7stO4qPXy9yNUUBkJjkHreKrdcJpF8ps9ORVpwyfUkjIVY8+sm8BV3uX28DurFC1zAg3oKyChD6AJy6TG9yKlY24NGIHDtSgVe+D1ER0IUYl2zvm8NEIYmVdeelEV6lqncn4pdCD4YRkcCylcRxHYuuaw2egPsT1C3Jnu2t0g0CbLhVxVOe+aizoK83X6rvHNcOk3Vt6bhMSiawfaWfd/eB78+62lDPhBV0A34XrkTpTpTstV/2TMuvPTHwZ+yQo1MasdjABtEj385pbe4N6ecm8FwA0AgnzeCILmSJdNjERwWHbvf2gS8pNhKR5R/HjNVvxsuH3hsZ0nDZgtENVxR55k8h8hjTQsjjcHVb0aiJkjPS//iGeBD6nBhAvADlyGAnEi8Kndlg4eU1kHC+EDbD+L8rVg5SlR3Pj9VIzhKGey8rVg/kt1Dd9DFpltSZsWFx3wqeTve/MdAlM314Qit8nQxzm3CaEIIjPc7EyKWPkm3lJqpArBr0KcO5BhCPvXdpoe4hv5JSPPBFu7da2bxsfOHjeDiXYyWooZihXdF0RZJ8YCKOe1Z6v3r2pedgF3Ij+KWP6ZvaxeDOs2K/kxJqiAwygB0t2lmRiolNDSdGfy23rOtSpNfd3GMLruFEER+uNL1MHT8GKPAfZc45PL93HiTUYcghO4e4TObpHToTCd5tSKTvUZp0E/dpsRh8SzkclGFSbWNQg0DFaKEMgniF+jIH+C1NzM3Oafd6MThakeI1cnxNJDMR9n8qO/C84pPbDy1Nuca6lCIS/v1JUzpsVgm/07LgsKvjyu/yYUbLLQKLsM8JjmnZ8VFc1m05UrUBHZMX8bjKFQjwNAq8505GY1+z/HgoPw+LJuLGlIWRM/xiXVwlrYWnKLqYldABPoTNCgz7vOFnFkRpEvQ3A8r5roWNjwYUmvA3gBOfGJxGpgvEXyYcfyUcf4xk2vsF87zxKm8KSwM4kRYfN6OxwM97M2pr1xOlLNMQiHskECjpd1cXVoidvzRIveJfa37fNgEI3srPiTeoNxUM6YKoFOrlXQmOMZ10y1b8DiyXnDyxyoYr6Izs5gqHelN99y057qDtYFKx4K3VFXGZdKZC4hoCmsaAOmV43SZfLUol+wW8pTUxKNmWJps76ladybLH6Bi2FTlz7L6VcqrWdj3mNFzRRwNiLM7JpRL1xacCMQo9aVeOvEJozsIDpgd4QHQqWN7fUSScFrCubQ1bVbAegBPZBtqcGjIfjsm3pWqGAM=
+          page_age: null
+          title: What Day of the Week Is May 14, 2025?
+          type: web_search_result
+          url: https://www.dayoftheweek.org/?m=May&d=14&y=2025&go=Go
+        - encrypted_content: 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
+          page_age: null
+          title: National Holidays on May 14th, 2025 | Days Of The Year
+          type: web_search_result
+          url: https://www.daysoftheyear.com/days/may/14/
+        - encrypted_content: EuUCCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDNTGqHhqgzMPPSfyvBoMlhz5M3Ag/qfWByZBIjAAaAB9xG6an3G9giGryVpVMQDJaVa0FvfywWIEQySIsaqFTYAIANQ5YnZyHv31vacq6AGb7K7zfFKak7CUQabYzwTXl8wIjnr4m+ChcForX+8+TlXvY/7X8+/3xC3TSEqodRMkJKgowcMQ3J+JCGdFhhA3WMkjwvwbvXiMrv1SOM1n+JNvCUiB6FG4ZrocyFPl4Xf6zF0tccngrsUnGU8bX6i+o2VlVPr9zFrm/BfF4ELra/p8s0RCWS7v/w7V8dB2+omT8EI0VkP6YTGFDeRYPnw+xKZuOoKNMOUTua14HhM2I5GItR/R4lQKiQVhe21ChXR7QUIvOPFnIDSW+GuIt/wIRES60FCN3+2DosmqEZubMKd9EyYFXdtVGAM=
+          page_age: null
+          title: 'April 14, 2025: History, News, Top Tweets, Social Media & Day Info'
+          type: web_search_result
+          url: https://www.wincalendar.com/Calendar/Date/April-14-2025
+        - encrypted_content: EosJCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDOHn1SNXW0sKnFgkDhoMXq6vuYB1w8eBtpaGIjAaSotCwI5hjkfcfWHdx2W1e2kY1KCzHO3pyH7PybE33Pzc36Zb82RShey8/ZQjVnIqjggCAYlJO2LKETgzXHx5fS7x3Yq7OkVa0HQRpk4HhRt5lnh6NStD9XCOfEsgq/dk+fO5MvTAa16YqFBjG3+PehAxQBpXbfBlX3IkXTJ3nKLGuw15BJnnfs/O5iT+WzPjE7Ym8TI7AvsfenL66YcF+H7XA4ZLg4d1e6/W3pcbzEYmsOk/jsScXhI0ZGkijM92e6pSFinWsPkRPVhmORe38UBoBvEIkDS+EP8RiEeMsCWaji1y/xJIbV2ImWWorVdycD0b2yO7wZbqKtJ5mOmgLkvaYn2JOtUszCEiVfK9QIj8tikkXLJhbzU4g2iJIh29PVg12o0vn7YBDuOZ6yM+Fb1LL6C1Ml359TlzM3bIPfZf5DF154gSxPN8xG6S6KPWo2WLAFkalW4z10iaaq2Zz5vXUgJO6oVUtEWhnZEbEk6jkjHN3JQAPjAYHNgcPlI50cLMYq9QeovqfqC14EtwIcDsr9CZ7wNhhAo6+eM7H8f1ai99OBgMKVwGuDy9Ia5UocEPFEDFlMsUfhtVnYcyOrs4XxKnU1SoZCr7X7Jq348SWIJ8YmqTtTdEtVvhTRHOnUtwAJz8pxn6cL+eXaswEPKZHjdkjRkj0rXuh7btByM7LFPV4zKCAden8aNzOFbrSX4l+3KCHOLTynWpzbS4iizY7OQqWTq0e5onmGOMVvns73kOBZKVYXbPiko+FnOF3tnAS8ccTeV7XJjw/IrLMNG4KPDuNJ6dVGl73frumfpFrnkevsXZhQzJO8TnDIB1Gn7iqaCXTy4SXWfBXD0W7tEso0ElK/4RflVpy9evR1gwxl+8XU4ihy2f3km9ElxoAxZlmfBWDsvRMNYEkXckondcqkbD2+ifo3r/Adgc8+2VOpOaDf+KehQyIGEBRAodm3Ly3Re64VuoyakiSQUDrpIMlkr7aR9eMiLSbsCsxRsdq/zDUtPbIeZs8Cfr67wmUndSuGyhW6eqpBntWz/uJDFn+ncoOZWBiapmlV1CH31FxaKDf2Vie9OIcb3OWBV+safGxeoYbXVt8OovponMIIvtLRuiyAeqjXHqbuBfcmXFwRU5LzoTdcMm/Zw0+rRfA+6rznk5cqK0Z3DyzPvkBnP9qNlK1z1k7OX/gDckJtD02zsEmKYGc4Ya12k0pLRdbnXm6BNjMY3riJzaUYa8/iJ4iTK077+aK9JjgpfDfr/zpHl9J/qcUYm7UzXtNF5WXxqmJXX2OkkisOMHqCpbOBRINDHZvGUAGibgXPZ7muYNwxzUPVqsIplKKOZiZWUeOOa/vryd0g5Nj7UwvQ4sruQKQRgHXlwffNAM05COz5frXSi9T+HAu2DNqcxojI3WGEi9SRj79/qELxXrX69j2TcaC/sJs1aqlTD8CbSNQxgYAw==
+          page_age: null
+          title: Daily Calendar for Wednesday, May 14, 2025 | Almanac.com
+          type: web_search_result
+          url: https://www.almanac.com/calendar/date/2025-05-14
+        - encrypted_content: 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
+          page_age: null
+          title: National Holidays in May, 2025 | Days Of The Year
+          type: web_search_result
+          url: https://www.daysoftheyear.com/days/may/
+        tool_use_id: srvtoolu_01RhAr4gUKVGNh2F9DLT4WNY
+        type: web_search_tool_result
+      - text: |2+
+
+
+          Based on the search results, today is Wednesday, May 14, 2025. Here are some additional details about today:
+
+        type: text
+      - citations:
+        - cited_text: 'May 14, 2025 is the 134th day of the year 2025 in the Gregorian calendar. There are 231 days remaining
+            until the end of this year. '
+          encrypted_index: EpEBCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFtlKgZiJHR7JqBGIxoMKc9D5YSjIiXWrHPcIjCeRjLh04EnS3ZV+Cqopq7+2L6vSuhhGiXQyDRrVp7bSGZl33mBKnMs2CFI/yKAtaIqFbeul9oFO6HH3nrS/DIQ9BH3LXNfxBgE
+          title: What Happened On May 14, 2025 This Day In History
+          type: web_search_result_location
+          url: https://www.whathappenedtodayinhistory.com/?m=May&d=14&y=2025&go=Go
+        text: It is the 134th day of the year 2025, with 231 days remaining until the end of this year
+        type: text
+      - text: |
+          .
+
+          Today features several notable observances:
+        type: text
+      - citations:
+        - cited_text: Wed May 14th, 2025 is National Dance Like a Chicken Day, National Buttermilk Biscuit Day, International
+            Chihuahua Appreciation Day, National Reception...
+          encrypted_index: Eo8BCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLWX8EyXcC5ge8DRWxoM8lDf2uygSSqbW8j1IjBvdWpC46PsxGw4yepQbRMFqKKa7KTSB0my4Xt221VnaWGMlvQbqnxbYTmJfxClVHQqE+6d4Q9ir0YnAMvc5rGyJNekPpAYBA==
+          title: National Holidays on May 14th, 2025 | Days Of The Year
+          type: web_search_result_location
+          url: https://www.daysoftheyear.com/days/may/14/
+        - cited_text: It's National Dance Like a Chicken Day, National Buttermilk Biscuit Day, International Chihuahua Appreciation
+            Day, National Receptionists Day, Online ...
+          encrypted_index: EpABCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDEyAxsHBYMXEU1jUwhoMOUjcAhl5PdDDirbHIjDsmTGOPT74M31dJUWmwUrxrA07YdZ9jUlYFHTSsjz8JE/NcCBOStLRPjzkXSRLaoAqFKK9AWMsL0XBkQj/ihJ6JnMdYDBEGAQ=
+          title: National Holidays on May 14th, 2025 | Days Of The Year
+          type: web_search_result_location
+          url: https://www.daysoftheyear.com/days/may/14/
+        text: |-
+          It's being celebrated as:
+          - National Dance Like a Chicken Day
+          - National Buttermilk Biscuit Day
+          - International Chihuahua Appreciation Day
+          - National Receptionists Day
+          - Online Romance Day
+        type: text
+      - text: |2+
+
+
+        type: text
+      - citations:
+        - cited_text: Get familiar with the history of Asian Americans and Pacific Islanders in the US, or join an event to
+            celebrate your heritage during Asian/Pacific Her...
+          encrypted_index: Eo8BCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDBJIi8ErVI8SPvtXnRoMVM/kY+jExGcrakWkIjDdfUL7xDZm/uDkIO+UnyN+W69tqzTjRl0ta+Yk4dSlPI7LRztzJSOkeOnoNZlYcCAqE9HebEam/25CyIeRbDXfuOI79xEYBA==
+          title: National Holidays on May 14th, 2025 | Days Of The Year
+          type: web_search_result_location
+          url: https://www.daysoftheyear.com/days/may/14/
+        text: It's also part of Asian/Pacific Heritage Month
+        type: text
+      - text: |+
+          .
+
+        type: text
+      - citations:
+        - cited_text: (Sponsored by MyBirthday.Ninja) Taurus is the zodiac sign of a person born on this day. Emerald is the
+            modern birthstone for this month. Sapphire is t...
+          encrypted_index: EpMBCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFJ5RUG1bQ1eEQ6q6BoMtBY580wgcdWItBUWIjBoMOm5r/PhUZFtiDNn8DZ+92GZDbgmK/Aco4q4a3V5WPCXfmv9JE96Tc6Vto5vh8YqF//2ULrAGRJFo/qvgaWyYjrk8f4lYcJtGAQ=
+          title: What Day of the Week Is May 14, 2025?
+          type: web_search_result_location
+          url: https://www.dayoftheweek.org/?m=May&d=14&y=2025&go=Go
+        text: |-
+          For those interested in astrology:
+          - The zodiac sign for today is Taurus
+          - The modern birthstone is Emerald
+          - The mystical birthstone is Sapphire
+        type: text
+      id: msg_015ivxZjWnb186VBacQBDCSr
+      model: claude-3-5-sonnet-latest
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 12360
+        output_tokens: 332
+        server_tool_use:
+          web_search_requests: 1
+    status:
+      code: 200
+      message: OK
+version: 1

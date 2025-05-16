@@ -173,6 +173,7 @@ class GeminiModel(Model):
 
         return ModelRequestParameters(
             function_tools=[_customize_tool_def(tool) for tool in model_request_parameters.function_tools],
+            builtin_tools=model_request_parameters.builtin_tools,
             allow_text_output=model_request_parameters.allow_text_output,
             output_tools=[_customize_tool_def(tool) for tool in model_request_parameters.output_tools],
         )

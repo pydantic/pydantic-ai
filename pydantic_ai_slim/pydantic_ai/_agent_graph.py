@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
@@ -92,6 +93,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
 
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
+    builtin_tools: list[AbstractBuiltinTool] = dataclasses.field(repr=False)
     mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
     default_retries: int
 
@@ -242,6 +244,7 @@ async def _prepare_request_parameters(
     output_schema = ctx.deps.output_schema
     return models.ModelRequestParameters(
         function_tools=function_tool_defs,
+        builtin_tools=ctx.deps.builtin_tools,
         allow_text_output=allow_text_output(output_schema),
         output_tools=output_schema.tool_defs() if output_schema is not None else [],
     )

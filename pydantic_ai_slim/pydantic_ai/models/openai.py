@@ -11,6 +11,7 @@ from typing import Any, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -58,6 +59,11 @@ try:
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
+    from openai.types.chat.completion_create_params import (
+        WebSearchOptions,
+        WebSearchOptionsUserLocation,
+        WebSearchOptionsUserLocationApproximate,
+    )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.shared import ReasoningEffort
@@ -254,6 +260,7 @@ class OpenAIModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
+        web_search_options = self._get_web_search_options(model_request_parameters)
 
         # standalone function to make it easier to override
         if not tools:
@@ -271,7 +278,6 @@ class OpenAIModel(Model):
             return await self.client.chat.completions.create(
                 model=self._model_name,
                 messages=openai_messages,
-                n=1,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
@@ -288,6 +294,7 @@ class OpenAIModel(Model):
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
+                web_search_options=web_search_options or NOT_GIVEN,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -326,6 +333,19 @@ class OpenAIModel(Model):
         if model_request_parameters.output_tools:
             tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
+
+    def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, WebSearchTool):
+                if tool.user_location:
+                    return WebSearchOptions(
+                        search_context_size=tool.search_context_size,
+                        user_location=WebSearchOptionsUserLocation(
+                            type='approximate',
+                            approximate=WebSearchOptionsUserLocationApproximate(**tool.user_location),
+                        ),
+                    )
+                return WebSearchOptions(search_context_size=tool.search_context_size)
 
     async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
@@ -601,6 +621,7 @@ class OpenAIResponsesModel(Model):
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
         tools = self._get_tools(model_request_parameters)
         tools = list(model_settings.get('openai_builtin_tools', [])) + tools
+        tools = self._get_builtin_tools(model_request_parameters) + tools
 
         # standalone function to make it easier to override
         if not tools:
@@ -651,6 +672,20 @@ class OpenAIResponsesModel(Model):
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
         if model_request_parameters.output_tools:
             tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
+        return tools
+
+    def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
+        tools: list[responses.ToolParam] = []
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, WebSearchTool):
+                web_search_tool = responses.WebSearchToolParam(
+                    type='web_search_preview', search_context_size=tool.search_context_size
+                )
+                if tool.user_location:
+                    web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
+                        type='approximate', **tool.user_location
+                    )
+                tools.append(web_search_tool)
         return tools
 
     @staticmethod
@@ -1079,6 +1114,7 @@ def _customize_request_parameters(model_request_parameters: ModelRequestParamete
 
     return ModelRequestParameters(
         function_tools=[_customize_tool_def(tool) for tool in model_request_parameters.function_tools],
+        builtin_tools=model_request_parameters.builtin_tools,
         allow_text_output=model_request_parameters.allow_text_output,
         output_tools=[_customize_tool_def(tool) for tool in model_request_parameters.output_tools],
     )

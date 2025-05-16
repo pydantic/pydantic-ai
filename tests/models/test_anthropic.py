@@ -13,6 +13,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
@@ -1012,3 +1013,14 @@ def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
 )
 def test_usage(message_callback: Callable[[], AnthropicMessage | RawMessageStreamEvent], usage: Usage):
     assert _map_usage(message_callback()) == usage
+
+
+@pytest.mark.vcr()
+async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, builtin_tools=[WebSearchTool()])
+
+    result = await agent.run('What day is today?')
+    assert result.output == snapshot(
+        "I can't tell you what day it is today, as I don't have access to real-time information. However, you can easily check the current date on your device or calendar."
+    )

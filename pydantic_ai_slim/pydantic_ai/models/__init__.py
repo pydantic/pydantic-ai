@@ -16,6 +16,8 @@ from functools import cache
 import httpx
 from typing_extensions import Literal, TypeAliasType
 
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
+
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent
@@ -261,6 +263,7 @@ class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition] = field(default_factory=list)
+    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
     allow_text_output: bool = True
     output_tools: list[ToolDefinition] = field(default_factory=list)
 
