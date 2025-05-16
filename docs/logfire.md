@@ -238,6 +238,127 @@ print(result.output)
 #> Paris
 ```
 
+## Using W&B Weave
+
+[W&B Weave](https://weave-docs.wandb.ai/) is an observability platform by Weights & Biases that can receive and visualize OpenTelemetry traces from your PydanticAI applications.
+
+Since PydanticAI uses OpenTelemetry for instrumentation, you can send your agent and tool traces to Weave for visualization and analysis.
+
+### Setup
+
+To use W&B Weave with PydanticAI, you'll need to install the required OpenTelemetry dependencies:
+
+```bash
+pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+```
+
+### Configuring OTEL for Weave
+
+Configure OpenTelemetry to send traces to Weave by setting up a tracer provider and exporter:
+
+```python
+import base64
+import os
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk import trace as trace_sdk
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+# Load sensitive values from environment variables
+WANDB_BASE_URL = "https://trace.wandb.ai"
+PROJECT_ID = os.environ.get("WANDB_PROJECT_ID")  # Your W&B entity/project name e.g. "myteam/myproject"
+WANDB_API_KEY = os.environ.get("WANDB_API_KEY")  # Your W&B API key (can be found at https://wandb.ai/authorize)
+
+OTEL_EXPORTER_OTLP_ENDPOINT = f"{WANDB_BASE_URL}/otel/v1/traces"
+AUTH = base64.b64encode(f"api:{WANDB_API_KEY}".encode()).decode()
+
+OTEL_EXPORTER_OTLP_HEADERS = {
+    "Authorization": f"Basic {AUTH}",
+    "project_id": PROJECT_ID,
+}
+
+# Create the OTLP span exporter with endpoint and headers
+exporter = OTLPSpanExporter(
+    endpoint=OTEL_EXPORTER_OTLP_ENDPOINT,
+    headers=OTEL_EXPORTER_OTLP_HEADERS,
+)
+
+# Create a tracer provider and add the exporter
+tracer_provider = trace_sdk.TracerProvider()
+tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+```
+
+!!! tip "Secure your credentials"
+    Store sensitive values like your API key in environment variables or a secure credentials manager, not directly in your code.
+
+### Tracing PydanticAI agents
+
+To trace your agents, pass an `InstrumentationSettings` object with your configured tracer provider:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.instrumented import InstrumentationSettings
+
+# Create a PydanticAI agent with OTEL tracing
+agent = Agent(
+    "openai:gpt-4o",
+    instrument=InstrumentationSettings(tracer_provider=tracer_provider),
+)
+
+result = agent.run_sync("What is the capital of France?")
+print(result.output)
+#> Paris
+```
+
+### Tracing tools
+
+When your agent uses tools, both the agent calls and tool executions will be traced:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.instrumented import InstrumentationSettings
+
+# Create an agent with a system prompt and OTEL tracing
+agent = Agent(
+    "openai:gpt-4o",
+    system_prompt=(
+        "You are a helpful assistant that can multiply numbers. "
+        "When asked to multiply numbers, use the multiply tool."
+    ),
+    instrument=InstrumentationSettings(tracer_provider=tracer_provider),
+)
+
+# Define a tool
+@agent.tool_plain
+def multiply(a: int, b: int) -> int:
+    """Multiply two numbers."""
+    return a * b
+
+# Ask the agent to use the tool
+result = agent.run_sync("What is 7 multiplied by 8?")
+print(result.output)
+#> 56
+```
+
+### Instrumenting all agents with Weave
+
+To apply Weave tracing to all agents in your application:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.instrumented import InstrumentationSettings
+
+# Set up default instrumentation for all agents
+Agent.instrument_all(InstrumentationSettings(tracer_provider=tracer_provider))
+
+# Now, any new agent will use this instrumentation by default
+agent = Agent("openai:gpt-4o")
+result = agent.run_sync("What is the capital of France?")
+print(result.output)
+#> Paris
+```
+
+For more information, see the [W&B Weave documentation on PydanticAI integration](https://weave-docs.wandb.ai/guides/integrations/pydantic_ai).
+
 ## Data format
 
 PydanticAI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), with one caveat. The semantic conventions specify that messages should be captured as individual events (logs) that are children of the request span. By default, PydanticAI instead collects these events into a JSON array which is set as a single large attribute called `events` on the request span. To change this, use [`InstrumentationSettings(event_mode='logs')`][pydantic_ai.agent.InstrumentationSettings].
