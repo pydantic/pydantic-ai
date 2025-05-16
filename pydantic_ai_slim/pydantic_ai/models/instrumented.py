@@ -99,8 +99,7 @@ class InstrumentationSettings:
                 If not provided, the global event logger provider is used.
                 Calling `logfire.configure()` sets the global event logger provider, so most users don't need this.
                 This is only used if `event_mode='logs'`.
-            include_binary_content: Whether to include binary content in the instrumentation.
-                If `False`, binary content will be omitted from the events.
+            include_binary_content: Whether to include binary content in the instrumentation events.
         """
         from pydantic_ai import __version__
 
