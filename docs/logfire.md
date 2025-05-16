@@ -238,9 +238,11 @@ print(result.output)
 #> Paris
 ```
 
-## Data format
+## Advanced usage
 
-PydanticAI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), with one caveat. The semantic conventions specify that messages should be captured as individual events (logs) that are children of the request span. By default, PydanticAI instead collects these events into a JSON array which is set as a single large attribute called `events` on the request span. To change this, use [`InstrumentationSettings(event_mode='logs')`][pydantic_ai.agent.InstrumentationSettings].
+### Configuring data format
+
+PydanticAI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), with one caveat. The semantic conventions specify that messages should be captured as individual events (logs) that are children of the request span. By default, PydanticAI instead collects these events into a JSON array which is set as a single large attribute called `events` on the request span. To change this, use `event_mode='logs'`:
 
 ```python {title="instrumentation_settings_event_mode.py"}
 import logfire
@@ -261,7 +263,7 @@ If you have very long conversations, the `events` span attribute may be truncate
 
 Note that the OpenTelemetry Semantic Conventions are still experimental and are likely to change.
 
-## Setting OpenTelemetry SDK providers
+### Setting OpenTelemetry SDK providers
 
 By default, the global `TracerProvider` and `EventLoggerProvider` are used. These are set automatically by `logfire.configure()`. They can also be set by the `set_tracer_provider` and `set_event_logger_provider` functions in the OpenTelemetry Python SDK. You can set custom providers with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
 
@@ -269,15 +271,19 @@ By default, the global `TracerProvider` and `EventLoggerProvider` are used. Thes
 from opentelemetry.sdk._events import EventLoggerProvider
 from opentelemetry.sdk.trace import TracerProvider
 
-from pydantic_ai.agent import InstrumentationSettings
+from pydantic_ai.agent import Agent, InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(
     tracer_provider=TracerProvider(),
     event_logger_provider=EventLoggerProvider(),
 )
+
+agent = Agent('gpt-4o', instrument=instrumentation_settings)
+# or to instrument all agents:
+Agent.instrument_all(instrumentation_settings)
 ```
 
-## Instrumenting a specific `Model`
+### Instrumenting a specific `Model`
 
 ```python {title="instrumented_model_example.py"}
 from pydantic_ai import Agent
@@ -286,4 +292,16 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 settings = InstrumentationSettings()
 model = InstrumentedModel('gpt-4o', settings)
 agent = Agent(model)
+```
+
+### Excluding binary content
+
+```python {title="excluding_binary_content.py"}
+from pydantic_ai.agent import Agent, InstrumentationSettings
+
+instrumentation_settings = InstrumentationSettings(include_binary_content=False)
+
+agent = Agent('gpt-4o', instrument=instrumentation_settings)
+# or to instrument all agents:
+Agent.instrument_all(instrumentation_settings)
 ```
