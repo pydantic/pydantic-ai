@@ -668,14 +668,19 @@ async def test_bedrock_handles_empty_content_blocks(bedrock_provider: BedrockPro
                 'role': 'assistant',
                 'content': [
                     {
-                        'tool_calls': [
-                            {
+                        'toolUse': {
+                            'input': {
+                                'function': {
+                                    'arguments': {'param': 'value'},
+                                    'name': 'normal_tool',
+                                },
                                 'id': 'normal1',
                                 'type': 'function',
-                                'function': {'name': 'normal_tool', 'arguments': {'param': 'value'}},
-                            }
-                        ]
-                    }
+                            },
+                            'name': 'normal_tool',
+                            'toolUseId': 'normal1',
+                        },
+                    },
                 ],
             },
             {
