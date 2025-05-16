@@ -629,3 +629,60 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
             },
         ]
     )
+
+
+async def test_bedrock_handles_empty_content_blocks(bedrock_provider: BedrockProvider):
+    """
+    Test that the Bedrock provider correctly handles empty content blocks without errors.
+    This test verifies that empty content in UserPromptPart, TextPart, and ToolReturnPart
+    are processed properly without causing issues.
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Please use the tool'])]),
+        ModelResponse(
+            parts=[
+                TextPart(content=""" """),
+                ToolCallPart(
+                    tool_name='normal_tool',
+                    args={'param': 'value'},
+                    tool_call_id='normal1',
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='normal_tool', content='result', tool_call_id='normal1', timestamp=now),
+            ]
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Please use the tool'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'tool_calls': [
+                            {
+                                'id': 'normal1',
+                                'type': 'function',
+                                'function': {'name': 'normal_tool', 'arguments': {'param': 'value'}},
+                            }
+                        ]
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'normal1', 'content': [{'text': 'result'}], 'status': 'success'}}
+                ],
+            },
+        ]
+    )
