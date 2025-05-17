@@ -164,7 +164,7 @@ class ModelResponsePartsManager:
             if tool_name is None and self._parts:
                 part_index = len(self._parts) - 1
                 latest_part = self._parts[part_index]
-                if isinstance(latest_part, (ToolCallPart, ToolCallPartDelta)):
+                if isinstance(latest_part, (ToolCallPart, ToolCallPartDelta)):  # pragma: no branch
                     existing_matching_part_and_index = latest_part, part_index
         else:
             # vendor_part_id is provided, so look up the corresponding part or delta

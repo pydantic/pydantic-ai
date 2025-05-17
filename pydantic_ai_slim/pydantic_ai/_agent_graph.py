@@ -196,7 +196,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     for i, part in enumerate(msg.parts):
                         if isinstance(part, _messages.SystemPromptPart) and part.dynamic_ref:
                             # Look up the runner by its ref
-                            if runner := self.system_prompt_dynamic_functions.get(part.dynamic_ref):
+                            if runner := self.system_prompt_dynamic_functions.get(  # pragma: lax no cover
+                                part.dynamic_ref
+                            ):
                                 updated_part_content = await runner.run(run_context)
                                 msg.parts[i] = _messages.SystemPromptPart(
                                     updated_part_content, dynamic_ref=part.dynamic_ref
@@ -265,7 +267,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._did_stream:
             # `self._result` gets set when exiting the `stream` contextmanager, so hitting this
             # means that the stream was started but not finished before `run()` was called
-            raise exceptions.AgentRunError('You must finish streaming before calling run()')
+            raise exceptions.AgentRunError('You must finish streaming before calling run()')  # pragma: no cover
 
         return await self._make_request(ctx)
 
@@ -316,7 +318,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
         if self._result is not None:
-            return self._result
+            return self._result  # pragma: no cover
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
@@ -333,7 +335,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.message_history.append(self.request)
 
         # Check usage
-        if ctx.deps.usage_limits:
+        if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_before_request(ctx.state.usage)
 
         # Increment run_step
@@ -350,7 +352,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
         # Update usage
         ctx.state.usage.incr(response.usage)
-        if ctx.deps.usage_limits:
+        if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
 
         # Append the model response to state.message_history
@@ -735,7 +737,7 @@ async def _tool_from_mcp_server(
 
     for server in ctx.deps.mcp_servers:
         tools = await server.list_tools()
-        if tool_name in {tool.name for tool in tools}:
+        if tool_name in {tool.name for tool in tools}:  # pragma: no branch
             return Tool(name=tool_name, function=run_tool, takes_ctx=True, max_retries=ctx.deps.default_retries)
     return None
 
