@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
-from typing import Annotated, Any, Literal, Union, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
 
 import pydantic
 import pydantic_core
@@ -16,6 +16,10 @@ from typing_extensions import TypeAlias
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
 from .usage import Usage
+
+if TYPE_CHECKING:
+    from .models.instrumented import InstrumentationSettings
+
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
@@ -68,7 +72,7 @@ class SystemPromptPart:
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self) -> Event:
+    def otel_event(self, _settings: InstrumentationSettings) -> Event:
         return Event('gen_ai.system.message', body={'content': self.content, 'role': 'system'})
 
 
@@ -305,7 +309,7 @@ class UserPromptPart:
     part_kind: Literal['user-prompt'] = 'user-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self) -> Event:
+    def otel_event(self, settings: InstrumentationSettings) -> Event:
         content: str | list[dict[str, Any] | str]
         if isinstance(self.content, str):
             content = self.content
@@ -317,8 +321,10 @@ class UserPromptPart:
                 elif isinstance(part, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
                     content.append({'kind': part.kind, 'url': part.url})
                 elif isinstance(part, BinaryContent):
-                    base64_data = base64.b64encode(part.data).decode()
-                    content.append({'kind': part.kind, 'content': base64_data, 'media_type': part.media_type})
+                    converted_part = {'kind': part.kind, 'media_type': part.media_type}
+                    if settings.include_binary_content:
+                        converted_part['binary_content'] = base64.b64encode(part.data).decode()
+                    content.append(converted_part)
                 else:
                     content.append({'kind': part.kind})
         return Event('gen_ai.user.message', body={'content': content, 'role': 'user'})
@@ -361,7 +367,7 @@ class ToolReturnPart:
         else:
             return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
 
-    def otel_event(self) -> Event:
+    def otel_event(self, _settings: InstrumentationSettings) -> Event:
         return Event(
             'gen_ai.tool.message',
             body={'content': self.content, 'role': 'tool', 'id': self.tool_call_id, 'name': self.tool_name},
@@ -418,7 +424,7 @@ class RetryPromptPart:
             description = f'{len(self.content)} validation errors: {json_errors.decode()}'
         return f'{description}\n\nFix the errors and try again.'
 
-    def otel_event(self) -> Event:
+    def otel_event(self, _settings: InstrumentationSettings) -> Event:
         if self.tool_name is None:
             return Event('gen_ai.user.message', body={'content': self.model_response(), 'role': 'user'})
         else:
