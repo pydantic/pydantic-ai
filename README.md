@@ -90,6 +90,8 @@ _(This example is complete, it can be run "as is")_
 
 Not very interesting yet, but we can easily add "tools", dynamic system prompts, and structured responses to build more powerful agents.
 
+Ensure the GEMINI_API_KEY environment variable is set before running the agent
+
 ## Tools & Dependency Injection Example
 
 Here is a concise example using PydanticAI to build a support agent for a bank:
