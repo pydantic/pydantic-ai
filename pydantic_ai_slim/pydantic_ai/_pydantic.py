@@ -76,8 +76,15 @@ def function_schema(  # noqa: C901
     description, field_descriptions = doc_descriptions(function, sig, docstring_format=docstring_format)
 
     if require_parameter_descriptions:
-        if len(field_descriptions) != len(sig.parameters):
-            missing_params = set(sig.parameters) - set(field_descriptions)
+        missing_params = set(sig.parameters) - set(field_descriptions)
+
+        if takes_ctx:
+            for name in missing_params:
+                if _is_call_ctx(sig.parameters[name].annotation):
+                    missing_params.remove(name)
+                    break
+
+        if missing_params:
             errors.append(f'Missing parameter descriptions for {", ".join(missing_params)}')
 
     for index, (name, p) in enumerate(sig.parameters.items()):
