@@ -18,7 +18,7 @@ except ImportError as _import_error:
 
 
 class GoogleProvider(Provider[genai.Client]):
-    """Provider for Google API."""
+    """Provider for Google."""
 
     @property
     def name(self) -> str:
@@ -26,7 +26,7 @@ class GoogleProvider(Provider[genai.Client]):
 
     @property
     def base_url(self) -> str:
-        return str(self._client._api_client._httpx_client.base_url)  # type: ignore[reportPrivateUsage]
+        return str(self._client._api_client._http_options.base_url)  # type: ignore[reportPrivateUsage]
 
     @property
     def client(self) -> genai.Client:
@@ -60,7 +60,7 @@ class GoogleProvider(Provider[genai.Client]):
         client: genai.Client | None = None,
         vertexai: bool | None = None,
     ) -> None:
-        """Create a new Google GLA provider.
+        """Create a new Google provider.
 
         Args:
             api_key: The `API key <https://ai.google.dev/gemini-api/docs/api-key>`_ to

@@ -112,6 +112,7 @@ jobs:
           --package pydantic-ai-slim
           --extra openai
           --extra vertexai
+          --extra google
           --extra groq
           --extra anthropic
           --extra mistral

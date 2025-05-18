@@ -9,11 +9,10 @@ from datetime import datetime
 from typing import Literal, Union, cast, overload
 from uuid import uuid4
 
-import httpx
 from google.genai.types import ThinkingConfigDict
-from typing_extensions import assert_never, deprecated
+from typing_extensions import assert_never
 
-from pydantic_ai.providers import Provider, infer_provider
+from pydantic_ai.providers import Provider
 
 from .. import UnexpectedModelBehavior, UserError, _utils, usage
 from ..messages import (
@@ -64,6 +63,8 @@ try:
         ToolDict,
         ToolListUnionDict,
     )
+
+    from ..providers.google import GoogleProvider
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google model, '
@@ -123,32 +124,11 @@ class GoogleModel(Model):
     _url: str | None = field(repr=False)
     _system: str = field(default='gemini', repr=False)
 
-    @overload
-    @deprecated(
-        'Use `pydantic_ai.providers.google.GoogleProvider` instead of `GoogleGLAProvider` or `GoogleVertexProvider`.'
-    )
-    def __init__(
-        self,
-        model_name: GoogleModelName,
-        *,
-        provider: Provider[httpx.AsyncClient],
-    ) -> None: ...
-
-    @overload
     def __init__(
         self,
         model_name: GoogleModelName,
         *,
         provider: Literal['google-gla', 'google-vertex'] | Provider[genai.Client] = 'google-gla',
-    ) -> None: ...
-
-    def __init__(
-        self,
-        model_name: GoogleModelName,
-        *,
-        provider: Literal['google-gla', 'google-vertex']
-        | Provider[httpx.AsyncClient]
-        | Provider[genai.Client] = 'google-gla',
     ):
         """Initialize a Gemini model.
 
@@ -161,10 +141,7 @@ class GoogleModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = infer_provider(provider)
-        if isinstance(provider.client, httpx.AsyncClient):  # pragma: no cover
-            raise UserError('Use `GoogleProvider` instead of `GoogleGLAProvider` or `GoogleVertexProvider`.')
-        provider = cast(Provider[genai.Client], provider)
+            provider = GoogleProvider(vertexai=provider == 'google-vertex')
 
         self._provider = provider
         self._system = provider.name
@@ -382,10 +359,9 @@ class GoogleModel(Model):
                     client = cached_async_http_client()
                     response = await client.get(item.url, follow_redirects=True)
                     response.raise_for_status()
-                    mime_type = response.headers['Content-Type'].split(';')[0]
                     # NOTE: The type from Google GenAI is incorrect, it should be `str`, not `bytes`.
                     base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    content.append({'inline_data': {'data': base64_encoded, 'mime_type': mime_type}})  # type: ignore
+                    content.append({'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}})  # type: ignore
                 else:
                     assert_never(item)
         return content
@@ -487,7 +463,10 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.Usage:
     # TODO(Marcelo): We exclude the `prompt_tokens_details` and `candidate_token_details` fields because on
     # `usage.Usage.incr``, it will try to sum non-integer values with integers, which will fail. We should probably
     # handle this in the `Usage` class.
-    details = metadata.model_dump(exclude={'prompt_tokens_details', 'candidates_tokens_details'}, exclude_defaults=True)
+    details = metadata.model_dump(
+        exclude={'prompt_tokens_details', 'candidates_tokens_details', 'traffic_type'},
+        exclude_defaults=True,
+    )
     return usage.Usage(
         request_tokens=details.pop('prompt_token_count', 0),
         response_tokens=details.pop('candidates_token_count', 0),
