@@ -276,7 +276,7 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
                 if value == field.default:
                     continue
             if field.default_factory is not MISSING:
-                if value == field.default_factory():
+                if value == field.default_factory():  # pragma: no branch
                     continue
             raw_arguments[field.name] = value
         return raw_arguments

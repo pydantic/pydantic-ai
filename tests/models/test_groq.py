@@ -95,7 +95,9 @@ class MockGroq:
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
-                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream[self.index])))
+                response = MockAsyncStream(  # pragma: no cover
+                    iter(cast(list[MockChatCompletionChunk], self.stream[self.index]))
+                )
             else:
                 response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream)))
         else:

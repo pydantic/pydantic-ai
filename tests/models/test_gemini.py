@@ -406,7 +406,6 @@ async def test_json_def_recursive(allow_model_requests: None):
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
         mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
         mrp = m.customize_request_parameters(mrp)
-        m._get_tools(mrp)
 
 
 async def test_json_def_date(allow_model_requests: None):
@@ -516,7 +515,7 @@ async def get_gemini_client(
 
 def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
     candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
-    if finish_reason:
+    if finish_reason:  # pragma: no branch
         candidate['finish_reason'] = finish_reason
     return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage(), model_version='gemini-1.5-flash-123')
 
@@ -981,7 +980,7 @@ def gemini_no_content_response(
     safety_ratings: list[_GeminiSafetyRating], finish_reason: Literal['SAFETY'] | None = 'SAFETY'
 ) -> _GeminiResponse:
     candidate = _GeminiCandidates(safety_ratings=safety_ratings)
-    if finish_reason:
+    if finish_reason:  # pragma: no branch
         candidate['finish_reason'] = finish_reason
     return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage())
 

@@ -45,7 +45,7 @@ if TYPE_CHECKING or imports_successful():
             self.inputs = inputs
             self.duration = duration
 else:
-    MockContext = object
+    MockContext = object  # pragma: lax no cover
 
 
 async def test_equals():

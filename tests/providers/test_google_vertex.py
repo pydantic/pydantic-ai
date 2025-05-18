@@ -53,7 +53,7 @@ def test_google_vertex_provider(allow_model_requests: None) -> None:
 class NoOpCredentials:
     token = 'my-token'
 
-    def refresh(self, request: Request): ...
+    def refresh(self, request: Request): ...  # pragma: no branch
 
 
 @patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=(NoOpCredentials(), 'my-project-id'))
@@ -144,10 +144,10 @@ def save_service_account(service_account_path: Path, project_id: str) -> None:
 
 
 @pytest.fixture(autouse=True)
-def vertex_provider_auth(mocker: MockerFixture) -> None:
+def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
     if not os.getenv('CI'):
-        return  # pragma: lax no cover
+        return
 
     @dataclass
     class NoOpCredentials:
@@ -163,7 +163,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:
     not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
 )
 @pytest.mark.vcr()
-async def test_vertexai_provider(allow_model_requests: None):
+async def test_vertexai_provider(allow_model_requests: None):  # pragma: lax no cover
     m = GeminiModel('gemini-2.0-flash', provider='google-vertex')
     agent = Agent(m)
 

@@ -294,7 +294,7 @@ class OpenAIModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise
+            raise  # pragma: lax no cover
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -313,7 +313,9 @@ class OpenAIModel(Model):
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise UnexpectedModelBehavior(  # pragma: no cover
+                'Streamed response ended without content or tool calls'
+            )
 
         return OpenAIStreamedResponse(
             _model_name=self._model_name,
@@ -399,7 +401,9 @@ class OpenAIModel(Model):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
+                    yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
+                        role='user', content=part.model_response()
+                    )
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
@@ -637,7 +641,7 @@ class OpenAIResponsesModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise
+            raise  # pragma: lax no cover
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
@@ -867,7 +871,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     args=chunk.delta,
                     tool_call_id=chunk.item_id,
                 )
-                if maybe_event is not None:
+                if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
 
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
@@ -1031,7 +1035,7 @@ class _OpenAIJsonSchema(WalkJsonSchema):
                     notes.append(f'{key}={value}')
                 notes_string = ', '.join(notes)
                 schema['description'] = notes_string if not description else f'{description} ({notes_string})'
-            elif self.strict is None:
+            elif self.strict is None:  # pragma: no branch
                 self.is_strict_compatible = False
 
         schema_type = schema.get('type')

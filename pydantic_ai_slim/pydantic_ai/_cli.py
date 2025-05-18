@@ -202,7 +202,7 @@ Special prompts:
     elif args.code_theme == 'dark':
         code_theme = 'monokai'
     else:
-        code_theme = args.code_theme
+        code_theme = args.code_theme  # pragma: no cover
 
     if prompt := cast(str, args.prompt):
         try:

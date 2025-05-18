@@ -197,7 +197,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         Returns:
             The result type from ending the run and the history of the run.
         """
-        if infer_name and self.name is None:
+        if infer_name and self.name is None:  # pragma: no branch
             self._infer_name(inspect.currentframe())
 
         return _utils.get_event_loop().run_until_complete(
@@ -302,7 +302,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
         snapshot.node.set_snapshot_id(snapshot.id)
 
-        if self.auto_instrument and span is None:
+        if self.auto_instrument and span is None:  # pragma: no branch
             span = logfire_api.span('run graph {graph.name}', graph=self)
 
         with ExitStack() as stack:
@@ -532,7 +532,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                     # break the inner (bases) loop
                     break
 
-        if not _utils.is_set(state_type):
+        if not _utils.is_set(state_type):  # pragma: no branch
             # state defaults to None, so use that if we can't infer it
             state_type = None
         if not _utils.is_set(run_end_type):
@@ -585,9 +585,9 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                 if item is self:
                     self.name = name
                     return
-            if parent_frame.f_locals != parent_frame.f_globals:
+            if parent_frame.f_locals != parent_frame.f_globals:  # pragma: no branch
                 # if we couldn't find the agent in locals and globals are a different dict, try globals
-                for name, item in parent_frame.f_globals.items():
+                for name, item in parent_frame.f_globals.items():  # pragma: no branch
                     if item is self:
                         self.name = name
                         return

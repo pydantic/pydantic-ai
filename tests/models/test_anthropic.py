@@ -112,7 +112,9 @@ class MockAnthropic:
             if isinstance(self.stream[0], Sequence):
                 response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream[self.index])))
             else:
-                response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream)))
+                response = MockAsyncStream(  # pragma: no cover
+                    iter(cast(list[MockRawMessageStreamEvent], self.stream))
+                )
         else:
             assert self.messages_ is not None, '`messages` must be provided'
             if isinstance(self.messages_, Sequence):
@@ -436,7 +438,7 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
         if loc_name == 'London':
-            return json.dumps({'lat': 51, 'lng': 0})
+            return json.dumps({'lat': 51, 'lng': 0})  # pragma: no cover
         else:
             raise ModelRetry('Wrong location, please try again')
 

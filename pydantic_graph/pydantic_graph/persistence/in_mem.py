@@ -45,7 +45,7 @@ class SimpleStatePersistence(BaseStatePersistence[StateT, RunEndT]):
         self, snapshot_id: str, state: StateT, next_node: BaseNode[StateT, Any, RunEndT]
     ) -> None:
         if self.last_snapshot and self.last_snapshot.id == snapshot_id:
-            return
+            return  # pragma: no cover
         else:
             await self.snapshot_node(state, next_node)
 

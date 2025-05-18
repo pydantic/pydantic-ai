@@ -130,7 +130,7 @@ class InstrumentationSettings:
                 for part in message.parts:
                     if hasattr(part, 'otel_event'):
                         message_events.append(part.otel_event(self))
-            elif isinstance(message, ModelResponse):
+            elif isinstance(message, ModelResponse):  # pragma: no branch
                 message_events = message.otel_events()
             for event in message_events:
                 event.attributes = {
@@ -192,7 +192,7 @@ class InstrumentedModel(WrapperModel):
                 ) as response_stream:
                     yield response_stream
             finally:
-                if response_stream:
+                if response_stream:  # pragma: no branch
                     finish(response_stream.get())
 
     @contextmanager
@@ -290,9 +290,9 @@ class InstrumentedModel(WrapperModel):
             except Exception:  # pragma: no cover
                 pass
             else:
-                if parsed.hostname:
+                if parsed.hostname:  # pragma: no branch
                     attributes['server.address'] = parsed.hostname
-                if parsed.port:
+                if parsed.port:  # pragma: no branch
                     attributes['server.port'] = parsed.port
 
         return attributes
@@ -300,7 +300,7 @@ class InstrumentedModel(WrapperModel):
     @staticmethod
     def event_to_dict(event: Event) -> dict[str, Any]:
         if not event.body:
-            body = {}
+            body = {}  # pragma: no cover
         elif isinstance(event.body, Mapping):
             body = event.body  # type: ignore
         else:

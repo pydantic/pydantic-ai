@@ -392,7 +392,7 @@ async def test_openai_responses_model_http_error(allow_model_requests: None, ope
 
     with pytest.raises(ModelHTTPError):
         async with agent.run_stream('What is the capital of France?'):
-            ...
+            ...  # pragma: lax no cover
 
 
 async def test_openai_responses_model_builtin_tools(allow_model_requests: None, openai_api_key: str):

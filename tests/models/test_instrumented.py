@@ -442,7 +442,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 output_tools=[],
             ),
         ) as response_stream:
-            async for event in response_stream:
+            async for event in response_stream:  # pragma: no branch
                 assert event == PartStartEvent(index=0, part=TextPart(content='text1'))
                 raise RuntimeError
 

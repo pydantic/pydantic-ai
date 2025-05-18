@@ -52,7 +52,7 @@ def create_test_module():
     try:
         yield _create_test_module
     finally:
-        if 'test_module' in sys.modules:
+        if 'test_module' in sys.modules:  # pragma: no branch
             del sys.modules['test_module']
 
 

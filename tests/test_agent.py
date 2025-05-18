@@ -395,7 +395,7 @@ def test_response_tuple():
 def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     try:
         union = input_union_callable()
-    except TypeError:
+    except TypeError:  # pragma: lax no cover
         pytest.skip('Python version does not support `|` syntax for unions')
 
     m = TestModel()
@@ -1396,7 +1396,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
         if loc_name == 'London':
             return json.dumps({'lat': 51, 'lng': 0})
         else:
-            raise ModelRetry('Wrong location, please try again')
+            raise ModelRetry('Wrong location, please try again')  # pragma: no cover
 
     result = agent.run_sync('Hello')
     assert result.output == 'final response'

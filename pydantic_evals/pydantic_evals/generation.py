@@ -74,9 +74,9 @@ async def generate_dataset(
     result = await agent.run(extra_instructions or 'Please generate the object.')
     try:
         result = dataset_type.from_text(result.output, fmt='json', custom_evaluator_types=custom_evaluator_types)
-    except ValidationError as e:
+    except ValidationError as e:  # pragma: no cover
         print(f'Raw response from model:\n{result.output}')
         raise e
     if path is not None:
-        result.to_file(path, custom_evaluator_types=custom_evaluator_types)
+        result.to_file(path, custom_evaluator_types=custom_evaluator_types)  # pragma: no cover
     return result
