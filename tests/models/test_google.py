@@ -39,7 +39,7 @@ from pydantic_ai.usage import Usage
 from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
-    from google import auth
+    from google.genai import _api_client
     from google.genai.types import HarmBlockThreshold, HarmCategory
 
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
@@ -279,7 +279,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
             return False
 
     return_value = (NoOpCredentials(), 'pydantic-ai')
-    mocker.patch.object(auth, 'default', return_value=return_value)
+    mocker.patch.object(_api_client, '_load_auth', return_value=return_value)
 
 
 async def test_google_model_vertex_provider(allow_model_requests: None):
