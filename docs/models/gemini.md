@@ -1,5 +1,15 @@
 # Gemini
 
+!!! note
+    We've developed a new Google model called `GoogleModel` which uses `google-genai` under the hood.
+
+    Honestly, Google packages are a mess, and that's why we've used plain `httpx` instead of relying on their own client
+    to create `GeminiModel`. That said, it's easier to use the `google-genai` package directly, since they keep the package
+    up-to-date with the latest API changes. For that reason, we've created a new model called `GoogleModel` which uses
+    `google-genai` under the hood.
+
+    Check it out [here](../api/models/google.md).
+
 PydanticAI supports Google's Gemini models through two different APIs:
 
 - Generative Language API (`generativelanguage.googleapis.com`)

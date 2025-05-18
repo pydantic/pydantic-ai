@@ -122,6 +122,7 @@ def test_docs_examples(  # noqa: C901
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
+    env.set('GOOGLE_API_KEY', 'testing')
     env.set('GROQ_API_KEY', 'testing')
     env.set('CO_API_KEY', 'testing')
     env.set('MISTRAL_API_KEY', 'testing')
