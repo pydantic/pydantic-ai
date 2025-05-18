@@ -81,6 +81,9 @@ class GoogleProvider(Provider[genai.Client]):
             # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
             api_key = api_key or os.environ.get('GOOGLE_API_KEY')
 
+            if vertexai is None:
+                vertexai = bool(location or project or credentials)
+
             if not vertexai:
                 if api_key is None:
                     raise UserError(  # pragma: no cover
@@ -88,13 +91,13 @@ class GoogleProvider(Provider[genai.Client]):
                         'to use the Google Generative Language API.'
                     )
                 self._client = genai.Client(
-                    vertexai=False,
+                    vertexai=vertexai,
                     api_key=api_key,
                     http_options={'headers': {'User-Agent': get_user_agent()}},
                 )
             else:
                 self._client = genai.Client(
-                    vertexai=True,
+                    vertexai=vertexai,
                     project=project or os.environ.get('GOOGLE_CLOUD_PROJECT'),
                     location=location or os.environ.get('GOOGLE_CLOUD_LOCATION'),
                     credentials=credentials,

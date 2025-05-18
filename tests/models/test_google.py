@@ -286,7 +286,8 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
 )
 async def test_google_model_vertex_provider(allow_model_requests: None):
-    model = GoogleModel('gemini-2.0-flash', provider='google-vertex')
+    provider = GoogleProvider(location='global')
+    model = GoogleModel('gemini-2.0-flash', provider=provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.')
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.\n')
