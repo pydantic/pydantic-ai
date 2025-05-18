@@ -71,7 +71,7 @@ try:
     from mistralai.models.usermessage import UserMessage as MistralUserMessage
     from mistralai.types.basemodel import Unset as MistralUnset
     from mistralai.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
-except ImportError as e:  # pragma: no cover
+except ImportError as e:  # pragma: lax no cover
     raise ImportError(
         'Please install `mistral` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
@@ -208,7 +208,7 @@ class MistralModel(Model):
         except SDKError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: no cover
+            raise  # pragma: lax no cover
 
         assert response, 'A unexpected empty response from Mistral.'
         return response

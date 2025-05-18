@@ -244,7 +244,7 @@ class AnthropicModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: no cover
+            raise  # pragma: lax no cover
 
     def _process_response(self, response: AnthropicMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -448,7 +448,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             if isinstance(event, RawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, TextBlock) and current_block.text:
-                    yield self._parts_manager.handle_text_delta(  # pragma: no cover
+                    yield self._parts_manager.handle_text_delta(  # pragma: lax no cover
                         vendor_part_id='content', content=current_block.text
                     )
                 elif isinstance(current_block, ToolUseBlock):  # pragma: no branch
