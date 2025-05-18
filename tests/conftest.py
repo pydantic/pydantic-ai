@@ -65,7 +65,7 @@ class TestEnv:
             if value is None:
                 os.environ.pop(name, None)
             else:
-                os.environ[name] = value
+                os.environ[name] = value  # pragma: lax no cover
 
 
 @pytest.fixture
