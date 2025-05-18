@@ -282,6 +282,9 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     mocker.patch.object(_api_client, '_load_auth', return_value=return_value)
 
 
+@pytest.mark.skipif(
+    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+)
 async def test_google_model_vertex_provider(allow_model_requests: None):
     model = GoogleModel('gemini-2.0-flash', provider='google-vertex')
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.')
