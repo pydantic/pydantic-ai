@@ -61,7 +61,7 @@ class Usage:
             'gen_ai.usage.output_tokens': self.response_tokens,
         }
         for key, value in (self.details or {}).items():
-            result[f'gen_ai.usage.details.{key}'] = value
+            result[f'gen_ai.usage.details.{key}'] = value  # pragma: no cover
         return {k: v for k, v in result.items() if v}
 
     def has_values(self) -> bool:

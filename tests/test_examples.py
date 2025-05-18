@@ -41,7 +41,7 @@ from .conftest import ClientWithHandler, TestEnv, try_import
 
 try:
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
-except ImportError:
+except ImportError:  # pragma: lax no cover
     GoogleVertexProvider = None
 
 

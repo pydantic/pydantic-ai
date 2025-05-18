@@ -395,7 +395,7 @@ def test_response_tuple():
 def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     try:
         union = input_union_callable()
-    except TypeError:
+    except TypeError:  # pragma: lax no cover
         pytest.skip('Python version does not support `|` syntax for unions')
 
     m = TestModel()

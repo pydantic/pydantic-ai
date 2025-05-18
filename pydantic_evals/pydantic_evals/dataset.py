@@ -43,9 +43,9 @@ from .otel._context_subtree import context_subtree
 from .reporting import EvaluationReport, ReportCase
 
 if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup
+    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
 else:
-    ExceptionGroup = ExceptionGroup
+    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 # while waiting for https://github.com/pydantic/logfire/issues/745
 try:

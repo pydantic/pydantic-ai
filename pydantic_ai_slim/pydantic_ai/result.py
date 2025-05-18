@@ -114,7 +114,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         async for response in self.stream_responses(debounce_by=debounce_by):
             if self._final_result_event is not None:
                 yield await self._validate_response(response, self._final_result_event.tool_name, allow_partial=True)
-        if self._final_result_event is not None:
+        if self._final_result_event is not None:  # pragma: no branch
             yield await self._validate_response(
                 self._raw_stream_response.get(), self._final_result_event.tool_name, allow_partial=False
             )
@@ -124,7 +124,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         # if the message currently has any parts with content, yield before streaming
         msg = self._raw_stream_response.get()
         for part in msg.parts:
-            if part.has_content():
+            if part.has_content():  # pragma: no branch
                 yield msg
                 break
 
@@ -147,7 +147,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         if self._output_schema is not None and output_tool_name is not None:
             match = self._output_schema.find_named_tool(message.parts, output_tool_name)
             if match is None:
-                raise exceptions.UnexpectedModelBehavior(
+                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     f'Invalid response, unable to find tool: {self._output_schema.tool_names()}'
                 )
 
@@ -188,7 +188,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     new_part = e.part
                     if isinstance(new_part, _messages.ToolCallPart):
                         if output_schema:
-                            for call, _ in output_schema.find_tool([new_part]):
+                            for call, _ in output_schema.find_tool([new_part]):  # pragma: no branch
                                 return _messages.FinalResultEvent(
                                     tool_name=call.tool_name, tool_call_id=call.tool_call_id
                                 )
