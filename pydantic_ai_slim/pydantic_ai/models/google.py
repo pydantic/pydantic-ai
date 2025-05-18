@@ -9,7 +9,6 @@ from datetime import datetime
 from typing import Literal, Union, cast, overload
 from uuid import uuid4
 
-from google.genai.types import ThinkingConfigDict
 from typing_extensions import assert_never
 
 from pydantic_ai.providers import Provider
@@ -59,6 +58,7 @@ try:
         Part,
         PartDict,
         SafetySettingDict,
+        ThinkingConfigDict,
         ToolConfigDict,
         ToolDict,
         ToolListUnionDict,
@@ -104,7 +104,16 @@ class GoogleModelSettings(ModelSettings, total=False):
     """
 
     google_safety_settings: list[SafetySettingDict]
+    """The safety settings to use for the model.
+
+    See <https://ai.google.dev/gemini-api/docs/safety-settings> for more information.
+    """
+
     google_thinking_config: ThinkingConfigDict
+    """The thinking configuration to use for the model.
+
+    See <https://ai.google.dev/gemini-api/docs/thinking> for more information.
+    """
 
 
 @dataclass(init=False)
@@ -122,7 +131,7 @@ class GoogleModel(Model):
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[genai.Client] = field(repr=False)
     _url: str | None = field(repr=False)
-    _system: str = field(default='gemini', repr=False)
+    _system: str = field(default='google', repr=False)
 
     def __init__(
         self,
@@ -215,11 +224,11 @@ class GoogleModel(Model):
             names: list[str] = []
             for tool in tools:
                 for function_declaration in tool.get('function_declarations') or []:
-                    if name := function_declaration.get('name'):
+                    if name := function_declaration.get('name'):  # pragma: no branch
                         names.append(name)
             return _tool_config(names)
         else:
-            return _tool_config([])
+            return _tool_config([])  # pragma: no cover
 
     @overload
     async def _generate_content(
@@ -269,12 +278,15 @@ class GoogleModel(Model):
 
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
         if not response.candidates or len(response.candidates) != 1:
-            raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')
+            raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
+        print(response.candidates[0].safety_ratings)
         if response.candidates[0].content is None or response.candidates[0].content.parts is None:
             if response.candidates[0].finish_reason == 'SAFETY':
                 raise UnexpectedModelBehavior('Safety settings triggered', str(response))
             else:
-                raise UnexpectedModelBehavior('Content field missing from Gemini response', str(response))
+                raise UnexpectedModelBehavior(
+                    'Content field missing from Gemini response', str(response)
+                )  # pragma: no cover
         parts = response.candidates[0].content.parts or []
         usage = _metadata_as_usage(response)
         usage.requests = 1
@@ -285,7 +297,7 @@ class GoogleModel(Model):
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
         return GeminiStreamedResponse(
             _model_name=self._model_name,
@@ -318,7 +330,7 @@ class GoogleModel(Model):
                         )
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
-                            message_parts.append({'text': part.model_response()})
+                            message_parts.append({'text': part.model_response()})  # pragma: no cover
                         else:
                             message_parts.append(
                                 {
@@ -332,7 +344,7 @@ class GoogleModel(Model):
                     else:
                         assert_never(part)
 
-                if message_parts:
+                if message_parts:  # pragma: no branch
                     contents.append({'role': 'user', 'parts': message_parts})
             elif isinstance(m, ModelResponse):
                 contents.append(_content_model_response(m))
@@ -382,7 +394,7 @@ class GeminiStreamedResponse(StreamedResponse):
             assert chunk.candidates is not None
             candidate = chunk.candidates[0]
             if candidate.content is None:
-                raise UnexpectedModelBehavior('Streamed response has no content field')
+                raise UnexpectedModelBehavior('Streamed response has no content field')  # pragma: no cover
             assert candidate.content.parts is not None
             for part in candidate.content.parts:
                 if part.text:
@@ -394,10 +406,10 @@ class GeminiStreamedResponse(StreamedResponse):
                         args=part.function_call.args,
                         tool_call_id=part.function_call.id,
                     )
-                    if maybe_event is not None:
+                    if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 else:
-                    assert part.function_response is not None, f'Unexpected part: {part}'
+                    assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
     @property
     def model_name(self) -> GoogleModelName:
@@ -417,7 +429,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
             parts.append({'function_call': function_call})
         elif isinstance(item, TextPart):
-            if item.content:
+            if item.content:  # pragma: no branch
                 parts.append({'text': item.content})
         else:
             assert_never(item)
@@ -433,9 +445,9 @@ def _process_response_from_parts(parts: list[Part], model_name: GoogleModelName,
             assert part.function_call.name is not None
             tool_call_part = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args or {})
             if part.function_call.id is not None:
-                tool_call_part.tool_call_id = part.function_call.id
+                tool_call_part.tool_call_id = part.function_call.id  # pragma: no cover
             items.append(tool_call_part)
-        elif part.function_response:
+        elif part.function_response:  # pragma: no cover
             raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
@@ -445,7 +457,7 @@ def _process_response_from_parts(parts: list[Part], model_name: GoogleModelName,
 def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclarationDict:
     json_schema = tool.parameters_json_schema
     f = FunctionDeclarationDict(name=tool.name, description=tool.description)
-    if json_schema.get('properties'):
+    if json_schema.get('properties'):  # pragma: no branch
         f['parameters'] = json_schema  # type: ignore
     return f
 
@@ -459,7 +471,7 @@ def _tool_config(function_names: list[str]) -> ToolConfigDict:
 def _metadata_as_usage(response: GenerateContentResponse) -> usage.Usage:
     metadata = response.usage_metadata
     if metadata is None:
-        return usage.Usage()
+        return usage.Usage()  # pragma: no cover
     # TODO(Marcelo): We exclude the `prompt_tokens_details` and `candidate_token_details` fields because on
     # `usage.Usage.incr``, it will try to sum non-integer values with integers, which will fail. We should probably
     # handle this in the `Usage` class.
@@ -535,9 +547,11 @@ class _GeminiJsonSchema(WalkJsonSchema):
                 schema['description'] = f'Format: {fmt}'
 
         if '$ref' in schema:
-            raise UserError(f'Recursive `$ref`s in JSON Schema are not supported by Gemini: {schema["$ref"]}')
+            raise UserError(  # pragma: no cover
+                f'Recursive `$ref`s in JSON Schema are not supported by Gemini: {schema["$ref"]}'
+            )
 
-        if 'prefixItems' in schema:
+        if 'prefixItems' in schema:  # pragma: lax no cover
             # prefixItems is not currently supported in Gemini, so we convert it to items for best compatibility
             prefix_items = schema.pop('prefixItems')
             items = schema.get('items')

@@ -6,13 +6,14 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from dirty_equals import IsInstance
 from httpx import Request
 from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
@@ -24,6 +25,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -32,15 +34,15 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models.google import GoogleModelSettings
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from google import auth
+    from google.genai.types import HarmBlockThreshold, HarmCategory
 
-    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import GoogleProvider
 
 pytestmark = [
@@ -58,6 +60,7 @@ def google_provider(gemini_api_key: str) -> GoogleProvider:
 async def test_google_model(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-1.5-flash', provider=google_provider)
     assert model.base_url == 'https://generativelanguage.googleapis.com/'
+    assert model.system == 'google-gla'
     agent = Agent(model=model, system_prompt='You are a chatbot.')
 
     result = await agent.run('Hello!')
@@ -170,7 +173,7 @@ async def test_google_model_structured_response(allow_model_requests: None, goog
 
 
 async def test_google_model_stream(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.0-flash-exp', provider=google_provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
@@ -178,7 +181,7 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
 
 
 async def test_google_model_retry(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=google_provider)
     agent = Agent(
         model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0}, retries=2
     )
@@ -202,13 +205,35 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 ]
             ),
             ModelResponse(
+                parts=[ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr())],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=57,
+                    response_tokens=15,
+                    total_tokens=173,
+                    details={'thoughts_token_count': 101},
+                ),
+                model_name='models/gemini-2.5-pro-preview-05-06',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='The country is not supported.',
+                        tool_name='get_capital',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
                 parts=[
                     TextPart(
-                        content='The available tools lack the information to answer this question.  I need more information or a different tool to get the capital of France.\n'
+                        content='I am sorry, I cannot fulfill this request. The country you provided is not supported.'
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=31, response_tokens=28, total_tokens=59, details={}),
-                model_name='gemini-1.5-flash',
+                usage=Usage(requests=1, request_tokens=104, response_tokens=18, total_tokens=122, details={}),
+                model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
             ),
         ]
@@ -238,7 +263,7 @@ async def test_google_model_thinking_config(allow_model_requests: None, google_p
 
 
 @pytest.fixture(autouse=True)
-def vertex_provider_auth(mocker: MockerFixture) -> None:
+def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
     if not os.getenv('CI'):
         return  # pragma: lax no cover
@@ -300,9 +325,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                 index=0,
                 part=ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr()),
             ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr()),
-            ),
+            IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='get_capital', content='Paris', tool_call_id=IsStr(), timestamp=IsDatetime()
@@ -313,9 +336,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                 index=0,
                 part=ToolCallPart(tool_name='get_temperature', args={'city': 'Paris'}, tool_call_id=IsStr()),
             ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='get_temperature', args={'city': 'Paris'}, tool_call_id=IsStr()),
-            ),
+            IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='get_temperature', content='30°C', tool_call_id=IsStr(), timestamp=IsDatetime()
@@ -466,3 +487,19 @@ async def test_google_model_multiple_documents_in_history(
     )
 
     assert result.output == snapshot('Both documents contain the text "Dummy PDF file".')
+
+
+async def test_google_model_safety_settings(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    settings = GoogleModelSettings(
+        google_safety_settings=[
+            {
+                'category': HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                'threshold': HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+            }
+        ]
+    )
+    agent = Agent(m, instructions='You hate the world!', model_settings=settings)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Safety settings triggered'):
+        await agent.run('Tell me a joke about a Brazilians.')

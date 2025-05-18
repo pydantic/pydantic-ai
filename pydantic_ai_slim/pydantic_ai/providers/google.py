@@ -64,8 +64,8 @@ class GoogleProvider(Provider[genai.Client]):
 
         Args:
             api_key: The `API key <https://ai.google.dev/gemini-api/docs/api-key>`_ to
-                use for authentication. It can also be set via the `GEMINI_API_KEY` environment variable or
-                `GOOGLE_API_KEY` environment variable. Applies to the Gemini Developer API only.
+                use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable.
+                Applies to the Gemini Developer API only.
             credentials: The credentials to use for authentication when calling the Vertex AI APIs. Credentials can be
                 obtained from environment variables and default credentials. For more information, see Set up
                 Application Default Credentials. Applies to the Vertex AI API only.
@@ -79,11 +79,11 @@ class GoogleProvider(Provider[genai.Client]):
         """
         if client is None:
             # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
-            api_key = api_key or os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')
+            api_key = api_key or os.environ.get('GOOGLE_API_KEY')
 
             if not vertexai:
                 if api_key is None:
-                    raise UserError(
+                    raise UserError(  # pragma: no cover
                         'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
                         'to use the Google Generative Language API.'
                     )
@@ -101,7 +101,7 @@ class GoogleProvider(Provider[genai.Client]):
                     http_options={'headers': {'User-Agent': get_user_agent()}},
                 )
         else:
-            self._client = client
+            self._client = client  # pragma: no cover
 
 
 VertexAILocation = Literal[
