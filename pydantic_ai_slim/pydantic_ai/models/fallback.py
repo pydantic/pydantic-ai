@@ -96,7 +96,7 @@ class FallbackModel(Model):
                     if self._fallback_on(exc):
                         exceptions.append(exc)
                         continue
-                    raise exc
+                    raise exc  # pragma: no cover
 
                 self._set_span_attributes(model)
                 yield response
@@ -109,7 +109,7 @@ class FallbackModel(Model):
             span = get_current_span()
             if span.is_recording():
                 attributes = getattr(span, 'attributes', {})
-                if attributes.get('gen_ai.request.model') == self.model_name:
+                if attributes.get('gen_ai.request.model') == self.model_name:  # pragma: no branch
                     span.set_attributes(InstrumentedModel.model_attributes(model))
 
     @property

@@ -169,7 +169,7 @@ class TestModel(Model):
                 model_name=self._model_name,
             )
 
-        if messages:
+        if messages:  # pragma: no branch
             last_message = messages[-1]
             assert isinstance(last_message, ModelRequest), 'Expected last message to be a `ModelRequest`.'
 

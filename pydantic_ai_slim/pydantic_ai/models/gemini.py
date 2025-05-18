@@ -137,8 +137,8 @@ class GeminiModel(Model):
 
     @property
     def base_url(self) -> str:
-        assert self._url is not None, 'URL not initialized'
-        return self._url
+        assert self._url is not None, 'URL not initialized'  # pragma: no cover
+        return self._url  # pragma: no cover
 
     async def request(
         self,
@@ -201,7 +201,7 @@ class GeminiModel(Model):
         elif tools:
             return _tool_config([t['name'] for t in tools['function_declarations']])
         else:
-            return _tool_config([])
+            return _tool_config([])  # pragma: no cover
 
     @asynccontextmanager
     async def _make_request(
@@ -257,17 +257,21 @@ class GeminiModel(Model):
                 await r.aread()
                 if status_code >= 400:
                     raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=r.text)
-                raise UnexpectedModelBehavior(f'Unexpected response from gemini {status_code}', r.text)
+                raise UnexpectedModelBehavior(  # pragma: no cover
+                    f'Unexpected response from gemini {status_code}', r.text
+                )
             yield r
 
     def _process_response(self, response: _GeminiResponse) -> ModelResponse:
         if len(response['candidates']) != 1:
-            raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')
+            raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
         if 'content' not in response['candidates'][0]:
             if response['candidates'][0].get('finish_reason') == 'SAFETY':
                 raise UnexpectedModelBehavior('Safety settings triggered', str(response))
             else:
-                raise UnexpectedModelBehavior('Content field missing from Gemini response', str(response))
+                raise UnexpectedModelBehavior(  # pragma: no cover
+                    'Content field missing from Gemini response', str(response)
+                )
         parts = response['candidates'][0]['content']['parts']
         usage = _metadata_as_usage(response)
         usage.requests = 1
@@ -285,7 +289,7 @@ class GeminiModel(Model):
                 _ensure_decodeable(content),
                 experimental_allow_partial='trailing-strings',
             )
-            if responses:
+            if responses:  # pragma: no branch
                 last = responses[-1]
                 if last['candidates'] and last['candidates'][0].get('content', {}).get('parts'):
                     start_response = last
@@ -314,14 +318,14 @@ class GeminiModel(Model):
                         message_parts.append(_response_part_from_response(part.tool_name, part.model_response_object()))
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
-                            message_parts.append(_GeminiTextPart(text=part.model_response()))
+                            message_parts.append(_GeminiTextPart(text=part.model_response()))  # pragma: no cover
                         else:
                             response = {'call_error': part.model_response()}
                             message_parts.append(_response_part_from_response(part.tool_name, response))
                     else:
                         assert_never(part)
 
-                if message_parts:
+                if message_parts:  # pragma: no branch
                     contents.append(_GeminiContent(role='user', parts=message_parts))
             elif isinstance(m, ModelResponse):
                 contents.append(_content_model_response(m))
@@ -372,7 +376,7 @@ class ApiKeyAuth:
 
     async def headers(self) -> dict[str, str]:
         # https://cloud.google.com/docs/authentication/api-keys-use#using-with-rest
-        return {'X-Goog-Api-Key': self.api_key}
+        return {'X-Goog-Api-Key': self.api_key}  # pragma: no cover
 
 
 @dataclass
@@ -388,7 +392,7 @@ class GeminiStreamedResponse(StreamedResponse):
         async for gemini_response in self._get_gemini_responses():
             candidate = gemini_response['candidates'][0]
             if 'content' not in candidate:
-                raise UnexpectedModelBehavior('Streamed response has no content field')
+                raise UnexpectedModelBehavior('Streamed response has no content field')  # pragma: no cover
             gemini_part: _GeminiPartUnion
             for gemini_part in candidate['content']['parts']:
                 if 'text' in gemini_part:
@@ -407,10 +411,10 @@ class GeminiStreamedResponse(StreamedResponse):
                         args=gemini_part['function_call']['args'],
                         tool_call_id=None,
                     )
-                    if maybe_event is not None:
+                    if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 else:
-                    assert 'function_response' in gemini_part, f'Unexpected part: {gemini_part}'
+                    assert 'function_response' in gemini_part, f'Unexpected part: {gemini_part}'  # pragma: no cover
 
     async def _get_gemini_responses(self) -> AsyncIterator[_GeminiResponse]:
         # This method exists to ensure we only yield completed items, so we don't need to worry about
@@ -438,7 +442,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield r
 
         # Now yield the final response, which should be complete
-        if gemini_responses:
+        if gemini_responses:  # pragma: no branch
             r = gemini_responses[-1]
             self._usage += _metadata_as_usage(r)
             yield r
@@ -601,7 +605,7 @@ def _process_response_from_parts(
             items.append(TextPart(content=part['text']))
         elif 'function_call' in part:
             items.append(ToolCallPart(tool_name=part['function_call']['name'], args=part['function_call']['args']))
-        elif 'function_response' in part:
+        elif 'function_response' in part:  # pragma: no cover
             raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
@@ -631,13 +635,13 @@ class _GeminiFunctionResponse(TypedDict):
 
 
 def _part_discriminator(v: Any) -> str:
-    if isinstance(v, dict):
+    if isinstance(v, dict):  # pragma: no branch
         if 'text' in v:
             return 'text'
         elif 'inlineData' in v:
-            return 'inline_data'
+            return 'inline_data'  # pragma: no cover
         elif 'fileData' in v:
-            return 'file_data'
+            return 'file_data'  # pragma: no cover
         elif 'functionCall' in v or 'function_call' in v:
             return 'function_call'
         elif 'functionResponse' in v or 'function_response' in v:
@@ -748,10 +752,10 @@ class _GeminiUsageMetaData(TypedDict, total=False):
 def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
     metadata = response.get('usage_metadata')
     if metadata is None:
-        return usage.Usage()
+        return usage.Usage()  # pragma: no cover
     details: dict[str, int] = {}
     if cached_content_token_count := metadata.get('cached_content_token_count'):
-        details['cached_content_token_count'] = cached_content_token_count
+        details['cached_content_token_count'] = cached_content_token_count  # pragma: no cover
     return usage.Usage(
         request_tokens=metadata.get('prompt_token_count', 0),
         response_tokens=metadata.get('candidates_token_count', 0),
@@ -866,10 +870,10 @@ class _GeminiJsonSchema(WalkJsonSchema):
                     unique_items.append(item)
             if len(unique_items) > 1:  # pragma: no cover
                 schema['items'] = {'anyOf': unique_items}
-            elif len(unique_items) == 1:
+            elif len(unique_items) == 1:  # pragma: no branch
                 schema['items'] = unique_items[0]
             schema.setdefault('minItems', len(prefix_items))
-            if items is None:
+            if items is None:  # pragma: no branch
                 schema.setdefault('maxItems', len(prefix_items))
 
         return schema

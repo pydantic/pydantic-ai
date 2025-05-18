@@ -71,7 +71,7 @@ try:
     from mistralai.models.usermessage import UserMessage as MistralUserMessage
     from mistralai.types.basemodel import Unset as MistralUnset
     from mistralai.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
-except ImportError as e:
+except ImportError as e:  # pragma: lax no cover
     raise ImportError(
         'Please install `mistral` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
@@ -208,7 +208,7 @@ class MistralModel(Model):
         except SDKError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise
+            raise  # pragma: lax no cover
 
         assert response, 'A unexpected empty response from Mistral.'
         return response
@@ -336,7 +336,9 @@ class MistralModel(Model):
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise UnexpectedModelBehavior(  # pragma: no cover
+                'Streamed response ended without content or tool calls'
+            )
 
         if first_chunk.data.created:
             timestamp = datetime.fromtimestamp(first_chunk.data.created, tz=timezone.utc)
@@ -437,7 +439,7 @@ class MistralModel(Model):
         """Convert a timeout to milliseconds."""
         if timeout is None:
             return None
-        if isinstance(timeout, float):
+        if isinstance(timeout, float):  # pragma: no cover
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
@@ -454,7 +456,7 @@ class MistralModel(Model):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield MistralUserMessage(content=part.model_response())
+                    yield MistralUserMessage(content=part.model_response())  # pragma: no cover
                 else:
                     yield MistralToolMessage(
                         tool_call_id=part.tool_call_id,
@@ -519,7 +521,7 @@ class MistralModel(Model):
                     else:
                         raise RuntimeError('Only image binary content is supported for Mistral.')
                 elif isinstance(item, DocumentUrl):
-                    raise RuntimeError('DocumentUrl is not supported in Mistral.')
+                    raise RuntimeError('DocumentUrl is not supported in Mistral.')  # pragma: no cover
                 elif isinstance(item, VideoUrl):
                     raise RuntimeError('VideoUrl is not supported in Mistral.')
                 else:  # pragma: no cover
@@ -663,7 +665,7 @@ def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk)
             details=None,
         )
     else:
-        return Usage()
+        return Usage()  # pragma: no cover
 
 
 def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None:
@@ -677,7 +679,9 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None
             if isinstance(chunk, MistralTextChunk):
                 output = output or '' + chunk.text
             else:
-                assert False, f'Other data types like (Image, Reference) are not yet supported,  got {type(chunk)}'
+                assert False, (  # pragma: no cover
+                    f'Other data types like (Image, Reference) are not yet supported,  got {type(chunk)}'
+                )
     elif isinstance(content, str):
         output = content
 

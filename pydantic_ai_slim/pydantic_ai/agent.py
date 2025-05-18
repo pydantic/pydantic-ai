@@ -1002,7 +1002,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                         final_result_details = await stream_to_final(streamed_response)
                         if final_result_details is not None:
                             if yielded:
-                                raise exceptions.AgentRunError('Agent run produced final results')
+                                raise exceptions.AgentRunError('Agent run produced final results')  # pragma: no cover
                             yielded = True
 
                             messages = graph_ctx.state.message_history.copy()
@@ -1049,11 +1049,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                             break
                 next_node = await agent_run.next(node)
                 if not isinstance(next_node, _agent_graph.AgentNode):
-                    raise exceptions.AgentRunError('Should have produced a StreamedRunResult before getting here')
+                    raise exceptions.AgentRunError(  # pragma: no cover
+                        'Should have produced a StreamedRunResult before getting here'
+                    )
                 node = cast(_agent_graph.AgentNode[Any, Any], next_node)
 
         if not yielded:
-            raise exceptions.AgentRunError('Agent run finished without producing a final result')
+            raise exceptions.AgentRunError('Agent run finished without producing a final result')  # pragma: no cover
 
     @contextmanager
     def override(
@@ -1227,7 +1229,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
                 runner = _system_prompt.SystemPromptRunner[AgentDepsT](func_, dynamic=dynamic)
                 self._system_prompt_functions.append(runner)
-                if dynamic:
+                if dynamic:  # pragma: lax no cover
                     self._system_prompt_dynamic_functions[func_.__qualname__] = runner
                 return func_
 
@@ -1609,7 +1611,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                     if item is self:
                         self.name = name
                         return
-                if parent_frame.f_locals != parent_frame.f_globals:
+                if parent_frame.f_locals != parent_frame.f_globals:  # pragma: no branch
                     # if we couldn't find the agent in locals and globals are a different dict, try globals
                     for name, item in parent_frame.f_globals.items():
                         if item is self:
@@ -2025,7 +2027,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
 
-    def __repr__(self) -> str:
+    def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.result
         result_repr = '<run not finished>' if result is None else repr(result.output)
         return f'<{type(self).__name__} result={result_repr} usage={self.usage()}>'

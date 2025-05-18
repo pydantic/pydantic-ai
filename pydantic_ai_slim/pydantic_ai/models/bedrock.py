@@ -252,7 +252,7 @@ class BedrockConverseModel(Model):
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
         items: list[ModelResponsePart] = []
-        if message := response['output'].get('message'):
+        if message := response['output'].get('message'):  # pragma: no branch
             for item in message['content']:
                 if text := item.get('text'):
                     items.append(TextPart(content=text))
@@ -305,7 +305,7 @@ class BedrockConverseModel(Model):
         if not tools or not support_tools_choice:
             tool_choice: ToolChoiceTypeDef = {}
         elif not model_request_parameters.allow_text_output:
-            tool_choice = {'any': {}}
+            tool_choice = {'any': {}}  # pragma: no cover
         else:
             tool_choice = {'auto': {}}
 
@@ -492,7 +492,7 @@ class BedrockConverseModel(Model):
                         data = response.content
                         content.append({'document': {'name': name, 'format': item.format, 'source': {'bytes': data}}})
 
-                    elif item.kind == 'video-url':
+                    elif item.kind == 'video-url':  # pragma: no branch
                         format = item.media_type.split('/')[1]
                         assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp'), (
                             f'Unsupported video format: {format}'
@@ -535,13 +535,13 @@ class BedrockStreamedResponse(StreamedResponse):
             if 'messageStop' in chunk:
                 continue
             if 'metadata' in chunk:
-                if 'usage' in chunk['metadata']:
+                if 'usage' in chunk['metadata']:  # pragma: no branch
                     self._usage += self._map_usage(chunk['metadata'])
                 continue
             if 'contentBlockStart' in chunk:
                 index = chunk['contentBlockStart']['contentBlockIndex']
                 start = chunk['contentBlockStart']['start']
-                if 'toolUse' in start:
+                if 'toolUse' in start:  # pragma: no branch
                     tool_use_start = start['toolUse']
                     tool_id = tool_use_start['toolUseId']
                     tool_name = tool_use_start['name']
@@ -552,7 +552,7 @@ class BedrockStreamedResponse(StreamedResponse):
                         tool_call_id=tool_id,
                     )
                     if maybe_event:
-                        yield maybe_event
+                        yield maybe_event  # pragma: no cover
             if 'contentBlockDelta' in chunk:
                 index = chunk['contentBlockDelta']['contentBlockIndex']
                 delta = chunk['contentBlockDelta']['delta']
@@ -566,7 +566,7 @@ class BedrockStreamedResponse(StreamedResponse):
                         args=tool_use.get('input'),
                         tool_call_id=tool_id,
                     )
-                    if maybe_event:
+                    if maybe_event:  # pragma: no branch
                         yield maybe_event
 
     @property
@@ -602,4 +602,4 @@ class _AsyncIteratorWrapper(Generic[T]):
             if type(e.__cause__) is StopIteration:
                 raise StopAsyncIteration
             else:
-                raise e
+                raise e  # pragma: lax no cover

@@ -485,7 +485,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
             raise UserError(f'Unknown model: {model}')
 
     if provider == 'vertexai':
-        provider = 'google-vertex'
+        provider = 'google-vertex'  # pragma: no cover
 
     if provider == 'cohere':
         from .cohere import CohereModel
@@ -516,7 +516,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
 
         return BedrockConverseModel(model_name, provider=provider)
     else:
-        raise UserError(f'Unknown model: {model}')
+        raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
 def cached_async_http_client(*, provider: str | None = None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:

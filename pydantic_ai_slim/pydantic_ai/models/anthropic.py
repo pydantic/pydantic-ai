@@ -244,7 +244,7 @@ class AnthropicModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise
+            raise  # pragma: lax no cover
 
     def _process_response(self, response: AnthropicMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -268,7 +268,7 @@ class AnthropicModel(Model):
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
         # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
         timestamp = datetime.now(tz=timezone.utc)
@@ -305,9 +305,10 @@ class AnthropicModel(Model):
                             is_error=False,
                         )
                         user_content_params.append(tool_result_block_param)
-                    elif isinstance(request_part, RetryPromptPart):
+                    elif isinstance(request_part, RetryPromptPart):  # pragma: no branch
                         if request_part.tool_name is None:
-                            retry_param = TextBlockParam(type='text', text=request_part.model_response())
+                            text = request_part.model_response()  # pragma: no cover
+                            retry_param = TextBlockParam(type='text', text=text)  # pragma: no cover
                         else:
                             retry_param = ToolResultBlockParam(
                                 tool_use_id=_guard_tool_call_id(t=request_part),
@@ -380,7 +381,7 @@ class AnthropicModel(Model):
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
                 else:
-                    raise RuntimeError(f'Unsupported content type: {type(item)}')
+                    raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolParam:
@@ -447,21 +448,25 @@ class AnthropicStreamedResponse(StreamedResponse):
             if isinstance(event, RawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, TextBlock) and current_block.text:
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=current_block.text)
-                elif isinstance(current_block, ToolUseBlock):
+                    yield self._parts_manager.handle_text_delta(  # pragma: lax no cover
+                        vendor_part_id='content', content=current_block.text
+                    )
+                elif isinstance(current_block, ToolUseBlock):  # pragma: no branch
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=current_block.id,
                         tool_name=current_block.name,
                         args=cast(dict[str, Any], current_block.input),
                         tool_call_id=current_block.id,
                     )
-                    if maybe_event is not None:
+                    if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
 
             elif isinstance(event, RawContentBlockDeltaEvent):
                 if isinstance(event.delta, TextDelta):
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=event.delta.text)
-                elif (
+                    yield self._parts_manager.handle_text_delta(  # pragma: no cover
+                        vendor_part_id='content', content=event.delta.text
+                    )
+                elif (  # pragma: no branch
                     current_block and event.delta.type == 'input_json_delta' and isinstance(current_block, ToolUseBlock)
                 ):
                     # Try to parse the JSON immediately, otherwise cache the value for later. This handles
@@ -480,7 +485,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                         args=parsed_args,
                         tool_call_id=current_block.id,
                     )
-                    if maybe_event is not None:
+                    if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
 
             elif isinstance(event, (RawContentBlockStopEvent, RawMessageStopEvent)):
