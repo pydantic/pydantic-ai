@@ -1396,7 +1396,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
         if loc_name == 'London':
             return json.dumps({'lat': 51, 'lng': 0})
         else:
-            raise ModelRetry('Wrong location, please try again')
+            raise ModelRetry('Wrong location, please try again')  # pragma: no cover
 
     result = agent.run_sync('Hello')
     assert result.output == 'final response'

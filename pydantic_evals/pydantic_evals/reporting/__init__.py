@@ -242,7 +242,7 @@ class EvaluationReport(BaseModel):
         else:  # pragma: no cover
             return renderer.build_diff_table(self, baseline)
 
-    def __str__(self) -> str:
+    def __str__(self) -> str:  # pragma: lax no cover
         """Return a string representation of the report."""
         table = self.console_table()
         io_file = StringIO()
@@ -290,7 +290,7 @@ class _ValueRenderer:
             result = f'{old_str} → {new_str}'
 
             has_diff = self.diff_checker and self.diff_checker(old, new)
-            if has_diff:
+            if has_diff:  # pragma: no branch
                 # If there is a diff, make the name bold and compute the diff_str
                 name = name and f'[bold]{name}[/]'
                 diff_str = self.diff_formatter and self.diff_formatter(old, new)
@@ -404,12 +404,12 @@ class _NumberRenderer:
                 # If there is a diff, make the name bold and compute the diff_str
                 name = name and f'[bold]{name}[/]'
                 diff_str = self._get_diff_str(old, new)
-                if diff_str:
+                if diff_str:  # pragma: no branch
                     result += f' ({diff_str})'
                 result = f'[{diff_style}]{result}[/]'
 
         # Add the name
-        if name:
+        if name:  # pragma: no branch
             result = f'{name}: {result}'
 
         return result
@@ -485,9 +485,9 @@ T_contra = TypeVar('T_contra', contravariant=True)
 
 
 class _AbstractRenderer(Protocol[T_contra]):
-    def render_value(self, name: str | None, v: T_contra) -> str: ...
+    def render_value(self, name: str | None, v: T_contra) -> str: ...  # pragma: no branch
 
-    def render_diff(self, name: str | None, old: T_contra | None, new: T_contra | None) -> str: ...
+    def render_diff(self, name: str | None, old: T_contra | None, new: T_contra | None) -> str: ...  # pragma: no branch
 
 
 _DEFAULT_NUMBER_CONFIG = RenderNumberConfig()
@@ -625,28 +625,28 @@ class ReportCaseRenderer:
         assert baseline.name == new_case.name, 'This should only be called for matching case IDs'
         row = [baseline.name]
 
-        if self.include_input:
+        if self.include_input:  # pragma: no branch
             input_diff = self.input_renderer.render_diff(None, baseline.inputs, new_case.inputs) or EMPTY_CELL_STR
             row.append(input_diff)
 
-        if self.include_metadata:
+        if self.include_metadata:  # pragma: no branch
             metadata_diff = (
                 self.metadata_renderer.render_diff(None, baseline.metadata, new_case.metadata) or EMPTY_CELL_STR
             )
             row.append(metadata_diff)
 
-        if self.include_expected_output:
+        if self.include_expected_output:  # pragma: no branch
             expected_output_diff = (
                 self.output_renderer.render_diff(None, baseline.expected_output, new_case.expected_output)
                 or EMPTY_CELL_STR
             )
             row.append(expected_output_diff)
 
-        if self.include_output:
+        if self.include_output:  # pragma: no branch
             output_diff = self.output_renderer.render_diff(None, baseline.output, new_case.output) or EMPTY_CELL_STR
             row.append(output_diff)
 
-        if self.include_scores:
+        if self.include_scores:  # pragma: no branch
             scores_diff = self._render_dicts_diff(
                 {k: v.value for k, v in baseline.scores.items()},
                 {k: v.value for k, v in new_case.scores.items()},
@@ -654,21 +654,21 @@ class ReportCaseRenderer:
             )
             row.append(scores_diff)
 
-        if self.include_labels:
+        if self.include_labels:  # pragma: no branch
             labels_diff = self._render_dicts_diff(baseline.labels, new_case.labels, self.label_renderers)
             row.append(labels_diff)
 
-        if self.include_metrics:
+        if self.include_metrics:  # pragma: no branch
             metrics_diff = self._render_dicts_diff(baseline.metrics, new_case.metrics, self.metric_renderers)
             row.append(metrics_diff)
 
-        if self.include_assertions:
+        if self.include_assertions:  # pragma: no branch
             assertions_diff = self._render_assertions_diff(
                 list(baseline.assertions.values()), list(new_case.assertions.values())
             )
             row.append(assertions_diff)
 
-        if self.include_durations:
+        if self.include_durations:  # pragma: no branch
             durations_diff = self._render_durations_diff(baseline, new_case)
             row.append(durations_diff)
 
@@ -683,35 +683,35 @@ class ReportCaseRenderer:
         assert baseline.name == new.name, 'This should only be called for aggregates with matching names'
         row = [f'[b i]{baseline.name}[/]']
 
-        if self.include_input:
+        if self.include_input:  # pragma: no branch
             row.append(EMPTY_AGGREGATE_CELL_STR)
 
-        if self.include_metadata:
+        if self.include_metadata:  # pragma: no branch
             row.append(EMPTY_AGGREGATE_CELL_STR)
 
-        if self.include_expected_output:
+        if self.include_expected_output:  # pragma: no branch
             row.append(EMPTY_AGGREGATE_CELL_STR)
 
-        if self.include_output:
+        if self.include_output:  # pragma: no branch
             row.append(EMPTY_AGGREGATE_CELL_STR)
 
-        if self.include_scores:
+        if self.include_scores:  # pragma: no branch
             scores_diff = self._render_dicts_diff(baseline.scores, new.scores, self.score_renderers)
             row.append(scores_diff)
 
-        if self.include_labels:
+        if self.include_labels:  # pragma: no branch
             labels_diff = self._render_dicts_diff(baseline.labels, new.labels, self.label_renderers)
             row.append(labels_diff)
 
-        if self.include_metrics:
+        if self.include_metrics:  # pragma: no branch
             metrics_diff = self._render_dicts_diff(baseline.metrics, new.metrics, self.metric_renderers)
             row.append(metrics_diff)
 
-        if self.include_assertions:
+        if self.include_assertions:  # pragma: no branch
             assertions_diff = self._render_aggregate_assertions_diff(baseline.assertions, new.assertions)
             row.append(assertions_diff)
 
-        if self.include_durations:
+        if self.include_durations:  # pragma: no branch
             durations_diff = self._render_durations_diff(baseline, new)
             row.append(durations_diff)
 
@@ -736,7 +736,7 @@ class ReportCaseRenderer:
         """Build the diff string for a duration value."""
         base_case_durations: dict[str, float] = {'task': base_case.task_duration}
         new_case_durations: dict[str, float] = {'task': new_case.task_duration}
-        if self.include_total_duration:
+        if self.include_total_duration:  # pragma: no branch
             base_case_durations['total'] = base_case.total_duration
             new_case_durations['total'] = new_case.total_duration
         return self._render_dicts_diff(
@@ -908,7 +908,7 @@ class EvaluationRenderer:
         for case in report.cases:
             table.add_row(*case_renderer.build_row(case))
 
-        if self.include_averages:
+        if self.include_averages:  # pragma: no branch
             average = report.averages()
             table.add_row(*case_renderer.build_aggregate_row(average))
         return table
@@ -950,7 +950,7 @@ class EvaluationRenderer:
             row[0] = f'[red]- Removed Case[/]\n{row[0]}'
             table.add_row(*row)
 
-        if self.include_averages:
+        if self.include_averages:  # pragma: no branch
             report_average = ReportCaseAggregate.average(report_cases)
             baseline_average = ReportCaseAggregate.average(baseline_cases)
             table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
