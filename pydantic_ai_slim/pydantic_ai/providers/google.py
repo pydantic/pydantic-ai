@@ -81,7 +81,7 @@ class GoogleProvider(Provider[genai.Client]):
             # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
             api_key = api_key or os.environ.get('GOOGLE_API_KEY')
 
-            if vertexai is None:
+            if vertexai is None:  # pragma: lax no cover
                 vertexai = bool(location or project or credentials)
 
             if not vertexai:
