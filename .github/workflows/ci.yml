@@ -144,6 +144,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - run: mkdir $UV_CACHE_DIR
+
       - uses: actions/cache/restore@v4
         with:
           path: $UV_CACHE_DIR
