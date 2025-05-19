@@ -184,6 +184,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -197,6 +198,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -287,6 +289,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -356,6 +359,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -384,6 +388,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -406,6 +411,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -754,6 +760,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                vendor_id='msg_01BPu4UTHXhqtR1TvsRhBLYY',
             ),
             ModelRequest(
                 parts=[
@@ -792,6 +799,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                vendor_id='msg_01Ua6uyZUF15YV3G1PusaqSq',
             ),
         ]
     )
@@ -924,6 +932,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 ),
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
+                vendor_id='msg_01U58nruzfn9BrXrrF2hhb4m',
             ),
         ]
     )

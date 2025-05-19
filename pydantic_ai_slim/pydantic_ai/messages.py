@@ -569,6 +569,9 @@ class ModelResponse:
     For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
     """
 
+    vendor_id: str | None = None
+    """Vendor ID as specified by the model provider. This can be used to track the specific request to the model."""
+
     def otel_events(self) -> list[Event]:
         """Return OpenTelemetry events for the response."""
         result: list[Event] = []

@@ -172,6 +172,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -179,6 +180,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -252,6 +254,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -343,6 +346,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -367,6 +371,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -383,6 +388,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -723,6 +729,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
             ),
             ModelRequest(
                 parts=[
@@ -760,6 +767,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
             ),
         ]
     )
@@ -804,6 +812,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-BRlkLhPc87BdohVobEJJCGq3rUAG2',
             ),
             ModelRequest(
                 parts=[
@@ -839,6 +848,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-BRlkORPA5rXMV3uzcOcgK4eQFKCVW',
             ),
         ]
     )
@@ -1474,6 +1484,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
             ),
         ]
     )
@@ -1522,6 +1533,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
             ),
             ModelRequest(
                 parts=[
@@ -1548,6 +1560,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
             ),
         ]
     )
