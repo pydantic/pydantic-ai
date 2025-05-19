@@ -273,7 +273,11 @@ class GeminiModel(Model):
                     'Content field missing from Gemini response', str(response)
                 )
         parts = response['candidates'][0]['content']['parts']
-        finish_reasons = response['candidates'][0].get('finish_reason')
+        finish_reasons = [
+            finish_reason
+            for finish_reason in [response['candidates'][0].get('finish_reason')]
+            if finish_reason is not None
+        ]
         id = response.get('id')
         usage = _metadata_as_usage(response)
         usage.requests = 1
