@@ -24,6 +24,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - run: mkdir -p $UV_CACHE_DIR
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: $UV_CACHE_DIR
+          key: ${{ hashFiles('uv.lock') }}-${{ matrix.python-version }}
+
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
@@ -43,6 +50,11 @@ jobs:
 
       - run: uv build --all-packages
       - run: ls -lh dist/
+
+      - uses: actions/cache/save@v4
+        with:
+          path: $UV_CACHE_DIR
+          key: ${{ hashFiles('uv.lock') }}-${{ matrix.python-version }}
 
   # mypy and lint are a bit slower than other jobs, so we run them separately
   mypy:
