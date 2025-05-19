@@ -156,7 +156,7 @@ _url_formats = [
     pytest.param(DocumentUrl('foobar.html'), 'text/html', 'html', id='html'),
     pytest.param(DocumentUrl('foobar.xls'), 'application/vnd.ms-excel', 'xls', id='xls'),
 ]
-if sys.version_info[1] > 11:
+if sys.version_info[1] > 11:  # pragma: no branch
     _url_formats.append(pytest.param(DocumentUrl('foobar.md'), 'text/markdown', 'md', id='md'))
 
 
