@@ -56,7 +56,6 @@ def create_test_module():
             del sys.modules['test_module']
 
 
-@pytest.mark.skip()
 def test_agent_flag(
     capfd: CaptureFixture[str],
     mocker: MockerFixture,
@@ -92,7 +91,6 @@ def test_agent_flag_no_model(env: TestEnv, create_test_module: Callable[..., Non
         cli(['--agent', 'test_module:custom_agent', 'hello'])
 
 
-@pytest.mark.skip()
 def test_agent_flag_set_model(
     capfd: CaptureFixture[str],
     mocker: MockerFixture,
