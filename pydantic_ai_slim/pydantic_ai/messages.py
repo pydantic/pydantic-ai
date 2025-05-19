@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, List, cast, overload
 
 import pydantic
 import pydantic_core
@@ -552,6 +552,15 @@ class ModelResponse:
 
     model_name: str | None = None
     """The name of the model that generated the response."""
+
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    """The ID of the response.
+    
+    If the model provides an ID in the response that will be used, otherwise a random UUID will be generated.
+    """
+
+    finish_reasons: List[str] | None = None
+    """The reasons why the model finished generating the response, one for each part of the response."""
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp of the response.
