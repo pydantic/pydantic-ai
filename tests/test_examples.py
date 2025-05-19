@@ -41,13 +41,13 @@ from .conftest import ClientWithHandler, TestEnv, try_import
 
 try:
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
-except ImportError:
+except ImportError:  # pragma: lax no cover
     GoogleVertexProvider = None
 
 
 try:
     import logfire
-except ImportError:
+except ImportError:  # pragma: lax no cover
     logfire = None
 
 
@@ -74,6 +74,15 @@ def find_filter_examples() -> Iterable[ParameterSet]:
             yield pytest.param(ex, id=test_id)
 
 
+@pytest.fixture
+def reset_cwd():
+    original_cwd = os.getcwd()
+    try:
+        yield
+    finally:
+        os.chdir(original_cwd)
+
+
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(  # noqa: C901
     example: CodeExample,
@@ -83,6 +92,7 @@ def test_docs_examples(  # noqa: C901
     allow_model_requests: None,
     env: TestEnv,
     tmp_path: Path,
+    reset_cwd: None,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
@@ -97,7 +107,7 @@ def test_docs_examples(  # noqa: C901
 
     class CustomEvaluationReport(EvaluationReport):
         def print(self, *args: Any, **kwargs: Any) -> None:
-            if 'width' in kwargs:  # pragma: no cover
+            if 'width' in kwargs:  # pragma: lax no cover
                 raise ValueError('width should not be passed to CustomEvaluationReport')
             table = self.console_table(*args, **kwargs)
             io_file = StringIO()
@@ -106,7 +116,7 @@ def test_docs_examples(  # noqa: C901
 
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
 
-    if sys.version_info >= (3, 10):
+    if sys.version_info >= (3, 10):  # pragma: lax no cover
         mocker.patch('pydantic_ai.mcp.MCPServerHTTP', return_value=MockMCPServer())
         mocker.patch('mcp.server.fastmcp.FastMCP')
 
@@ -132,19 +142,12 @@ def test_docs_examples(  # noqa: C901
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
         if sys.version_info < python_version_info:
-            pytest.skip(f'Python version {python_version} required')
-
-    cwd = Path.cwd()
+            pytest.skip(f'Python version {python_version} required')  # pragma: lax no cover
 
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
         pytest.skip('both running code and lint skipped')
 
-    if opt_title == 'sql_app_evals.py':
-        os.chdir(tmp_path)
-        examples = [{'request': f'sql prompt {i}', 'sql': f'SELECT {i}'} for i in range(15)]
-        with (tmp_path / 'examples.json').open('w') as f:
-            json.dump(examples, f)
-    elif opt_title in {
+    if opt_title in {
         'ai_q_and_a_run.py',
         'count_down_from_persistence.py',
         'generate_dataset_example.py',
@@ -173,7 +176,7 @@ def test_docs_examples(  # noqa: C901
 
     if not opt_lint.startswith('skip'):
         # ruff and seem to black disagree here, not sure if that's easily fixable
-        if eval_example.update_examples:  # pragma: no cover
+        if eval_example.update_examples:  # pragma: lax no cover
             eval_example.format_ruff(example)
         else:
             eval_example.lint_ruff(example)
@@ -184,12 +187,11 @@ def test_docs_examples(  # noqa: C901
         test_globals: dict[str, str] = {}
         if opt_title == 'mcp_client.py':
             test_globals['__name__'] = '__test__'
-        if eval_example.update_examples:  # pragma: no cover
+        if eval_example.update_examples:  # pragma: lax no cover
             module_dict = eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
         else:
             module_dict = eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
 
-        os.chdir(cwd)
         if title := opt_title:
             if title.endswith('.py'):
                 module_name = title[:-3]
@@ -230,9 +232,9 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         return '1'
     elif prompt == 'Select product':
         return 'crisps'
-    elif prompt == 'What is the capital of France?':
+    elif prompt == 'What is the capital of France?':  # pragma: no cover
         return 'Vichy'
-    elif prompt == 'what is 1 + 1?':
+    elif prompt == 'what is 1 + 1?':  # pragma: no cover
         return '2'
     else:  # pragma: no cover
         raise ValueError(f'Unexpected prompt: {prompt}')
@@ -387,6 +389,11 @@ text_responses: dict[str, str | ToolCallPart] = {
             'steps': ['Mix the ingredients', 'Bake at 350°F for 30 minutes'],
         },
     ),
+    'What is 123 / 456?': ToolCallPart(
+        tool_name='divide',
+        args={'numerator': '123', 'denominator': '456'},
+        tool_call_id='pyd_ai_2e0e396768a14fe482df90a29a78dc7b',
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -397,7 +404,9 @@ tool_responses: dict[tuple[str, str], str] = {
 }
 
 
-async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover  # noqa: C901
+async def model_logic(  # noqa: C901
+    messages: list[ModelMessage], info: AgentInfo
+) -> ModelResponse:  # pragma: lax no cover
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
         if isinstance(m.content, list) and m.content[0] == 'This is file d9a13f:':
@@ -496,7 +505,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='final_result', args={'response': win}, tool_call_id='pyd_ai_tool_call_id')]
+            parts=[ToolCallPart(tool_name='final_result', args={'response': win}, tool_call_id='pyd_ai_tool_call_id')],
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roll_die':
         return ModelResponse(
@@ -573,7 +582,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
 
 async def stream_model_logic(  # noqa C901
     messages: list[ModelMessage], info: AgentInfo
-) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: no cover
+) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: lax no cover
     async def stream_text_response(r: str) -> AsyncIterator[str]:
         if isinstance(r, str):
             words = r.split(' ')
@@ -631,14 +640,14 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
     if isinstance(model, FallbackModel):
         # When a fallback model is encountered, replace any OpenAIModel with a model that will raise a ModelHTTPError.
         # Otherwise, do the usual inference.
-        def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelHTTPError(401, 'Invalid API Key')
 
         mock_fallback_models: list[Model] = []
         for m in model.models:
             try:
                 from pydantic_ai.models.openai import OpenAIModel
-            except ImportError:
+            except ImportError:  # pragma: lax no cover
                 OpenAIModel = type(None)
 
             if isinstance(m, OpenAIModel):

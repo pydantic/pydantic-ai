@@ -89,6 +89,9 @@ jobs:
           name: site
           path: site
 
+      # check all docs images are tinified, You'll need an API key from https://tinify.com/ to fix this if it fails
+      - run: uvx tinicly docs --check
+
   test-live:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -221,8 +224,9 @@ jobs:
           name: diff-coverage-html
           path: index.html
 
-      - run: uv run coverage report --fail-under 95
+      - run: uv run coverage report --fail-under 100
       - run: uv run diff-cover coverage.xml --fail-under 100
+      - run: uv run strict-no-cover
 
   test-mcp-run-python:
     runs-on: ubuntu-latest
@@ -390,7 +394,7 @@ jobs:
     steps:
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
       - name: Install dependencies
         run: pip install tweepy==4.14.0
       - name: Send tweet

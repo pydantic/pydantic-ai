@@ -1,11 +1,12 @@
 from __future__ import annotations as _annotations
 
+import base64
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
-from typing import Annotated, Any, Literal, Union, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
 
 import pydantic
 import pydantic_core
@@ -14,6 +15,11 @@ from typing_extensions import TypeAlias
 
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
+from .usage import Usage
+
+if TYPE_CHECKING:
+    from .models.instrumented import InstrumentationSettings
+
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
@@ -66,7 +72,7 @@ class SystemPromptPart:
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self) -> Event:
+    def otel_event(self, _settings: InstrumentationSettings) -> Event:
         return Event('gen_ai.system.message', body={'content': self.content, 'role': 'system'})
 
 
@@ -81,7 +87,7 @@ class VideoUrl:
     """Type identifier, this is available on all parts as a discriminator."""
 
     @property
-    def media_type(self) -> VideoMediaType:  # pragma: no cover
+    def media_type(self) -> VideoMediaType:
         """Return the media type of the video, based on the url."""
         if self.url.endswith('.mkv'):
             return 'video/x-matroska'
@@ -108,7 +114,7 @@ class VideoUrl:
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _video_format(self.media_type)
+        return _video_format_lookup[self.media_type]
 
 
 @dataclass
@@ -130,6 +136,11 @@ class AudioUrl:
             return 'audio/wav'
         else:
             raise ValueError(f'Unknown audio file extension: {self.url}')
+
+    @property
+    def format(self) -> AudioFormat:
+        """The file format of the audio file."""
+        return _audio_format_lookup[self.media_type]
 
 
 @dataclass
@@ -162,7 +173,7 @@ class ImageUrl:
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _image_format(self.media_type)
+        return _image_format_lookup[self.media_type]
 
 
 @dataclass
@@ -180,7 +191,7 @@ class DocumentUrl:
         """Return the media type of the document, based on the url."""
         type_, _ = guess_type(self.url)
         if type_ is None:
-            raise RuntimeError(f'Unknown document file extension: {self.url}')
+            raise ValueError(f'Unknown document file extension: {self.url}')
         return type_
 
     @property
@@ -189,7 +200,11 @@ class DocumentUrl:
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _document_format(self.media_type)
+        media_type = self.media_type
+        try:
+            return _document_format_lookup[media_type]
+        except KeyError as e:
+            raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
 @dataclass
@@ -223,93 +238,58 @@ class BinaryContent:
     @property
     def is_document(self) -> bool:
         """Return `True` if the media type is a document type."""
-        return self.media_type in {
-            'application/pdf',
-            'text/plain',
-            'text/csv',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'text/html',
-            'text/markdown',
-            'application/vnd.ms-excel',
-        }
+        return self.media_type in _document_format_lookup
 
     @property
     def format(self) -> str:
         """The file format of the binary content."""
-        if self.is_audio:
-            if self.media_type == 'audio/mpeg':
-                return 'mp3'
-            elif self.media_type == 'audio/wav':
-                return 'wav'
-        elif self.is_image:
-            return _image_format(self.media_type)
-        elif self.is_document:
-            return _document_format(self.media_type)
-        elif self.is_video:
-            return _video_format(self.media_type)
-        raise ValueError(f'Unknown media type: {self.media_type}')
+        try:
+            if self.is_audio:
+                return _audio_format_lookup[self.media_type]
+            elif self.is_image:
+                return _image_format_lookup[self.media_type]
+            elif self.is_video:
+                return _video_format_lookup[self.media_type]
+            else:
+                return _document_format_lookup[self.media_type]
+        except KeyError as e:
+            raise ValueError(f'Unknown media type: {self.media_type}') from e
 
 
 UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
 
 # Ideally this would be a Union of types, but Python 3.9 requires it to be a string, and strings don't work with `isinstance``.
 MultiModalContentTypes = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
-
-
-def _document_format(media_type: str) -> DocumentFormat:
-    if media_type == 'application/pdf':
-        return 'pdf'
-    elif media_type == 'text/plain':
-        return 'txt'
-    elif media_type == 'text/csv':
-        return 'csv'
-    elif media_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-        return 'docx'
-    elif media_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
-        return 'xlsx'
-    elif media_type == 'text/html':
-        return 'html'
-    elif media_type == 'text/markdown':
-        return 'md'
-    elif media_type == 'application/vnd.ms-excel':
-        return 'xls'
-    else:
-        raise ValueError(f'Unknown document media type: {media_type}')
-
-
-def _image_format(media_type: str) -> ImageFormat:
-    if media_type == 'image/jpeg':
-        return 'jpeg'
-    elif media_type == 'image/png':
-        return 'png'
-    elif media_type == 'image/gif':
-        return 'gif'
-    elif media_type == 'image/webp':
-        return 'webp'
-    else:
-        raise ValueError(f'Unknown image media type: {media_type}')
-
-
-def _video_format(media_type: str) -> VideoFormat:
-    if media_type == 'video/x-matroska':
-        return 'mkv'
-    elif media_type == 'video/quicktime':
-        return 'mov'
-    elif media_type == 'video/mp4':
-        return 'mp4'
-    elif media_type == 'video/webm':
-        return 'webm'
-    elif media_type == 'video/x-flv':
-        return 'flv'
-    elif media_type == 'video/mpeg':
-        return 'mpeg'
-    elif media_type == 'video/x-ms-wmv':
-        return 'wmv'
-    elif media_type == 'video/3gpp':
-        return 'three_gp'
-    else:  # pragma: no cover
-        raise ValueError(f'Unknown video media type: {media_type}')
+_document_format_lookup: dict[str, DocumentFormat] = {
+    'application/pdf': 'pdf',
+    'text/plain': 'txt',
+    'text/csv': 'csv',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'text/html': 'html',
+    'text/markdown': 'md',
+    'application/vnd.ms-excel': 'xls',
+}
+_audio_format_lookup: dict[str, AudioFormat] = {
+    'audio/mpeg': 'mp3',
+    'audio/wav': 'wav',
+}
+_image_format_lookup: dict[str, ImageFormat] = {
+    'image/jpeg': 'jpeg',
+    'image/png': 'png',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+}
+_video_format_lookup: dict[str, VideoFormat] = {
+    'video/x-matroska': 'mkv',
+    'video/quicktime': 'mov',
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'video/x-flv': 'flv',
+    'video/mpeg': 'mpeg',
+    'video/x-ms-wmv': 'wmv',
+    'video/3gpp': 'three_gp',
+}
 
 
 @dataclass
@@ -329,7 +309,7 @@ class UserPromptPart:
     part_kind: Literal['user-prompt'] = 'user-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self) -> Event:
+    def otel_event(self, settings: InstrumentationSettings) -> Event:
         content: str | list[dict[str, Any] | str]
         if isinstance(self.content, str):
             content = self.content
@@ -340,8 +320,13 @@ class UserPromptPart:
                     content.append(part)
                 elif isinstance(part, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
                     content.append({'kind': part.kind, 'url': part.url})
+                elif isinstance(part, BinaryContent):
+                    converted_part = {'kind': part.kind, 'media_type': part.media_type}
+                    if settings.include_binary_content:
+                        converted_part['binary_content'] = base64.b64encode(part.data).decode()
+                    content.append(converted_part)
                 else:
-                    content.append({'kind': part.kind})
+                    content.append({'kind': part.kind})  # pragma: no cover
         return Event('gen_ai.user.message', body={'content': content, 'role': 'user'})
 
 
@@ -378,11 +363,11 @@ class ToolReturnPart:
         """Return a dictionary representation of the content, wrapping non-dict types appropriately."""
         # gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict
         if isinstance(self.content, dict):
-            return tool_return_ta.dump_python(self.content, mode='json')  # pyright: ignore[reportUnknownMemberType]
+            return tool_return_ta.dump_python(self.content, mode='json')  # pyright: ignore[reportUnknownMemberType]  # pragma: no cover
         else:
             return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
 
-    def otel_event(self) -> Event:
+    def otel_event(self, _settings: InstrumentationSettings) -> Event:
         return Event(
             'gen_ai.tool.message',
             body={'content': self.content, 'role': 'tool', 'id': self.tool_call_id, 'name': self.tool_name},
@@ -439,7 +424,7 @@ class RetryPromptPart:
             description = f'{len(self.content)} validation errors: {json_errors.decode()}'
         return f'{description}\n\nFix the errors and try again.'
 
-    def otel_event(self) -> Event:
+    def otel_event(self, _settings: InstrumentationSettings) -> Event:
         if self.tool_name is None:
             return Event('gen_ai.user.message', body={'content': self.model_response(), 'role': 'user'})
         else:
@@ -472,6 +457,11 @@ class ModelRequest:
 
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
+
+    @classmethod
+    def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
+        """Create a `ModelRequest` with a single user prompt as text."""
+        return cls(parts=[UserPromptPart(user_prompt)], instructions=instructions)
 
 
 @dataclass
@@ -554,6 +544,12 @@ class ModelResponse:
     parts: list[ModelResponsePart]
     """The parts of the model message."""
 
+    usage: Usage = field(default_factory=Usage)
+    """Usage information for the request.
+
+    This has a default to make tests easier, and to support loading old messages where usage will be missing.
+    """
+
     model_name: str | None = None
     """The name of the model that generated the response."""
 
@@ -629,7 +625,7 @@ class TextPartDelta:
             ValueError: If `part` is not a `TextPart`.
         """
         if not isinstance(part, TextPart):
-            raise ValueError('Cannot apply TextPartDeltas to non-TextParts')
+            raise ValueError('Cannot apply TextPartDeltas to non-TextParts')  # pragma: no cover
         return replace(part, content=part.content + self.content_delta)
 
 
@@ -692,7 +688,9 @@ class ToolCallPartDelta:
         if isinstance(part, ToolCallPartDelta):
             return self._apply_to_delta(part)
 
-        raise ValueError(f'Can only apply ToolCallPartDeltas to ToolCallParts or ToolCallPartDeltas, not {part}')
+        raise ValueError(  # pragma: no cover
+            f'Can only apply ToolCallPartDeltas to ToolCallParts or ToolCallPartDeltas, not {part}'
+        )
 
     def _apply_to_delta(self, delta: ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta:
         """Internal helper to apply this delta to another delta."""
