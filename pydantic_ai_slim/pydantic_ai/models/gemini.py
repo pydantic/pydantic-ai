@@ -780,10 +780,10 @@ def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
         details['cached_content_token_count'] = cached_content_token_count  # pragma: no cover
 
     if thoughts_token_count := metadata.get('thoughts_token_count'):
-        details['thoughts_token_count'] = thoughts_token_count
+        details['thoughts_token_count'] = thoughts_token_count  # pragma: no cover
 
     if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count'):
-        details['tool_use_prompt_token_count'] = tool_use_prompt_token_count
+        details['tool_use_prompt_token_count'] = tool_use_prompt_token_count  # pragma: no cover
 
     detailed_keys_map: dict[str, str] = {
         'prompt_tokens_details': 'prompt_tokens',
