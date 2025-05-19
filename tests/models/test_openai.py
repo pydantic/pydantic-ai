@@ -140,6 +140,19 @@ def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage
     )
 
 
+def completion_message_created_none(
+    message: ChatCompletionMessage, *, usage: CompletionUsage | None = None
+) -> chat.ChatCompletion:
+    return chat.ChatCompletion.model_construct(
+        created=None,
+        id='123',
+        choices=[Choice(finish_reason='stop', index=0, message=message)],
+        model='gpt-4o-123',
+        object='chat.completion',
+        usage=usage,
+    )
+
+
 async def test_request_simple_success(allow_model_requests: None):
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
@@ -386,6 +399,29 @@ async def test_request_tool_call(allow_model_requests: None):
             total_tokens=9,
             details={'cached_tokens': 3},
         )
+    )
+
+
+async def test_request_created_at_none(allow_model_requests: None):
+    c = completion_message_created_none(
+        ChatCompletionMessage(content='world', role='assistant'),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello')
+    assert result.output == 'world'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                usage=Usage(requests=1),
+                model_name='gpt-4o-123',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
     )
 
 
