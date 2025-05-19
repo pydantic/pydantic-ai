@@ -197,7 +197,7 @@ display(Image(fives_graph.mermaid_image(start_node=DivisibleBy5)))
 
 The "state" concept in `pydantic-graph` provides an optional way to access and mutate an object (often a `dataclass` or Pydantic model) as nodes run in a graph. If you think of Graphs as a production line, then your state is the engine being passed along the line and built up by each node as the graph is run.
 
-In the future, we intend to extend `pydantic-graph` to provide state persistence with the state recorded after each node is run, see [#695](https://github.com/pydantic/pydantic-ai/issues/695).
+`pydantic-graph` provides state persistence, with the state recorded after each node is run. (See [State Persistence](#state-persistence).)
 
 Here's an example of a graph which represents a vending machine where the user may insert coins and select a product to purchase.
 
@@ -812,7 +812,7 @@ import asyncio
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, FullStatePersistence, Graph, GraphRunContext
 
 
 @dataclass
@@ -856,11 +856,11 @@ fives_graph = Graph(nodes=[DivisibleBy5, Increment])
 async def main():
     with ProcessPoolExecutor() as executor:
         deps = GraphDeps(executor)
-        result = await fives_graph.run(DivisibleBy5(3), deps=deps)
+        result = await fives_graph.run(DivisibleBy5(3), deps=deps, persistence=FullStatePersistence())
     print(result.output)
     #> 5
     # the full history is quite verbose (see below), so we'll just print the summary
-    print([item.data_snapshot() for item in result.history])
+    print([item.node for item in result.persistence.history])
     """
     [
         DivisibleBy5(foo=3),

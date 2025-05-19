@@ -128,7 +128,7 @@ class _VertexAIAuth(httpx.Auth):
         self.credentials = None
 
     async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
-        if self.credentials is None:
+        if self.credentials is None:  # pragma: no branch
             self.credentials = await self._get_credentials()
         if self.credentials.token is None:  # type: ignore[reportUnknownMemberType]
             await self._refresh_token()
@@ -157,9 +157,9 @@ class _VertexAIAuth(httpx.Auth):
             creds, creds_project_id = await _async_google_auth()
             creds_source = '`google.auth.default()`'
 
-        if self.project_id is None:
+        if self.project_id is None:  # pragma: no branch
             if creds_project_id is None:
-                raise UserError(f'No project_id provided and none found in {creds_source}')
+                raise UserError(f'No project_id provided and none found in {creds_source}')  # pragma: no cover
             self.project_id = creds_project_id
         return creds
 

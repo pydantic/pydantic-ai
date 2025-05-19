@@ -94,8 +94,8 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
         docstring = cls.__doc__
         # dataclasses get an automatic docstring which is just their signature, we don't want that
         if docstring and is_dataclass(cls) and docstring.startswith(f'{cls.__name__}('):
-            docstring = None
-        if docstring:
+            docstring = None  # pragma: no cover
+        if docstring:  # pragma: no branch
             # remove indentation from docstring
             import inspect
 

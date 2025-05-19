@@ -1,14 +1,17 @@
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, cast
+from typing import Any, Literal, cast
+
+from typing_extensions import TypedDict
 
 from pydantic_ai import models
+from pydantic_ai.settings import ModelSettings
 
 from ..otel.span_tree import SpanQuery
 from .context import EvaluatorContext
-from .evaluator import EvaluationReason, Evaluator, EvaluatorOutput
+from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
 
 __all__ = (
     'Equals',
@@ -19,6 +22,7 @@ __all__ = (
     'LLMJudge',
     'HasMatchingSpan',
     'Python',
+    'OutputConfig',
 )
 
 
@@ -27,6 +31,7 @@ class Equals(Evaluator[object, object, object]):
     """Check if the output exactly equals the provided value."""
 
     value: Any
+    evaluation_name: str | None = field(default=None, repr=False)
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> bool:
         return ctx.output == self.value
@@ -35,6 +40,8 @@ class Equals(Evaluator[object, object, object]):
 @dataclass
 class EqualsExpected(Evaluator[object, object, object]):
     """Check if the output exactly equals the expected output."""
+
+    evaluation_name: str | None = field(default=None, repr=False)
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> bool | dict[str, bool]:
         if ctx.expected_output is None:
@@ -67,6 +74,7 @@ class Contains(Evaluator[object, object, object]):
     value: Any
     case_sensitive: bool = True
     as_strings: bool = False
+    evaluation_name: str | None = field(default=None, repr=False)
 
     def evaluate(
         self,
@@ -126,6 +134,7 @@ class IsInstance(Evaluator[object, object, object]):
     """Check if the output is an instance of a type with the given name."""
 
     type_name: str
+    evaluation_name: str | None = field(default=None, repr=False)
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluationReason:
         output = ctx.output
@@ -153,6 +162,27 @@ class MaxDuration(Evaluator[object, object, object]):
         return duration <= seconds
 
 
+class OutputConfig(TypedDict, total=False):
+    """Configuration for the score and assertion outputs of the LLMJudge evaluator."""
+
+    evaluation_name: str
+    include_reason: bool
+
+
+def _update_combined_output(
+    combined_output: dict[str, EvaluationScalar | EvaluationReason],
+    value: EvaluationScalar,
+    reason: str | None,
+    config: OutputConfig,
+    default_name: str,
+) -> None:
+    name = config.get('evaluation_name') or default_name
+    if config.get('include_reason') and reason is not None:
+        combined_output[name] = EvaluationReason(value=value, reason=reason)
+    else:
+        combined_output[name] = value
+
+
 @dataclass
 class LLMJudge(Evaluator[object, object, object]):
     """Judge whether the output of a language model meets the criteria of a provided rubric.
@@ -164,25 +194,43 @@ class LLMJudge(Evaluator[object, object, object]):
     rubric: str
     model: models.Model | models.KnownModelName | None = None
     include_input: bool = False
+    model_settings: ModelSettings | None = None
+    score: OutputConfig | Literal[False] = False
+    assertion: OutputConfig | Literal[False] = field(default_factory=lambda: OutputConfig(include_reason=True))
 
     async def evaluate(
         self,
         ctx: EvaluatorContext[object, object, object],
-    ) -> EvaluationReason:
+    ) -> EvaluatorOutput:
         if self.include_input:
             from .llm_as_a_judge import judge_input_output
 
-            grading_output = await judge_input_output(ctx.inputs, ctx.output, self.rubric, self.model)
+            grading_output = await judge_input_output(
+                ctx.inputs, ctx.output, self.rubric, self.model, self.model_settings
+            )
         else:
             from .llm_as_a_judge import judge_output
 
-            grading_output = await judge_output(ctx.output, self.rubric, self.model)
-        return EvaluationReason(value=grading_output.pass_, reason=grading_output.reason)
+            grading_output = await judge_output(ctx.output, self.rubric, self.model, self.model_settings)
+
+        output: dict[str, EvaluationScalar | EvaluationReason] = {}
+        include_both = self.score is not False and self.assertion is not False
+        evaluation_name = self.get_default_evaluation_name()
+
+        if self.score is not False:
+            default_name = f'{evaluation_name}_score' if include_both else evaluation_name
+            _update_combined_output(output, grading_output.score, grading_output.reason, self.score, default_name)
+
+        if self.assertion is not False:
+            default_name = f'{evaluation_name}_pass' if include_both else evaluation_name
+            _update_combined_output(output, grading_output.pass_, grading_output.reason, self.assertion, default_name)
+
+        return output
 
     def build_serialization_arguments(self):
         result = super().build_serialization_arguments()
         # always serialize the model as a string when present; use its name if it's a KnownModelName
-        if (model := result.get('model')) and isinstance(model, models.Model):
+        if (model := result.get('model')) and isinstance(model, models.Model):  # pragma: no branch
             result['model'] = f'{model.system}:{model.model_name}'
 
         # Note: this may lead to confusion if you try to serialize-then-deserialize with a custom model.
@@ -196,6 +244,7 @@ class HasMatchingSpan(Evaluator[object, object, object]):
     """Check if the span tree contains a span that matches the specified query."""
 
     query: SpanQuery
+    evaluation_name: str | None = field(default=None, repr=False)
 
     def evaluate(
         self,
@@ -213,6 +262,7 @@ class Python(Evaluator[object, object, object]):
     """
 
     expression: str
+    evaluation_name: str | None = field(default=None, repr=False)
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
         # Evaluate the condition, exposing access to the evaluator context as `ctx`.

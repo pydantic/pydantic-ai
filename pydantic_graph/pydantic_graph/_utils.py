@@ -58,7 +58,7 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
     """Extract the arguments of a Union type if `response_type` is a union, otherwise return an empty tuple."""
     # similar to `pydantic_ai_slim/pydantic_ai/_result.py:get_union_args`
     if typing_objects.is_typealiastype(tp):
-        tp = tp.__value__
+        tp = tp.__value__  # pragma: no cover
 
     origin = get_origin(tp)
     if is_union_origin(origin):
@@ -96,8 +96,8 @@ def get_parent_namespace(frame: types.FrameType | None) -> dict[str, Any] | None
     If the graph is defined with generics `Graph[a, b]` then another frame is inserted, and we have to skip that
     to get the correct namespace.
     """
-    if frame is not None:
-        if back := frame.f_back:
+    if frame is not None:  # pragma: no branch
+        if back := frame.f_back:  # pragma: no branch
             if back.f_globals.get('__name__') == 'typing':
                 # If the class calling this function is generic, explicitly parameterizing the class
                 # results in a `typing._GenericAlias` instance, which proxies instantiation calls to the

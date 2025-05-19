@@ -11,13 +11,14 @@ from pydantic_ai import Agent, ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import Usage
 
 from ..conftest import IsNow, try_import
 
 if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup as ExceptionGroup
+    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
 else:
-    ExceptionGroup = ExceptionGroup
+    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
@@ -59,6 +60,7 @@ def test_first_successful() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=1, total_tokens=52),
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -83,6 +85,7 @@ def test_first_failed() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=1, total_tokens=52),
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -108,6 +111,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=1, total_tokens=52),
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -166,16 +170,19 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
+                    usage=Usage(request_tokens=50, response_tokens=1, total_tokens=51),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
+                    usage=Usage(request_tokens=50, response_tokens=2, total_tokens=52),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
+                    usage=Usage(request_tokens=50, response_tokens=2, total_tokens=52),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -339,16 +346,19 @@ async def test_first_success_streaming() -> None:
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
+                    usage=Usage(request_tokens=50, response_tokens=1, total_tokens=51),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
+                    usage=Usage(request_tokens=50, response_tokens=2, total_tokens=52),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
+                    usage=Usage(request_tokens=50, response_tokens=2, total_tokens=52),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -365,16 +375,19 @@ async def test_first_failed_streaming() -> None:
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
+                    usage=Usage(request_tokens=50, response_tokens=1, total_tokens=51),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
+                    usage=Usage(request_tokens=50, response_tokens=2, total_tokens=52),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
+                    usage=Usage(request_tokens=50, response_tokens=2, total_tokens=52),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -388,7 +401,7 @@ async def test_all_failed_streaming() -> None:
     agent = Agent(model=fallback_model)
     with pytest.raises(ExceptionGroup) as exc_info:
         async with agent.run_stream('hello') as result:
-            [c async for c, _is_last in result.stream_structured(debounce_by=None)]
+            [c async for c, _is_last in result.stream_structured(debounce_by=None)]  # pragma: lax no cover
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     exceptions = exc_info.value.exceptions
     assert len(exceptions) == 2

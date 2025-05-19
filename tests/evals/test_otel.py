@@ -879,7 +879,7 @@ async def test_context_subtree_invalid_tracer_provider(mocker: MockerFixture):
 
     mocker.patch('pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=None)
     with pytest.raises(TypeError) as exc_info:
-        with context_subtree():  # pragma: no cover
+        with context_subtree():
             pass
     assert str(exc_info.value) == snapshot(
         "Expected `tracer_provider` to have an `add_span_processor` method; got an instance of <class 'NoneType'>. For help resolving this, please create an issue at https://github.com/pydantic/pydantic-ai/issues."
