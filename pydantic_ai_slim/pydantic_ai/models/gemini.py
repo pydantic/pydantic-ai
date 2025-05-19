@@ -273,9 +273,11 @@ class GeminiModel(Model):
                     'Content field missing from Gemini response', str(response)
                 )
         parts = response['candidates'][0]['content']['parts']
+        finish_reasons = response['candidates'][0].get('finish_reason')
+        id = response.get('id')
         usage = _metadata_as_usage(response)
         usage.requests = 1
-        return _process_response_from_parts(parts, response.get('model_version', self._model_name), usage)
+        return _process_response_from_parts(parts, response.get('model_version', self._model_name), usage, id=id, finish_reasons=finish_reasons)
 
     async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -597,7 +599,7 @@ def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart
 
 
 def _process_response_from_parts(
-    parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, usage: usage.Usage
+    parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, usage: usage.Usage, id: str, finish_reasons: list[str]
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
@@ -609,7 +611,7 @@ def _process_response_from_parts(
             raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
-    return ModelResponse(parts=items, usage=usage, model_name=model_name)
+    return ModelResponse(parts=items, usage=usage, model_name=model_name, id=id, finish_reasons=finish_reasons)
 
 
 class _GeminiFunctionCall(TypedDict):
@@ -721,6 +723,8 @@ class _GeminiResponse(TypedDict):
     usage_metadata: NotRequired[Annotated[_GeminiUsageMetaData, pydantic.Field(alias='usageMetadata')]]
     prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, pydantic.Field(alias='promptFeedback')]]
     model_version: NotRequired[Annotated[str, pydantic.Field(alias='modelVersion')]]
+    id: NotRequired[Annotated[str, pydantic.Field(alias='responseId')]]
+
 
 
 class _GeminiCandidates(TypedDict):
