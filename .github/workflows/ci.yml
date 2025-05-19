@@ -12,7 +12,7 @@ env:
   COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: "1"
-  UV_CACHE_DIR: "~/.cache/uv"
+  UV_CACHE_DIR: ".cache/uv"
 
 
 permissions:
@@ -149,7 +149,7 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: $UV_CACHE_DIR
-          key: ${{ runner.os }}-${{ hashFiles('uv.lock') }}-${{ matrix.python-version }}
+          key: ${{ hashFiles('uv.lock') }}-${{ matrix.python-version }}
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -188,7 +188,7 @@ jobs:
       - uses: actions/cache/save@v4
         with:
           path: $UV_CACHE_DIR
-          key: ${{ runner.os }}-${{ hashFiles('uv.lock') }}-${{ matrix.python-version }}
+          key: ${{ hashFiles('uv.lock') }}-${{ matrix.python-version }}
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
