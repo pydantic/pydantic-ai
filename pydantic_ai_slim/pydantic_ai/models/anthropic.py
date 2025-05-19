@@ -35,8 +35,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    cached_async_http_client,
     check_allow_model_requests,
+    download_item,
     get_user_agent,
 )
 
@@ -372,10 +372,9 @@ class AnthropicModel(Model):
                     if item.media_type == 'application/pdf':
                         yield DocumentBlockParam(source={'url': item.url, 'type': 'url'}, type='document')
                     elif item.media_type == 'text/plain':
-                        response = await cached_async_http_client().get(item.url)
-                        response.raise_for_status()
+                        text, _ = await download_item(item, data_format='text')
                         yield DocumentBlockParam(
-                            source=PlainTextSourceParam(data=response.text, media_type=item.media_type, type='text'),
+                            source=PlainTextSourceParam(data=text, media_type='text/plain', type='text'),
                             type='document',
                         )
                     else:  # pragma: no cover

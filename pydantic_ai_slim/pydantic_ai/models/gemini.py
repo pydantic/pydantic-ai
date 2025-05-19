@@ -41,8 +41,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    cached_async_http_client,
     check_allow_model_requests,
+    download_item,
     get_user_agent,
 )
 from ._json_schema import JsonSchema, WalkJsonSchema
@@ -349,21 +349,8 @@ class GeminiModel(Model):
                         _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
                     )
                 elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl, VideoUrl)):
-                    client = cached_async_http_client()
-                    response = await client.get(item.url, follow_redirects=True)
-                    response.raise_for_status()
-                    content_type = response.headers.get('Content-Type')
-                    if content_type:
-                        mime_type = content_type.split(';')[0]
-                    else:
-                        mime_type = item.media_type
-
-                    inline_data = _GeminiInlineDataPart(
-                        inline_data={
-                            'data': base64.b64encode(response.content).decode('utf-8'),
-                            'mime_type': mime_type,
-                        }
-                    )
+                    base64_data, media_type = await download_item(item, data_format='base64')
+                    inline_data = _GeminiInlineDataPart(inline_data={'data': base64_data, 'mime_type': media_type})
                     content.append(inline_data)
                 else:
                     assert_never(item)

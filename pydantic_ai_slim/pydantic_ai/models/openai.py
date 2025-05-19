@@ -39,8 +39,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    cached_async_http_client,
     check_allow_model_requests,
+    download_item,
     get_user_agent,
 )
 from ._json_schema import JsonSchema, WalkJsonSchema
@@ -448,29 +448,13 @@ class OpenAIModel(Model):
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):
-                    client = cached_async_http_client()
-                    response = await client.get(item.url)
-                    response.raise_for_status()
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    content_type = response.headers['content-type']
-                    if content_type:
-                        audio_format: Any = content_type.removeprefix('audio/')
-                    else:
-                        audio_format = item.media_type.removeprefix('audio/')
-                    audio = InputAudio(data=base64_encoded, format=audio_format)
+                    base64_data, format = await download_item(item, data_format='base64', type_format='extension')
+                    assert format in ('wav', 'mp3'), f'Unsupported audio format: {format}'
+                    audio = InputAudio(data=base64_data, format=format)
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
-                    client = cached_async_http_client()
-                    response = await client.get(item.url)
-                    response.raise_for_status()
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    content_type = response.headers.get('content-type')
-                    if content_type:
-                        media_type = content_type.split(';')[0]
-                    else:
-                        media_type = item.media_type
-                    file_data = f'data:{media_type};base64,{base64_encoded}'
-                    file = File(file=FileFile(file_data=file_data, filename=f'filename.{item.format}'), type='file')
+                    base64_uri, format = await download_item(item, data_format='base64_uri', type_format='extension')
+                    file = File(file=FileFile(file_data=base64_uri, filename=f'filename.{format}'), type='file')
                     content.append(file)
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
@@ -774,31 +758,21 @@ class OpenAIResponsesModel(Model):
                         responses.ResponseInputImageParam(image_url=item.url, type='input_image', detail='auto')
                     )
                 elif isinstance(item, AudioUrl):  # pragma: no cover
-                    client = cached_async_http_client()
-                    response = await client.get(item.url)
-                    response.raise_for_status()
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                    base64_uri, format = await download_item(item, data_format='base64_uri', type_format='extension')
                     content.append(
                         responses.ResponseInputFileParam(
                             type='input_file',
-                            file_data=f'data:{item.media_type};base64,{base64_encoded}',
+                            file_data=base64_uri,
+                            filename=f'filename.{format}',
                         )
                     )
                 elif isinstance(item, DocumentUrl):
-                    client = cached_async_http_client()
-                    response = await client.get(item.url)
-                    response.raise_for_status()
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    content_type = response.headers.get('content-type')
-                    if content_type:
-                        media_type = content_type.split(';')[0]
-                    else:
-                        media_type = item.media_type
+                    base64_uri, format = await download_item(item, data_format='base64_uri', type_format='extension')
                     content.append(
                         responses.ResponseInputFileParam(
                             type='input_file',
-                            file_data=f'data:{media_type};base64,{base64_encoded}',
-                            filename=f'filename.{item.format}',
+                            file_data=base64_uri,
+                            filename=f'filename.{format}',
                         )
                     )
                 elif isinstance(item, VideoUrl):  # pragma: no cover

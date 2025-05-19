@@ -32,7 +32,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -48,6 +48,7 @@ if TYPE_CHECKING:
         ConverseResponseTypeDef,
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
+        DocumentBlockTypeDef,
         GuardrailConfigurationTypeDef,
         ImageBlockTypeDef,
         InferenceConfigurationTypeDef,
@@ -479,25 +480,26 @@ class BedrockConverseModel(Model):
                     else:
                         raise NotImplementedError('Binary content is not supported yet.')
                 elif isinstance(item, (ImageUrl, DocumentUrl, VideoUrl)):
-                    response = await cached_async_http_client().get(item.url)
-                    response.raise_for_status()
+                    data, format = await download_item(item, data_format='bytes', type_format='extension')
                     if item.kind == 'image-url':
-                        format = item.media_type.split('/')[1]
                         assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
-                        image: ImageBlockTypeDef = {'format': format, 'source': {'bytes': response.content}}
+                        image: ImageBlockTypeDef = {'format': format, 'source': {'bytes': data}}
                         content.append({'image': image})
 
                     elif item.kind == 'document-url':
                         name = f'Document {next(document_count)}'
-                        data = response.content
-                        content.append({'document': {'name': name, 'format': item.format, 'source': {'bytes': data}}})
+                        document: DocumentBlockTypeDef = {
+                            'name': name,
+                            'format': item.format,
+                            'source': {'bytes': data},
+                        }
+                        content.append({'document': document})
 
                     elif item.kind == 'video-url':  # pragma: no branch
-                        format = item.media_type.split('/')[1]
                         assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp'), (
                             f'Unsupported video format: {format}'
                         )
-                        video: VideoBlockTypeDef = {'format': format, 'source': {'bytes': response.content}}
+                        video: VideoBlockTypeDef = {'format': format, 'source': {'bytes': data}}
                         content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
