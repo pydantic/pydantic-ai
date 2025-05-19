@@ -262,7 +262,7 @@ class AnthropicModel(Model):
                     )
                 )
 
-        return ModelResponse(items, usage=_map_usage(response), model_name=response.model)
+        return ModelResponse(items, usage=_map_usage(response), model_name=response.model, vendor_id=response.id)
 
     async def _process_streamed_response(self, response: AsyncStream[RawMessageStreamEvent]) -> StreamedResponse:
         peekable_response = _utils.PeekableAsyncStream(response)
