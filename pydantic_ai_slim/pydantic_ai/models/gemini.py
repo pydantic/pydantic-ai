@@ -278,7 +278,7 @@ class GeminiModel(Model):
             for finish_reason in [response['candidates'][0].get('finish_reason')]
             if finish_reason is not None
         ]
-        id = response.get('id')
+        id = response.get('id', str(uuid4()))
         usage = _metadata_as_usage(response)
         usage.requests = 1
         return _process_response_from_parts(
@@ -608,7 +608,7 @@ def _process_response_from_parts(
     parts: Sequence[_GeminiPartUnion],
     model_name: GeminiModelName,
     usage: usage.Usage,
-    id: str,
+    id: str | None,
     finish_reasons: list[str],
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
