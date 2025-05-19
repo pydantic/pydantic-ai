@@ -562,6 +562,13 @@ class ModelResponse:
     kind: Literal['response'] = 'response'
     """Message type identifier, this is available on all parts as a discriminator."""
 
+    vendor_details: dict[str, Any] | None = field(default=None, repr=False)
+    """Additional vendor-specific details in a serializable format.
+
+    This allows storing selected vendor-specific data that isn't mapped to standard ModelResponse fields.
+    For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
+    """
+
     def otel_events(self) -> list[Event]:
         """Return OpenTelemetry events for the response."""
         result: list[Event] = []

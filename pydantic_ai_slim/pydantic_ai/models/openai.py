@@ -104,6 +104,12 @@ class OpenAIModelSettings(ModelSettings, total=False):
     result in faster responses and fewer tokens used on reasoning in a response.
     """
 
+    openai_logprobs: bool
+    """Include log probabilities in the response."""
+
+    openai_top_logprobs: int
+    """Include log probabilities of the top n tokens in the response."""
+
     openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
 
@@ -287,6 +293,8 @@ class OpenAIModel(Model):
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
+                logprobs=model_settings.get('openai_logprobs', NOT_GIVEN),
+                top_logprobs=model_settings.get('openai_top_logprobs', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
@@ -301,12 +309,37 @@ class OpenAIModel(Model):
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+        vendor_details: dict[str, Any] | None = None
+
+        # Add logprobs to vendor_details if available
+        if choice.logprobs is not None and choice.logprobs.content:
+            # Convert logprobs to a serializable format
+            vendor_details = {
+                'logprobs': [
+                    {
+                        'token': lp.token,
+                        'bytes': lp.bytes,
+                        'logprob': lp.logprob,
+                        'top_logprobs': [
+                            {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                        ],
+                    }
+                    for lp in choice.logprobs.content
+                ],
+            }
+
         if choice.message.content is not None:
             items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
-        return ModelResponse(items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp)
+        return ModelResponse(
+            items,
+            usage=_map_usage(response),
+            model_name=response.model,
+            timestamp=timestamp,
+            vendor_details=vendor_details,
+        )
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
