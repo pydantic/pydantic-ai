@@ -559,7 +559,7 @@ class ModelResponse:
     If the model provides an ID in the response that will be used, otherwise a random UUID will be generated.
     """
 
-    finish_reasons: list[str] | None = None
+    finish_reasons: list[str] = field(default_factory=list)
     """The reasons why the model finished generating the response, one for each part of the response."""
 
     timestamp: datetime = field(default_factory=_now_utc)
