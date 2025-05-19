@@ -52,6 +52,7 @@ async def model_request(
             model_name='claude-3-5-haiku-latest',
             timestamp=datetime.datetime(...),
             kind='response',
+            vendor_id=None,
         )
         '''
     ```
@@ -108,6 +109,7 @@ def model_request_sync(
         model_name='claude-3-5-haiku-latest',
         timestamp=datetime.datetime(...),
         kind='response',
+        vendor_id=None,
     )
     '''
     ```
