@@ -10,7 +10,6 @@ from typing import Any, Generic, cast, overload
 
 import logfire_api
 import typing_extensions
-from opentelemetry.trace import Span
 from typing_extensions import deprecated
 from typing_inspection import typing_objects
 
@@ -212,7 +211,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         state: StateT = None,
         deps: DepsT = None,
         persistence: BaseStatePersistence[StateT, RunEndT] | None = None,
-        span: AbstractContextManager[Span] | None = None,
+        span: AbstractContextManager[AbstractSpan] | None = None,
         infer_name: bool = True,
     ) -> AsyncIterator[GraphRun[StateT, DepsT, RunEndT]]:
         """A contextmanager which can be used to iterate over the graph's nodes as they are executed.
