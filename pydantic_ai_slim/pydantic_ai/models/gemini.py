@@ -608,7 +608,7 @@ def _process_response_from_parts(
     parts: Sequence[_GeminiPartUnion],
     model_name: GeminiModelName,
     usage: usage.Usage,
-    id: str | None,
+    id: str,
     finish_reasons: list[str],
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
