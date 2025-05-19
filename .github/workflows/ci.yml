@@ -12,6 +12,8 @@ env:
   COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: "1"
+  UV_CACHE_DIR: "/tmp/setup-uv-cache"
+
 
 permissions:
   contents: read
@@ -142,6 +144,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/cache/restore@v4
+        with:
+          path: $UV_CACHE_DIR
+          key: ${{ runner.os }}-${{ hashFiles('uv.lock') }}
+
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
@@ -175,6 +182,11 @@ jobs:
           uv run --all-extras --resolution lowest-direct coverage run -m pytest
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-lowest-versions
+
+      - uses: actions/cache/save@v4
+        with:
+          path: $UV_CACHE_DIR
+          key: ${{ runner.os }}-${{ hashFiles('uv.lock') }}
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
