@@ -555,7 +555,7 @@ class ModelResponse:
 
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     """The ID of the response.
-    
+
     If the model provides an ID in the response that will be used, otherwise a random UUID will be generated.
     """
 
