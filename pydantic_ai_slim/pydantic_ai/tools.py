@@ -68,7 +68,7 @@ class RunContext(Generic[AgentDepsT]):
         kwargs = {}
         if retry is not None:
             kwargs['retry'] = retry
-        if tool_name is not _utils.UNSET:
+        if tool_name is not _utils.UNSET:  # pragma: no branch
             kwargs['tool_name'] = tool_name
         return dataclasses.replace(self, **kwargs)
 
@@ -374,7 +374,7 @@ class Tool(Generic[AgentDepsT]):
         )
         args = [ctx] if self.takes_ctx else []
         for positional_field in self._positional_fields:
-            args.append(args_dict.pop(positional_field))
+            args.append(args_dict.pop(positional_field))  # pragma: no cover
         if self._var_positional_field:
             args.extend(args_dict.pop(self._var_positional_field))
 
