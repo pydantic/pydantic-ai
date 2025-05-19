@@ -59,19 +59,24 @@ typecheck: typecheck-pyright ## Run static type checking
 typecheck-both: typecheck-pyright typecheck-mypy
 
 .PHONY: test
-test: ## Run tests and collect coverage data
+test: ## Run tests and collect coverage data. NOTE: Inline Snapshots will NOT be updated because xdist is used. Run test-update-inline-snapshots if you need them updated
+	uv run coverage run -m pytest -n auto --dist=loadgroup
+	@uv run coverage report
+
+.PHONY: test-update-inline-snapshots
+test-update-inline-snapshots: ## Runs the tests without pytest-xdist so inline-snapshots can be updated.
 	uv run coverage run -m pytest
 	@uv run coverage report
 
 .PHONY: test-all-python
 test-all-python: ## Run tests on Python 3.9 to 3.13
-	UV_PROJECT_ENVIRONMENT=.venv39 uv run --python 3.9 --all-extras --all-packages coverage run -p -m pytest
-	UV_PROJECT_ENVIRONMENT=.venv310 uv run --python 3.10 --all-extras --all-packages coverage run -p -m pytest
-	UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --all-packages coverage run -p -m pytest
-	UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --all-packages coverage run -p -m pytest
-	UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --all-packages coverage run -p -m pytest
-	@uv run coverage combine
-	@uv run coverage report
+	UV_PROJECT_ENVIRONMENT=.venv39 uv run --active --python 3.9 --all-extras --all-packages coverage run -p -m pytest -n auto --dist=loadgroup
+	UV_PROJECT_ENVIRONMENT=.venv310 uv run --active --python 3.10 --all-extras --all-packages coverage run -p -m pytest -n auto --dist=loadgroup
+	UV_PROJECT_ENVIRONMENT=.venv311 uv run --active --python 3.11 --all-extras --all-packages coverage run -p -m pytest -n auto --dist=loadgroup
+	UV_PROJECT_ENVIRONMENT=.venv312 uv run --active --python 3.12 --all-extras --all-packages coverage run -p -m pytest -n auto --dist=loadgroup
+	UV_PROJECT_ENVIRONMENT=.venv313 uv run --active --python 3.13 --all-extras --all-packages coverage run -p -m pytest -n auto --dist=loadgroup
+	@uv run --active --all-extras --all-packages coverage combine
+	@uv run --active --all-extras --all-packages coverage report
 
 .PHONY: testcov
 testcov: test ## Run tests and generate a coverage report
