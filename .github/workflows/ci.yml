@@ -12,7 +12,7 @@ env:
   COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: "1"
-  UV_CACHE_DIR: "/home/runner/work/pydantic-ai/pydantic-ai/.cache"
+  UV_CACHE_DIR: "$RUNNER_TEMP/uv_cache_dir"
 
 
 permissions:
