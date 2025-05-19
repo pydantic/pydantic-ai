@@ -12,7 +12,7 @@ env:
   COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: "1"
-  UV_CACHE_DIR: "$RUNNER_TEMP/uv_cache_dir"
+  UV_CACHE_DIR: "${{ runner.temp }}/uv_cache_dir"
 
 
 permissions:
