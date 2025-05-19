@@ -277,7 +277,9 @@ class GeminiModel(Model):
         id = response.get('id')
         usage = _metadata_as_usage(response)
         usage.requests = 1
-        return _process_response_from_parts(parts, response.get('model_version', self._model_name), usage, id=id, finish_reasons=finish_reasons)
+        return _process_response_from_parts(
+            parts, response.get('model_version', self._model_name), usage, id=id, finish_reasons=finish_reasons
+        )
 
     async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -599,7 +601,11 @@ def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart
 
 
 def _process_response_from_parts(
-    parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, usage: usage.Usage, id: str, finish_reasons: list[str]
+    parts: Sequence[_GeminiPartUnion],
+    model_name: GeminiModelName,
+    usage: usage.Usage,
+    id: str,
+    finish_reasons: list[str],
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
@@ -724,7 +730,6 @@ class _GeminiResponse(TypedDict):
     prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, pydantic.Field(alias='promptFeedback')]]
     model_version: NotRequired[Annotated[str, pydantic.Field(alias='modelVersion')]]
     id: NotRequired[Annotated[str, pydantic.Field(alias='responseId')]]
-
 
 
 class _GeminiCandidates(TypedDict):
