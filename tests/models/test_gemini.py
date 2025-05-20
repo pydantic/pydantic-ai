@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
+from enum import IntEnum
 from typing import Annotated
 
 import httpx
@@ -164,9 +165,17 @@ async def test_require_response_tool(allow_model_requests: None):
 
 
 async def test_json_def_replaced(allow_model_requests: None):
+    class Axis(BaseModel):
+        label: str
+
+    class Chart(BaseModel):
+        x_axis: Axis
+        y_axis: Axis
+
     class Location(BaseModel):
         lat: float
         lng: float = 1.1
+        chart: Chart
 
     class Locations(BaseModel):
         locations: list[Location]
@@ -175,15 +184,28 @@ async def test_json_def_replaced(allow_model_requests: None):
     assert json_schema == snapshot(
         {
             '$defs': {
+                'Axis': {
+                    'properties': {'label': {'title': 'Label', 'type': 'string'}},
+                    'required': ['label'],
+                    'title': 'Axis',
+                    'type': 'object',
+                },
+                'Chart': {
+                    'properties': {'x_axis': {'$ref': '#/$defs/Axis'}, 'y_axis': {'$ref': '#/$defs/Axis'}},
+                    'required': ['x_axis', 'y_axis'],
+                    'title': 'Chart',
+                    'type': 'object',
+                },
                 'Location': {
                     'properties': {
                         'lat': {'title': 'Lat', 'type': 'number'},
                         'lng': {'default': 1.1, 'title': 'Lng', 'type': 'number'},
+                        'chart': {'$ref': '#/$defs/Chart'},
                     },
-                    'required': ['lat'],
+                    'required': ['lat', 'chart'],
                     'title': 'Location',
                     'type': 'object',
-                }
+                },
             },
             'properties': {'locations': {'items': {'$ref': '#/$defs/Location'}, 'title': 'Locations', 'type': 'array'}},
             'required': ['locations'],
@@ -201,6 +223,87 @@ async def test_json_def_replaced(allow_model_requests: None):
     mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
     mrp = m.customize_request_parameters(mrp)
     assert m._get_tools(mrp) == snapshot(
+        {
+            'function_declarations': [
+                {
+                    'name': 'result',
+                    'description': 'This is the tool for the final Result',
+                    'parameters': {
+                        'properties': {
+                            'locations': {
+                                'items': {
+                                    'properties': {
+                                        'lat': {'type': 'number'},
+                                        'lng': {'type': 'number'},
+                                        'chart': {
+                                            'properties': {
+                                                'x_axis': {
+                                                    'properties': {'label': {'type': 'string'}},
+                                                    'required': ['label'],
+                                                    'type': 'object',
+                                                },
+                                                'y_axis': {
+                                                    'properties': {'label': {'type': 'string'}},
+                                                    'required': ['label'],
+                                                    'type': 'object',
+                                                },
+                                            },
+                                            'required': ['x_axis', 'y_axis'],
+                                            'type': 'object',
+                                        },
+                                    },
+                                    'required': ['lat', 'chart'],
+                                    'type': 'object',
+                                },
+                                'type': 'array',
+                            }
+                        },
+                        'required': ['locations'],
+                        'type': 'object',
+                    },
+                }
+            ]
+        }
+    )
+
+
+async def test_json_def_enum(allow_model_requests: None):
+    class ProgressEnum(IntEnum):
+        DONE = 100
+        ALMOST_DONE = 80
+        IN_PROGRESS = 60
+        BARELY_STARTED = 40
+        NOT_STARTED = 20
+
+    class QueryDetails(BaseModel):
+        progress: list[ProgressEnum] | None = None
+
+    json_schema = QueryDetails.model_json_schema()
+    assert json_schema == snapshot(
+        {
+            '$defs': {'ProgressEnum': {'enum': [100, 80, 60, 40, 20], 'title': 'ProgressEnum', 'type': 'integer'}},
+            'properties': {
+                'progress': {
+                    'anyOf': [{'items': {'$ref': '#/$defs/ProgressEnum'}, 'type': 'array'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Progress',
+                }
+            },
+            'title': 'QueryDetails',
+            'type': 'object',
+        }
+    )
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    output_tool = ToolDefinition(
+        'result',
+        'This is the tool for the final Result',
+        json_schema,
+    )
+    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+    mrp = m.customize_request_parameters(mrp)
+
+    # This tests that the enum values are properly converted to strings for Gemini
+    assert m._get_tools(mrp) == snapshot(
         _GeminiTools(
             function_declarations=[
                 _GeminiFunction(
@@ -208,19 +311,12 @@ async def test_json_def_replaced(allow_model_requests: None):
                     description='This is the tool for the final Result',
                     parameters={
                         'properties': {
-                            'locations': {
-                                'items': {
-                                    'properties': {
-                                        'lat': {'type': 'number'},
-                                        'lng': {'type': 'number'},
-                                    },
-                                    'required': ['lat'],
-                                    'type': 'object',
-                                },
+                            'progress': {
+                                'items': {'enum': ['100', '80', '60', '40', '20'], 'type': 'string'},
                                 'type': 'array',
+                                'nullable': True,
                             }
                         },
-                        'required': ['locations'],
                         'type': 'object',
                     },
                 )
@@ -311,7 +407,6 @@ async def test_json_def_recursive(allow_model_requests: None):
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
         mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
         mrp = m.customize_request_parameters(mrp)
-        m._get_tools(mrp)
 
 
 async def test_json_def_date(allow_model_requests: None):
@@ -421,7 +516,7 @@ async def get_gemini_client(
 
 def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
     candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
-    if finish_reason:  # pragma: no cover
+    if finish_reason:  # pragma: no branch
         candidate['finish_reason'] = finish_reason
     return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage(), model_version='gemini-1.5-flash-123')
 
@@ -443,6 +538,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -457,12 +553,14 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -485,6 +583,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2, 123]}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -513,7 +612,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     parts=[
                         ToolCallPart('get_location', {'loc_name': 'London'}),
                         ToolCallPart('get_location', {'loc_name': 'New York'}),
-                    ]
+                    ],
                 )
             )
         ),
@@ -546,6 +645,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 parts=[
                     ToolCallPart(tool_name='get_location', args={'loc_name': 'San Fransisco'}, tool_call_id=IsStr())
                 ],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -564,6 +664,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     ToolCallPart(tool_name='get_location', args={'loc_name': 'London'}, tool_call_id=IsStr()),
                     ToolCallPart(tool_name='get_location', args={'loc_name': 'New York'}, tool_call_id=IsStr()),
                 ],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -585,6 +686,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -748,6 +850,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                     ToolCallPart(tool_name='foo', args={'x': 'a'}, tool_call_id=IsStr()),
                     ToolCallPart(tool_name='bar', args={'y': 'b'}, tool_call_id=IsStr()),
                 ],
+                usage=Usage(request_tokens=2, response_tokens=4, total_tokens=6),
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -763,6 +866,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2]}, tool_call_id=IsStr())],
+                usage=Usage(request_tokens=1, response_tokens=2, total_tokens=3),
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -877,7 +981,7 @@ def gemini_no_content_response(
     safety_ratings: list[_GeminiSafetyRating], finish_reason: Literal['SAFETY'] | None = 'SAFETY'
 ) -> _GeminiResponse:
     candidate = _GeminiCandidates(safety_ratings=safety_ratings)
-    if finish_reason:
+    if finish_reason:  # pragma: no branch
         candidate['finish_reason'] = finish_reason
     return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage())
 
@@ -993,6 +1097,7 @@ I need to use the `get_image` tool to see the image first.
                     ),
                     ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
                 ],
+                usage=Usage(requests=1, request_tokens=38, response_tokens=28, total_tokens=427, details={}),
                 model_name='gemini-2.5-pro-preview-03-25',
                 timestamp=IsDatetime(),
             ),
@@ -1015,6 +1120,7 @@ I need to use the `get_image` tool to see the image first.
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a kiwi fruit, sliced in half.')],
+                usage=Usage(requests=1, request_tokens=360, response_tokens=11, total_tokens=572, details={}),
                 model_name='gemini-2.5-pro-preview-03-25',
                 timestamp=IsDatetime(),
             ),
@@ -1172,6 +1278,7 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.\n')],
+                usage=Usage(requests=1, request_tokens=13, response_tokens=8, total_tokens=21, details={}),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
             ),

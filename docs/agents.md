@@ -145,9 +145,17 @@ async def main():
         CallToolsNode(
             model_response=ModelResponse(
                 parts=[TextPart(content='Paris', part_kind='text')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=56,
+                    response_tokens=1,
+                    total_tokens=57,
+                    details=None,
+                ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
+                vendor_id=None,
             )
         ),
         End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
@@ -209,9 +217,17 @@ async def main():
             CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='Paris', part_kind='text')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=56,
+                        response_tokens=1,
+                        total_tokens=57,
+                        details=None,
+                    ),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                     kind='response',
+                    vendor_id=None,
                 )
             ),
             End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
@@ -805,9 +821,17 @@ with capture_run_messages() as messages:  # (2)!
                         part_kind='tool-call',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=62,
+                    response_tokens=4,
+                    total_tokens=66,
+                    details=None,
+                ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
+                vendor_id=None,
             ),
             ModelRequest(
                 parts=[
@@ -831,9 +855,17 @@ with capture_run_messages() as messages:  # (2)!
                         part_kind='tool-call',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=72,
+                    response_tokens=8,
+                    total_tokens=80,
+                    details=None,
+                ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
+                vendor_id=None,
             ),
         ]
         """

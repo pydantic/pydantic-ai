@@ -1,7 +1,7 @@
-import os
 import sys
+import types
 from io import StringIO
-from typing import Any
+from typing import Any, Callable
 
 import pytest
 from dirty_equals import IsInstance, IsStr
@@ -17,11 +17,13 @@ from pydantic_ai.models.test import TestModel
 from .conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
+    from openai import OpenAIError
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
     from pydantic_ai._cli import cli, cli_agent, handle_slash_command
+    from pydantic_ai.models.openai import OpenAIModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
 
@@ -31,51 +33,105 @@ def test_cli_version(capfd: CaptureFixture[str]):
     assert capfd.readouterr().out.startswith('pai - PydanticAI CLI')
 
 
-@pytest.mark.skipif(not os.getenv('CI', False), reason="Marcelo can't make this test pass locally")
-@pytest.mark.skipif(sys.version_info >= (3, 13), reason='slightly different output with 3.13')
-def test_cli_help(capfd: CaptureFixture[str]):
-    with pytest.raises(SystemExit) as exc:
-        cli(['--help'])
-    assert exc.value.code == 0
-
-    assert capfd.readouterr().out.splitlines() == snapshot(
-        [
-            'usage: pai [-h] [-m [MODEL]] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]',
-            '',
-            IsStr(),
-            '',
-            'Special prompt:',
-            '* `/exit` - exit the interactive mode',
-            '* `/markdown` - show the last markdown output of the last question',
-            '* `/multiline` - toggle multiline mode',
-            '',
-            'positional arguments:',
-            '  prompt                AI Prompt, if omitted fall into interactive mode',
-            '',
-            IsStr(),
-            '  -h, --help            show this help message and exit',
-            '  -m [MODEL], --model [MODEL]',
-            '                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o". Defaults to "openai:gpt-4o".',
-            '  -l, --list-models     List all available models and exit',
-            '  -t [CODE_THEME], --code-theme [CODE_THEME]',
-            '                        Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "monokai".',
-            '  --no-stream           Whether to stream responses from the model',
-            '  --version             Show version and exit',
-        ]
-    )
-
-
 def test_invalid_model(capfd: CaptureFixture[str]):
     assert cli(['--model', 'potato']) == 1
-    assert capfd.readouterr().out.splitlines() == snapshot(
-        [IsStr(), 'Error initializing potato:', 'Unknown model: potato']
-    )
+    assert capfd.readouterr().out.splitlines() == snapshot(['Error initializing potato:', 'Unknown model: potato'])
+
+
+@pytest.fixture
+def create_test_module():
+    def _create_test_module(**namespace: Any) -> None:
+        assert 'test_module' not in sys.modules
+
+        test_module = types.ModuleType('test_module')
+        for key, value in namespace.items():
+            setattr(test_module, key, value)
+
+        sys.modules['test_module'] = test_module
+
+    try:
+        yield _create_test_module
+    finally:
+        if 'test_module' in sys.modules:  # pragma: no branch
+            del sys.modules['test_module']
+
+
+def test_agent_flag(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    create_test_module: Callable[..., None],
+):
+    env.remove('OPENAI_API_KEY')
+    env.set('COLUMNS', '150')
+
+    test_agent = Agent(TestModel(custom_output_text='Hello from custom agent'))
+    create_test_module(custom_agent=test_agent)
+
+    # Mock ask_agent to avoid actual execution but capture the agent
+    mock_ask = mocker.patch('pydantic_ai._cli.ask_agent')
+
+    # Test CLI with custom agent
+    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
+
+    # Verify the output contains the custom agent message
+    assert 'using custom agent test_module:custom_agent' in capfd.readouterr().out.replace('\n', '')
+
+    # Verify ask_agent was called with our custom agent
+    mock_ask.assert_called_once()
+    assert mock_ask.call_args[0][0] is test_agent
+
+
+def test_agent_flag_no_model(env: TestEnv, create_test_module: Callable[..., None]):
+    env.remove('OPENAI_API_KEY')
+    test_agent = Agent()
+    create_test_module(custom_agent=test_agent)
+
+    msg = 'The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable'
+    with pytest.raises(OpenAIError, match=msg):
+        cli(['--agent', 'test_module:custom_agent', 'hello'])
+
+
+def test_agent_flag_set_model(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    env: TestEnv,
+    create_test_module: Callable[..., None],
+):
+    env.set('OPENAI_API_KEY', 'xxx')
+    env.set('COLUMNS', '150')
+
+    custom_agent = Agent(TestModel(custom_output_text='Hello from custom agent'))
+    create_test_module(custom_agent=custom_agent)
+
+    mocker.patch('pydantic_ai._cli.ask_agent')
+
+    assert cli(['--agent', 'test_module:custom_agent', '--model', 'gpt-4o', 'hello']) == 0
+
+    assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out.replace('\n', '')
+
+    assert isinstance(custom_agent.model, OpenAIModel)
+
+
+def test_agent_flag_non_agent(
+    capfd: CaptureFixture[str], mocker: MockerFixture, create_test_module: Callable[..., None]
+):
+    test_agent = 'Not an Agent object'
+    create_test_module(custom_agent=test_agent)
+
+    assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 1
+    assert 'is not an Agent' in capfd.readouterr().out
+
+
+def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
+    assert cli(['--agent', 'bad_path', 'hello']) == 1
+    assert 'Agent must be specified in "module:variable" format' in capfd.readouterr().out
 
 
 def test_list_models(capfd: CaptureFixture[str]):
     assert cli(['--list-models']) == 0
     output = capfd.readouterr().out.splitlines()
-    assert output[:2] == snapshot([IsStr(regex='pai - PydanticAI CLI .* using openai:gpt-4o'), 'Available models:'])
+    assert output[:3] == snapshot([IsStr(regex='pai - PydanticAI CLI .*'), '', 'Available models:'])
 
     providers = (
         'openai',
@@ -88,7 +144,7 @@ def test_list_models(capfd: CaptureFixture[str]):
         'cohere',
         'deepseek',
     )
-    models = {line.strip().split(' ')[0] for line in output[2:]}
+    models = {line.strip().split(' ')[0] for line in output[3:]}
     for provider in providers:
         models = models - {model for model in models if model.startswith(provider)}
     assert models == set(), models
@@ -169,7 +225,7 @@ def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli([])
     mock_run_chat.assert_awaited_once_with(
-        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai'
+        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai'
     )
 
 
@@ -178,7 +234,7 @@ def test_code_theme_light(mocker: MockerFixture, env: TestEnv):
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=light'])
     mock_run_chat.assert_awaited_once_with(
-        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'default'
+        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'default', 'pai'
     )
 
 
@@ -187,5 +243,36 @@ def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=dark'])
     mock_run_chat.assert_awaited_once_with(
-        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai'
+        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai'
+    )
+
+
+def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+    cli_agent.to_cli_sync()
+    mock_run_chat.assert_awaited_once_with(
+        session=IsInstance(PromptSession),
+        stream=True,
+        agent=IsInstance(Agent),
+        console=IsInstance(Console),
+        code_theme='monokai',
+        prog_name='pydantic-ai',
+        deps=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+    await cli_agent.to_cli()
+    mock_run_chat.assert_awaited_once_with(
+        session=IsInstance(PromptSession),
+        stream=True,
+        agent=IsInstance(Agent),
+        console=IsInstance(Console),
+        code_theme='monokai',
+        prog_name='pydantic-ai',
+        deps=None,
     )

@@ -36,7 +36,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import Usage
 
-from ..conftest import try_import
+from ..conftest import IsStr, try_import
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
@@ -70,19 +70,17 @@ class MyModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
-        return (
-            ModelResponse(
-                parts=[
-                    TextPart('text1'),
-                    ToolCallPart('tool1', 'args1', 'tool_call_1'),
-                    ToolCallPart('tool2', {'args2': 3}, 'tool_call_2'),
-                    TextPart('text2'),
-                    {},  # test unexpected parts  # type: ignore
-                ],
-                model_name='my_model_123',
-            ),
-            Usage(request_tokens=100, response_tokens=200),
+    ) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                TextPart('text1'),
+                ToolCallPart('tool1', 'args1', 'tool_call_1'),
+                ToolCallPart('tool2', {'args2': 3}, 'tool_call_2'),
+                TextPart('text2'),
+                {},  # test unexpected parts  # type: ignore
+            ],
+            usage=Usage(request_tokens=100, response_tokens=200),
+            model_name='my_model_123',
         )
 
     @asynccontextmanager
@@ -127,11 +125,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 {},  # test unexpected parts  # type: ignore
             ]
         ),
-        ModelResponse(
-            parts=[
-                TextPart('text3'),
-            ]
-        ),
+        ModelResponse(parts=[TextPart('text3')]),
     ]
     await model.request(
         messages,
@@ -448,7 +442,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 output_tools=[],
             ),
         ) as response_stream:
-            async for event in response_stream:
+            async for event in response_stream:  # pragma: no branch
                 assert event == PartStartEvent(index=0, part=TextPart(content='text1'))
                 raise RuntimeError
 
@@ -540,11 +534,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                 {},  # test unexpected parts  # type: ignore
             ]
         ),
-        ModelResponse(
-            parts=[
-                TextPart('text3'),
-            ]
-        ),
+        ModelResponse(parts=[TextPart('text3')]),
     ]
     await model.request(
         messages,
@@ -685,7 +675,8 @@ def test_messages_to_otel_events_serialization_errors():
         ModelRequest(parts=[ToolReturnPart('tool', Bar(), tool_call_id='return_tool_call_id')]),
     ]
 
-    assert [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)] == [
+    settings = InstrumentationSettings()
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == [
         {
             'body': "{'role': 'assistant', 'tool_calls': [{'id': 'tool_call_id', 'type': 'function', 'function': {'name': 'tool', 'arguments': {'arg': Foo()}}}]}",
             'gen_ai.message.index': 0,
@@ -704,9 +695,8 @@ def test_messages_to_otel_events_instructions():
         ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
         ModelResponse(parts=[TextPart('text1')]),
     ]
-    assert [
-        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
-    ] == snapshot(
+    settings = InstrumentationSettings()
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
             {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
@@ -726,9 +716,8 @@ def test_messages_to_otel_events_instructions_multiple_messages():
         ModelResponse(parts=[TextPart('text1')]),
         ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')]),
     ]
-    assert [
-        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
-    ] == snapshot(
+    settings = InstrumentationSettings()
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {'content': 'instructions2', 'role': 'system', 'event.name': 'gen_ai.system.message'},
             {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
@@ -765,9 +754,8 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
         ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
         ModelResponse(parts=[TextPart('text1')]),
     ]
-    assert [
-        InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)
-    ] == snapshot(
+    settings = InstrumentationSettings()
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {
                 'content': ['user_prompt', {'kind': 'image-url', 'url': 'https://example.com/image.png'}],
@@ -806,7 +794,10 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
                 'event.name': 'gen_ai.user.message',
             },
             {
-                'content': ['user_prompt6', {'kind': 'binary'}],
+                'content': [
+                    'user_prompt6',
+                    {'kind': 'binary', 'binary_content': IsStr(), 'media_type': 'application/pdf'},
+                ],
                 'role': 'user',
                 'gen_ai.message.index': 5,
                 'event.name': 'gen_ai.user.message',
@@ -817,5 +808,22 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
                 'gen_ai.message.index': 6,
                 'event.name': 'gen_ai.assistant.message',
             },
+        ]
+    )
+
+
+def test_messages_to_otel_events_without_binary_content(document_content: BinaryContent):
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
+    ]
+    settings = InstrumentationSettings(include_binary_content=False)
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+        [
+            {
+                'content': ['user_prompt6', {'kind': 'binary', 'media_type': 'application/pdf'}],
+                'role': 'user',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.user.message',
+            }
         ]
     )

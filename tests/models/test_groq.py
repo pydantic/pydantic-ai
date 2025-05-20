@@ -95,7 +95,9 @@ class MockGroq:
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
-                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream[self.index])))
+                response = MockAsyncStream(  # pragma: no cover
+                    iter(cast(list[MockChatCompletionChunk], self.stream[self.index]))
+                )
             else:
                 response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream)))
         else:
@@ -142,14 +144,18 @@ async def test_request_simple_success(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -199,8 +205,10 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -285,8 +293,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -306,8 +316,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=3, response_tokens=2, total_tokens=6),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -321,8 +333,10 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -489,7 +503,7 @@ async def test_no_content(allow_model_requests: None):
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
         async with agent.run_stream(''):
-            pass  # pragma: no cover
+            pass
 
 
 async def test_no_delta(allow_model_requests: None):
@@ -556,8 +570,10 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_wkpd')],
+                usage=Usage(requests=1, request_tokens=192, response_tokens=8, total_tokens=200),
                 model_name='meta-llama/llama-4-scout-17b-16e-instruct',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-3c327c89-e9f5-4aac-a5d5-190e6f6f25c9',
             ),
             ModelRequest(
                 parts=[
@@ -578,8 +594,10 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[TextPart(content='The fruit in the image is a kiwi.')],
+                usage=Usage(requests=1, request_tokens=2552, response_tokens=11, total_tokens=2563),
                 model_name='meta-llama/llama-4-scout-17b-16e-instruct',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-82dfad42-6a28-4089-82c3-c8633f626c0d',
             ),
         ]
     )
@@ -656,8 +674,10 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
+                usage=Usage(requests=1, request_tokens=48, response_tokens=8, total_tokens=56),
                 model_name='llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf',
             ),
         ]
     )

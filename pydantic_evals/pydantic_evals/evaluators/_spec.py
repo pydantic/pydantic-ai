@@ -32,18 +32,19 @@ class EvaluatorSpec(BaseModel):
     * `{'MyEvaluator': {k1: v1, k2: v2}}` - Multiple kwargs are passed to `MyEvaluator.__init__`
 
     Args:
-        name: The name of the evaluator to use. Unless overridden, this is the snake_case version of the class name.
+        name: The serialization name of the evaluator class returned by `EvaluatorClass.get_serialization_name()`;
+            this is usually just the class name itself.
         arguments: The arguments to pass to the evaluator's constructor. Can be None (for no arguments),
             a tuple (for a single positional argument), or a dict (for multiple keyword arguments).
     """
 
     name: str
-    """The name of the evaluator class; should be the value returned by EvaluatorClass.name()"""
+    """The name of the evaluator class; should be the value returned by `EvaluatorClass.get_serialization_name()`"""
 
     arguments: None | tuple[Any] | dict[str, Any]
     """The arguments to pass to the evaluator's constructor.
 
-    Can be None (no arguments), a tuple (positional arguments), or a dict (keyword arguments).
+    Can be None (no arguments), a tuple (a single positional argument), or a dict (keyword arguments).
     """
 
     @property
