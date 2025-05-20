@@ -341,9 +341,9 @@ class MCPServerHTTP(MCPServer):
     tool_prefix: str | None = None
     """A prefix to add to all tools that are registered with the server.
 
-    If not empty, will include a trailing underscore(`_`).
+    If not empty, will include a trailing underscore (`_`).
 
-    e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
+    For example, if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
 
     @asynccontextmanager
