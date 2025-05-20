@@ -156,7 +156,7 @@ _url_formats = [
     pytest.param(DocumentUrl('foobar.html'), 'text/html', 'html', id='html'),
     pytest.param(DocumentUrl('foobar.xls'), 'application/vnd.ms-excel', 'xls', id='xls'),
 ]
-if sys.version_info[1] > 11:  # pragma: no branch
+if sys.version_info > (3, 11):  # pragma: no branch
     # This solves an issue with MIMEType on MacOS + python < 3.12. mimetypes.py added the text/markdown in 3.12, but on
     # versions of linux the knownfiles include text/markdown so it isn't an issue. The .md test is only consistent
     # independent of OS on > 3.11.
