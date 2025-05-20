@@ -5,11 +5,15 @@ import pytest
 from asgi_lifespan import LifespanManager
 from inline_snapshot import snapshot
 
-from fasta2a.applications import FastA2A
-from fasta2a.broker import InMemoryBroker
-from fasta2a.storage import InMemoryStorage
+from ..conftest import try_import
 
-pytestmark = pytest.mark.anyio
+with try_import() as imports_successful:
+    from fasta2a.applications import FastA2A
+    from fasta2a.broker import InMemoryBroker
+    from fasta2a.storage import InMemoryStorage
+
+
+pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='fasta2a not installed')]
 
 
 @pytest.fixture(scope='function')
