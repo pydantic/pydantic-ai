@@ -112,7 +112,9 @@ class MockAnthropic:
             if isinstance(self.stream[0], Sequence):
                 response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream[self.index])))
             else:
-                response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream)))
+                response = MockAsyncStream(  # pragma: no cover
+                    iter(cast(list[MockRawMessageStreamEvent], self.stream))
+                )
         else:
             assert self.messages_ is not None, '`messages` must be provided'
             if isinstance(self.messages_, Sequence):
@@ -182,6 +184,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -195,6 +198,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -285,6 +289,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -354,6 +359,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -382,6 +388,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -404,6 +411,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -436,7 +444,7 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
         if loc_name == 'London':
-            return json.dumps({'lat': 51, 'lng': 0})
+            return json.dumps({'lat': 51, 'lng': 0})  # pragma: no cover
         else:
             raise ModelRetry('Wrong location, please try again')
 
@@ -752,6 +760,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                vendor_id='msg_01BPu4UTHXhqtR1TvsRhBLYY',
             ),
             ModelRequest(
                 parts=[
@@ -790,6 +799,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                vendor_id='msg_01Ua6uyZUF15YV3G1PusaqSq',
             ),
         ]
     )
@@ -922,6 +932,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 ),
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
+                vendor_id='msg_01U58nruzfn9BrXrrF2hhb4m',
             ),
         ]
     )

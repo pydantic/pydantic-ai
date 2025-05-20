@@ -77,6 +77,7 @@ class InstrumentationSettings:
     tracer: Tracer = field(repr=False)
     event_logger: EventLogger = field(repr=False)
     event_mode: Literal['attributes', 'logs'] = 'attributes'
+    include_binary_content: bool = True
 
     def __init__(
         self,
@@ -84,6 +85,7 @@ class InstrumentationSettings:
         event_mode: Literal['attributes', 'logs'] = 'attributes',
         tracer_provider: TracerProvider | None = None,
         event_logger_provider: EventLoggerProvider | None = None,
+        include_binary_content: bool = True,
     ):
         """Create instrumentation options.
 
@@ -97,6 +99,7 @@ class InstrumentationSettings:
                 If not provided, the global event logger provider is used.
                 Calling `logfire.configure()` sets the global event logger provider, so most users don't need this.
                 This is only used if `event_mode='logs'`.
+            include_binary_content: Whether to include binary content in the instrumentation events.
         """
         from pydantic_ai import __version__
 
@@ -105,6 +108,40 @@ class InstrumentationSettings:
         self.tracer = tracer_provider.get_tracer('pydantic-ai', __version__)
         self.event_logger = event_logger_provider.get_event_logger('pydantic-ai', __version__)
         self.event_mode = event_mode
+        self.include_binary_content = include_binary_content
+
+    def messages_to_otel_events(self, messages: list[ModelMessage]) -> list[Event]:
+        """Convert a list of model messages to OpenTelemetry events.
+
+        Args:
+            messages: The messages to convert.
+
+        Returns:
+            A list of OpenTelemetry events.
+        """
+        events: list[Event] = []
+        instructions = InstrumentedModel._get_instructions(messages)  # pyright: ignore [reportPrivateUsage]
+        if instructions is not None:
+            events.append(Event('gen_ai.system.message', body={'content': instructions, 'role': 'system'}))
+
+        for message_index, message in enumerate(messages):
+            message_events: list[Event] = []
+            if isinstance(message, ModelRequest):
+                for part in message.parts:
+                    if hasattr(part, 'otel_event'):
+                        message_events.append(part.otel_event(self))
+            elif isinstance(message, ModelResponse):  # pragma: no branch
+                message_events = message.otel_events()
+            for event in message_events:
+                event.attributes = {
+                    'gen_ai.message.index': message_index,
+                    **(event.attributes or {}),
+                }
+            events.extend(message_events)
+
+        for event in events:
+            event.body = InstrumentedModel.serialize_any(event.body)
+        return events
 
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
@@ -155,7 +192,7 @@ class InstrumentedModel(WrapperModel):
                 ) as response_stream:
                     yield response_stream
             finally:
-                if response_stream:
+                if response_stream:  # pragma: no branch
                     finish(response_stream.get())
 
     @contextmanager
@@ -193,8 +230,8 @@ class InstrumentedModel(WrapperModel):
                 if not span.is_recording():
                     return
 
-                events = self.messages_to_otel_events(messages)
-                for event in self.messages_to_otel_events([response]):
+                events = self.settings.messages_to_otel_events(messages)
+                for event in self.settings.messages_to_otel_events([response]):
                     events.append(
                         Event(
                             'gen_ai.choice',
@@ -253,9 +290,9 @@ class InstrumentedModel(WrapperModel):
             except Exception:  # pragma: no cover
                 pass
             else:
-                if parsed.hostname:
+                if parsed.hostname:  # pragma: no branch
                     attributes['server.address'] = parsed.hostname
-                if parsed.port:
+                if parsed.port:  # pragma: no branch
                     attributes['server.port'] = parsed.port
 
         return attributes
@@ -263,39 +300,12 @@ class InstrumentedModel(WrapperModel):
     @staticmethod
     def event_to_dict(event: Event) -> dict[str, Any]:
         if not event.body:
-            body = {}
+            body = {}  # pragma: no cover
         elif isinstance(event.body, Mapping):
             body = event.body  # type: ignore
         else:
             body = {'body': event.body}
         return {**body, **(event.attributes or {})}
-
-    @staticmethod
-    def messages_to_otel_events(messages: list[ModelMessage]) -> list[Event]:
-        events: list[Event] = []
-        last_model_request: ModelRequest | None = None
-        for message_index, message in enumerate(messages):
-            message_events: list[Event] = []
-            if isinstance(message, ModelRequest):
-                last_model_request = message
-                for part in message.parts:
-                    if hasattr(part, 'otel_event'):
-                        message_events.append(part.otel_event())
-            elif isinstance(message, ModelResponse):
-                message_events = message.otel_events()
-            for event in message_events:
-                event.attributes = {
-                    'gen_ai.message.index': message_index,
-                    **(event.attributes or {}),
-                }
-            events.extend(message_events)
-        if last_model_request and last_model_request.instructions:
-            events.insert(
-                0, Event('gen_ai.system.message', body={'content': last_model_request.instructions, 'role': 'system'})
-            )
-        for event in events:
-            event.body = InstrumentedModel.serialize_any(event.body)
-        return events
 
     @staticmethod
     def serialize_any(value: Any) -> str:

@@ -216,6 +216,7 @@ async def test_multiple_completions(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -223,6 +224,7 @@ async def test_multiple_completions(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -267,6 +269,7 @@ async def test_three_completions(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -274,6 +277,7 @@ async def test_three_completions(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='final message', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -281,6 +285,7 @@ async def test_three_completions(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -399,6 +404,7 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -459,6 +465,7 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
                 usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -518,6 +525,7 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
                 usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1085,6 +1093,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1107,6 +1116,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=3, response_tokens=2, total_tokens=6),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1123,6 +1133,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -1225,6 +1236,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1247,6 +1259,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=3, response_tokens=2, total_tokens=6),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1269,6 +1282,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1787,6 +1801,7 @@ async def test_image_as_binary_content_tool_response(
                 usage=Usage(requests=1, request_tokens=65, response_tokens=16, total_tokens=81),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
+                vendor_id='fce6d16a4e5940edb24ae16dd0369947',
             ),
             ModelRequest(
                 parts=[
@@ -1814,6 +1829,7 @@ async def test_image_as_binary_content_tool_response(
                 usage=Usage(requests=1, request_tokens=2931, response_tokens=70, total_tokens=3001),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
+                vendor_id='26e7de193646460e8904f8e604a60dc1',
             ),
         ]
     )
@@ -1851,6 +1867,7 @@ async def test_image_url_input(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
+                vendor_id='123',
             ),
         ]
     )
@@ -1883,6 +1900,7 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
+                vendor_id='123',
             ),
         ]
     )
@@ -1943,6 +1961,7 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
                 usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
+                vendor_id='123',
             ),
         ]
     )

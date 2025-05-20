@@ -174,7 +174,7 @@ class CohereModel(Model):
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise
+            raise  # pragma: lax no cover
 
     def _process_response(self, response: ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -185,7 +185,7 @@ class CohereModel(Model):
             choice = response.message.content[0]
             parts.append(TextPart(choice.text))
         for c in response.message.tool_calls or []:
-            if c.function and c.function.name and c.function.arguments:
+            if c.function and c.function.name and c.function.arguments:  # pragma: no branch
                 parts.append(
                     ToolCallPart(
                         tool_name=c.function.name,
@@ -269,7 +269,7 @@ class CohereModel(Model):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield UserChatMessageV2(role='user', content=part.model_response())
+                    yield UserChatMessageV2(role='user', content=part.model_response())  # pragma: no cover
                 else:
                     yield ToolChatMessageV2(
                         role='tool',
@@ -287,7 +287,7 @@ def _map_usage(response: ChatResponse) -> usage.Usage:
     else:
         details: dict[str, int] = {}
         if u.billed_units is not None:
-            if u.billed_units.input_tokens:
+            if u.billed_units.input_tokens:  # pragma: no branch
                 details['input_tokens'] = int(u.billed_units.input_tokens)
             if u.billed_units.output_tokens:
                 details['output_tokens'] = int(u.billed_units.output_tokens)

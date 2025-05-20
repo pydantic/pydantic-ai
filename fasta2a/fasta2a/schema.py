@@ -38,7 +38,7 @@ class AgentCard(TypedDict):
     documentation_url: NotRequired[str]
     """A URL to documentation for the agent."""
 
-    capabilities: NotRequired[Capabilities]
+    capabilities: Capabilities
     """The capabilities of the agent."""
 
     # TODO(Marcelo): The spec makes authentication required.

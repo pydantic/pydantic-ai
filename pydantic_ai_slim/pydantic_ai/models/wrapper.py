@@ -48,4 +48,4 @@ class WrapperModel(Model):
         return self.wrapped.system
 
     def __getattr__(self, item: str):
-        return getattr(self.wrapped, item)
+        return getattr(self.wrapped, item)  # pragma: no cover

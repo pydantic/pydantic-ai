@@ -129,6 +129,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT',
                 ),
                 ModelRequest(
                     parts=[
@@ -157,6 +158,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF',
                 ),
             ]
         )
@@ -265,6 +267,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy',
                 ),
                 ModelRequest(
                     parts=[
@@ -297,6 +300,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp',
                 ),
             ]
         )
@@ -340,6 +344,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
                 ),
                 ModelRequest(
                     parts=[
@@ -368,6 +373,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
                 ),
             ]
         )
@@ -413,6 +419,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
                 ),
                 ModelRequest(
                     parts=[
@@ -452,6 +459,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
                 ),
             ]
         )
@@ -495,6 +503,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRloGQJWIX0Qk7gtNzF4s2Fez0O29',
                 ),
                 ModelRequest(
                     parts=[
@@ -530,6 +539,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRloJHR654fSD0fcvLWZxtKtn0pag',
                 ),
             ]
         )
@@ -567,6 +577,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7',
                 ),
                 ModelRequest(
                     parts=[
@@ -595,6 +606,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L',
                 ),
             ]
         )
@@ -640,6 +652,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRloSNg7aGSp1rXDkhInjMIUHKd7A',
                 ),
                 ModelRequest(
                     parts=[
@@ -674,6 +687,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRloTvSkFeX4DZKQLqfH9KbQkWlpt',
                 ),
                 ModelRequest(
                     parts=[
@@ -706,6 +720,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRloU3MhnqNEqujs28a3ofRbs7VPF',
                 ),
             ]
         )
@@ -743,6 +758,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRloX2RokWc9j9PAXAuNXGR73WNqY',
                 ),
                 ModelRequest(
                     parts=[
@@ -771,6 +787,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRloYWGujk8yE94gfVSsM1T1Ol2Ej',
                 ),
             ]
         )
@@ -816,6 +833,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRlobKLgm6vf79c9O8sloZaYx3coC',
                 ),
                 ModelRequest(
                     parts=[
@@ -860,6 +878,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BRloepWR5NJpTgSqFBGTSPeM1SWm8',
                 ),
             ]
         )

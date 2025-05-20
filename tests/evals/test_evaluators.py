@@ -6,6 +6,7 @@ from typing import Any, cast
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
+from pydantic_core import to_jsonable_python
 
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
@@ -207,12 +208,6 @@ async def test_is_instance_evaluator():
     assert result.value is False
 
 
-async def test_llm_judge_evaluator():
-    """Test the LLMJudge evaluator."""
-    # We can't easily test this without mocking the LLM, so we'll just check that it's importable
-    assert LLMJudge
-
-
 async def test_custom_evaluator(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
     """Test a custom evaluator."""
 
@@ -232,9 +227,41 @@ async def test_custom_evaluator(test_context: EvaluatorContext[TaskInput, TaskOu
 
     evaluator = CustomEvaluator()
     result = evaluator.evaluate(test_context)
-    assert isinstance(result, dict)
-    assert result['is_correct'] is True
-    assert result['difficulty'] == 'easy'
+    assert result == snapshot({'difficulty': 'easy', 'is_correct': True})
+
+
+async def test_custom_evaluator_name(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
+    @dataclass
+    class CustomNameFieldEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        result: int
+        evaluation_name: str
+
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
+            return self.result
+
+    evaluator = CustomNameFieldEvaluator(result=123, evaluation_name='abc')
+
+    assert to_jsonable_python(await run_evaluator(evaluator, test_context)) == snapshot(
+        [{'name': 'abc', 'reason': None, 'source': {'evaluation_name': 'abc', 'result': 123}, 'value': 123}]
+    )
+
+    @dataclass
+    class CustomNamePropertyEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        result: int
+        my_name: str
+
+        @property
+        def evaluation_name(self) -> str:
+            return f'hello {self.my_name}'
+
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
+            return self.result
+
+    evaluator = CustomNamePropertyEvaluator(result=123, my_name='marcelo')
+
+    assert to_jsonable_python(await run_evaluator(evaluator, test_context)) == snapshot(
+        [{'name': 'hello marcelo', 'reason': None, 'source': {'my_name': 'marcelo', 'result': 123}, 'value': 123}]
+    )
 
 
 async def test_evaluator_error_handling(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):

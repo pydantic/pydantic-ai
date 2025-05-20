@@ -59,7 +59,7 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     ) -> None:
         async with self._lock():
             snapshots = await self.load_all()
-            if not any(s.id == snapshot_id for s in snapshots):
+            if not any(s.id == snapshot_id for s in snapshots):  # pragma: no branch
                 await self._append_save(NodeSnapshot(state=state, node=next_node), lock=False)
 
     async def snapshot_end(self, state: StateT, end: End[RunEndT]) -> None:

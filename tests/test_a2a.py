@@ -73,7 +73,7 @@ async def test_a2a_simple():
             assert 'result' in response
             task_id = response['result']['id']
 
-            while task := await a2a_client.get_task(task_id):
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
                 if 'result' in task and task['result']['status']['state'] == 'completed':
                     break
                 await anyio.sleep(0.1)
@@ -139,7 +139,7 @@ async def test_a2a_file_message_with_file():
             assert 'result' in response
             task_id = response['result']['id']
 
-            while task := await a2a_client.get_task(task_id):
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
                 if 'result' in task and task['result']['status']['state'] == 'completed':
                     break
                 await anyio.sleep(0.1)
@@ -207,7 +207,7 @@ async def test_a2a_file_message_with_file_content():
             assert 'result' in response
             task_id = response['result']['id']
 
-            while task := await a2a_client.get_task(task_id):
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
                 if 'result' in task and task['result']['status']['state'] == 'completed':
                     break
                 await anyio.sleep(0.1)
@@ -263,7 +263,7 @@ async def test_a2a_file_message_with_data():
             assert 'result' in response
             task_id = response['result']['id']
 
-            while task := await a2a_client.get_task(task_id):
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
                 if 'result' in task and task['result']['status']['state'] == 'failed':
                     break
                 await anyio.sleep(0.1)

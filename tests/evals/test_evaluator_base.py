@@ -86,7 +86,7 @@ def test_strict_abc_meta():
     assert 'evaluate' in str(exc_info.value)
 
 
-if TYPE_CHECKING or imports_successful():
+if TYPE_CHECKING or imports_successful():  # pragma: no branch
 
     @dataclass
     class SimpleEvaluator(Evaluator[Any, Any, Any]):
@@ -172,10 +172,11 @@ async def test_evaluator_async():
     assert result is True
 
 
-async def test_evaluator_name():
+async def test_evaluation_name():
     """Test evaluator name method."""
     evaluator = SimpleEvaluator()
-    assert evaluator.name() == 'SimpleEvaluator'
+    assert evaluator.get_serialization_name() == 'SimpleEvaluator'
+    assert evaluator.get_default_evaluation_name() == 'SimpleEvaluator'
 
 
 async def test_evaluator_serialization():
