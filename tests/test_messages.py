@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 
 from pydantic_ai.messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, VideoUrl
@@ -135,29 +137,33 @@ def test_image_url_invalid():
         ImageUrl('foobar.potato').format
 
 
-@pytest.mark.parametrize(
-    'document_url,media_type,format',
-    [
-        pytest.param(DocumentUrl('foobar.pdf'), 'application/pdf', 'pdf', id='pdf'),
-        pytest.param(DocumentUrl('foobar.txt'), 'text/plain', 'txt', id='txt'),
-        pytest.param(DocumentUrl('foobar.csv'), 'text/csv', 'csv', id='csv'),
-        pytest.param(
-            DocumentUrl('foobar.docx'),
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'docx',
-            id='docx',
-        ),
-        pytest.param(
-            DocumentUrl('foobar.xlsx'),
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'xlsx',
-            id='xlsx',
-        ),
-        pytest.param(DocumentUrl('foobar.html'), 'text/html', 'html', id='html'),
-        pytest.param(DocumentUrl('foobar.md'), 'text/markdown', 'md', id='md'),
-        pytest.param(DocumentUrl('foobar.xls'), 'application/vnd.ms-excel', 'xls', id='xls'),
-    ],
-)
+_url_formats = [
+    pytest.param(DocumentUrl('foobar.pdf'), 'application/pdf', 'pdf', id='pdf'),
+    pytest.param(DocumentUrl('foobar.txt'), 'text/plain', 'txt', id='txt'),
+    pytest.param(DocumentUrl('foobar.csv'), 'text/csv', 'csv', id='csv'),
+    pytest.param(
+        DocumentUrl('foobar.docx'),
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'docx',
+        id='docx',
+    ),
+    pytest.param(
+        DocumentUrl('foobar.xlsx'),
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'xlsx',
+        id='xlsx',
+    ),
+    pytest.param(DocumentUrl('foobar.html'), 'text/html', 'html', id='html'),
+    pytest.param(DocumentUrl('foobar.xls'), 'application/vnd.ms-excel', 'xls', id='xls'),
+]
+if sys.version_info > (3, 11):  # pragma: no branch
+    # This solves an issue with MIMEType on MacOS + python < 3.12. mimetypes.py added the text/markdown in 3.12, but on
+    # versions of linux the knownfiles include text/markdown so it isn't an issue. The .md test is only consistent
+    # independent of OS on > 3.11.
+    _url_formats.append(pytest.param(DocumentUrl('foobar.md'), 'text/markdown', 'md', id='md'))
+
+
+@pytest.mark.parametrize('document_url,media_type,format', _url_formats)
 def test_document_url_formats(document_url: DocumentUrl, media_type: str, format: str):
     assert document_url.media_type == media_type
     assert document_url.format == format
@@ -232,6 +238,7 @@ def test_binary_content_is_methods():
     assert document_content.format == 'pdf'
 
 
+@pytest.mark.xdist_group(name='url_formats')
 @pytest.mark.parametrize(
     'video_url,media_type,format',
     [

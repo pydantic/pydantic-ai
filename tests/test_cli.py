@@ -75,7 +75,7 @@ def test_agent_flag(
     assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
 
     # Verify the output contains the custom agent message
-    assert 'using custom agent test_module:custom_agent' in capfd.readouterr().out
+    assert 'using custom agent test_module:custom_agent' in capfd.readouterr().out.replace('\n', '')
 
     # Verify ask_agent was called with our custom agent
     mock_ask.assert_called_once()
@@ -108,7 +108,7 @@ def test_agent_flag_set_model(
 
     assert cli(['--agent', 'test_module:custom_agent', '--model', 'gpt-4o', 'hello']) == 0
 
-    assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out
+    assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out.replace('\n', '')
 
     assert isinstance(custom_agent.model, OpenAIModel)
 
