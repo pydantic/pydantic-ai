@@ -304,7 +304,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
         Args:
             country: The country name.
         """
-        return 'Paris'  # pragma: no cover
+        return 'Paris'  # pragma: lax no cover
 
     @agent.tool_plain
     async def get_temperature(city: str) -> str:

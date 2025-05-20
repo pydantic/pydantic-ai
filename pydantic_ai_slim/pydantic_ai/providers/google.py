@@ -104,7 +104,7 @@ class GoogleProvider(Provider[genai.Client]):
                     http_options={'headers': {'User-Agent': get_user_agent()}},
                 )
         else:
-            self._client = client  # pragma: no cover
+            self._client = client  # pragma: lax no cover
 
 
 VertexAILocation = Literal[
