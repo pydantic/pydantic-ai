@@ -1764,7 +1764,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             lifespan=lifespan,
         )
 
-    async def to_cli(self: Self, deps: AgentDepsT = None) -> None:
+    async def to_cli(self: Self, deps: AgentDepsT = None, prog_name: str = None) -> None:
         """Run the agent in a CLI chat interface.
 
         Example:
@@ -1785,6 +1785,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         # TODO(Marcelo): We need to refactor the CLI code to be able to be able to just pass `agent`, `deps` and
         # `prog_name` from here.
+        
+        if not isinstance(prog_name, str):
+            prog_name = 'pydantic-ai'
 
         session: PromptSession[Any] = PromptSession(history=FileHistory(str(PROMPT_HISTORY_PATH)))
         await run_chat(
@@ -1794,7 +1797,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             deps=deps,
             console=Console(),
             code_theme='monokai',
-            prog_name='pydantic-ai',
+            prog_name=prog_name,
         )
 
     def to_cli_sync(self: Self, deps: AgentDepsT = None) -> None:
