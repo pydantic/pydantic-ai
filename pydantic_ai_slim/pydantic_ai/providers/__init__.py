@@ -52,6 +52,10 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .deepseek import DeepSeekProvider
 
         return DeepSeekProvider()
+    elif provider == 'openrouter':
+        from .openrouter import OpenRouterProvider
+
+        return OpenRouterProvider()
     elif provider == 'azure':
         from .azure import AzureProvider
 
