@@ -55,6 +55,9 @@ This folder is used to store the prompt history and configuration.
 
 PROMPT_HISTORY_PATH = PYDANTIC_AI_HOME / 'prompt-history.txt'
 
+PYDANTIC_AI_HOME.mkdir(parents=True, exist_ok=True) # create pydantic-ai directory that stores prompt history
+PROMPT_HISTORY_PATH.touch(exist_ok=True) # create prompt history file
+
 
 class SimpleCodeBlock(CodeBlock):
     """Customized code blocks in markdown.
