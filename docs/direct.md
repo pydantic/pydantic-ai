@@ -95,6 +95,7 @@ async def main():
         model_name='gpt-4.1-nano',
         timestamp=datetime.datetime(...),
         kind='response',
+        vendor_id=None,
     )
     """
 ```

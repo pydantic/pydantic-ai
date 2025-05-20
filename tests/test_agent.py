@@ -1755,8 +1755,10 @@ def test_binary_content_all_messages_json():
                     'details': None,
                 },
                 'model_name': 'test',
+                'vendor_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
+                'vendor_details': None,
             },
         ]
     )
