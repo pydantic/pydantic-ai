@@ -63,6 +63,7 @@ def test_agent_flag(
     create_test_module: Callable[..., None],
 ):
     env.remove('OPENAI_API_KEY')
+    env.set('COLUMNS', '150')
 
     test_agent = Agent(TestModel(custom_output_text='Hello from custom agent'))
     create_test_module(custom_agent=test_agent)
@@ -98,6 +99,7 @@ def test_agent_flag_set_model(
     create_test_module: Callable[..., None],
 ):
     env.set('OPENAI_API_KEY', 'xxx')
+    env.set('COLUMNS', '150')
 
     custom_agent = Agent(TestModel(custom_output_text='Hello from custom agent'))
     create_test_module(custom_agent=custom_agent)
