@@ -136,13 +136,13 @@ class ToolOutput(Generic[OutputDataT]):
 
 # TODO: Comments to explain what's supported
 T_co = TypeVar('T_co', covariant=True)
-OutputCallable = TypeAliasType('OutputCallable', Callable[..., T_co | Awaitable[T_co]], type_params=(T_co,))
-SimpleOutputType = TypeAliasType('SimpleOutputType', type[T_co] | OutputCallable[T_co], type_params=(T_co,))
+OutputCallable = TypeAliasType('OutputCallable', Callable[..., Union[T_co, Awaitable[T_co]]], type_params=(T_co,))
+SimpleOutputType = TypeAliasType('SimpleOutputType', Union[type[T_co], OutputCallable[T_co]], type_params=(T_co,))
 SimpleOutputTypeOrMarker = TypeAliasType(
-    'SimpleOutputTypeOrMarker', SimpleOutputType[T_co] | ToolOutput[T_co], type_params=(T_co,)
+    'SimpleOutputTypeOrMarker', Union[SimpleOutputType[T_co], ToolOutput[T_co]], type_params=(T_co,)
 )
 OutputType = TypeAliasType(
-    'OutputType', SimpleOutputTypeOrMarker[T_co] | Sequence[SimpleOutputTypeOrMarker[T_co]], type_params=(T_co,)
+    'OutputType', Union[SimpleOutputTypeOrMarker[T_co], Sequence[SimpleOutputTypeOrMarker[T_co]]], type_params=(T_co,)
 )
 
 
