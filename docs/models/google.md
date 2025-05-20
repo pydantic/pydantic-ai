@@ -91,7 +91,7 @@ agent = Agent(model)
 
 You can specify the location when using Vertex AI:
 
-```python
+```python {title="google_model_location.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
@@ -108,6 +108,7 @@ You can provide a custom `Provider` via the `provider` argument, for example to 
 
 ```python
 from google import genai
+
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
