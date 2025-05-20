@@ -1,0 +1,42 @@
+from typing import cast
+
+import httpx
+import pytest
+from asgi_lifespan import LifespanManager
+from inline_snapshot import snapshot
+
+from fasta2a.applications import FastA2A
+from fasta2a.broker import InMemoryBroker
+from fasta2a.storage import InMemoryStorage
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(scope='function')
+async def test_client(request: pytest.FixtureRequest):
+    app = cast(FastA2A, request.param)
+    async with LifespanManager(app=app) as manager:
+        transport = httpx.ASGITransport(app=manager.app)
+        async with httpx.AsyncClient(transport=transport, base_url='http://testclient') as client:
+            yield client
+
+
+app = FastA2A(storage=InMemoryStorage(), broker=InMemoryBroker())
+
+
+@pytest.mark.parametrize('test_client', [app], indirect=True)
+async def test_agent_card(test_client: httpx.AsyncClient):
+    response = await test_client.get('/.well-known/agent.json')
+    assert response.status_code == 200
+    assert response.json() == snapshot(
+        {
+            'name': 'Agent',
+            'url': 'http://localhost:8000',
+            'version': '1.0.0',
+            'skills': [],
+            'defaultInputModes': ['application/json'],
+            'defaultOutputModes': ['application/json'],
+            'capabilities': {'streaming': False, 'pushNotifications': False, 'stateTransitionHistory': False},
+            'authentication': {'schemes': []},
+        }
+    )

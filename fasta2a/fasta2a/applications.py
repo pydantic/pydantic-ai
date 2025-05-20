@@ -12,7 +12,16 @@ from starlette.routing import Route
 from starlette.types import ExceptionHandler, Lifespan, Receive, Scope, Send
 
 from .broker import Broker
-from .schema import AgentCard, Capabilities, Provider, Skill, a2a_request_ta, a2a_response_ta, agent_card_ta
+from .schema import (
+    AgentCard,
+    Authentication,
+    Capabilities,
+    Provider,
+    Skill,
+    a2a_request_ta,
+    a2a_response_ta,
+    agent_card_ta,
+)
 from .storage import Storage
 from .task_manager import TaskManager
 
@@ -82,12 +91,13 @@ class FastA2A(Starlette):
                 default_input_modes=self.default_input_modes,
                 default_output_modes=self.default_output_modes,
                 capabilities=Capabilities(streaming=False, push_notifications=False, state_transition_history=False),
+                authentication=Authentication(schemes=[]),
             )
             if self.description is not None:
                 agent_card['description'] = self.description
             if self.provider is not None:
                 agent_card['provider'] = self.provider
-            self._agent_card_json_schema = agent_card_ta.dump_json(agent_card)
+            self._agent_card_json_schema = agent_card_ta.dump_json(agent_card, by_alias=True)
         return Response(content=self._agent_card_json_schema, media_type='application/json')
 
     async def _agent_run_endpoint(self, request: Request) -> Response:
