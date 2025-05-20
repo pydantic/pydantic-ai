@@ -24,7 +24,7 @@ from . import (
     result,
     usage as _usage,
 )
-from .result import OutputDataT, ToolOutput
+from .result import OutputDataT
 from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, Tool, ToolDefinition, ToolsPrepareFunc
 
@@ -251,7 +251,7 @@ async def _prepare_request_parameters(
     output_schema = ctx.deps.output_schema
     return models.ModelRequestParameters(
         function_tools=function_tool_defs,
-        allow_text_output=allow_text_output(output_schema),
+        allow_text_output=_output.allow_text_output(output_schema),
         output_tools=output_schema.tool_defs() if output_schema is not None else [],
     )
 
@@ -437,7 +437,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # when the model has already returned text along side tool calls
                     # in this scenario, if text responses are allowed, we return text from the most recent model
                     # response, if any
-                    if allow_text_output(ctx.deps.output_schema):
+                    if _output.allow_text_output(ctx.deps.output_schema):
                         for message in reversed(ctx.state.message_history):
                             if isinstance(message, _messages.ModelResponse):
                                 last_texts = [p.content for p in message.parts if isinstance(p, _messages.TextPart)]
@@ -520,27 +520,22 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_schema = ctx.deps.output_schema
 
         text = '\n\n'.join(texts)
-        if allow_text_output(output_schema):
-            # The following cast is safe because we know `str` is an allowed result type
-            result_data_input = cast(NodeRunEndT, text)
-            try:
-                result_data = await _validate_output(result_data_input, ctx, None)
-            except _output.ToolRetryError as e:
-                ctx.state.increment_retries(ctx.deps.max_result_retries)
-                return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
+        try:
+            if _output.allow_text_output(output_schema):
+                # The following cast is safe because we know `str` is an allowed result type
+                result_data = cast(NodeRunEndT, text)
             else:
-                return self._handle_final_result(ctx, result.FinalResult(result_data, None, None), [])
-        else:
-            ctx.state.increment_retries(ctx.deps.max_result_retries)
-            return ModelRequestNode[DepsT, NodeRunEndT](
-                _messages.ModelRequest(
-                    parts=[
-                        _messages.RetryPromptPart(
-                            content='Plain text responses are not permitted, please include your response in a tool call',
-                        )
-                    ]
+                m = _messages.RetryPromptPart(
+                    content='Plain text responses are not permitted, please include your response in a tool call',
                 )
-            )
+                raise _output.ToolRetryError(m)
+
+            result_data = await _validate_output(result_data, ctx, None)
+        except _output.ToolRetryError as e:
+            ctx.state.increment_retries(ctx.deps.max_result_retries)
+            return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
+        else:
+            return self._handle_final_result(ctx, result.FinalResult(result_data, None, None), [])
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
@@ -782,11 +777,6 @@ async def _validate_output(
     return result_data
 
 
-def allow_text_output(output_schema: _output.OutputSchema[Any] | None) -> bool:
-    """Check if the result schema allows text results."""
-    return output_schema is None or output_schema.allow_text_output
-
-
 @dataclasses.dataclass
 class _RunMessages:
     messages: list[_messages.ModelMessage]
@@ -836,7 +826,9 @@ def get_captured_run_messages() -> _RunMessages:
 
 
 def build_agent_graph(
-    name: str | None, deps_type: type[DepsT], output_type: type[OutputT] | ToolOutput[OutputT]
+    name: str | None,
+    deps_type: type[DepsT],
+    output_type: _output.OutputType[OutputT],
 ) -> Graph[GraphAgentState, GraphAgentDeps[DepsT, result.FinalResult[OutputT]], result.FinalResult[OutputT]]:
     """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
     nodes = (

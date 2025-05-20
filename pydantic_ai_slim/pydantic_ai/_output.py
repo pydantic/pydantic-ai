@@ -12,11 +12,43 @@ from typing_inspection.introspection import is_union_origin
 
 from . import _utils, messages as _messages
 from .exceptions import ModelRetry
-from .result import DEFAULT_OUTPUT_TOOL_NAME, OutputDataT, OutputDataT_inv, OutputValidatorFunc, ToolOutput
-from .tools import AgentDepsT, GenerateToolJsonSchema, RunContext, ToolDefinition
+from .tools import AgentDepsT, GenerateToolJsonSchema, ObjectJsonSchema, RunContext, ToolDefinition
 
 T = TypeVar('T')
 """An invariant TypeVar."""
+OutputDataT_inv = TypeVar('OutputDataT_inv', default=str)
+"""
+An invariant type variable for the result data of a model.
+
+We need to use an invariant typevar for `OutputValidator` and `OutputValidatorFunc` because the output data type is used
+in both the input and output of a `OutputValidatorFunc`. This can theoretically lead to some issues assuming that types
+possessing OutputValidator's are covariant in the result data type, but in practice this is rarely an issue, and
+changing it would have negative consequences for the ergonomics of the library.
+
+At some point, it may make sense to change the input to OutputValidatorFunc to be `Any` or `object` as doing that would
+resolve these potential variance issues.
+"""
+OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
+"""Covariant type variable for the result data type of a run."""
+
+OutputValidatorFunc = Union[
+    Callable[[RunContext[AgentDepsT], OutputDataT_inv], OutputDataT_inv],
+    Callable[[RunContext[AgentDepsT], OutputDataT_inv], Awaitable[OutputDataT_inv]],
+    Callable[[OutputDataT_inv], OutputDataT_inv],
+    Callable[[OutputDataT_inv], Awaitable[OutputDataT_inv]],
+]
+"""
+A function that always takes and returns the same type of data (which is the result type of an agent run), and:
+
+* may or may not take [`RunContext`][pydantic_ai.tools.RunContext] as a first argument
+* may or may not be async
+
+Usage `OutputValidatorFunc[AgentDepsT, T]`.
+"""
+
+
+DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
+DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
 
 
 @dataclass
@@ -76,69 +108,99 @@ class ToolRetryError(Exception):
         super().__init__()
 
 
+@dataclass(init=False)
+class ToolOutput(Generic[OutputDataT]):
+    """Marker class to use tools for outputs, and customize the tool."""
+
+    output_type: type[OutputDataT]
+    name: str | None
+    description: str | None
+    max_retries: int | None
+    strict: bool | None
+
+    def __init__(
+        self,
+        *,
+        type_: type[OutputDataT],
+        name: str | None = None,
+        description: str | None = None,
+        max_retries: int | None = None,
+        strict: bool | None = None,
+    ):
+        self.output_type = type_
+        self.name = name
+        self.description = description
+        self.max_retries = max_retries
+        self.strict = strict
+
+
+# TODO: Use TypeAliasType
+type OutputType[OutputDataT] = type[OutputDataT] | ToolOutput[OutputDataT]
+
+
 @dataclass
 class OutputSchema(Generic[OutputDataT]):
-    """Model the final response from an agent run.
+    """Model the final output from an agent run.
 
     Similar to `Tool` but for the final output of running an agent.
     """
 
-    tools: dict[str, OutputSchemaTool[OutputDataT]]
+    tools: dict[str, OutputTool[OutputDataT]]
     allow_text_output: bool
 
     @classmethod
     def build(
         cls: type[OutputSchema[T]],
-        output_type: type[T] | ToolOutput[T],
+        output_type: OutputType[T],
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
     ) -> OutputSchema[T] | None:
-        """Build an OutputSchema dataclass from a response type."""
+        """Build an OutputSchema dataclass from an output type."""
         if output_type is str:
             return None
 
+        allow_text_output = False
         if isinstance(output_type, ToolOutput):
             # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
             name = output_type.name
             description = output_type.description
             output_type_ = output_type.output_type
             strict = output_type.strict
+        elif output_type_other_than_str := extract_str_from_union(output_type):
+            output_type_ = output_type_other_than_str.value
+            allow_text_output = True
         else:
             output_type_ = output_type
 
-        if output_type_option := extract_str_from_union(output_type):
-            output_type_ = output_type_option.value
-            allow_text_output = True
-        else:
-            allow_text_output = False
-
-        tools: dict[str, OutputSchemaTool[T]] = {}
+        tools: dict[str, OutputTool[T]] = {}
         if args := get_union_args(output_type_):
             for i, arg in enumerate(args, start=1):
                 tool_name = raw_tool_name = union_tool_name(name, arg)
                 while tool_name in tools:
                     tool_name = f'{raw_tool_name}_{i}'
+
+                parameters_schema = OutputObjectSchema(output_type=arg, description=description, strict=strict)
                 tools[tool_name] = cast(
-                    OutputSchemaTool[T],
-                    OutputSchemaTool(
-                        output_type=arg, name=tool_name, description=description, multiple=True, strict=strict
-                    ),
+                    OutputTool[T],
+                    OutputTool(name=tool_name, parameters_schema=parameters_schema, multiple=True),
                 )
         else:
-            name = name or DEFAULT_OUTPUT_TOOL_NAME
-            tools[name] = cast(
-                OutputSchemaTool[T],
-                OutputSchemaTool(
-                    output_type=output_type_, name=name, description=description, multiple=False, strict=strict
-                ),
+            tool_name = name or DEFAULT_OUTPUT_TOOL_NAME
+            parameters_schema = OutputObjectSchema(output_type=output_type_, description=description, strict=strict)
+            tools[tool_name] = cast(
+                OutputTool[T],
+                OutputTool(name=tool_name, parameters_schema=parameters_schema, multiple=False),
             )
 
-        return cls(tools=tools, allow_text_output=allow_text_output)
+        return cls(
+            tools=tools,
+            allow_text_output=allow_text_output,
+        )
 
     def find_named_tool(
         self, parts: Iterable[_messages.ModelResponsePart], tool_name: str
-    ) -> tuple[_messages.ToolCallPart, OutputSchemaTool[OutputDataT]] | None:
+    ) -> tuple[_messages.ToolCallPart, OutputTool[OutputDataT]] | None:
         """Find a tool that matches one of the calls, with a specific name."""
         for part in parts:  # pragma: no branch
             if isinstance(part, _messages.ToolCallPart):  # pragma: no branch
@@ -148,7 +210,7 @@ class OutputSchema(Generic[OutputDataT]):
     def find_tool(
         self,
         parts: Iterable[_messages.ModelResponsePart],
-    ) -> Iterator[tuple[_messages.ToolCallPart, OutputSchemaTool[OutputDataT]]]:
+    ) -> Iterator[tuple[_messages.ToolCallPart, OutputTool[OutputDataT]]]:
         """Find a tool that matches one of the calls."""
         for part in parts:
             if isinstance(part, _messages.ToolCallPart):  # pragma: no branch
@@ -164,55 +226,116 @@ class OutputSchema(Generic[OutputDataT]):
         return [t.tool_def for t in self.tools.values()]
 
 
-DEFAULT_DESCRIPTION = 'The final response which ends this conversation'
+def allow_text_output(output_schema: OutputSchema[Any] | None) -> bool:
+    return output_schema is None or output_schema.allow_text_output
+
+
+@dataclass
+class OutputObjectDefinition:
+    name: str
+    json_schema: ObjectJsonSchema
+    description: str | None = None
+    strict: bool | None = None
 
 
 @dataclass(init=False)
-class OutputSchemaTool(Generic[OutputDataT]):
-    tool_def: ToolDefinition
+class OutputObjectSchema(Generic[OutputDataT]):
+    definition: OutputObjectDefinition
     type_adapter: TypeAdapter[Any]
+    outer_typed_dict_key: str | None = None
 
     def __init__(
-        self, *, output_type: type[OutputDataT], name: str, description: str | None, multiple: bool, strict: bool | None
+        self,
+        *,
+        output_type: type[OutputDataT],
+        name: str | None = None,
+        description: str | None = None,
+        strict: bool | None = None,
     ):
-        """Build a OutputSchemaTool from a response type."""
         if _utils.is_model_like(output_type):
             self.type_adapter = TypeAdapter(output_type)
-            outer_typed_dict_key: str | None = None
-            # noinspection PyArgumentList
-            parameters_json_schema = _utils.check_object_json_schema(
-                self.type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
-            )
         else:
+            self.outer_typed_dict_key = 'response'
             response_data_typed_dict = TypedDict(  # noqa: UP013
                 'response_data_typed_dict',
                 {'response': output_type},  # pyright: ignore[reportInvalidTypeForm]
             )
             self.type_adapter = TypeAdapter(response_data_typed_dict)
-            outer_typed_dict_key = 'response'
-            # noinspection PyArgumentList
-            parameters_json_schema = _utils.check_object_json_schema(
-                self.type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
-            )
-            # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
-            parameters_json_schema.pop('title')
 
-        if json_schema_description := parameters_json_schema.pop('description', None):
+        json_schema = _utils.check_object_json_schema(
+            self.type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+        )
+        if self.outer_typed_dict_key:
+            # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
+            json_schema.pop('title')
+
+        if json_schema_description := json_schema.pop('description', None):
             if description is None:
-                tool_description = json_schema_description
+                description = json_schema_description
             else:
-                tool_description = f'{description}. {json_schema_description}'  # pragma: no cover
+                description = f'{description}. {json_schema_description}'
+
+        self.definition = OutputObjectDefinition(
+            name=name or getattr(output_type, '__name__', DEFAULT_OUTPUT_TOOL_NAME),
+            description=description,
+            json_schema=json_schema,
+            strict=strict,
+        )
+
+    def validate(
+        self, data: str | dict[str, Any], allow_partial: bool = False, wrap_validation_errors: bool = True
+    ) -> OutputDataT:
+        """Validate an output message.
+
+        Args:
+            data: The output data to validate.
+            allow_partial: If true, allow partial validation.
+            wrap_validation_errors: If true, wrap the validation errors in a retry message.
+
+        Returns:
+            Either the validated output data (left) or a retry message (right).
+        """
+        try:
+            pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
+            if isinstance(data, str):
+                output = self.type_adapter.validate_json(data, experimental_allow_partial=pyd_allow_partial)
+            else:
+                output = self.type_adapter.validate_python(data, experimental_allow_partial=pyd_allow_partial)
+        except ValidationError as e:
+            if wrap_validation_errors:
+                m = _messages.RetryPromptPart(
+                    content=e.errors(include_url=False),
+                )
+                raise ToolRetryError(m) from e
+            else:
+                raise
         else:
-            tool_description = description or DEFAULT_DESCRIPTION
+            if k := self.outer_typed_dict_key:
+                output = output[k]
+            return output
+
+
+@dataclass(init=False)
+class OutputTool(Generic[OutputDataT]):
+    parameters_schema: OutputObjectSchema[OutputDataT]
+    tool_def: ToolDefinition
+
+    def __init__(self, *, name: str, parameters_schema: OutputObjectSchema[OutputDataT], multiple: bool):
+        self.parameters_schema = parameters_schema
+        definition = parameters_schema.definition
+
+        description = definition.description
+        if not description:
+            description = DEFAULT_OUTPUT_TOOL_DESCRIPTION
             if multiple:
-                tool_description = f'{union_arg_name(output_type)}: {tool_description}'
+                description = f'{definition.name}: {description}'
 
         self.tool_def = ToolDefinition(
             name=name,
-            description=tool_description,
-            parameters_json_schema=parameters_json_schema,
-            outer_typed_dict_key=outer_typed_dict_key,
-            strict=strict,
+            description=description,
+            parameters_json_schema=definition.json_schema,
+            strict=definition.strict,
+            outer_typed_dict_key=parameters_schema.outer_typed_dict_key,
         )
 
     def validate(
@@ -229,11 +352,9 @@ class OutputSchemaTool(Generic[OutputDataT]):
             Either the validated output data (left) or a retry message (right).
         """
         try:
-            pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
-            if isinstance(tool_call.args, str):
-                output = self.type_adapter.validate_json(tool_call.args, experimental_allow_partial=pyd_allow_partial)
-            else:
-                output = self.type_adapter.validate_python(tool_call.args, experimental_allow_partial=pyd_allow_partial)
+            output = self.parameters_schema.validate(
+                tool_call.args, allow_partial=allow_partial, wrap_validation_errors=False
+            )
         except ValidationError as e:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -245,8 +366,6 @@ class OutputSchemaTool(Generic[OutputDataT]):
             else:
                 raise  # pragma: lax no cover
         else:
-            if k := self.tool_def.outer_typed_dict_key:
-                output = output[k]
             return output
 
 
