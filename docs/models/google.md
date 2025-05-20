@@ -1,6 +1,7 @@
 # Google
 
-The `GoogleModel` is a model that uses the [`google-genai`](https://pypi.org/project/google-generativeai/) package under the hood to access Google's Gemini models via both the Generative Language API and Vertex AI.
+The `GoogleModel` is a model that uses the [`google-genai`](https://pypi.org/project/google-generativeai/) package under the hood to
+access Google's Gemini models via both the Generative Language API and Vertex AI.
 
 ## Install
 
@@ -13,9 +14,10 @@ pip/uv-add "pydantic-ai-slim[google]"
 ---
 
 !!! warning "Explicit instantiation required"
-    You **cannot** currently use `Agent('google-gla:gemini-1.5-flash')` or `Agent('google-vertex:gemini-1.5-flash')` directly with `GoogleModel`. The model name inference will select `GeminiModel` instead of `GoogleModel`.
+    You **cannot** currently use `Agent('google-gla:gemini-1.5-flash')` or `Agent('google-vertex:gemini-1.5-flash')` directly with `GoogleModel`. The model name inference will select [`GeminiModel`](../models/gemini.md) instead of `GoogleModel`.
 
-    To use `GoogleModel`, you **must** explicitly instantiate a `GoogleProvider` and pass it to `GoogleModel`, then pass the model to `Agent`. This is being worked on and will be improved in the future so that name-based inference works as expected.
+    To use `GoogleModel`, you **must** explicitly instantiate a [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] and pass it to
+    [`GoogleModel`][pydantic_ai.models.google.GoogleModel], then pass the model to [`Agent`][pydantic_ai.Agent].
 
 ---
 
@@ -105,11 +107,13 @@ agent = Agent(model)
 You can provide a custom `Provider` via the `provider` argument, for example to use a pre-initialized `genai.Client` or to customize authentication:
 
 ```python
+from google import genai
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-provider = GoogleProvider(api_key='your-api-key')
+client = genai.Client()
+provider = GoogleProvider(client=client)
 model = GoogleModel('gemini-1.5-flash', provider=provider)
 agent = Agent(model)
 ...
@@ -117,7 +121,7 @@ agent = Agent(model)
 
 ## Model Settings
 
-You can customize model behavior using `GoogleModelSettings`:
+You can customize model behavior using [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings]:
 
 ```python
 from google.genai.types import HarmBlockThreshold, HarmCategory
@@ -148,4 +152,8 @@ See the [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings)
 `GoogleModel` supports multi-modal input, including documents, images, audio, and video. See the [input documentation](../input.md) for details and examples.
 
 !!! warning
-    When using Gemini models, document content is always sent as binary data, regardless of whether you use `DocumentUrl` or `BinaryContent`. This is due to differences in how Vertex AI and Google AI handle document inputs. See [this discussion](https://discuss.ai.google.dev/t/i-am-using-google-generative-ai-model-gemini-1-5-pro-for-image-analysis-but-getting-error/34866/4).
+    When using Gemini models, document content is always sent as binary data, regardless of whether you use `DocumentUrl` or `BinaryContent`.
+    This is due to differences in how Vertex AI and Google AI handle document inputs.
+
+    See [this discussion](https://discuss.ai.google.dev/t/i-am-using-google-generative-ai-model-gemini-1-5-pro-for-image-analysis-but-getting-error/34866/4)
+    for more details.
