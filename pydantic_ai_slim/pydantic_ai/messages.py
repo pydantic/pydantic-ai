@@ -553,12 +553,6 @@ class ModelResponse:
     model_name: str | None = None
     """The name of the model that generated the response."""
 
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    """The ID of the response.
-
-    If the model provides an ID in the response that will be used, otherwise a random UUID will be generated.
-    """
-
     finish_reasons: list[str] = field(default_factory=list)
     """The reasons why the model finished generating the response, one for each part of the response."""
 
