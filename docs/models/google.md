@@ -158,3 +158,48 @@ See the [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings)
 
     See [this discussion](https://discuss.ai.google.dev/t/i-am-using-google-generative-ai-model-gemini-1-5-pro-for-image-analysis-but-getting-error/34866/4)
     for more details.
+
+## Model settings
+
+You can use the [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings] class to customize the model request.
+
+### Disable thinking
+
+You can disable thinking by setting the `thinking_budget` to `0` on the `google_thinking_config`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+
+model_settings = GoogleModelSettings(google_thinking_config={'thinking_budget': 0})
+model = GoogleModel('gemini-2.0-flash')
+agent = Agent(model, model_settings=model_settings)
+...
+```
+
+Check out the [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for more on thinking.
+
+### Safety settings
+
+You can customize the safety settings by setting the `google_safety_settings` field.
+
+```python
+from google.genai.types import HarmBlockThreshold, HarmCategory
+
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+
+model_settings = GoogleModelSettings(
+    google_safety_settings=[
+        {
+            'category': HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            'threshold': HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
+        }
+    ]
+)
+model = GoogleModel('gemini-2.0-flash')
+agent = Agent(model, model_settings=model_settings)
+...
+```
+
+See the [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings) for more on safety settings.

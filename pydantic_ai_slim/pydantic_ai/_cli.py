@@ -57,7 +57,7 @@ PROMPT_HISTORY_PATH = PYDANTIC_AI_HOME / 'prompt-history.txt'
 
 
 class SimpleCodeBlock(CodeBlock):
-    """Customised code blocks in markdown.
+    """Customized code blocks in markdown.
 
     This avoids a background color which messes up copy-pasting and sets the language name as dim prefix and suffix.
     """
@@ -70,7 +70,7 @@ class SimpleCodeBlock(CodeBlock):
 
 
 class LeftHeading(Heading):
-    """Customised headings in markdown to stop centering and prepend markdown style hashes."""
+    """Customized headings in markdown to stop centering and prepend markdown style hashes."""
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         # note we use `Style(bold=True)` not `self.style_name` here to disable underlining which is ugly IMHO

@@ -183,7 +183,7 @@ agent = Agent(model)
 ...
 ```
 
-### Customising region
+### Customizing region
 
 Whichever way you authenticate, you can specify which region requests will be sent to via the `region` argument.
 
@@ -218,3 +218,46 @@ model = GeminiModel(
 agent = Agent(model)
 ...
 ```
+
+### Model settings
+
+You can use the [`GeminiModelSettings`][pydantic_ai.models.gemini.GeminiModelSettings] class to customize the model request.
+
+#### Disable thinking
+
+You can disable thinking by setting the `thinking_budget` to `0` on the `google_thinking_config`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
+
+model_settings = GeminiModelSettings(gemini_thinking_config={'thinking_budget': 0})
+model = GeminiModel('gemini-2.0-flash')
+agent = Agent(model, model_settings=model_settings)
+...
+```
+
+Check out the [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for more on thinking.
+
+#### Safety settings
+
+You can customize the safety settings by setting the `google_safety_settings` field.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
+
+model_settings = GeminiModelSettings(
+    gemini_safety_settings=[
+        {
+            'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
+            'threshold': 'BLOCK_ONLY_HIGH',
+        }
+    ]
+)
+model = GeminiModel('gemini-2.0-flash')
+agent = Agent(model, model_settings=model_settings)
+...
+```
+
+Check out the [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings) for more on safety settings.
