@@ -83,6 +83,7 @@ def reset_cwd():
         os.chdir(original_cwd)
 
 
+@pytest.mark.xdist_group(name='doc_tests')
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(  # noqa: C901
     example: CodeExample,
