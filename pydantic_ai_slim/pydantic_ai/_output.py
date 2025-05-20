@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Literal, Union, cast
 
 from pydantic import TypeAdapter, ValidationError
-from typing_extensions import TypedDict, TypeVar, get_args, get_origin
+from typing_extensions import TypeAliasType, TypedDict, TypeVar, get_args, get_origin
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
@@ -134,11 +134,16 @@ class ToolOutput(Generic[OutputDataT]):
         self.strict = strict
 
 
-# TODO: Use TypeAliasType
-type OutputCallable[OutputDataT] = Callable[..., OutputDataT | Awaitable[OutputDataT]]
-type SimpleOutputType[OutputDataT] = type[OutputDataT] | OutputCallable[OutputDataT]
-type SimpleOutputTypeOrMarker[OutputDataT] = SimpleOutputType[OutputDataT] | ToolOutput[OutputDataT]
-type OutputType[OutputDataT] = SimpleOutputTypeOrMarker[OutputDataT] | Sequence[SimpleOutputTypeOrMarker[OutputDataT]]
+# TODO: Comments to explain what's supported
+T_co = TypeVar('T_co', covariant=True)
+OutputCallable = TypeAliasType('OutputCallable', Callable[..., T_co | Awaitable[T_co]], type_params=(T_co,))
+SimpleOutputType = TypeAliasType('SimpleOutputType', type[T_co] | OutputCallable[T_co], type_params=(T_co,))
+SimpleOutputTypeOrMarker = TypeAliasType(
+    'SimpleOutputTypeOrMarker', SimpleOutputType[T_co] | ToolOutput[T_co], type_params=(T_co,)
+)
+OutputType = TypeAliasType(
+    'OutputType', SimpleOutputTypeOrMarker[T_co] | Sequence[SimpleOutputTypeOrMarker[T_co]], type_params=(T_co,)
+)
 
 
 @dataclass
@@ -279,6 +284,7 @@ class OutputObjectSchema(Generic[OutputDataT]):
         description: str | None = None,
         strict: bool | None = None,
     ):
+        # TODO: Support bound instance methods
         if inspect.isfunction(output_type) or _utils.is_model_like(output_type):
             self.type_adapter = TypeAdapter(output_type)
         else:
