@@ -40,9 +40,11 @@ from pydantic_ai.models.test import TestModel
 from .conftest import ClientWithHandler, TestEnv, try_import
 
 try:
+    from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 except ImportError:  # pragma: lax no cover
     GoogleVertexProvider = None
+    GoogleProvider = None
 
 
 try:
@@ -57,7 +59,10 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
-    pytest.mark.skipif(GoogleVertexProvider is None or logfire is None, reason='google-auth or logfire not installed'),
+    pytest.mark.skipif(
+        GoogleVertexProvider is None or logfire is None or GoogleProvider is None,
+        reason='google-auth or logfire or google-provider not installed',
+    ),
 ]
 
 

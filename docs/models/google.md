@@ -71,8 +71,9 @@ agent = Agent(model)
 
 To use a service account JSON file:
 
-```python
+```python {title="google_model_service_account.py" test="skip"}
 from google.oauth2 import service_account
+
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
@@ -120,6 +121,7 @@ You can customize model behavior using `GoogleModelSettings`:
 
 ```python
 from google.genai.types import HarmBlockThreshold, HarmCategory
+
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
@@ -140,23 +142,6 @@ agent = Agent(model, model_settings=settings)
 ```
 
 See the [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings) for more on safety settings, and [thinking config](https://ai.google.dev/gemini-api/docs/thinking).
-
-## Streaming
-
-`GoogleModel` supports streaming responses. You can use `agent.run_stream()` to stream text or structured output:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.google import GoogleModel
-
-model = GoogleModel('gemini-1.5-flash')
-agent = Agent(model)
-
-async def main():
-    async with agent.run_stream('Tell me a joke about AI.') as result:
-        async for message in result.stream_text():
-            print(message)
-```
 
 ## Document, Image, Audio, and Video Input
 
