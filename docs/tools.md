@@ -553,6 +553,100 @@ print(test_model.last_model_request_parameters.function_tools)
 
 _(This example is complete, it can be run "as is")_
 
+## Agent-wide Dynamic Tool Preparation {#prepare-tools}
+
+In addition to per-tool `prepare` methods, you can also define an agent-wide `prepare_tools` function. This function is called at each step of a run and allows you to filter or modify the list of all tool definitions available to the agent for that step. This is especially useful if you want to enable or disable multiple tools at once, or apply global logic based on the current context.
+
+The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns a new list of tool definitions (or `None` to disable all tools for that step).
+
+!!! note
+    The list of tool definitions passed to `prepare_tools` includes both regular tools and tools from any MCP servers attached to the agent.
+
+Here's an example that makes all tools strict if the model is an OpenAI model:
+
+```python {title="agent_prepare_tools_customize.py" noqa="I001"}
+from dataclasses import replace
+from typing import Union
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.models.test import TestModel
+
+
+async def turn_on_strict_if_openai(
+    ctx: RunContext[None], tool_defs: list[ToolDefinition]
+) -> Union[list[ToolDefinition], None]:
+    if ctx.model.system == 'openai':
+        return [replace(tool_def, strict=True) for tool_def in tool_defs]
+    return tool_defs
+
+
+test_model = TestModel()
+agent = Agent(test_model, prepare_tools=turn_on_strict_if_openai)
+
+
+@agent.tool_plain
+def echo(message: str) -> str:
+    return message
+
+
+agent.run_sync('testing...')
+assert test_model.last_model_request_parameters.function_tools[0].strict is None
+
+# Set the system attribute of the test_model to 'openai'
+test_model._system = 'openai'
+
+agent.run_sync('testing with openai...')
+assert test_model.last_model_request_parameters.function_tools[0].strict
+```
+
+_(This example is complete, it can be run "as is")_
+
+Here's another example that conditionally filters out the tools by name if the dependency (`ctx.deps`) is `True`:
+
+```python {title="agent_prepare_tools_filter_out.py" noqa="I001"}
+from typing import Union
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.tools import Tool, ToolDefinition
+
+
+def launch_potato(target: str) -> str:
+    return f'Potato launched at {target}!'
+
+
+async def filter_out_tools_by_name(
+    ctx: RunContext[bool], tool_defs: list[ToolDefinition]
+) -> Union[list[ToolDefinition], None]:
+    if ctx.deps:
+        return [tool_def for tool_def in tool_defs if tool_def.name != 'launch_potato']
+    return tool_defs
+
+
+agent = Agent(
+    'test',
+    tools=[Tool(launch_potato)],
+    prepare_tools=filter_out_tools_by_name,
+    deps_type=bool,
+)
+
+result = agent.run_sync('testing...', deps=False)
+print(result.output)
+#> {"launch_potato":"Potato launched at a!"}
+result = agent.run_sync('testing...', deps=True)
+print(result.output)
+#> success (no tool calls)
+```
+
+_(This example is complete, it can be run "as is")_
+
+You can use `prepare_tools` to:
+
+- Dynamically enable or disable tools based on the current model, dependencies, or other context
+- Modify tool definitions globally (e.g., set all tools to strict mode, change descriptions, etc.)
+
+If both per-tool `prepare` and agent-wide `prepare_tools` are used, the per-tool `prepare` is applied first to each tool, and then `prepare_tools` is called with the resulting list of tool definitions.
+
 
 ## Tool Execution and Retries {#tool-retries}
 
