@@ -88,7 +88,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 )
 
             call, output_tool = match
-            result_data = output_tool.validate(call, allow_partial=allow_partial, wrap_validation_errors=False)
+            result_data = await output_tool.process(call, allow_partial=allow_partial, wrap_validation_errors=False)
         else:
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
             # The following cast is safe because we know `str` is an allowed output type
@@ -396,7 +396,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 )
 
             call, output_tool = match
-            result_data = output_tool.validate(call, allow_partial=allow_partial, wrap_validation_errors=False)
+            result_data = await output_tool.process(call, allow_partial=allow_partial, wrap_validation_errors=False)
         else:
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
             result_data = cast(OutputDataT, text)

@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import inspect
-from collections.abc import Awaitable, Iterable, Iterator
+from collections.abc import Awaitable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Literal, Union, cast
 
@@ -112,7 +112,7 @@ class ToolRetryError(Exception):
 class ToolOutput(Generic[OutputDataT]):
     """Marker class to use tools for outputs, and customize the tool."""
 
-    output_type: type[OutputDataT]
+    output_type: SimpleOutputType[OutputDataT]
     name: str | None
     description: str | None
     max_retries: int | None
@@ -121,7 +121,7 @@ class ToolOutput(Generic[OutputDataT]):
     def __init__(
         self,
         *,
-        type_: type[OutputDataT],
+        type_: SimpleOutputType[OutputDataT],
         name: str | None = None,
         description: str | None = None,
         max_retries: int | None = None,
@@ -135,7 +135,10 @@ class ToolOutput(Generic[OutputDataT]):
 
 
 # TODO: Use TypeAliasType
-type OutputType[OutputDataT] = type[OutputDataT] | ToolOutput[OutputDataT]
+type OutputCallable[OutputDataT] = Callable[..., OutputDataT | Awaitable[OutputDataT]]
+type SimpleOutputType[OutputDataT] = type[OutputDataT] | OutputCallable[OutputDataT]
+type SimpleOutputTypeOrMarker[OutputDataT] = SimpleOutputType[OutputDataT] | ToolOutput[OutputDataT]
+type OutputType[OutputDataT] = SimpleOutputTypeOrMarker[OutputDataT] | Sequence[SimpleOutputTypeOrMarker[OutputDataT]]
 
 
 @dataclass
@@ -150,48 +153,72 @@ class OutputSchema(Generic[OutputDataT]):
 
     @classmethod
     def build(
-        cls: type[OutputSchema[T]],
-        output_type: OutputType[T],
+        cls: type[OutputSchema[OutputDataT]],
+        output_type: OutputType[OutputDataT],
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
-    ) -> OutputSchema[T] | None:
+    ) -> OutputSchema[OutputDataT] | None:
         """Build an OutputSchema dataclass from an output type."""
         if output_type is str:
             return None
 
+        multiple = False
+
+        output_types_or_markers: Sequence[SimpleOutputTypeOrMarker[OutputDataT]]
+        if isinstance(output_type, Sequence):
+            output_types_or_markers = output_type
+            multiple = True
+        else:
+            output_types_or_markers = [output_type]
+
         allow_text_output = False
-        if isinstance(output_type, ToolOutput):
-            # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
-            name = output_type.name
-            description = output_type.description
-            output_type_ = output_type.output_type
-            strict = output_type.strict
-        elif output_type_other_than_str := extract_str_from_union(output_type):
-            output_type_ = output_type_other_than_str.value
-            allow_text_output = True
-        else:
-            output_type_ = output_type
+        tools: dict[str, OutputTool[OutputDataT]] = {}
+        for output_type_or_marker in output_types_or_markers:
+            tool_name = name
+            tool_description = description
+            tool_strict = strict
+            custom_tool_name = False
+            if isinstance(output_type_or_marker, ToolOutput):
+                output_type_ = output_type_or_marker.output_type
+                # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
+                tool_name = output_type_or_marker.name
+                tool_description = output_type_or_marker.description
+                tool_strict = output_type_or_marker.strict
+                custom_tool_name = True
+            elif output_type_other_than_str := extract_str_from_union(output_type_or_marker):
+                output_type_ = output_type_other_than_str.value
+                allow_text_output = True
+            else:
+                output_type_ = output_type_or_marker
 
-        tools: dict[str, OutputTool[T]] = {}
-        if args := get_union_args(output_type_):
-            for i, arg in enumerate(args, start=1):
-                tool_name = raw_tool_name = union_tool_name(name, arg)
+            disambiguate_tool_name = multiple and not custom_tool_name
+            if args := get_union_args(output_type_):
+                multiple = True
+                disambiguate_tool_name = True
+            else:
+                args = (output_type_,)
+
+            base_tool_name = tool_name
+            for arg in args:
+                tool_name = base_tool_name or DEFAULT_OUTPUT_TOOL_NAME
+
+                if disambiguate_tool_name:
+                    tool_name += f'_{arg.__name__}'
+
+                i = 1
+                original_tool_name = tool_name
                 while tool_name in tools:
-                    tool_name = f'{raw_tool_name}_{i}'
+                    tool_name = f'{original_tool_name}_{i}'
+                    i += 1
 
-                parameters_schema = OutputObjectSchema(output_type=arg, description=description, strict=strict)
-                tools[tool_name] = cast(
-                    OutputTool[T],
-                    OutputTool(name=tool_name, parameters_schema=parameters_schema, multiple=True),
+                parameters_schema = OutputObjectSchema(
+                    output_type=arg, description=tool_description, strict=tool_strict
                 )
-        else:
-            tool_name = name or DEFAULT_OUTPUT_TOOL_NAME
-            parameters_schema = OutputObjectSchema(output_type=output_type_, description=description, strict=strict)
-            tools[tool_name] = cast(
-                OutputTool[T],
-                OutputTool(name=tool_name, parameters_schema=parameters_schema, multiple=False),
-            )
+                tools[tool_name] = cast(
+                    OutputTool[OutputDataT],
+                    OutputTool(name=tool_name, parameters_schema=parameters_schema, multiple=multiple),
+                )
 
         return cls(
             tools=tools,
@@ -247,18 +274,18 @@ class OutputObjectSchema(Generic[OutputDataT]):
     def __init__(
         self,
         *,
-        output_type: type[OutputDataT],
+        output_type: SimpleOutputType[OutputDataT],
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
     ):
-        if _utils.is_model_like(output_type):
+        if inspect.isfunction(output_type) or _utils.is_model_like(output_type):
             self.type_adapter = TypeAdapter(output_type)
         else:
             self.outer_typed_dict_key = 'response'
             response_data_typed_dict = TypedDict(  # noqa: UP013
                 'response_data_typed_dict',
-                {'response': output_type},  # pyright: ignore[reportInvalidTypeForm]
+                {'response': cast(type[OutputDataT], output_type)},  # pyright: ignore[reportInvalidTypeForm]
             )
             self.type_adapter = TypeAdapter(response_data_typed_dict)
 
@@ -282,10 +309,10 @@ class OutputObjectSchema(Generic[OutputDataT]):
             strict=strict,
         )
 
-    def validate(
+    async def process(
         self, data: str | dict[str, Any], allow_partial: bool = False, wrap_validation_errors: bool = True
     ) -> OutputDataT:
-        """Validate an output message.
+        """Process an output message, performing validation and (if necessary) calling the output function.
 
         Args:
             data: The output data to validate.
@@ -296,6 +323,7 @@ class OutputObjectSchema(Generic[OutputDataT]):
             Either the validated output data (left) or a retry message (right).
         """
         try:
+            # TODO: Inject RunContext?
             pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
             if isinstance(data, str):
                 output = self.type_adapter.validate_json(data, experimental_allow_partial=pyd_allow_partial)
@@ -309,10 +337,20 @@ class OutputObjectSchema(Generic[OutputDataT]):
                 raise ToolRetryError(m) from e
             else:
                 raise
+        except ModelRetry as r:
+            if wrap_validation_errors:
+                m = _messages.RetryPromptPart(content=r.message)
+                raise ToolRetryError(m) from r
+            else:
+                raise
         else:
             if k := self.outer_typed_dict_key:
                 output = output[k]
-            return output
+
+        # A non-awaitable callable output_type will already have been executed by the TypeAdapter's validation method
+        if inspect.isawaitable(output):
+            output = await output
+        return output
 
 
 @dataclass(init=False)
@@ -338,7 +376,7 @@ class OutputTool(Generic[OutputDataT]):
             outer_typed_dict_key=parameters_schema.outer_typed_dict_key,
         )
 
-    def validate(
+    async def process(
         self, tool_call: _messages.ToolCallPart, allow_partial: bool = False, wrap_validation_errors: bool = True
     ) -> OutputDataT:
         """Validate an output message.
@@ -352,7 +390,7 @@ class OutputTool(Generic[OutputDataT]):
             Either the validated output data (left) or a retry message (right).
         """
         try:
-            output = self.parameters_schema.validate(
+            output = await self.parameters_schema.process(
                 tool_call.args, allow_partial=allow_partial, wrap_validation_errors=False
             )
         except ValidationError as e:
@@ -365,16 +403,18 @@ class OutputTool(Generic[OutputDataT]):
                 raise ToolRetryError(m) from e
             else:
                 raise  # pragma: lax no cover
+        except ModelRetry as r:
+            if wrap_validation_errors:
+                m = _messages.RetryPromptPart(
+                    tool_name=tool_call.tool_name,
+                    content=r.message,
+                    tool_call_id=tool_call.tool_call_id,
+                )
+                raise ToolRetryError(m) from r
+            else:
+                raise
         else:
             return output
-
-
-def union_tool_name(base_name: str | None, union_arg: Any) -> str:
-    return f'{base_name or DEFAULT_OUTPUT_TOOL_NAME}_{union_arg_name(union_arg)}'
-
-
-def union_arg_name(union_arg: Any) -> str:
-    return union_arg.__name__
 
 
 def extract_str_from_union(output_type: Any) -> _utils.Option[Any]:

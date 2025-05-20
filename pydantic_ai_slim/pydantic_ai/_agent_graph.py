@@ -465,7 +465,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         if output_schema is not None:
             for call, output_tool in output_schema.find_tool(tool_calls):
                 try:
-                    result_data = output_tool.validate(call)
+                    result_data = await output_tool.process(call)
                     result_data = await _validate_output(result_data, ctx, call)
                 except _output.ToolRetryError as e:
                     # TODO: Should only increment retry stuff once per node execution, not for each tool call

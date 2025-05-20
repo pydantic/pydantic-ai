@@ -29,7 +29,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.result import Usage
+from pydantic_ai.result import ToolOutput, Usage
 from pydantic_ai.tools import ToolDefinition
 
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
@@ -446,6 +446,8 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     'union_code',
     [
         pytest.param('OutputType = Union[Foo, Bar]'),
+        pytest.param('OutputType = [Foo, Bar]'),
+        pytest.param('OutputType = ToolOutput(type_=Union[Foo, Bar])'),
         pytest.param('OutputType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='3.10+')),
         pytest.param(
             'OutputType: TypeAlias = Foo | Bar',
@@ -461,6 +463,7 @@ def test_response_multiple_return_tools(create_module: Callable[[str], Any], uni
 from pydantic import BaseModel
 from typing import Union
 from typing_extensions import TypeAlias
+from pydantic_ai import ToolOutput
 
 class Foo(BaseModel):
     a: int
@@ -529,6 +532,408 @@ class Bar(BaseModel):
     result = agent.run_sync('Hello', model=TestModel(seed=1))
     assert result.output == mod.Bar(b='b')
     assert got_tool_call_name == snapshot('final_result_Bar')
+
+
+def test_output_type_callable():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    def get_weather(city: str) -> Weather:
+        return Weather(temperature=28.7, description='sunny')
+
+    output_tools = None
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        nonlocal output_tools
+        output_tools = info.output_tools
+
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(call_tool), output_type=get_weather)
+    result = agent.run_sync('Mexico City')
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert output_tools == snapshot(
+        [
+            ToolDefinition(
+                name='final_result',
+                description='The final response which ends this conversation',
+                parameters_json_schema={
+                    'additionalProperties': False,
+                    'properties': {'city': {'title': 'City', 'type': 'string'}},
+                    'required': ['city'],
+                    'type': 'object',
+                },
+            )
+        ]
+    )
+
+
+def test_output_type_callable_with_retry():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    def get_weather(city: str) -> Weather:
+        if city != 'Mexico City':
+            raise ModelRetry('City not found, I only know Mexico City')
+        return Weather(temperature=28.7, description='sunny')
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        if len(messages) == 1:
+            args_json = '{"city": "New York City"}'
+        else:
+            args_json = '{"city": "Mexico City"}'
+
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(call_tool), output_type=get_weather)
+    result = agent.run_sync('New York City')
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='New York City',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"city": "New York City"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=7, total_tokens=60),
+                model_name='function:call_tool:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='City not found, I only know Mexico City',
+                        tool_name='final_result',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"city": "Mexico City"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(requests=1, request_tokens=68, response_tokens=13, total_tokens=81),
+                model_name='function:call_tool:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+
+def test_output_type_async_callable():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    async def get_weather(city: str) -> Weather:
+        return Weather(temperature=28.7, description='sunny')
+
+    output_tools = None
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        nonlocal output_tools
+        output_tools = info.output_tools
+
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(call_tool), output_type=get_weather)
+    result = agent.run_sync('Mexico City')
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert output_tools == snapshot(
+        [
+            ToolDefinition(
+                name='final_result',
+                description='The final response which ends this conversation',
+                parameters_json_schema={
+                    'additionalProperties': False,
+                    'properties': {'city': {'title': 'City', 'type': 'string'}},
+                    'required': ['city'],
+                    'type': 'object',
+                },
+            )
+        ]
+    )
+
+
+def test_output_type_callable_with_custom_tool_name():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    def get_weather(city: str) -> Weather:
+        return Weather(temperature=28.7, description='sunny')
+
+    output_tools = None
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        nonlocal output_tools
+        output_tools = info.output_tools
+
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(call_tool), output_type=ToolOutput(type_=get_weather, name='get_weather'))
+    result = agent.run_sync('Mexico City')
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert output_tools == snapshot(
+        [
+            ToolDefinition(
+                name='get_weather',
+                description='The final response which ends this conversation',
+                parameters_json_schema={
+                    'additionalProperties': False,
+                    'properties': {'city': {'title': 'City', 'type': 'string'}},
+                    'required': ['city'],
+                    'type': 'object',
+                },
+            )
+        ]
+    )
+
+
+def test_output_type_callable_or_model():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    def get_weather(city: str) -> Weather:
+        return Weather(temperature=28.7, description='sunny')
+
+    output_tools = None
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        nonlocal output_tools
+        output_tools = info.output_tools
+
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(call_tool), output_type=[get_weather, Weather])
+    result = agent.run_sync('Mexico City')
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert output_tools == snapshot(
+        [
+            ToolDefinition(
+                name='final_result_get_weather',
+                description='get_weather: The final response which ends this conversation',
+                parameters_json_schema={
+                    'additionalProperties': False,
+                    'properties': {'city': {'title': 'City', 'type': 'string'}},
+                    'required': ['city'],
+                    'type': 'object',
+                },
+            ),
+            ToolDefinition(
+                name='final_result_Weather',
+                description='Weather: The final response which ends this conversation',
+                parameters_json_schema={
+                    'properties': {'temperature': {'type': 'number'}, 'description': {'type': 'string'}},
+                    'required': ['temperature', 'description'],
+                    'title': 'Weather',
+                    'type': 'object',
+                },
+            ),
+        ]
+    )
+
+
+def test_output_type_handoff_to_agent():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    def get_weather(city: str) -> Weather:
+        return Weather(temperature=28.7, description='sunny')
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(call_tool), output_type=get_weather)
+
+    handoff_result = None
+
+    async def handoff(city: str) -> Weather:
+        result = await agent.run(f'Get me the weather in {city}')
+        nonlocal handoff_result
+        handoff_result = result
+        return result.output
+
+    def call_handoff_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    supervisor_agent = Agent(FunctionModel(call_handoff_tool), output_type=handoff)
+
+    result = supervisor_agent.run_sync('Mexico City')
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Mexico City',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"city": "Mexico City"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=6, total_tokens=58),
+                model_name='function:call_handoff_tool:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+    assert handoff_result is not None
+    assert handoff_result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Get me the weather in Mexico City',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"city": "Mexico City"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(requests=1, request_tokens=57, response_tokens=6, total_tokens=63),
+                model_name='function:call_tool:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+
+def test_output_type_multiple_custom_tools():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    def get_weather(city: str) -> Weather:
+        return Weather(temperature=28.7, description='sunny')
+
+    output_tools = None
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        nonlocal output_tools
+        output_tools = info.output_tools
+
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        output_type=[
+            ToolOutput(type_=get_weather, name='get_weather'),
+            ToolOutput(type_=Weather, name='return_weather'),
+        ],
+    )
+    result = agent.run_sync('Mexico City')
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert output_tools == snapshot(
+        [
+            ToolDefinition(
+                name='get_weather',
+                description='get_weather: The final response which ends this conversation',
+                parameters_json_schema={
+                    'additionalProperties': False,
+                    'properties': {'city': {'title': 'City', 'type': 'string'}},
+                    'required': ['city'],
+                    'type': 'object',
+                },
+            ),
+            ToolDefinition(
+                name='return_weather',
+                description='Weather: The final response which ends this conversation',
+                parameters_json_schema={
+                    'properties': {'temperature': {'type': 'number'}, 'description': {'type': 'string'}},
+                    'required': ['temperature', 'description'],
+                    'title': 'Weather',
+                    'type': 'object',
+                },
+            ),
+        ]
+    )
 
 
 def test_run_with_history_new():
