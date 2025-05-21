@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     TextPart,
     TextPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
@@ -396,10 +397,11 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='thinking')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='>\n')),
             PartStartEvent(
+                index=1, part=ToolCallPart(tool_name='get_temperature', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA')
+            ),
+            PartDeltaEvent(
                 index=1,
-                part=ToolCallPart(
-                    tool_name='get_temperature', args='{"city":"Paris"}', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'
-                ),
+                delta=ToolCallPartDelta(args_delta='{"city":"Paris"}', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'),
             ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
