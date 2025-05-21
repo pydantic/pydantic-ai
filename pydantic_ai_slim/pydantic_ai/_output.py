@@ -284,8 +284,7 @@ class OutputObjectSchema(Generic[OutputDataT]):
         description: str | None = None,
         strict: bool | None = None,
     ):
-        # TODO: Support bound instance methods
-        if inspect.isfunction(output_type) or _utils.is_model_like(output_type):
+        if inspect.isfunction(output_type) or inspect.ismethod(output_type) or _utils.is_model_like(output_type):
             self.type_adapter = TypeAdapter(output_type)
         else:
             self.outer_typed_dict_key = 'response'
