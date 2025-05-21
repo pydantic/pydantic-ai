@@ -52,7 +52,7 @@ def create_test_module():
     try:
         yield _create_test_module
     finally:
-        if 'test_module' in sys.modules:
+        if 'test_module' in sys.modules:  # pragma: no branch
             del sys.modules['test_module']
 
 
@@ -63,6 +63,7 @@ def test_agent_flag(
     create_test_module: Callable[..., None],
 ):
     env.remove('OPENAI_API_KEY')
+    env.set('COLUMNS', '150')
 
     test_agent = Agent(TestModel(custom_output_text='Hello from custom agent'))
     create_test_module(custom_agent=test_agent)
@@ -74,7 +75,7 @@ def test_agent_flag(
     assert cli(['--agent', 'test_module:custom_agent', 'hello']) == 0
 
     # Verify the output contains the custom agent message
-    assert 'using custom agent test_module:custom_agent' in capfd.readouterr().out
+    assert 'using custom agent test_module:custom_agent' in capfd.readouterr().out.replace('\n', '')
 
     # Verify ask_agent was called with our custom agent
     mock_ask.assert_called_once()
@@ -98,6 +99,7 @@ def test_agent_flag_set_model(
     create_test_module: Callable[..., None],
 ):
     env.set('OPENAI_API_KEY', 'xxx')
+    env.set('COLUMNS', '150')
 
     custom_agent = Agent(TestModel(custom_output_text='Hello from custom agent'))
     create_test_module(custom_agent=custom_agent)
@@ -106,7 +108,7 @@ def test_agent_flag_set_model(
 
     assert cli(['--agent', 'test_module:custom_agent', '--model', 'gpt-4o', 'hello']) == 0
 
-    assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out
+    assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out.replace('\n', '')
 
     assert isinstance(custom_agent.model, OpenAIModel)
 

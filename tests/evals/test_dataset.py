@@ -39,9 +39,9 @@ pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-eval
 
 
 if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup
+    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
 else:
-    ExceptionGroup = ExceptionGroup
+    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 
 @pytest.fixture(autouse=True)
@@ -636,7 +636,7 @@ async def test_from_text_failure():
     with pytest.raises(ExceptionGroup) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
     if sys.version_info >= (3, 10):
-        assert exc_info.value == HasRepr(
+        assert exc_info.value == HasRepr(  # pragma: lax no cover
             repr(
                 ExceptionGroup(
                     '2 error(s) loading evaluators from registry',
@@ -652,7 +652,7 @@ async def test_from_text_failure():
             )
         )
     else:
-        assert exc_info.value == HasRepr(
+        assert exc_info.value == HasRepr(  # pragma: lax no cover
             repr(
                 ExceptionGroup(
                     '2 error(s) loading evaluators from registry',

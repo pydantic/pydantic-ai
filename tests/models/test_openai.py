@@ -40,7 +40,7 @@ from .mock_async_stream import MockAsyncStream
 with try_import() as imports_successful:
     from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI
     from openai.types import chat
-    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion import Choice, ChoiceLogprobs
     from openai.types.chat.chat_completion_chunk import (
         Choice as ChunkChoice,
         ChoiceDelta,
@@ -49,6 +49,7 @@ with try_import() as imports_successful:
     )
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
     from openai.types.chat.chat_completion_message_tool_call import Function
+    from openai.types.chat.chat_completion_token_logprob import ChatCompletionTokenLogprob
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
     from pydantic_ai.models.openai import (
@@ -129,10 +130,15 @@ def get_mock_chat_completion_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str
         raise RuntimeError('Not a MockOpenAI instance')
 
 
-def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage | None = None) -> chat.ChatCompletion:
+def completion_message(
+    message: ChatCompletionMessage, *, usage: CompletionUsage | None = None, logprobs: ChoiceLogprobs | None = None
+) -> chat.ChatCompletion:
+    choices = [Choice(finish_reason='stop', index=0, message=message)]
+    if logprobs:
+        choices = [Choice(finish_reason='stop', index=0, message=message, logprobs=logprobs)]
     return chat.ChatCompletion(
         id='123',
-        choices=[Choice(finish_reason='stop', index=0, message=message)],
+        choices=choices,
         created=1704067200,  # 2024-01-01
         model='gpt-4o-123',
         object='chat.completion',
@@ -141,7 +147,9 @@ def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage
 
 
 async def test_request_simple_success(allow_model_requests: None):
-    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    c = completion_message(
+        ChatCompletionMessage(content='world', role='assistant'),
+    )
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
@@ -164,6 +172,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -171,6 +180,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -244,6 +254,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -335,6 +346,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -359,6 +371,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -375,6 +388,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -715,6 +729,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
             ),
             ModelRequest(
                 parts=[
@@ -752,6 +767,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
             ),
         ]
     )
@@ -796,6 +812,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-BRlkLhPc87BdohVobEJJCGq3rUAG2',
             ),
             ModelRequest(
                 parts=[
@@ -831,6 +848,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-BRlkORPA5rXMV3uzcOcgK4eQFKCVW',
             ),
         ]
     )
@@ -1466,6 +1484,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
             ),
         ]
     )
@@ -1514,6 +1533,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
             ),
             ModelRequest(
                 parts=[
@@ -1540,6 +1560,47 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
+                vendor_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
             ),
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_openai_instructions_with_logprobs(allow_model_requests: None):
+    # Create a mock response with logprobs
+    c = completion_message(
+        ChatCompletionMessage(content='world', role='assistant'),
+        logprobs=ChoiceLogprobs(
+            content=[
+                ChatCompletionTokenLogprob(
+                    token='world', logprob=-0.6931, top_logprobs=[], bytes=[119, 111, 114, 108, 100]
+                )
+            ],
+        ),
+    )
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+    )
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+    )
+    result = await agent.run(
+        'What is the capital of Minas Gerais?',
+        model_settings=OpenAIModelSettings(openai_logprobs=True),
+    )
+    messages = result.all_messages()
+    response = cast(Any, messages[1])
+    assert response.vendor_details is not None
+    assert response.vendor_details['logprobs'] == [
+        {
+            'token': 'world',
+            'logprob': -0.6931,
+            'bytes': [119, 111, 114, 108, 100],
+            'top_logprobs': [],
+        }
+    ]

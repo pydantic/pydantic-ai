@@ -395,7 +395,7 @@ def test_response_tuple():
 def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     try:
         union = input_union_callable()
-    except TypeError:
+    except TypeError:  # pragma: lax no cover
         pytest.skip('Python version does not support `|` syntax for unions')
 
     m = TestModel()
@@ -1396,7 +1396,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
         if loc_name == 'London':
             return json.dumps({'lat': 51, 'lng': 0})
         else:
-            raise ModelRetry('Wrong location, please try again')
+            raise ModelRetry('Wrong location, please try again')  # pragma: no cover
 
     result = agent.run_sync('Hello')
     assert result.output == 'final response'
@@ -1755,8 +1755,10 @@ def test_binary_content_all_messages_json():
                     'details': None,
                 },
                 'model_name': 'test',
+                'vendor_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
+                'vendor_details': None,
             },
         ]
     )
@@ -1966,3 +1968,10 @@ def test_agent_run_result_serialization() -> None:
     # Check that we can load the data back
     deserialized_result = adapter.validate_json(serialized_data)
     assert deserialized_result == result
+
+
+def test_agent_repr() -> None:
+    agent = Agent()
+    assert repr(agent) == snapshot(
+        "Agent(model=None, name=None, end_strategy='early', model_settings=None, output_type=<class 'str'>, instrument=None)"
+    )

@@ -65,7 +65,7 @@ class TestEnv:
             if value is None:
                 os.environ.pop(name, None)
             else:
-                os.environ[name] = value
+                os.environ[name] = value  # pragma: lax no cover
 
 
 @pytest.fixture
@@ -101,7 +101,7 @@ async def client_with_handler() -> AsyncIterator[ClientWithHandler]:
     try:
         yield create_client
     finally:
-        if client:
+        if client:  # pragma: no branch
             await client.aclose()
 
 
@@ -277,6 +277,11 @@ def mistral_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def openrouter_api_key() -> str:
+    return os.getenv('OPENROUTER_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def bedrock_provider():
     try:
         import boto3
@@ -291,7 +296,7 @@ def bedrock_provider():
         )
         yield BedrockProvider(bedrock_client=bedrock_client)
         bedrock_client.close()
-    except ImportError:
+    except ImportError:  # pragma: lax no cover
         pytest.skip('boto3 is not installed')
 
 

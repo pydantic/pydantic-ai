@@ -106,7 +106,7 @@ class FunctionModel(Model):
             response = response_
         response.model_name = self._model_name
         # Add usage data if not already present
-        if not response.usage.has_values():
+        if not response.usage.has_values():  # pragma: no branch
             response.usage = _estimate_usage(chain(messages, [response]))
             response.usage.requests = 1
         return response

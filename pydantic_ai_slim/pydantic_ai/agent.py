@@ -42,6 +42,7 @@ from .tools import (
     ToolFuncPlain,
     ToolParams,
     ToolPrepareFunc,
+    ToolsPrepareFunc,
 )
 
 # Re-exporting like this improves auto-import behavior in PyCharm
@@ -148,6 +149,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
         repr=False
     )
+    _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _function_tools: dict[str, Tool[AgentDepsT]] = dataclasses.field(repr=False)
     _mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
     _default_retries: int = dataclasses.field(repr=False)
@@ -172,6 +174,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         retries: int = 1,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -200,6 +203,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         result_tool_description: str | None = None,
         result_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -223,6 +227,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         retries: int = 1,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -251,6 +256,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
+            prepare_tools: custom method to prepare the tool definition of all tools for each step.
+                This is useful if you want to customize the definition of multiple tools or you want to register
+                a subset of tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
             mcp_servers: MCP servers to register with the agent. You should register a [`MCPServer`][pydantic_ai.mcp.MCPServer]
                 for each server you want the agent to connect to.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
@@ -334,6 +342,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._default_retries = retries
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._mcp_servers = mcp_servers
+        self._prepare_tools = prepare_tools
         for tool in tools:
             if isinstance(tool, Tool):
                 self._register_tool(tool)
@@ -585,6 +594,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
                         kind='response',
+                        vendor_id=None,
                     )
                 ),
                 End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
@@ -654,8 +664,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits = usage_limits or _usage.UsageLimits()
 
         if isinstance(model_used, InstrumentedModel):
+            instrumentation_settings = model_used.settings
             tracer = model_used.settings.tracer
         else:
+            instrumentation_settings = None
             tracer = NoOpTracer()
         agent_name = self.name or 'agent'
         run_span = tracer.start_span(
@@ -691,6 +703,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             mcp_servers=self._mcp_servers,
             default_retries=self._default_retries,
             tracer=tracer,
+            prepare_tools=self._prepare_tools,
             get_instructions=get_instructions,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
@@ -723,19 +736,18 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                     )
         finally:
             try:
-                if run_span.is_recording():
-                    run_span.set_attributes(self._run_span_end_attributes(state, usage))
+                if instrumentation_settings and run_span.is_recording():
+                    run_span.set_attributes(self._run_span_end_attributes(state, usage, instrumentation_settings))
             finally:
                 run_span.end()
 
-    def _run_span_end_attributes(self, state: _agent_graph.GraphAgentState, usage: _usage.Usage):
+    def _run_span_end_attributes(
+        self, state: _agent_graph.GraphAgentState, usage: _usage.Usage, settings: InstrumentationSettings
+    ):
         return {
             **usage.opentelemetry_attributes(),
             'all_messages_events': json.dumps(
-                [
-                    InstrumentedModel.event_to_dict(e)
-                    for e in InstrumentedModel.messages_to_otel_events(state.message_history)
-                ]
+                [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(state.message_history)]
             ),
             'logfire.json_schema': json.dumps(
                 {
@@ -1001,7 +1013,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                         final_result_details = await stream_to_final(streamed_response)
                         if final_result_details is not None:
                             if yielded:
-                                raise exceptions.AgentRunError('Agent run produced final results')
+                                raise exceptions.AgentRunError('Agent run produced final results')  # pragma: no cover
                             yielded = True
 
                             messages = graph_ctx.state.message_history.copy()
@@ -1048,11 +1060,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                             break
                 next_node = await agent_run.next(node)
                 if not isinstance(next_node, _agent_graph.AgentNode):
-                    raise exceptions.AgentRunError('Should have produced a StreamedRunResult before getting here')
+                    raise exceptions.AgentRunError(  # pragma: no cover
+                        'Should have produced a StreamedRunResult before getting here'
+                    )
                 node = cast(_agent_graph.AgentNode[Any, Any], next_node)
 
         if not yielded:
-            raise exceptions.AgentRunError('Agent run finished without producing a final result')
+            raise exceptions.AgentRunError('Agent run finished without producing a final result')  # pragma: no cover
 
     @contextmanager
     def override(
@@ -1226,7 +1240,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
                 runner = _system_prompt.SystemPromptRunner[AgentDepsT](func_, dynamic=dynamic)
                 self._system_prompt_functions.append(runner)
-                if dynamic:
+                if dynamic:  # pragma: lax no cover
                     self._system_prompt_dynamic_functions[func_.__qualname__] = runner
                 return func_
 
@@ -1608,7 +1622,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                     if item is self:
                         self.name = name
                         return
-                if parent_frame.f_locals != parent_frame.f_globals:
+                if parent_frame.f_locals != parent_frame.f_globals:  # pragma: no branch
                     # if we couldn't find the agent in locals and globals are a different dict, try globals
                     for name, item in parent_frame.f_globals.items():
                         if item is self:
@@ -1851,6 +1865,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                     kind='response',
+                    vendor_id=None,
                 )
             ),
             End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
@@ -1996,6 +2011,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
                             kind='response',
+                            vendor_id=None,
                         )
                     ),
                     End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
@@ -2024,7 +2040,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
 
-    def __repr__(self) -> str:
+    def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.result
         result_repr = '<run not finished>' if result is None else repr(result.output)
         return f'<{type(self).__name__} result={result_repr} usage={self.usage()}>'

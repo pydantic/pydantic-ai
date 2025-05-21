@@ -112,6 +112,7 @@ jobs:
           --package pydantic-ai-slim
           --extra openai
           --extra vertexai
+          --extra google
           --extra groq
           --extra anthropic
           --extra mistral
@@ -224,7 +225,7 @@ jobs:
           name: diff-coverage-html
           path: index.html
 
-      - run: uv run coverage report --fail-under 95
+      - run: uv run coverage report --fail-under 100
       - run: uv run diff-cover coverage.xml --fail-under 100
       - run: uv run strict-no-cover
 

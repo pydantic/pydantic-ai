@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
-from typing import Annotated, Any, Literal, Union, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
 
 import pydantic
 import pydantic_core
@@ -16,6 +16,10 @@ from typing_extensions import TypeAlias
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
 from .usage import Usage
+
+if TYPE_CHECKING:
+    from .models.instrumented import InstrumentationSettings
+
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
@@ -68,7 +72,7 @@ class SystemPromptPart:
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self) -> Event:
+    def otel_event(self, _settings: InstrumentationSettings) -> Event:
         return Event('gen_ai.system.message', body={'content': self.content, 'role': 'system'})
 
 
@@ -305,7 +309,7 @@ class UserPromptPart:
     part_kind: Literal['user-prompt'] = 'user-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self) -> Event:
+    def otel_event(self, settings: InstrumentationSettings) -> Event:
         content: str | list[dict[str, Any] | str]
         if isinstance(self.content, str):
             content = self.content
@@ -317,10 +321,12 @@ class UserPromptPart:
                 elif isinstance(part, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
                     content.append({'kind': part.kind, 'url': part.url})
                 elif isinstance(part, BinaryContent):
-                    base64_data = base64.b64encode(part.data).decode()
-                    content.append({'kind': part.kind, 'content': base64_data, 'media_type': part.media_type})
+                    converted_part = {'kind': part.kind, 'media_type': part.media_type}
+                    if settings.include_binary_content:
+                        converted_part['binary_content'] = base64.b64encode(part.data).decode()
+                    content.append(converted_part)
                 else:
-                    content.append({'kind': part.kind})
+                    content.append({'kind': part.kind})  # pragma: no cover
         return Event('gen_ai.user.message', body={'content': content, 'role': 'user'})
 
 
@@ -357,11 +363,11 @@ class ToolReturnPart:
         """Return a dictionary representation of the content, wrapping non-dict types appropriately."""
         # gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict
         if isinstance(self.content, dict):
-            return tool_return_ta.dump_python(self.content, mode='json')  # pyright: ignore[reportUnknownMemberType]
+            return tool_return_ta.dump_python(self.content, mode='json')  # pyright: ignore[reportUnknownMemberType]  # pragma: no cover
         else:
             return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
 
-    def otel_event(self) -> Event:
+    def otel_event(self, _settings: InstrumentationSettings) -> Event:
         return Event(
             'gen_ai.tool.message',
             body={'content': self.content, 'role': 'tool', 'id': self.tool_call_id, 'name': self.tool_name},
@@ -418,7 +424,7 @@ class RetryPromptPart:
             description = f'{len(self.content)} validation errors: {json_errors.decode()}'
         return f'{description}\n\nFix the errors and try again.'
 
-    def otel_event(self) -> Event:
+    def otel_event(self, _settings: InstrumentationSettings) -> Event:
         if self.tool_name is None:
             return Event('gen_ai.user.message', body={'content': self.model_response(), 'role': 'user'})
         else:
@@ -556,6 +562,16 @@ class ModelResponse:
     kind: Literal['response'] = 'response'
     """Message type identifier, this is available on all parts as a discriminator."""
 
+    vendor_details: dict[str, Any] | None = field(default=None, repr=False)
+    """Additional vendor-specific details in a serializable format.
+
+    This allows storing selected vendor-specific data that isn't mapped to standard ModelResponse fields.
+    For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
+    """
+
+    vendor_id: str | None = None
+    """Vendor ID as specified by the model provider. This can be used to track the specific request to the model."""
+
     def otel_events(self) -> list[Event]:
         """Return OpenTelemetry events for the response."""
         result: list[Event] = []
@@ -619,7 +635,7 @@ class TextPartDelta:
             ValueError: If `part` is not a `TextPart`.
         """
         if not isinstance(part, TextPart):
-            raise ValueError('Cannot apply TextPartDeltas to non-TextParts')
+            raise ValueError('Cannot apply TextPartDeltas to non-TextParts')  # pragma: no cover
         return replace(part, content=part.content + self.content_delta)
 
 
@@ -682,7 +698,9 @@ class ToolCallPartDelta:
         if isinstance(part, ToolCallPartDelta):
             return self._apply_to_delta(part)
 
-        raise ValueError(f'Can only apply ToolCallPartDeltas to ToolCallParts or ToolCallPartDeltas, not {part}')
+        raise ValueError(  # pragma: no cover
+            f'Can only apply ToolCallPartDeltas to ToolCallParts or ToolCallPartDeltas, not {part}'
+        )
 
     def _apply_to_delta(self, delta: ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta:
         """Internal helper to apply this delta to another delta."""

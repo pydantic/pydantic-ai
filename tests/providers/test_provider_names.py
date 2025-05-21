@@ -23,11 +23,13 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     test_infer_provider_params = [
         ('anthropic', AnthropicProvider, 'ANTHROPIC_API_KEY'),
         ('cohere', CohereProvider, 'CO_API_KEY'),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
+        ('openrouter', OpenRouterProvider, 'OPENROUTER_API_KEY'),
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),
         ('azure', AzureProvider, 'AZURE_OPENAI'),
         ('google-vertex', GoogleVertexProvider, None),
@@ -37,7 +39,7 @@ with try_import() as imports_successful:
     ]
 
 if not imports_successful():
-    test_infer_provider_params = []
+    test_infer_provider_params = []  # pragma: lax no cover
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='need to install all extra packages')
 

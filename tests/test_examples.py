@@ -40,14 +40,16 @@ from pydantic_ai.models.test import TestModel
 from .conftest import ClientWithHandler, TestEnv, try_import
 
 try:
+    from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
-except ImportError:
+except ImportError:  # pragma: lax no cover
     GoogleVertexProvider = None
+    GoogleProvider = None
 
 
 try:
     import logfire
-except ImportError:
+except ImportError:  # pragma: lax no cover
     logfire = None
 
 
@@ -57,7 +59,10 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
-    pytest.mark.skipif(GoogleVertexProvider is None or logfire is None, reason='google-auth or logfire not installed'),
+    pytest.mark.skipif(
+        GoogleVertexProvider is None or logfire is None or GoogleProvider is None,
+        reason='google-auth or logfire or google-provider not installed',
+    ),
 ]
 
 
@@ -83,6 +88,7 @@ def reset_cwd():
         os.chdir(original_cwd)
 
 
+@pytest.mark.xdist_group(name='doc_tests')
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(  # noqa: C901
     example: CodeExample,
@@ -116,12 +122,13 @@ def test_docs_examples(  # noqa: C901
 
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
 
-    if sys.version_info >= (3, 10):
+    if sys.version_info >= (3, 10):  # pragma: lax no cover
         mocker.patch('pydantic_ai.mcp.MCPServerHTTP', return_value=MockMCPServer())
         mocker.patch('mcp.server.fastmcp.FastMCP')
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
+    env.set('GOOGLE_API_KEY', 'testing')
     env.set('GROQ_API_KEY', 'testing')
     env.set('CO_API_KEY', 'testing')
     env.set('MISTRAL_API_KEY', 'testing')
@@ -142,17 +149,12 @@ def test_docs_examples(  # noqa: C901
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
         if sys.version_info < python_version_info:
-            pytest.skip(f'Python version {python_version} required')
+            pytest.skip(f'Python version {python_version} required')  # pragma: lax no cover
 
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
         pytest.skip('both running code and lint skipped')
 
-    if opt_title == 'sql_app_evals.py':
-        os.chdir(tmp_path)
-        examples = [{'request': f'sql prompt {i}', 'sql': f'SELECT {i}'} for i in range(15)]
-        with (tmp_path / 'examples.json').open('w') as f:
-            json.dump(examples, f)
-    elif opt_title in {
+    if opt_title in {
         'ai_q_and_a_run.py',
         'count_down_from_persistence.py',
         'generate_dataset_example.py',
@@ -237,11 +239,11 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         return '1'
     elif prompt == 'Select product':
         return 'crisps'
-    elif prompt == 'What is the capital of France?':
+    elif prompt == 'What is the capital of France?':  # pragma: no cover
         return 'Vichy'
-    elif prompt == 'what is 1 + 1?':
+    elif prompt == 'what is 1 + 1?':  # pragma: no cover
         return '2'
-    else:
+    else:  # pragma: no cover
         raise ValueError(f'Unexpected prompt: {prompt}')
 
 
@@ -652,7 +654,7 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         for m in model.models:
             try:
                 from pydantic_ai.models.openai import OpenAIModel
-            except ImportError:
+            except ImportError:  # pragma: lax no cover
                 OpenAIModel = type(None)
 
             if isinstance(m, OpenAIModel):
