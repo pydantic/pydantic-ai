@@ -42,6 +42,7 @@ from .tools import (
     ToolFuncPlain,
     ToolParams,
     ToolPrepareFunc,
+    ToolsPrepareFunc,
 )
 
 # Re-exporting like this improves auto-import behavior in PyCharm
@@ -148,6 +149,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
         repr=False
     )
+    _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _function_tools: dict[str, Tool[AgentDepsT]] = dataclasses.field(repr=False)
     _mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
     _default_retries: int = dataclasses.field(repr=False)
@@ -172,6 +174,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         retries: int = 1,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -200,6 +203,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         result_tool_description: str | None = None,
         result_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -223,6 +227,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         retries: int = 1,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -251,6 +256,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
+            prepare_tools: custom method to prepare the tool definition of all tools for each step.
+                This is useful if you want to customize the definition of multiple tools or you want to register
+                a subset of tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
             mcp_servers: MCP servers to register with the agent. You should register a [`MCPServer`][pydantic_ai.mcp.MCPServer]
                 for each server you want the agent to connect to.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
@@ -334,6 +342,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._default_retries = retries
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._mcp_servers = mcp_servers
+        self._prepare_tools = prepare_tools
         for tool in tools:
             if isinstance(tool, Tool):
                 self._register_tool(tool)
@@ -585,6 +594,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
                         kind='response',
+                        vendor_id=None,
                     )
                 ),
                 End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
@@ -693,6 +703,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             mcp_servers=self._mcp_servers,
             default_retries=self._default_retries,
             tracer=tracer,
+            prepare_tools=self._prepare_tools,
             get_instructions=get_instructions,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
@@ -1762,18 +1773,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             await agent.to_cli()
         ```
         """
-        from prompt_toolkit import PromptSession
-        from prompt_toolkit.history import FileHistory
         from rich.console import Console
 
-        from pydantic_ai._cli import PROMPT_HISTORY_PATH, run_chat
+        from pydantic_ai._cli import run_chat
 
         # TODO(Marcelo): We need to refactor the CLI code to be able to be able to just pass `agent`, `deps` and
         # `prog_name` from here.
 
-        session: PromptSession[Any] = PromptSession(history=FileHistory(str(PROMPT_HISTORY_PATH)))
         await run_chat(
-            session=session,
             stream=True,
             agent=self,
             deps=deps,
@@ -1854,6 +1861,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                     kind='response',
+                    vendor_id=None,
                 )
             ),
             End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
@@ -1999,6 +2007,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
                             kind='response',
+                            vendor_id=None,
                         )
                     ),
                     End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),

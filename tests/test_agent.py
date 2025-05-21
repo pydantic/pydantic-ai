@@ -1755,8 +1755,10 @@ def test_binary_content_all_messages_json():
                     'details': None,
                 },
                 'model_name': 'test',
+                'vendor_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
+                'vendor_details': None,
             },
         ]
     )
@@ -1966,3 +1968,10 @@ def test_agent_run_result_serialization() -> None:
     # Check that we can load the data back
     deserialized_result = adapter.validate_json(serialized_data)
     assert deserialized_result == result
+
+
+def test_agent_repr() -> None:
+    agent = Agent()
+    assert repr(agent) == snapshot(
+        "Agent(model=None, name=None, end_strategy='early', model_settings=None, output_type=<class 'str'>, instrument=None)"
+    )

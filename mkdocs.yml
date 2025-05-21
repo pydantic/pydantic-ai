@@ -23,6 +23,7 @@ nav:
           - models/openai.md
           - models/anthropic.md
           - models/gemini.md
+          - models/google.md
           - models/bedrock.md
           - models/cohere.md
           - models/groq.md
@@ -76,6 +77,7 @@ nav:
       - api/models/bedrock.md
       - api/models/cohere.md
       - api/models/gemini.md
+      - api/models/google.md
       - api/models/groq.md
       - api/models/instrumented.md
       - api/models/mistral.md
@@ -105,25 +107,24 @@ theme:
   custom_dir: docs/.overrides
   palette:
     - media: "(prefers-color-scheme)"
-      scheme: default
       primary: pink
       accent: pink
       toggle:
-        icon: material/lightbulb
+        icon: material/brightness-auto
         name: "Switch to light mode"
     - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: pink
       accent: pink
       toggle:
-        icon: material/lightbulb-outline
+        icon: material/brightness-7
         name: "Switch to dark mode"
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: pink
       accent: pink
       toggle:
-        icon: material/lightbulb-auto-outline
+        icon: material/brightness-4
         name: "Switch to system preference"
   features:
     - search.suggest
