@@ -1,6 +1,6 @@
 # Google
 
-The `GoogleModel` is a model that uses the [`google-genai`](https://pypi.org/project/google-generativeai/) package under the hood to
+The `GoogleModel` is a model that uses the [`google-genai`](https://pypi.org/project/google-genai/) package under the hood to
 access Google's Gemini models via both the Generative Language API and Vertex AI.
 
 ## Install
