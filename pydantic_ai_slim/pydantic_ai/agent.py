@@ -132,11 +132,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`.
     """
 
-    prepare_tools: ToolsPrepareFunc[AgentDepsT] | None
-    """
-    Function invoked on each step, allowing the tools to be modified and filtered out as needed.
-    """
-
     instrument: InstrumentationSettings | bool | None
     """Options to automatically instrument with OpenTelemetry."""
 
@@ -154,6 +149,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
         repr=False
     )
+    _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _function_tools: dict[str, Tool[AgentDepsT]] = dataclasses.field(repr=False)
     _mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
     _default_retries: int = dataclasses.field(repr=False)
