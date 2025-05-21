@@ -42,6 +42,7 @@ from . import (
     check_allow_model_requests,
     get_user_agent,
 )
+from ._google_common import gemini_usage_metadata_ta, parse_usage_details
 from ._json_schema import JsonSchema, WalkJsonSchema
 
 try:
@@ -388,7 +389,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
-            self._usage += _metadata_as_usage(chunk)
+            self._usage = _metadata_as_usage(chunk)
 
             assert chunk.candidates is not None
             candidate = chunk.candidates[0]
@@ -471,18 +472,13 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.Usage:
     metadata = response.usage_metadata
     if metadata is None:
         return usage.Usage()  # pragma: no cover
-    # TODO(Marcelo): We exclude the `prompt_tokens_details` and `candidate_token_details` fields because on
-    # `usage.Usage.incr``, it will try to sum non-integer values with integers, which will fail. We should probably
-    # handle this in the `Usage` class.
-    details = metadata.model_dump(
-        exclude={'prompt_tokens_details', 'candidates_tokens_details', 'traffic_type'},
-        exclude_defaults=True,
-    )
+    details = metadata.model_dump(exclude_defaults=True)
+
     return usage.Usage(
-        request_tokens=details.pop('prompt_token_count', 0),
-        response_tokens=details.pop('candidates_token_count', 0),
-        total_tokens=details.pop('total_token_count', 0),
-        details=details,
+        request_tokens=details.get('prompt_token_count', 0),
+        response_tokens=details.get('candidates_token_count', 0),
+        total_tokens=details.get('total_token_count', 0),
+        details=parse_usage_details(gemini_usage_metadata_ta.validate_python(details)),
     )
 
 
