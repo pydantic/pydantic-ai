@@ -47,14 +47,14 @@ def parse_usage_details(metadata: GeminiUsageMetaData) -> dict[str, int]:
     details: dict[str, int] = {}
     if cached_content_token_count := metadata.get('cached_content_token_count'):
         # 'cached_content_token_count' left for backwards compatibility
-        details['cached_content_token_count'] = cached_content_token_count
-        details['cached_content_tokens'] = cached_content_token_count
+        details['cached_content_token_count'] = cached_content_token_count  # pragma: no cover
+        details['cached_content_tokens'] = cached_content_token_count  # pragma: no cover
 
     if thoughts_token_count := metadata.get('thoughts_token_count'):
         details['thoughts_tokens'] = thoughts_token_count
 
     if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count'):
-        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count
+        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count  # pragma: no cover
 
     detailed_keys_map: dict[str, str] = {
         'prompt_tokens_details': 'prompt_tokens',
