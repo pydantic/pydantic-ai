@@ -475,9 +475,9 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.Usage:
     details = metadata.model_dump(exclude_defaults=True)
 
     return usage.Usage(
-        request_tokens=details.get('prompt_token_count', 0),
-        response_tokens=details.get('candidates_token_count', 0),
-        total_tokens=details.get('total_token_count', 0),
+        request_tokens=details.pop('prompt_token_count', 0),
+        response_tokens=details.pop('candidates_token_count', 0),
+        total_tokens=details.pop('total_token_count', 0),
         details=parse_usage_details(gemini_usage_metadata_ta.validate_python(details)),
     )
 
