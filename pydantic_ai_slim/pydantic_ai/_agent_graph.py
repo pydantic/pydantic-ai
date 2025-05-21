@@ -458,6 +458,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         tool_calls: list[_messages.ToolCallPart],
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         output_schema = ctx.deps.output_schema
+        run_context = build_run_context(ctx)
 
         # first, look for the output tool call
         final_result: result.FinalResult[NodeRunEndT] | None = None
@@ -465,7 +466,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         if output_schema is not None:
             for call, output_tool in output_schema.find_tool(tool_calls):
                 try:
-                    result_data = await output_tool.process(call)
+                    result_data = await output_tool.process(call, run_context)
                     result_data = await _validate_output(result_data, ctx, call)
                 except _output.ToolRetryError as e:
                     # TODO: Should only increment retry stuff once per node execution, not for each tool call
@@ -492,7 +493,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             if tool_responses:
                 parts.extend(tool_responses)
-            run_context = build_run_context(ctx)
             instructions = await ctx.deps.get_instructions(run_context)
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                 _messages.ModelRequest(parts=parts, instructions=instructions)

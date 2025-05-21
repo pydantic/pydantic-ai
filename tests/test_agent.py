@@ -564,7 +564,46 @@ def test_output_type_function():
                 description='The final response which ends this conversation',
                 parameters_json_schema={
                     'additionalProperties': False,
-                    'properties': {'city': {'title': 'City', 'type': 'string'}},
+                    'properties': {'city': {'type': 'string'}},
+                    'required': ['city'],
+                    'type': 'object',
+                },
+            )
+        ]
+    )
+
+
+def test_output_type_function_with_run_context():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    def get_weather(ctx: RunContext[None], city: str) -> Weather:
+        assert ctx is not None
+        return Weather(temperature=28.7, description='sunny')
+
+    output_tools = None
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        nonlocal output_tools
+        output_tools = info.output_tools
+
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(call_tool), output_type=get_weather)
+    result = agent.run_sync('Mexico City')
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert output_tools == snapshot(
+        [
+            ToolDefinition(
+                name='final_result',
+                description='The final response which ends this conversation',
+                parameters_json_schema={
+                    'additionalProperties': False,
+                    'properties': {'city': {'type': 'string'}},
                     'required': ['city'],
                     'type': 'object',
                 },
@@ -604,7 +643,48 @@ def test_output_type_bound_instance_method():
                 description='The final response which ends this conversation',
                 parameters_json_schema={
                     'additionalProperties': False,
-                    'properties': {'city': {'title': 'City', 'type': 'string'}},
+                    'properties': {'city': {'type': 'string'}},
+                    'required': ['city'],
+                    'type': 'object',
+                },
+            )
+        ]
+    )
+
+
+def test_output_type_bound_instance_method_with_run_context():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+        def get_weather(self, ctx: RunContext[None], city: str) -> Self:
+            assert ctx is not None
+            return self
+
+    weather = Weather(temperature=28.7, description='sunny')
+
+    output_tools = None
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        nonlocal output_tools
+        output_tools = info.output_tools
+
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(call_tool), output_type=weather.get_weather)
+    result = agent.run_sync('Mexico City')
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert output_tools == snapshot(
+        [
+            ToolDefinition(
+                name='final_result',
+                description='The final response which ends this conversation',
+                parameters_json_schema={
+                    'additionalProperties': False,
+                    'properties': {'city': {'type': 'string'}},
                     'required': ['city'],
                     'type': 'object',
                 },
@@ -694,7 +774,7 @@ def test_output_type_function_with_retry():
     )
 
 
-def test_output_type_async_callable():
+def test_output_type_async_function():
     class Weather(BaseModel):
         temperature: float
         description: str
@@ -723,7 +803,7 @@ def test_output_type_async_callable():
                 description='The final response which ends this conversation',
                 parameters_json_schema={
                     'additionalProperties': False,
-                    'properties': {'city': {'title': 'City', 'type': 'string'}},
+                    'properties': {'city': {'type': 'string'}},
                     'required': ['city'],
                     'type': 'object',
                 },
@@ -761,7 +841,7 @@ def test_output_type_function_with_custom_tool_name():
                 description='The final response which ends this conversation',
                 parameters_json_schema={
                     'additionalProperties': False,
-                    'properties': {'city': {'title': 'City', 'type': 'string'}},
+                    'properties': {'city': {'type': 'string'}},
                     'required': ['city'],
                     'type': 'object',
                 },
@@ -799,7 +879,7 @@ def test_output_type_function_or_model():
                 description='get_weather: The final response which ends this conversation',
                 parameters_json_schema={
                     'additionalProperties': False,
-                    'properties': {'city': {'title': 'City', 'type': 'string'}},
+                    'properties': {'city': {'type': 'string'}},
                     'required': ['city'],
                     'type': 'object',
                 },
@@ -958,7 +1038,7 @@ def test_output_type_multiple_custom_tools():
                 description='get_weather: The final response which ends this conversation',
                 parameters_json_schema={
                     'additionalProperties': False,
-                    'properties': {'city': {'title': 'City', 'type': 'string'}},
+                    'properties': {'city': {'type': 'string'}},
                     'required': ['city'],
                     'type': 'object',
                 },

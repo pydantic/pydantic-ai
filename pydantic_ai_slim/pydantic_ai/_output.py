@@ -6,11 +6,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Literal, Union, cast
 
 from pydantic import TypeAdapter, ValidationError
+from pydantic_core import SchemaValidator
 from typing_extensions import TypeAliasType, TypedDict, TypeVar, get_args, get_origin
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
-from . import _utils, messages as _messages
+from . import _function_schema, _utils, messages as _messages
 from .exceptions import ModelRetry
 from .tools import AgentDepsT, GenerateToolJsonSchema, ObjectJsonSchema, RunContext, ToolDefinition
 
@@ -134,13 +135,16 @@ class ToolOutput(Generic[OutputDataT]):
         self.strict = strict
 
 
-# TODO: Comments to explain what's supported
 T_co = TypeVar('T_co', covariant=True)
-OutputCallable = TypeAliasType('OutputCallable', Callable[..., Union[T_co, Awaitable[T_co]]], type_params=(T_co,))
-SimpleOutputType = TypeAliasType('SimpleOutputType', Union[type[T_co], OutputCallable[T_co]], type_params=(T_co,))
+# output_type=Type or output_type=function or output_type=object.method
+SimpleOutputType = TypeAliasType(
+    'SimpleOutputType', Union[type[T_co], Callable[..., Union[T_co, Awaitable[T_co]]]], type_params=(T_co,)
+)
+# output_type=ToolOutput(<see above>) or <see above>
 SimpleOutputTypeOrMarker = TypeAliasType(
     'SimpleOutputTypeOrMarker', Union[SimpleOutputType[T_co], ToolOutput[T_co]], type_params=(T_co,)
 )
+# output_type=<see above> or [<see above>, ...]
 OutputType = TypeAliasType(
     'OutputType', Union[SimpleOutputTypeOrMarker[T_co], Sequence[SimpleOutputTypeOrMarker[T_co]]], type_params=(T_co,)
 )
@@ -273,7 +277,8 @@ class OutputObjectDefinition:
 @dataclass(init=False)
 class OutputObjectSchema(Generic[OutputDataT]):
     definition: OutputObjectDefinition
-    type_adapter: TypeAdapter[Any]
+    validator: SchemaValidator
+    function_schema: _function_schema.FunctionSchema | None = None
     outer_typed_dict_key: str | None = None
 
     def __init__(
@@ -284,22 +289,31 @@ class OutputObjectSchema(Generic[OutputDataT]):
         description: str | None = None,
         strict: bool | None = None,
     ):
-        if inspect.isfunction(output_type) or inspect.ismethod(output_type) or _utils.is_model_like(output_type):
-            self.type_adapter = TypeAdapter(output_type)
+        if inspect.isfunction(output_type) or inspect.ismethod(output_type):
+            self.function_schema = _function_schema.function_schema(output_type, GenerateToolJsonSchema)
+            self.validator = self.function_schema.validator
+            json_schema = self.function_schema.json_schema
         else:
-            self.outer_typed_dict_key = 'response'
-            response_data_typed_dict = TypedDict(  # noqa: UP013
-                'response_data_typed_dict',
-                {'response': cast(type[OutputDataT], output_type)},  # pyright: ignore[reportInvalidTypeForm]
-            )
-            self.type_adapter = TypeAdapter(response_data_typed_dict)
+            type_adapter: TypeAdapter[Any]
+            if _utils.is_model_like(output_type):
+                type_adapter = TypeAdapter(output_type)
+            else:
+                self.outer_typed_dict_key = 'response'
+                response_data_typed_dict = TypedDict(  # noqa: UP013
+                    'response_data_typed_dict',
+                    {'response': cast(type[OutputDataT], output_type)},  # pyright: ignore[reportInvalidTypeForm]
+                )
+                type_adapter = TypeAdapter(response_data_typed_dict)
 
-        json_schema = _utils.check_object_json_schema(
-            self.type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
-        )
-        if self.outer_typed_dict_key:
-            # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
-            json_schema.pop('title')
+            # Really a PluggableSchemaValidator, but it's API-compatible
+            self.validator = cast(SchemaValidator, type_adapter.validator)
+            json_schema = _utils.check_object_json_schema(
+                type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+            )
+
+            if self.outer_typed_dict_key:
+                # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
+                json_schema.pop('title')
 
         if json_schema_description := json_schema.pop('description', None):
             if description is None:
@@ -315,12 +329,17 @@ class OutputObjectSchema(Generic[OutputDataT]):
         )
 
     async def process(
-        self, data: str | dict[str, Any], allow_partial: bool = False, wrap_validation_errors: bool = True
+        self,
+        data: str | dict[str, Any],
+        run_context: RunContext[AgentDepsT],
+        allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
     ) -> OutputDataT:
         """Process an output message, performing validation and (if necessary) calling the output function.
 
         Args:
             data: The output data to validate.
+            run_context: The current run context.
             allow_partial: If true, allow partial validation.
             wrap_validation_errors: If true, wrap the validation errors in a retry message.
 
@@ -328,12 +347,11 @@ class OutputObjectSchema(Generic[OutputDataT]):
             Either the validated output data (left) or a retry message (right).
         """
         try:
-            # TODO: Inject RunContext?
             pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
             if isinstance(data, str):
-                output = self.type_adapter.validate_json(data, experimental_allow_partial=pyd_allow_partial)
+                output = self.validator.validate_json(data, allow_partial=pyd_allow_partial)
             else:
-                output = self.type_adapter.validate_python(data, experimental_allow_partial=pyd_allow_partial)
+                output = self.validator.validate_python(data, allow_partial=pyd_allow_partial)
         except ValidationError as e:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -342,19 +360,19 @@ class OutputObjectSchema(Generic[OutputDataT]):
                 raise ToolRetryError(m) from e
             else:
                 raise
-        except ModelRetry as r:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(content=r.message)
-                raise ToolRetryError(m) from r
-            else:
-                raise
-        else:
-            if k := self.outer_typed_dict_key:
-                output = output[k]
 
-        # A non-awaitable callable output_type will already have been executed by the TypeAdapter's validation method
-        if inspect.isawaitable(output):
-            output = await output
+        if self.function_schema:
+            try:
+                output = await self.function_schema.call(output, run_context)
+            except ModelRetry as r:
+                if wrap_validation_errors:
+                    m = _messages.RetryPromptPart(content=r.message)
+                    raise ToolRetryError(m) from r
+                else:
+                    raise
+
+        if k := self.outer_typed_dict_key:
+            output = output[k]
         return output
 
 
@@ -382,12 +400,17 @@ class OutputTool(Generic[OutputDataT]):
         )
 
     async def process(
-        self, tool_call: _messages.ToolCallPart, allow_partial: bool = False, wrap_validation_errors: bool = True
+        self,
+        tool_call: _messages.ToolCallPart,
+        run_context: RunContext[AgentDepsT],
+        allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
     ) -> OutputDataT:
-        """Validate an output message.
+        """Process an output message.
 
         Args:
             tool_call: The tool call from the LLM to validate.
+            run_context: The current run context.
             allow_partial: If true, allow partial validation.
             wrap_validation_errors: If true, wrap the validation errors in a retry message.
 
@@ -396,7 +419,7 @@ class OutputTool(Generic[OutputDataT]):
         """
         try:
             output = await self.parameters_schema.process(
-                tool_call.args, allow_partial=allow_partial, wrap_validation_errors=False
+                tool_call.args, run_context, allow_partial=allow_partial, wrap_validation_errors=False
             )
         except ValidationError as e:
             if wrap_validation_errors:
