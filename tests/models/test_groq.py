@@ -432,6 +432,7 @@ async def test_stream_structured(allow_model_requests: None):
         assert not result.is_complete
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
             [
+                {},
                 {'first': 'One'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
