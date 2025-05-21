@@ -61,6 +61,7 @@ PYDANTIC_AI_HOME.mkdir(parents=True, exist_ok=True)
 # Create prompt history file
 PROMPT_HISTORY_PATH.touch(exist_ok=True)
 
+
 class SimpleCodeBlock(CodeBlock):
     """Customized code blocks in markdown.
 
