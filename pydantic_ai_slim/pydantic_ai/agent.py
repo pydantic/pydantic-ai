@@ -1773,18 +1773,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             await agent.to_cli()
         ```
         """
-        from prompt_toolkit import PromptSession
-        from prompt_toolkit.history import FileHistory
         from rich.console import Console
 
-        from pydantic_ai._cli import PROMPT_HISTORY_PATH, run_chat
+        from pydantic_ai._cli import run_chat
 
         # TODO(Marcelo): We need to refactor the CLI code to be able to be able to just pass `agent`, `deps` and
         # `prog_name` from here.
 
-        session: PromptSession[Any] = PromptSession(history=FileHistory(str(PROMPT_HISTORY_PATH)))
         await run_chat(
-            session=session,
             stream=True,
             agent=self,
             deps=deps,
