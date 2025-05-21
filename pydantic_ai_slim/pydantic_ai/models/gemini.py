@@ -17,6 +17,7 @@ from typing_extensions import NotRequired, TypedDict, assert_never
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, UserError, _utils, usage
+from .._output import OutputObjectDefinition
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -171,10 +172,17 @@ class GeminiModel(Model):
         def _customize_tool_def(t: ToolDefinition):
             return replace(t, parameters_json_schema=_GeminiJsonSchema(t.parameters_json_schema).walk())
 
+        def _customize_output_object_def(o: OutputObjectDefinition):
+            return replace(o, json_schema=_GeminiJsonSchema(o.json_schema).walk())
+
         return ModelRequestParameters(
             function_tools=[_customize_tool_def(tool) for tool in model_request_parameters.function_tools],
-            allow_text_output=model_request_parameters.allow_text_output,
+            output_mode=model_request_parameters.output_mode,
+            output_object=_customize_output_object_def(model_request_parameters.output_object)
+            if model_request_parameters.output_object
+            else None,
             output_tools=[_customize_tool_def(tool) for tool in model_request_parameters.output_tools],
+            require_tool_use=model_request_parameters.require_tool_use,
         )
 
     @property
@@ -196,7 +204,7 @@ class GeminiModel(Model):
     def _get_tool_config(
         self, model_request_parameters: ModelRequestParameters, tools: _GeminiTools | None
     ) -> _GeminiToolConfig | None:
-        if model_request_parameters.allow_text_output:
+        if not model_request_parameters.require_tool_use:
             return None
         elif tools:
             return _tool_config([t['name'] for t in tools['function_declarations']])

@@ -305,7 +305,7 @@ class BedrockConverseModel(Model):
         support_tools_choice = self.model_name.startswith(('anthropic', 'us.anthropic'))
         if not tools or not support_tools_choice:
             tool_choice: ToolChoiceTypeDef = {}
-        elif not model_request_parameters.allow_text_output:
+        elif model_request_parameters.require_tool_use:
             tool_choice = {'any': {}}  # pragma: no cover
         else:
             tool_choice = {'auto': {}}

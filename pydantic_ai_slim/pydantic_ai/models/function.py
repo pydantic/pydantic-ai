@@ -91,7 +91,7 @@ class FunctionModel(Model):
     ) -> ModelResponse:
         agent_info = AgentInfo(
             model_request_parameters.function_tools,
-            model_request_parameters.allow_text_output,
+            not model_request_parameters.require_tool_use,
             model_request_parameters.output_tools,
             model_settings,
         )
@@ -120,7 +120,7 @@ class FunctionModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         agent_info = AgentInfo(
             model_request_parameters.function_tools,
-            model_request_parameters.allow_text_output,
+            not model_request_parameters.require_tool_use,
             model_request_parameters.output_tools,
             model_settings,
         )
