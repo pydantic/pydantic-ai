@@ -1760,7 +1760,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             lifespan=lifespan,
         )
 
-    async def to_cli(self: Self, deps: AgentDepsT = None) -> None:
+    async def to_cli(self: Self, deps: AgentDepsT = None, prog_name: str | None = None) -> None:
         """Run the agent in a CLI chat interface.
 
         Example:
@@ -1780,16 +1780,18 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         # TODO(Marcelo): We need to refactor the CLI code to be able to be able to just pass `agent`, `deps` and
         # `prog_name` from here.
 
+        prog_name = prog_name or 'pydantic-ai'
+
         await run_chat(
             stream=True,
             agent=self,
             deps=deps,
             console=Console(),
             code_theme='monokai',
-            prog_name='pydantic-ai',
+            prog_name=prog_name,
         )
 
-    def to_cli_sync(self: Self, deps: AgentDepsT = None) -> None:
+    def to_cli_sync(self: Self, deps: AgentDepsT = None, prog_name: str | None = None) -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
@@ -1797,9 +1799,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
         agent.to_cli_sync()
+        agent.to_cli_sync(prog_name='assistant')
         ```
         """
-        return get_event_loop().run_until_complete(self.to_cli(deps=deps))
+        return get_event_loop().run_until_complete(self.to_cli(deps=deps, prog_name=prog_name))
 
 
 @dataclasses.dataclass(repr=False)
