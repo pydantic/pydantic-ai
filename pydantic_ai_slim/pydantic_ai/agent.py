@@ -1775,9 +1775,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         async def main():
             await agent.to_cli()
-
-        async def main():
-            await agent.to_cli(prog_name='assistant')
         ```
         """
         from prompt_toolkit import PromptSession
