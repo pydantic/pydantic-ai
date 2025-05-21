@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from copy import deepcopy
 from types import FrameType
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload, Optional
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -1764,7 +1764,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             lifespan=lifespan,
         )
 
-    async def to_cli(self: Self, deps: AgentDepsT = None, prog_name: str = None) -> None:
+    async def to_cli(self: Self, deps: AgentDepsT = None, prog_name: Optional[str] = None) -> None:
         """Run the agent in a CLI chat interface.
 
         Example:
@@ -1775,6 +1775,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         async def main():
             await agent.to_cli()
+
+        async def main():
+            await agent.to_cli(prog_name='assistant')
         ```
         """
         from prompt_toolkit import PromptSession
@@ -1786,8 +1789,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         # TODO(Marcelo): We need to refactor the CLI code to be able to be able to just pass `agent`, `deps` and
         # `prog_name` from here.
         
-        if not isinstance(prog_name, str):
-            prog_name = 'pydantic-ai'
+        prog_name = prog_name or "pydantic-ai"
 
         session: PromptSession[Any] = PromptSession(history=FileHistory(str(PROMPT_HISTORY_PATH)))
         await run_chat(
@@ -1800,7 +1802,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             prog_name=prog_name,
         )
 
-    def to_cli_sync(self: Self, deps: AgentDepsT = None) -> None:
+    def to_cli_sync(self: Self, deps: AgentDepsT = None, prog_name: Optional[str] = None) -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
@@ -1808,9 +1810,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
         agent.to_cli_sync()
+        agent.to_cli_sync(prog_name='assistant')
         ```
         """
-        return get_event_loop().run_until_complete(self.to_cli(deps=deps))
+        return get_event_loop().run_until_complete(self.to_cli(deps=deps, prog_name=prog_name))
 
 
 @dataclasses.dataclass(repr=False)
