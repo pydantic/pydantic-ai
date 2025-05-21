@@ -346,30 +346,14 @@ class OutputObjectSchema(Generic[OutputDataT]):
         Returns:
             Either the validated output data (left) or a retry message (right).
         """
-        try:
-            pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
-            if isinstance(data, str):
-                output = self.validator.validate_json(data, allow_partial=pyd_allow_partial)
-            else:
-                output = self.validator.validate_python(data, allow_partial=pyd_allow_partial)
-        except ValidationError as e:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    content=e.errors(include_url=False),
-                )
-                raise ToolRetryError(m) from e
-            else:
-                raise
+        pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
+        if isinstance(data, str):
+            output = self.validator.validate_json(data, allow_partial=pyd_allow_partial)
+        else:
+            output = self.validator.validate_python(data, allow_partial=pyd_allow_partial)
 
         if self.function_schema:
-            try:
-                output = await self.function_schema.call(output, run_context)
-            except ModelRetry as r:
-                if wrap_validation_errors:
-                    m = _messages.RetryPromptPart(content=r.message)
-                    raise ToolRetryError(m) from r
-                else:
-                    raise
+            output = await self.function_schema.call(output, run_context)
 
         if k := self.outer_typed_dict_key:
             output = output[k]
@@ -418,9 +402,7 @@ class OutputTool(Generic[OutputDataT]):
             Either the validated output data (left) or a retry message (right).
         """
         try:
-            output = await self.parameters_schema.process(
-                tool_call.args, run_context, allow_partial=allow_partial, wrap_validation_errors=False
-            )
+            output = await self.parameters_schema.process(tool_call.args, run_context, allow_partial=allow_partial)
         except ValidationError as e:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -440,7 +422,7 @@ class OutputTool(Generic[OutputDataT]):
                 )
                 raise ToolRetryError(m) from r
             else:
-                raise
+                raise  # pragma: lax no cover
         else:
             return output
 

@@ -535,6 +535,33 @@ class Bar(BaseModel):
     assert got_tool_call_name == snapshot('final_result_Bar')
 
 
+def test_output_type_with_two_descriptions():
+    class MyOutput(BaseModel):
+        """Description from docstring"""
+
+        valid: bool
+
+    m = TestModel()
+    agent = Agent(m, output_type=ToolOutput(type_=MyOutput, description='Description from ToolOutput'))
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(MyOutput(valid=False))
+    assert m.last_model_request_parameters is not None
+    assert m.last_model_request_parameters.output_tools == snapshot(
+        [
+            ToolDefinition(
+                name='final_result',
+                description='Description from ToolOutput. Description from docstring',
+                parameters_json_schema={
+                    'properties': {'valid': {'type': 'boolean'}},
+                    'required': ['valid'],
+                    'title': 'MyOutput',
+                    'type': 'object',
+                },
+            )
+        ]
+    )
+
+
 def test_output_type_function():
     class Weather(BaseModel):
         temperature: float
