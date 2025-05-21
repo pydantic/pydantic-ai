@@ -170,7 +170,7 @@ class OpenAIModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure'] | Provider[AsyncOpenAI] = 'openai',
+        provider: Literal['openai', 'deepseek', 'azure', 'openrouter'] | Provider[AsyncOpenAI] = 'openai',
         system_prompt_role: OpenAISystemPromptRole | None = None,
     ):
         """Initialize an OpenAI model.
