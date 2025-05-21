@@ -608,11 +608,12 @@ async def download_item(
     response = await client.get(item.url, follow_redirects=True)
     response.raise_for_status()
 
-    content_type = response.headers.get('content-type')
-    if content_type:
-        media_type = content_type.split(';')[0]
-    else:
-        media_type = item.media_type
+    if content_type := response.headers.get('content-type'):
+        content_type = content_type.split(';')[0]
+        if content_type == 'application/octet-stream':
+            content_type = None
+
+    media_type = content_type or item.media_type
 
     result = response.content
     if data_format in ('base64', 'base64_uri'):
