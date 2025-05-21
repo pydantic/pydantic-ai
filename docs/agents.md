@@ -734,7 +734,7 @@ def add_the_users_name(ctx: RunContext[str]) -> str:
 def add_the_date() -> str:
     return f'The date is {date.today()}.'
 
-result = agent.run_sync('What is the capital of France?', deps='Frank')
+result = agent.run_sync('What is the date?', deps='Frank')
 print(result.output)
 #> Hello Frank, the date today is 2032-01-02.
 ```
