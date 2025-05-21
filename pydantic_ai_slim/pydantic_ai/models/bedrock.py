@@ -552,8 +552,8 @@ class BedrockStreamedResponse(StreamedResponse):
                         args=None,
                         tool_call_id=tool_id,
                     )
-                    if maybe_event:
-                        yield maybe_event  # pragma: no cover
+                    if maybe_event:  # pragma: no branch
+                        yield maybe_event
             if 'contentBlockDelta' in chunk:
                 index = chunk['contentBlockDelta']['contentBlockIndex']
                 delta = chunk['contentBlockDelta']['delta']

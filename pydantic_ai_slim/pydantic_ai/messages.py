@@ -486,7 +486,7 @@ class ToolCallPart:
     tool_name: str
     """The name of the tool to call."""
 
-    args: str | dict[str, Any]
+    args: str | dict[str, Any] | None = None
     """The arguments to pass to the tool.
 
     This is stored either as a JSON string or a Python dictionary depending on how data was received.
@@ -506,10 +506,10 @@ class ToolCallPart:
 
         This is just for convenience with models that require dicts as input.
         """
+        if not self.args:
+            return {}
         if isinstance(self.args, dict):
             return self.args
-        if isinstance(self.args, str) and not self.args:
-            return {}
         args = pydantic_core.from_json(self.args)
         assert isinstance(args, dict), 'args should be a dict'
         return cast(dict[str, Any], args)
@@ -519,6 +519,8 @@ class ToolCallPart:
 
         This is just for convenience with models that require JSON strings as input.
         """
+        if not self.args:
+            return '{}'
         if isinstance(self.args, str):
             return self.args
         return pydantic_core.to_json(self.args).decode()
@@ -666,9 +668,9 @@ class ToolCallPartDelta:
         """Convert this delta to a fully formed `ToolCallPart` if possible, otherwise return `None`.
 
         Returns:
-            A `ToolCallPart` if both `tool_name_delta` and `args_delta` are set, otherwise `None`.
+            A `ToolCallPart` if `tool_name_delta` is set, otherwise `None`.
         """
-        if self.tool_name_delta is None or self.args_delta is None:
+        if self.tool_name_delta is None:
             return None
 
         return ToolCallPart(self.tool_name_delta, self.args_delta, self.tool_call_id or _generate_tool_call_id())
@@ -728,7 +730,7 @@ class ToolCallPartDelta:
             delta = replace(delta, tool_call_id=self.tool_call_id)
 
         # If we now have enough data to create a full ToolCallPart, do so
-        if delta.tool_name_delta is not None and delta.args_delta is not None:
+        if delta.tool_name_delta is not None:
             return ToolCallPart(delta.tool_name_delta, delta.args_delta, delta.tool_call_id or _generate_tool_call_id())
 
         return delta
@@ -741,12 +743,12 @@ class ToolCallPartDelta:
             part = replace(part, tool_name=tool_name)
 
         if isinstance(self.args_delta, str):
-            if not isinstance(part.args, str):
+            if isinstance(part.args, dict):
                 raise UnexpectedModelBehavior(f'Cannot apply JSON deltas to non-JSON tool arguments ({part=}, {self=})')
-            updated_json = part.args + self.args_delta
+            updated_json = (part.args or '') + self.args_delta
             part = replace(part, args=updated_json)
         elif isinstance(self.args_delta, dict):
-            if not isinstance(part.args, dict):
+            if isinstance(part.args, str):
                 raise UnexpectedModelBehavior(f'Cannot apply dict deltas to non-dict tool arguments ({part=}, {self=})')
             updated_dict = {**(part.args or {}), **self.args_delta}
             part = replace(part, args=updated_dict)

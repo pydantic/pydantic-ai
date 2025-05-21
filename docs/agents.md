@@ -370,7 +370,8 @@ if __name__ == '__main__':
     [
         '=== UserPromptNode: What will the weather be like in Paris on Tuesday? ===',
         '=== ModelRequestNode: streaming partial request tokens ===',
-        '[Request] Starting part 0: ToolCallPart(tool_name=\'weather_forecast\', args=\'{"location":"Pa\', tool_call_id=\'0001\', part_kind=\'tool-call\')',
+        "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', args=None, tool_call_id='0001', part_kind='tool-call')",
+        '[Request] Part 0 args_delta={"location":"Pa',
         '[Request] Part 0 args_delta=ris","forecast_',
         '[Request] Part 0 args_delta=date":"2030-01-',
         '[Request] Part 0 args_delta=01"}',
