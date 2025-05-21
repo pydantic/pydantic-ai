@@ -29,6 +29,7 @@ __all__ = (
     'ToolFuncEither',
     'ToolParams',
     'ToolPrepareFunc',
+    'ToolsPrepareFunc',
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
@@ -68,7 +69,7 @@ class RunContext(Generic[AgentDepsT]):
         kwargs = {}
         if retry is not None:
             kwargs['retry'] = retry
-        if tool_name is not _utils.UNSET:
+        if tool_name is not _utils.UNSET:  # pragma: no branch
             kwargs['tool_name'] = tool_name
         return dataclasses.replace(self, **kwargs)
 
@@ -132,6 +133,37 @@ hitchhiker = Tool(hitchhiker, prepare=only_if_42)
 
 Usage `ToolPrepareFunc[AgentDepsT]`.
 """
+
+ToolsPrepareFunc: TypeAlias = (
+    'Callable[[RunContext[AgentDepsT], list[ToolDefinition]], Awaitable[list[ToolDefinition] | None]]'
+)
+"""Definition of a function that can prepare the tool definition of all tools for each step.
+This is useful if you want to customize the definition of multiple tools or you want to register
+a subset of tools for a given step.
+
+Example — here `turn_on_strict_if_openai` is valid as a `ToolsPrepareFunc`:
+
+```python {noqa="I001"}
+from dataclasses import replace
+from typing import Union
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.tools import ToolDefinition
+
+
+async def turn_on_strict_if_openai(
+    ctx: RunContext[None], tool_defs: list[ToolDefinition]
+) -> Union[list[ToolDefinition], None]:
+    if ctx.model.system == 'openai':
+        return [replace(tool_def, strict=True) for tool_def in tool_defs]
+    return tool_defs
+
+agent = Agent('openai:gpt-4o', prepare_tools=turn_on_strict_if_openai)
+```
+
+Usage `ToolsPrepareFunc[AgentDepsT]`.
+"""
+
 
 DocstringFormat = Literal['google', 'numpy', 'sphinx', 'auto']
 """Supported docstring formats.
@@ -374,7 +406,7 @@ class Tool(Generic[AgentDepsT]):
         )
         args = [ctx] if self.takes_ctx else []
         for positional_field in self._positional_fields:
-            args.append(args_dict.pop(positional_field))
+            args.append(args_dict.pop(positional_field))  # pragma: no cover
         if self._var_positional_field:
             args.extend(args_dict.pop(self._var_positional_field))
 

@@ -82,7 +82,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
             self._client = openai_client
         else:
             azure_endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT')
-            if not azure_endpoint:  # pragma: no cover
+            if not azure_endpoint:
                 raise UserError(
                     'Must provide one of the `azure_endpoint` argument or the `AZURE_OPENAI_ENDPOINT` environment variable'
                 )

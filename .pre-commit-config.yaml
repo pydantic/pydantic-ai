@@ -40,6 +40,13 @@ repos:
         types_or: [javascript, ts, json]
         files: '^mcp-run-python/'
         pass_filenames: false
+      - id: clai-help
+        name: clai help output
+        entry: uv
+        args: [run, pytest, 'clai/update_readme.py']
+        language: system
+        types_or: [python, markdown]
+        pass_filenames: false
       - id: typecheck
         name: Typecheck
         entry: make
@@ -53,6 +60,6 @@ repos:
     rev: v2.3.0
     hooks:
     - id: codespell
-      args: ['--skip', 'tests/models/cassettes/*']
+      args: ['--skip', 'tests/models/cassettes/*,docs/a2a/fasta2a.md']
       additional_dependencies:
       - tomli

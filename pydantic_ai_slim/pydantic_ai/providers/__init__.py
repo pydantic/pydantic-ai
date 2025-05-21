@@ -52,6 +52,10 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .deepseek import DeepSeekProvider
 
         return DeepSeekProvider()
+    elif provider == 'openrouter':
+        from .openrouter import OpenRouterProvider
+
+        return OpenRouterProvider()
     elif provider == 'azure':
         from .azure import AzureProvider
 
@@ -65,7 +69,7 @@ def infer_provider(provider: str) -> Provider[Any]:
 
         return GoogleGLAProvider()
     # NOTE: We don't test because there are many ways the `boto3.client` can retrieve the credentials.
-    elif provider == 'bedrock':  # pragma: no cover
+    elif provider == 'bedrock':
         from .bedrock import BedrockProvider
 
         return BedrockProvider()

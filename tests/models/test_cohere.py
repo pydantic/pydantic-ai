@@ -66,9 +66,7 @@ class MockAsyncClientV2:
     def create_mock(cls, completions: MockChatResponse | Sequence[MockChatResponse]) -> AsyncClientV2:
         return cast(AsyncClientV2, cls(completions=completions))
 
-    async def chat(  # pragma: no cover
-        self, *_args: Any, **_kwargs: Any
-    ) -> ChatResponse:
+    async def chat(self, *_args: Any, **_kwargs: Any) -> ChatResponse:
         assert self.completions is not None
         if isinstance(self.completions, Sequence):
             raise_if_exception(self.completions[self.index])
@@ -115,11 +113,17 @@ async def test_request_simple_success(allow_model_requests: None):
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='world')], model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='world')],
+                usage=Usage(requests=1),
+                model_name='command-r7b-12-2024',
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='world')], model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='world')],
+                usage=Usage(requests=1),
+                model_name='command-r7b-12-2024',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -187,6 +191,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                usage=Usage(requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -273,6 +278,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(requests=1, total_tokens=0, details={}),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -294,6 +300,13 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=5,
+                    response_tokens=3,
+                    total_tokens=8,
+                    details={'input_tokens': 4, 'output_tokens': 2},
+                ),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -309,6 +322,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -386,6 +400,13 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                         content="The capital of France is Paris. It is the country's largest city and serves as the economic, cultural, and political center of France. Paris is known for its rich history, iconic landmarks such as the Eiffel Tower and the Louvre Museum, and its significant influence on fashion, cuisine, and the arts."
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=542,
+                    response_tokens=63,
+                    total_tokens=605,
+                    details={'input_tokens': 13, 'output_tokens': 61},
+                ),
                 model_name='command-r7b-12-2024',
                 timestamp=IsDatetime(),
             ),

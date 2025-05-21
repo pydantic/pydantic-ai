@@ -156,7 +156,7 @@ _(This example is complete, it can be run "as is")_
 
 In this example we evaluate a method for generating recipes based on customer orders.
 
-```python {title="judge_recipes.py"}
+```python {title="judge_recipes.py" test="skip"}
 from __future__ import annotations
 
 from typing import Any
@@ -263,7 +263,7 @@ _(This example is complete, it can be run "as is")_
 
 Datasets can be saved to and loaded from YAML or JSON files.
 
-```python {title="save_load_dataset_example.py"}
+```python {title="save_load_dataset_example.py" test="skip"}
 from pathlib import Path
 
 from judge_recipes import CustomerOrder, Recipe, recipe_dataset
@@ -695,7 +695,7 @@ You can send these traces to any OpenTelemetry-compatible backend, including [Py
 
 All you need to do is configure Logfire via `logfire.configure`:
 
-```python {title="logfire_integration.py"}
+```python {title="logfire_integration.py" test="skip"}
 import logfire
 from judge_recipes import recipe_dataset, transform_recipe
 

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import timezone
 from functools import cached_property
-from typing import Any, TypeVar, Union, cast
+from typing import Any, Callable, TypeVar, Union, cast
 
 import httpx
 import pytest
@@ -52,7 +52,11 @@ with try_import() as imports_successful:
     )
     from anthropic.types.raw_message_delta_event import Delta
 
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic import (
+        AnthropicModel,
+        AnthropicModelSettings,
+        _map_usage,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
     # note: we use Union here so that casting works with Python 3.9
@@ -108,7 +112,9 @@ class MockAnthropic:
             if isinstance(self.stream[0], Sequence):
                 response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream[self.index])))
             else:
-                response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream)))
+                response = MockAsyncStream(  # pragma: no cover
+                    iter(cast(list[MockRawMessageStreamEvent], self.stream))
+                )
         else:
             assert self.messages_ is not None, '`messages` must be provided'
             if isinstance(self.messages_, Sequence):
@@ -169,14 +175,30 @@ async def test_sync_request_text_response(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=5,
+                    response_tokens=10,
+                    total_tokens=15,
+                    details={'input_tokens': 5, 'output_tokens': 10},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=5,
+                    response_tokens=10,
+                    total_tokens=15,
+                    details={'input_tokens': 5, 'output_tokens': 10},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -258,8 +280,16 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=3,
+                    response_tokens=5,
+                    total_tokens=8,
+                    details={'input_tokens': 3, 'output_tokens': 5},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -320,8 +350,16 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=2,
+                    response_tokens=1,
+                    total_tokens=3,
+                    details={'input_tokens': 2, 'output_tokens': 1},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -341,8 +379,16 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=3,
+                    response_tokens=2,
+                    total_tokens=5,
+                    details={'input_tokens': 3, 'output_tokens': 2},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -356,8 +402,16 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=3,
+                    response_tokens=5,
+                    total_tokens=8,
+                    details={'input_tokens': 3, 'output_tokens': 5},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -390,7 +444,7 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
         if loc_name == 'London':
-            return json.dumps({'lat': 51, 'lng': 0})
+            return json.dumps({'lat': 51, 'lng': 0})  # pragma: no cover
         else:
             raise ModelRetry('Wrong location, please try again')
 
@@ -697,8 +751,21 @@ async def test_image_as_binary_content_tool_response(
                     TextPart(content='Let me get the image and check what fruit is shown.'),
                     ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01VMGXdexE1Fy5xdWgoom9Te'),
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=372,
+                    response_tokens=49,
+                    total_tokens=421,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 372,
+                        'output_tokens': 49,
+                    },
+                ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                vendor_id='msg_01BPu4UTHXhqtR1TvsRhBLYY',
             ),
             ModelRequest(
                 parts=[
@@ -723,8 +790,21 @@ async def test_image_as_binary_content_tool_response(
                         content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The kiwi's fuzzy brown skin is visible around the edges of the slice."
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=2025,
+                    response_tokens=57,
+                    total_tokens=2082,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 2025,
+                        'output_tokens': 57,
+                    },
+                ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                vendor_id='msg_01Ua6uyZUF15YV3G1PusaqSq',
             ),
         ]
     )
@@ -843,8 +923,108 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=20,
+                    response_tokens=10,
+                    total_tokens=30,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 20,
+                        'output_tokens': 10,
+                    },
+                ),
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
+                vendor_id='msg_01U58nruzfn9BrXrrF2hhb4m',
             ),
         ]
     )
+
+
+async def test_multiple_system_prompt_formatting(allow_model_requests: None):
+    c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic().create_mock(c)
+    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, system_prompt='this is the system prompt')
+
+    @agent.system_prompt
+    def system_prompt() -> str:
+        return 'and this is another'
+
+    await agent.run('hello')
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'system' in completion_kwargs
+    assert completion_kwargs['system'] == 'this is the system prompt\n\nand this is another'
+
+
+def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
+    return AnthropicMessage(
+        id='x',
+        content=[],
+        model='claude-3-7-sonnet-latest',
+        role='assistant',
+        type='message',
+        usage=usage,
+    )
+
+
+@pytest.mark.parametrize(
+    'message_callback,usage',
+    [
+        pytest.param(
+            lambda: anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)),
+            snapshot(
+                Usage(
+                    request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
+                )
+            ),
+            id='AnthropicMessage',
+        ),
+        pytest.param(
+            lambda: anth_msg(
+                AnthropicUsage(
+                    input_tokens=1, output_tokens=1, cache_creation_input_tokens=2, cache_read_input_tokens=3
+                )
+            ),
+            snapshot(
+                Usage(
+                    request_tokens=6,
+                    response_tokens=1,
+                    total_tokens=7,
+                    details={
+                        'cache_creation_input_tokens': 2,
+                        'cache_read_input_tokens': 3,
+                        'input_tokens': 1,
+                        'output_tokens': 1,
+                    },
+                )
+            ),
+            id='AnthropicMessage-cached',
+        ),
+        pytest.param(
+            lambda: RawMessageStartEvent(
+                message=anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)), type='message_start'
+            ),
+            snapshot(
+                Usage(
+                    request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
+                )
+            ),
+            id='RawMessageStartEvent',
+        ),
+        pytest.param(
+            lambda: RawMessageDeltaEvent(
+                delta=Delta(),
+                usage=MessageDeltaUsage(output_tokens=5),
+                type='message_delta',
+            ),
+            snapshot(Usage(response_tokens=5, total_tokens=5, details={'output_tokens': 5})),
+            id='RawMessageDeltaEvent',
+        ),
+        pytest.param(lambda: RawMessageStopEvent(type='message_stop'), snapshot(Usage()), id='RawMessageStopEvent'),
+    ],
+)
+def test_usage(message_callback: Callable[[], AnthropicMessage | RawMessageStreamEvent], usage: Usage):
+    assert _map_usage(message_callback()) == usage

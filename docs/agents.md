@@ -145,9 +145,17 @@ async def main():
         CallToolsNode(
             model_response=ModelResponse(
                 parts=[TextPart(content='Paris', part_kind='text')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=56,
+                    response_tokens=1,
+                    total_tokens=57,
+                    details=None,
+                ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
+                vendor_id=None,
             )
         ),
         End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
@@ -209,9 +217,17 @@ async def main():
             CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='Paris', part_kind='text')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=56,
+                        response_tokens=1,
+                        total_tokens=57,
+                        details=None,
+                    ),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                     kind='response',
+                    vendor_id=None,
                 )
             ),
             End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
@@ -699,6 +715,30 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
+You can also dynamically change the instructions for an agent by using the `@agent.instructions` decorator.
+
+```python {title="dynamic_instructions.py"}
+from datetime import date
+
+from pydantic_ai import Agent, RunContext
+
+agent = Agent('openai:gpt-4o', deps_type=str)
+
+
+@agent.instructions
+def add_the_users_name(ctx: RunContext[str]) -> str:
+    return f"The user's name is {ctx.deps}."
+
+
+@agent.instructions
+def add_the_date() -> str:
+    return f'The date is {date.today()}.'
+
+result = agent.run_sync('What is the date?', deps='Frank')
+print(result.output)
+#> Hello Frank, the date today is 2032-01-02.
+```
+
 ## Reflection and self-correction
 
 Validation errors from both function tool parameter validation and [structured output validation](output.md#structured-output) can be passed back to the model with a request to retry.
@@ -805,9 +845,17 @@ with capture_run_messages() as messages:  # (2)!
                         part_kind='tool-call',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=62,
+                    response_tokens=4,
+                    total_tokens=66,
+                    details=None,
+                ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
+                vendor_id=None,
             ),
             ModelRequest(
                 parts=[
@@ -831,9 +879,17 @@ with capture_run_messages() as messages:  # (2)!
                         part_kind='tool-call',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=72,
+                    response_tokens=8,
+                    total_tokens=80,
+                    details=None,
+                ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
                 kind='response',
+                vendor_id=None,
             ),
         ]
         """

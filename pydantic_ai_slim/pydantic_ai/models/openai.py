@@ -104,6 +104,12 @@ class OpenAIModelSettings(ModelSettings, total=False):
     result in faster responses and fewer tokens used on reasoning in a response.
     """
 
+    openai_logprobs: bool
+    """Include log probabilities in the response."""
+
+    openai_top_logprobs: int
+    """Include log probabilities of the top n tokens in the response."""
+
     openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
 
@@ -164,7 +170,7 @@ class OpenAIModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure'] | Provider[AsyncOpenAI] = 'openai',
+        provider: Literal['openai', 'deepseek', 'azure', 'openrouter'] | Provider[AsyncOpenAI] = 'openai',
         system_prompt_role: OpenAISystemPromptRole | None = None,
     ):
         """Initialize an OpenAI model.
@@ -192,12 +198,14 @@ class OpenAIModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         check_allow_model_requests()
         response = await self._completions_create(
             messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response), _map_usage(response)
+        model_response = self._process_response(response)
+        model_response.usage.requests = 1
+        return model_response
 
     @asynccontextmanager
     async def request_stream(
@@ -285,6 +293,8 @@ class OpenAIModel(Model):
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
+                logprobs=model_settings.get('openai_logprobs', NOT_GIVEN),
+                top_logprobs=model_settings.get('openai_top_logprobs', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
@@ -292,26 +302,54 @@ class OpenAIModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise
+            raise  # pragma: lax no cover
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+        vendor_details: dict[str, Any] | None = None
+
+        # Add logprobs to vendor_details if available
+        if choice.logprobs is not None and choice.logprobs.content:
+            # Convert logprobs to a serializable format
+            vendor_details = {
+                'logprobs': [
+                    {
+                        'token': lp.token,
+                        'bytes': lp.bytes,
+                        'logprob': lp.logprob,
+                        'top_logprobs': [
+                            {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                        ],
+                    }
+                    for lp in choice.logprobs.content
+                ],
+            }
+
         if choice.message.content is not None:
             items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
-        return ModelResponse(items, model_name=response.model, timestamp=timestamp)
+        return ModelResponse(
+            items,
+            usage=_map_usage(response),
+            model_name=response.model,
+            timestamp=timestamp,
+            vendor_details=vendor_details,
+            vendor_id=response.id,
+        )
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise UnexpectedModelBehavior(  # pragma: no cover
+                'Streamed response ended without content or tool calls'
+            )
 
         return OpenAIStreamedResponse(
             _model_name=self._model_name,
@@ -397,7 +435,9 @@ class OpenAIModel(Model):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
+                    yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
+                        role='user', content=part.model_response()
+                    )
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
@@ -522,12 +562,12 @@ class OpenAIResponsesModel(Model):
         messages: list[ModelRequest | ModelResponse],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         check_allow_model_requests()
         response = await self._responses_create(
             messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response), _map_usage(response)
+        return self._process_response(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -554,7 +594,7 @@ class OpenAIResponsesModel(Model):
         for item in response.output:
             if item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
-        return ModelResponse(items, model_name=response.model, timestamp=timestamp)
+        return ModelResponse(items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(
         self, response: AsyncStream[responses.ResponseStreamEvent]
@@ -635,7 +675,7 @@ class OpenAIResponsesModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise
+            raise  # pragma: lax no cover
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
@@ -770,7 +810,7 @@ class OpenAIResponsesModel(Model):
                             file_data=f'data:{item.media_type};base64,{base64_encoded}',
                         )
                     )
-                elif isinstance(item, DocumentUrl):  # pragma: no cover
+                elif isinstance(item, DocumentUrl):
                     client = cached_async_http_client()
                     response = await client.get(item.url)
                     response.raise_for_status()
@@ -865,7 +905,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     args=chunk.delta,
                     tool_call_id=chunk.item_id,
                 )
-                if maybe_event is not None:
+                if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
 
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
@@ -935,6 +975,7 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
         if response_usage.prompt_tokens_details is not None:
             details.update(response_usage.prompt_tokens_details.model_dump(exclude_none=True))
         return usage.Usage(
+            requests=1,
             request_tokens=response_usage.prompt_tokens,
             response_tokens=response_usage.completion_tokens,
             total_tokens=response_usage.total_tokens,
@@ -1028,7 +1069,7 @@ class _OpenAIJsonSchema(WalkJsonSchema):
                     notes.append(f'{key}={value}')
                 notes_string = ', '.join(notes)
                 schema['description'] = notes_string if not description else f'{description} ({notes_string})'
-            elif self.strict is None:
+            elif self.strict is None:  # pragma: no branch
                 self.is_strict_compatible = False
 
         schema_type = schema.get('type')
