@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Literal, Union, cast
 
 from pydantic import TypeAdapter, ValidationError
+from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import TypedDict, TypeVar, get_args, get_origin
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
@@ -104,8 +105,10 @@ class OutputSchema(Generic[OutputDataT]):
             description = output_type.description
             output_type_ = output_type.output_type
             strict = output_type.strict
+            schema_generator = output_type.schema_generator
         else:
             output_type_ = output_type
+            schema_generator = GenerateToolJsonSchema
 
         if output_type_option := extract_str_from_union(output_type):
             output_type_ = output_type_option.value
@@ -122,7 +125,12 @@ class OutputSchema(Generic[OutputDataT]):
                 tools[tool_name] = cast(
                     OutputSchemaTool[T],
                     OutputSchemaTool(
-                        output_type=arg, name=tool_name, description=description, multiple=True, strict=strict
+                        output_type=arg,
+                        name=tool_name,
+                        description=description,
+                        multiple=True,
+                        strict=strict,
+                        schema_generator=schema_generator,
                     ),
                 )
         else:
@@ -130,7 +138,12 @@ class OutputSchema(Generic[OutputDataT]):
             tools[name] = cast(
                 OutputSchemaTool[T],
                 OutputSchemaTool(
-                    output_type=output_type_, name=name, description=description, multiple=False, strict=strict
+                    output_type=output_type_,
+                    name=name,
+                    description=description,
+                    multiple=False,
+                    strict=strict,
+                    schema_generator=schema_generator,
                 ),
             )
 
@@ -173,7 +186,14 @@ class OutputSchemaTool(Generic[OutputDataT]):
     type_adapter: TypeAdapter[Any]
 
     def __init__(
-        self, *, output_type: type[OutputDataT], name: str, description: str | None, multiple: bool, strict: bool | None
+        self,
+        *,
+        output_type: type[OutputDataT],
+        name: str,
+        description: str | None,
+        multiple: bool,
+        strict: bool | None,
+        schema_generator: type[GenerateJsonSchema],
     ):
         """Build a OutputSchemaTool from a response type."""
         if _utils.is_model_like(output_type):
@@ -181,7 +201,7 @@ class OutputSchemaTool(Generic[OutputDataT]):
             outer_typed_dict_key: str | None = None
             # noinspection PyArgumentList
             parameters_json_schema = _utils.check_object_json_schema(
-                self.type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+                self.type_adapter.json_schema(schema_generator=schema_generator)
             )
         else:
             response_data_typed_dict = TypedDict(  # noqa: UP013
@@ -192,7 +212,7 @@ class OutputSchemaTool(Generic[OutputDataT]):
             outer_typed_dict_key = 'response'
             # noinspection PyArgumentList
             parameters_json_schema = _utils.check_object_json_schema(
-                self.type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+                self.type_adapter.json_schema(schema_generator=schema_generator)
             )
             # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
             parameters_json_schema.pop('title')
