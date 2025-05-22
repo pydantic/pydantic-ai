@@ -53,7 +53,7 @@ PYDANTIC_AI_HOME = Path.home() / '.pydantic-ai'
 This folder is used to store the prompt history and configuration.
 """
 
-PROMPT_HISTORY_PATH = PYDANTIC_AI_HOME / 'prompt-history.txt'
+PROMPT_HISTORY_FILENAME = 'prompt-history.txt'
 
 
 class SimpleCodeBlock(CodeBlock):
@@ -211,27 +211,26 @@ Special prompts:
             pass
         return 0
 
-    # Ensure the history directory and file exist
-    PROMPT_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PROMPT_HISTORY_PATH.touch(exist_ok=True)
-
-    # doing this instead of `PromptSession[Any](history=` allows mocking of PromptSession in tests
-    session: PromptSession[Any] = PromptSession(history=FileHistory(str(PROMPT_HISTORY_PATH)))
     try:
-        return asyncio.run(run_chat(session, stream, agent, console, code_theme, prog_name))
+        return asyncio.run(run_chat(stream, agent, console, code_theme, prog_name))
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 
 
 async def run_chat(
-    session: PromptSession[Any],
     stream: bool,
     agent: Agent[AgentDepsT, OutputDataT],
     console: Console,
     code_theme: str,
     prog_name: str,
+    config_dir: Path | None = None,
     deps: AgentDepsT = None,
 ) -> int:
+    prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
+    prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_history_path.touch(exist_ok=True)
+    session: PromptSession[Any] = PromptSession(history=FileHistory(str(prompt_history_path)))
+
     multiline = False
     messages: list[ModelMessage] = []
 

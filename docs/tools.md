@@ -75,38 +75,22 @@ print(dice_result.all_messages())
             SystemPromptPart(
                 content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
                 timestamp=datetime.datetime(...),
-                dynamic_ref=None,
-                part_kind='system-prompt',
             ),
             UserPromptPart(
                 content='My guess is 4',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
             ),
-        ],
-        instructions=None,
-        kind='request',
+        ]
     ),
     ModelResponse(
         parts=[
             ToolCallPart(
-                tool_name='roll_die',
-                args={},
-                tool_call_id='pyd_ai_tool_call_id',
-                part_kind='tool-call',
+                tool_name='roll_die', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=Usage(
-            requests=1,
-            request_tokens=90,
-            response_tokens=2,
-            total_tokens=92,
-            details=None,
-        ),
+        usage=Usage(requests=1, request_tokens=90, response_tokens=2, total_tokens=92),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
-        kind='response',
-        vendor_id=None,
     ),
     ModelRequest(
         parts=[
@@ -115,32 +99,18 @@ print(dice_result.all_messages())
                 content='4',
                 tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
-                part_kind='tool-return',
             )
-        ],
-        instructions=None,
-        kind='request',
+        ]
     ),
     ModelResponse(
         parts=[
             ToolCallPart(
-                tool_name='get_player_name',
-                args={},
-                tool_call_id='pyd_ai_tool_call_id',
-                part_kind='tool-call',
+                tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=Usage(
-            requests=1,
-            request_tokens=91,
-            response_tokens=4,
-            total_tokens=95,
-            details=None,
-        ),
+        usage=Usage(requests=1, request_tokens=91, response_tokens=4, total_tokens=95),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
-        kind='response',
-        vendor_id=None,
     ),
     ModelRequest(
         parts=[
@@ -149,30 +119,20 @@ print(dice_result.all_messages())
                 content='Anne',
                 tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
-                part_kind='tool-return',
             )
-        ],
-        instructions=None,
-        kind='request',
+        ]
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content="Congratulations Anne, you guessed correctly! You're a winner!",
-                part_kind='text',
+                content="Congratulations Anne, you guessed correctly! You're a winner!"
             )
         ],
         usage=Usage(
-            requests=1,
-            request_tokens=92,
-            response_tokens=12,
-            total_tokens=104,
-            details=None,
+            requests=1, request_tokens=92, response_tokens=12, total_tokens=104
         ),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
-        kind='response',
-        vendor_id=None,
     ),
 ]
 """
@@ -440,8 +400,6 @@ print(test_model.last_model_request_parameters.function_tools)
             'title': 'Foobar',
             'type': 'object',
         },
-        outer_typed_dict_key=None,
-        strict=None,
     )
 ]
 """
@@ -544,8 +502,6 @@ print(test_model.last_model_request_parameters.function_tools)
             'required': ['name'],
             'type': 'object',
         },
-        outer_typed_dict_key=None,
-        strict=None,
     )
 ]
 """

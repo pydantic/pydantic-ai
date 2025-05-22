@@ -39,7 +39,7 @@ AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(repr=False)
 class RunContext(Generic[AgentDepsT]):
     """Information about the current call."""
 
@@ -72,6 +72,8 @@ class RunContext(Generic[AgentDepsT]):
         if tool_name is not _utils.UNSET:  # pragma: no branch
             kwargs['tool_name'] = tool_name
         return dataclasses.replace(self, **kwargs)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 ToolParams = ParamSpec('ToolParams', default=...)
@@ -360,7 +362,7 @@ class Tool(Generic[AgentDepsT]):
             if isinstance(message.args, str):
                 args_dict = validator.validate_json(message.args or '{}')
             else:
-                args_dict = validator.validate_python(message.args)
+                args_dict = validator.validate_python(message.args or {})
         except ValidationError as e:
             return self._on_error(e, message)
 
@@ -409,7 +411,7 @@ With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `ext
 """
 
 
-@dataclass
+@dataclass(repr=False)
 class ToolDefinition:
     """Definition of a tool passed to a model.
 
@@ -442,3 +444,5 @@ class ToolDefinition:
 
     Note: this is currently only supported by OpenAI models.
     """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr

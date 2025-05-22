@@ -132,11 +132,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`.
     """
 
-    prepare_tools: ToolsPrepareFunc[AgentDepsT] | None
-    """
-    Function invoked on each step, allowing the tools to be modified and filtered out as needed.
-    """
-
     instrument: InstrumentationSettings | bool | None
     """Options to automatically instrument with OpenTelemetry."""
 
@@ -154,6 +149,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
         repr=False
     )
+    _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _function_tools: dict[str, Tool[AgentDepsT]] = dataclasses.field(repr=False)
     _mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
     _default_retries: int = dataclasses.field(repr=False)
@@ -578,30 +574,21 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                             UserPromptPart(
                                 content='What is the capital of France?',
                                 timestamp=datetime.datetime(...),
-                                part_kind='user-prompt',
                             )
-                        ],
-                        instructions=None,
-                        kind='request',
+                        ]
                     )
                 ),
                 CallToolsNode(
                     model_response=ModelResponse(
-                        parts=[TextPart(content='Paris', part_kind='text')],
+                        parts=[TextPart(content='Paris')],
                         usage=Usage(
-                            requests=1,
-                            request_tokens=56,
-                            response_tokens=1,
-                            total_tokens=57,
-                            details=None,
+                            requests=1, request_tokens=56, response_tokens=1, total_tokens=57
                         ),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
-                        kind='response',
-                        vendor_id=None,
                     )
                 ),
-                End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
+                End(data=FinalResult(output='Paris')),
             ]
             '''
             print(agent_run.result.output)
@@ -1777,18 +1764,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             await agent.to_cli()
         ```
         """
-        from prompt_toolkit import PromptSession
-        from prompt_toolkit.history import FileHistory
         from rich.console import Console
 
-        from pydantic_ai._cli import PROMPT_HISTORY_PATH, run_chat
+        from pydantic_ai._cli import run_chat
 
         # TODO(Marcelo): We need to refactor the CLI code to be able to be able to just pass `agent`, `deps` and
         # `prog_name` from here.
 
-        session: PromptSession[Any] = PromptSession(history=FileHistory(str(PROMPT_HISTORY_PATH)))
         await run_chat(
-            session=session,
             stream=True,
             agent=self,
             deps=deps,
@@ -1849,30 +1832,21 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                         UserPromptPart(
                             content='What is the capital of France?',
                             timestamp=datetime.datetime(...),
-                            part_kind='user-prompt',
                         )
-                    ],
-                    instructions=None,
-                    kind='request',
+                    ]
                 )
             ),
             CallToolsNode(
                 model_response=ModelResponse(
-                    parts=[TextPart(content='Paris', part_kind='text')],
+                    parts=[TextPart(content='Paris')],
                     usage=Usage(
-                        requests=1,
-                        request_tokens=56,
-                        response_tokens=1,
-                        total_tokens=57,
-                        details=None,
+                        requests=1, request_tokens=56, response_tokens=1, total_tokens=57
                     ),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
-                    kind='response',
-                    vendor_id=None,
                 )
             ),
-            End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
+            End(data=FinalResult(output='Paris')),
         ]
         '''
         print(agent_run.result.output)
@@ -1995,30 +1969,24 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                                 UserPromptPart(
                                     content='What is the capital of France?',
                                     timestamp=datetime.datetime(...),
-                                    part_kind='user-prompt',
                                 )
-                            ],
-                            instructions=None,
-                            kind='request',
+                            ]
                         )
                     ),
                     CallToolsNode(
                         model_response=ModelResponse(
-                            parts=[TextPart(content='Paris', part_kind='text')],
+                            parts=[TextPart(content='Paris')],
                             usage=Usage(
                                 requests=1,
                                 request_tokens=56,
                                 response_tokens=1,
                                 total_tokens=57,
-                                details=None,
                             ),
                             model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
-                            kind='response',
-                            vendor_id=None,
                         )
                     ),
-                    End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
+                    End(data=FinalResult(output='Paris')),
                 ]
                 '''
                 print('Final result:', agent_run.result.output)

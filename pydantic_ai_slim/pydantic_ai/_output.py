@@ -330,10 +330,9 @@ class OutputObjectSchema(Generic[OutputDataT]):
 
     async def process(
         self,
-        data: str | dict[str, Any],
+        data: str | dict[str, Any] | None,
         run_context: RunContext[AgentDepsT],
         allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
     ) -> OutputDataT:
         """Process an output message, performing validation and (if necessary) calling the output function.
 
@@ -341,16 +340,15 @@ class OutputObjectSchema(Generic[OutputDataT]):
             data: The output data to validate.
             run_context: The current run context.
             allow_partial: If true, allow partial validation.
-            wrap_validation_errors: If true, wrap the validation errors in a retry message.
 
         Returns:
             Either the validated output data (left) or a retry message (right).
         """
         pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
         if isinstance(data, str):
-            output = self.validator.validate_json(data, allow_partial=pyd_allow_partial)
+            output = self.validator.validate_json(data or '{}', allow_partial=pyd_allow_partial)
         else:
-            output = self.validator.validate_python(data, allow_partial=pyd_allow_partial)
+            output = self.validator.validate_python(data or {}, allow_partial=pyd_allow_partial)
 
         if self.function_schema:
             output = await self.function_schema.call(output, run_context)
