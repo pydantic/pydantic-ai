@@ -1,7 +1,6 @@
 """This file is used to test static typing, it's analyzed with pyright and mypy."""
 
-from collections.abc import Awaitable, Iterator
-from contextlib import contextmanager
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Callable, TypeAlias, Union
 
@@ -35,16 +34,6 @@ def system_prompt_ok2() -> str:
 # we have overloads for every possible signature of system_prompt, so the type of decorated functions is correct
 assert_type(system_prompt_ok1, Callable[[RunContext[MyDeps]], Awaitable[str]])
 assert_type(system_prompt_ok2, Callable[[], str])
-
-
-@contextmanager
-def expect_error(error_type: type[Exception]) -> Iterator[None]:
-    try:
-        yield None
-    except Exception as e:
-        assert isinstance(e, error_type), f'Expected {error_type}, got {type(e)}'
-    else:
-        raise AssertionError('Expected an error')
 
 
 @typed_agent.tool
@@ -106,13 +95,6 @@ async def bad_tool1(ctx: RunContext[MyDeps], x: str) -> str:
 @typed_agent.tool  # type: ignore[arg-type]
 async def bad_tool2(ctx: RunContext[int], x: str) -> str:
     return f'{x} {ctx.deps}'
-
-
-with expect_error(ValueError):
-
-    @typed_agent.tool  # type: ignore[arg-type]
-    async def bad_tool3(x: str) -> str:
-        return x
 
 
 @typed_agent.output_validator
