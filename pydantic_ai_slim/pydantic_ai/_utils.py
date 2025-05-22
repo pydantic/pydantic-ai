@@ -297,4 +297,4 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
     kv_pairs = (
         f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr and getattr(self, f.name) != f.default
     )
-    return f'{self.__class__.__name__}({", ".join(kv_pairs)})'
+    return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'

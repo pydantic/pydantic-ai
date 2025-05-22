@@ -26,7 +26,7 @@ __all__ = (
 )
 
 
-@dataclass
+@dataclass(repr=False)
 class Equals(Evaluator[object, object, object]):
     """Check if the output exactly equals the provided value."""
 
@@ -37,7 +37,7 @@ class Equals(Evaluator[object, object, object]):
         return ctx.output == self.value
 
 
-@dataclass
+@dataclass(repr=False)
 class EqualsExpected(Evaluator[object, object, object]):
     """Check if the output exactly equals the expected output."""
 
@@ -60,7 +60,7 @@ def _truncated_repr(value: Any, max_length: int = 100) -> str:
     return repr_value
 
 
-@dataclass
+@dataclass(repr=False)
 class Contains(Evaluator[object, object, object]):
     """Check if the output contains the expected output.
 
@@ -129,7 +129,7 @@ class Contains(Evaluator[object, object, object]):
         return EvaluationReason(value=failure_reason is None, reason=failure_reason)
 
 
-@dataclass
+@dataclass(repr=False)
 class IsInstance(Evaluator[object, object, object]):
     """Check if the output is an instance of a type with the given name."""
 
@@ -148,7 +148,7 @@ class IsInstance(Evaluator[object, object, object]):
         return EvaluationReason(value=False, reason=reason)
 
 
-@dataclass
+@dataclass(repr=False)
 class MaxDuration(Evaluator[object, object, object]):
     """Check if the execution time is under the specified maximum."""
 
@@ -183,7 +183,7 @@ def _update_combined_output(
         combined_output[name] = value
 
 
-@dataclass
+@dataclass(repr=False)
 class LLMJudge(Evaluator[object, object, object]):
     """Judge whether the output of a language model meets the criteria of a provided rubric.
 
@@ -239,7 +239,7 @@ class LLMJudge(Evaluator[object, object, object]):
         return result
 
 
-@dataclass
+@dataclass(repr=False)
 class HasMatchingSpan(Evaluator[object, object, object]):
     """Check if the span tree contains a span that matches the specified query."""
 
@@ -254,7 +254,7 @@ class HasMatchingSpan(Evaluator[object, object, object]):
 
 
 # TODO: Consider moving this to docs rather than providing it with the library, given the security implications
-@dataclass
+@dataclass(repr=False)
 class Python(Evaluator[object, object, object]):
     """The output of this evaluator is the result of evaluating the provided Python expression.
 
