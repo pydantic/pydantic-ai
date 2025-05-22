@@ -514,9 +514,55 @@ def test_init_tool_ctx():
     assert agent_infer._function_tools['ctx_tool'].takes_ctx is True
 
 
-def test_repeat_tool():
+def test_repeat_tool_by_rename():
+    """
+    1. add tool `bar`
+    2. add tool `foo` then rename it to `bar`, causing a conflict with `bar`
+    """
+
     with pytest.raises(UserError, match="Tool name conflicts with existing tool: 'ctx_tool'"):
         Agent('test', tools=[Tool(ctx_tool), ctx_tool], deps_type=int)
+
+    agent = Agent('test')
+
+    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+        tool_def.name = 'bar'
+        return tool_def
+
+    @agent.tool_plain
+    def bar(x: int, y: str) -> str:  # pragma: no cover
+        return f'{x} {y}'
+
+    @agent.tool_plain(prepare=change_tool_name)
+    def foo(x: int, y: str) -> str:  # pragma: no cover
+        return f'{x} {y}'
+
+    with pytest.raises(UserError, match=r"Renaming tool 'foo' to 'bar' conflicts with existing tool."):
+        agent.run_sync('')
+
+
+def test_repeat_tool():
+    """
+    1. add tool `foo`, then rename it to `bar`
+    2. add tool `bar`, causing a conflict with `bar`
+    """
+
+    agent = Agent('test')
+
+    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+        tool_def.name = 'bar'
+        return tool_def
+
+    @agent.tool_plain(prepare=change_tool_name)
+    def foo(x: int, y: str) -> str:  # pragma: no cover
+        return f'{x} {y}'
+
+    @agent.tool_plain
+    def bar(x: int, y: str) -> str:  # pragma: no cover
+        return f'{x} {y}'
+
+    with pytest.raises(UserError, match=r"Tool name conflicts with existing tool: 'bar'."):
+        agent.run_sync('')
 
 
 def test_tool_return_conflict():
