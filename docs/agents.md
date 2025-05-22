@@ -135,30 +135,21 @@ async def main():
                     UserPromptPart(
                         content='What is the capital of France?',
                         timestamp=datetime.datetime(...),
-                        part_kind='user-prompt',
                     )
-                ],
-                instructions=None,
-                kind='request',
+                ]
             )
         ),
         CallToolsNode(
             model_response=ModelResponse(
-                parts=[TextPart(content='Paris', part_kind='text')],
+                parts=[TextPart(content='Paris')],
                 usage=Usage(
-                    requests=1,
-                    request_tokens=56,
-                    response_tokens=1,
-                    total_tokens=57,
-                    details=None,
+                    requests=1, request_tokens=56, response_tokens=1, total_tokens=57
                 ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
-                kind='response',
-                vendor_id=None,
             )
         ),
-        End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
+        End(data=FinalResult(output='Paris')),
     ]
     """
     print(agent_run.result.output)
@@ -207,30 +198,24 @@ async def main():
                         UserPromptPart(
                             content='What is the capital of France?',
                             timestamp=datetime.datetime(...),
-                            part_kind='user-prompt',
                         )
-                    ],
-                    instructions=None,
-                    kind='request',
+                    ]
                 )
             ),
             CallToolsNode(
                 model_response=ModelResponse(
-                    parts=[TextPart(content='Paris', part_kind='text')],
+                    parts=[TextPart(content='Paris')],
                     usage=Usage(
                         requests=1,
                         request_tokens=56,
                         response_tokens=1,
                         total_tokens=57,
-                        details=None,
                     ),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
-                    kind='response',
-                    vendor_id=None,
                 )
             ),
-            End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
+            End(data=FinalResult(output='Paris')),
         ]
         """
 ```
@@ -370,7 +355,7 @@ if __name__ == '__main__':
     [
         '=== UserPromptNode: What will the weather be like in Paris on Tuesday? ===',
         '=== ModelRequestNode: streaming partial request tokens ===',
-        "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', args=None, tool_call_id='0001', part_kind='tool-call')",
+        "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', tool_call_id='0001')",
         '[Request] Part 0 args_delta={"location":"Pa',
         '[Request] Part 0 args_delta=ris","forecast_',
         '[Request] Part 0 args_delta=date":"2030-01-',
@@ -379,7 +364,7 @@ if __name__ == '__main__':
         '[Tools] The LLM calls tool=\'weather_forecast\' with args={"location":"Paris","forecast_date":"2030-01-01"} (tool_call_id=\'0001\')',
         "[Tools] Tool call '0001' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
         '=== ModelRequestNode: streaming partial request tokens ===',
-        "[Request] Starting part 0: TextPart(content='It will be ', part_kind='text')",
+        "[Request] Starting part 0: TextPart(content='It will be ')",
         '[Result] The model produced a final output (tool_name=None)',
         "[Request] Part 0 text delta: 'warm and sunny '",
         "[Request] Part 0 text delta: 'in Paris on '",
@@ -417,9 +402,7 @@ result_sync = agent.run_sync(
 print(result_sync.output)
 #> Rome
 print(result_sync.usage())
-"""
-Usage(requests=1, request_tokens=62, response_tokens=1, total_tokens=63, details=None)
-"""
+#> Usage(requests=1, request_tokens=62, response_tokens=1, total_tokens=63)
 
 try:
     result_sync = agent.run_sync(
@@ -831,11 +814,8 @@ with capture_run_messages() as messages:  # (2)!
                     UserPromptPart(
                         content='Please get me the volume of a box with size 6.',
                         timestamp=datetime.datetime(...),
-                        part_kind='user-prompt',
                     )
-                ],
-                instructions=None,
-                kind='request',
+                ]
             ),
             ModelResponse(
                 parts=[
@@ -843,20 +823,13 @@ with capture_run_messages() as messages:  # (2)!
                         tool_name='calc_volume',
                         args={'size': 6},
                         tool_call_id='pyd_ai_tool_call_id',
-                        part_kind='tool-call',
                     )
                 ],
                 usage=Usage(
-                    requests=1,
-                    request_tokens=62,
-                    response_tokens=4,
-                    total_tokens=66,
-                    details=None,
+                    requests=1, request_tokens=62, response_tokens=4, total_tokens=66
                 ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
-                kind='response',
-                vendor_id=None,
             ),
             ModelRequest(
                 parts=[
@@ -865,11 +838,8 @@ with capture_run_messages() as messages:  # (2)!
                         tool_name='calc_volume',
                         tool_call_id='pyd_ai_tool_call_id',
                         timestamp=datetime.datetime(...),
-                        part_kind='retry-prompt',
                     )
-                ],
-                instructions=None,
-                kind='request',
+                ]
             ),
             ModelResponse(
                 parts=[
@@ -877,20 +847,13 @@ with capture_run_messages() as messages:  # (2)!
                         tool_name='calc_volume',
                         args={'size': 6},
                         tool_call_id='pyd_ai_tool_call_id',
-                        part_kind='tool-call',
                     )
                 ],
                 usage=Usage(
-                    requests=1,
-                    request_tokens=72,
-                    response_tokens=8,
-                    total_tokens=80,
-                    details=None,
+                    requests=1, request_tokens=72, response_tokens=8, total_tokens=80
                 ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
-                kind='response',
-                vendor_id=None,
             ),
         ]
         """

@@ -14,6 +14,8 @@ from pydantic_core import to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo
 from typing_extensions import TypeVar, deprecated
 
+from pydantic_ai import _utils
+
 from .._utils import get_event_loop
 from ._spec import EvaluatorSpec
 from .context import EvaluatorContext
@@ -121,7 +123,7 @@ class _StrictABCMeta(ABCMeta):
         return result
 
 
-@dataclass
+@dataclass(repr=False)
 class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
     """Base class for all evaluators.
 
@@ -280,3 +282,5 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
                     continue
             raw_arguments[field.name] = value
         return raw_arguments
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
