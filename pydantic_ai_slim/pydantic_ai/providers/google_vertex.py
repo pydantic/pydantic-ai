@@ -97,15 +97,21 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
         if service_account_file and service_account_info:
             raise ValueError('Only one of `service_account_file` or `service_account_info` can be provided.')
 
-        self._client = http_client or cached_async_http_client(provider='google-vertex')
         self.service_account_file = service_account_file
         self.service_account_info = service_account_info
         self.project_id = project_id
         self.region = region
         self.model_publisher = model_publisher
 
+        if http_client is not None:
+            self._client = http_client
+            if str(http_client.base_url) == '':
+                self._client.base_url = self.base_url
+        else:
+            self._client = cached_async_http_client(provider='google-vertex')
+            self._client.base_url = self.base_url
+
         self._client.auth = _VertexAIAuth(service_account_file, service_account_info, project_id, region)
-        self._client.base_url = self.base_url
 
 
 class _VertexAIAuth(httpx.Auth):
