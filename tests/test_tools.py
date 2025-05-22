@@ -786,7 +786,7 @@ def test_enforce_parameter_descriptions() -> None:
 
 
 def test_enforce_parameter_descriptions_noraise() -> None:
-    async def complete_parameter_descriptions_docstring(ctx: RunContext, foo: int) -> str:
+    async def complete_parameter_descriptions_docstring(ctx: RunContext, foo: int) -> str:  # pragma: no cover
         """Describes function ops, but missing ctx description and contains non-existent parameter description.
 
         :param foo: The foo thing.
