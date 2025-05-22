@@ -121,8 +121,8 @@ class ToolOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        *,
         type_: SimpleOutputType[OutputDataT],
+        *,
         name: str | None = None,
         description: str | None = None,
         max_retries: int | None = None,

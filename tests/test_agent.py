@@ -448,7 +448,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     [
         pytest.param('OutputType = Union[Foo, Bar]'),
         pytest.param('OutputType = [Foo, Bar]'),
-        pytest.param('OutputType = ToolOutput(type_=Union[Foo, Bar])'),
+        pytest.param('OutputType = ToolOutput(Union[Foo, Bar])'),
         pytest.param('OutputType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='3.10+')),
         pytest.param(
             'OutputType: TypeAlias = Foo | Bar',
@@ -542,7 +542,7 @@ def test_output_type_with_two_descriptions():
         valid: bool
 
     m = TestModel()
-    agent = Agent(m, output_type=ToolOutput(type_=MyOutput, description='Description from ToolOutput'))
+    agent = Agent(m, output_type=ToolOutput(MyOutput, description='Description from ToolOutput'))
     result = agent.run_sync('Hello')
     assert result.output == snapshot(MyOutput(valid=False))
     assert m.last_model_request_parameters is not None
@@ -858,7 +858,7 @@ def test_output_type_function_with_custom_tool_name():
         args_json = '{"city": "Mexico City"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(call_tool), output_type=ToolOutput(type_=get_weather, name='get_weather'))
+    agent = Agent(FunctionModel(call_tool), output_type=ToolOutput(get_weather, name='get_weather'))
     result = agent.run_sync('Mexico City')
     assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
     assert output_tools == snapshot(
@@ -1052,8 +1052,8 @@ def test_output_type_multiple_custom_tools():
     agent = Agent(
         FunctionModel(call_tool),
         output_type=[
-            ToolOutput(type_=get_weather, name='get_weather'),
-            ToolOutput(type_=Weather, name='return_weather'),
+            ToolOutput(get_weather, name='get_weather'),
+            ToolOutput(Weather, name='return_weather'),
         ],
     )
     result = agent.run_sync('Mexico City')
