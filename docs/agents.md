@@ -370,7 +370,8 @@ if __name__ == '__main__':
     [
         '=== UserPromptNode: What will the weather be like in Paris on Tuesday? ===',
         '=== ModelRequestNode: streaming partial request tokens ===',
-        '[Request] Starting part 0: ToolCallPart(tool_name=\'weather_forecast\', args=\'{"location":"Pa\', tool_call_id=\'0001\', part_kind=\'tool-call\')',
+        "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', args=None, tool_call_id='0001', part_kind='tool-call')",
+        '[Request] Part 0 args_delta={"location":"Pa',
         '[Request] Part 0 args_delta=ris","forecast_',
         '[Request] Part 0 args_delta=date":"2030-01-',
         '[Request] Part 0 args_delta=01"}',
@@ -714,6 +715,30 @@ print(result.output)
 1. This will be the only instructions for this agent.
 
 _(This example is complete, it can be run "as is")_
+
+You can also dynamically change the instructions for an agent by using the `@agent.instructions` decorator.
+
+```python {title="dynamic_instructions.py"}
+from datetime import date
+
+from pydantic_ai import Agent, RunContext
+
+agent = Agent('openai:gpt-4o', deps_type=str)
+
+
+@agent.instructions
+def add_the_users_name(ctx: RunContext[str]) -> str:
+    return f"The user's name is {ctx.deps}."
+
+
+@agent.instructions
+def add_the_date() -> str:
+    return f'The date is {date.today()}.'
+
+result = agent.run_sync('What is the date?', deps='Frank')
+print(result.output)
+#> Hello Frank, the date today is 2032-01-02.
+```
 
 ## Reflection and self-correction
 
