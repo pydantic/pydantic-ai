@@ -561,7 +561,7 @@ def test_repeat_tool():
     def bar(x: int, y: str) -> str:  # pragma: no cover
         return f'{x} {y}'
 
-    with pytest.raises(UserError, match=r"New tool name 'bar' for tool `bar` conflicts with existing tool."):
+    with pytest.raises(UserError, match=r"Tool name conflicts with existing tool: 'bar'."):
         agent.run_sync('')
 
 

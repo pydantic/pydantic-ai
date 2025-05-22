@@ -230,14 +230,12 @@ async def _prepare_request_parameters(
             # prepare_tool_def may change tool_def.name
             if tool_def.name in function_tool_defs:
                 if tool_def.name != tool.name:
-                    # Renamed tool name causes a conflict
+                    # Prepare tool def may have renamed the tool
                     raise exceptions.UserError(
                         f"Renaming tool '{tool.name}' to '{tool_def.name}' conflicts with existing tool."
                     )
                 else:
-                    raise exceptions.UserError(
-                        f"New tool name '{tool_def.name}' for tool `{tool.name}` conflicts with existing tool."
-                    )
+                    raise exceptions.UserError(f'Tool name conflicts with existing tool: {tool.name!r}.')
             function_tool_defs[tool_def.name] = tool_def
 
     async def add_mcp_server_tools(server: MCPServer) -> None:
