@@ -263,6 +263,8 @@ class GeminiModel(Model):
             yield r
 
     def _process_response(self, response: _GeminiResponse) -> ModelResponse:
+        vendor_details: dict[str, Any] | None = None
+
         if len(response['candidates']) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
         if 'content' not in response['candidates'][0]:
@@ -274,7 +276,9 @@ class GeminiModel(Model):
                 )
         parts = response['candidates'][0]['content']['parts']
         vendor_id = response.get('vendor_id', None)
-        vendor_details = {'finish_reason': response['candidates'][0].get('finish_reason')}
+        finish_reason = response['candidates'][0].get('finish_reason')
+        if finish_reason:
+            vendor_details = {'finish_reason': finish_reason}
         usage = _metadata_as_usage(response)
         usage.requests = 1
         return _process_response_from_parts(
@@ -609,7 +613,7 @@ def _process_response_from_parts(
     model_name: GeminiModelName,
     usage: usage.Usage,
     vendor_id: str | None,
-    vendor_details: dict[str, Any] | None,
+    vendor_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
