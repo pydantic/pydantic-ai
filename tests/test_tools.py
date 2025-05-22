@@ -831,6 +831,20 @@ def test_enforce_parameter_descriptions() -> None:
     assert all(err_part in error_reason for err_part in error_parts)
 
 
+def test_enforce_parameter_descriptions_noraise() -> None:
+    async def complete_parameter_descriptions_docstring(ctx: RunContext, foo: int) -> str:  # pragma: no cover
+        """Describes function ops, but missing ctx description and contains non-existent parameter description.
+
+        :param foo: The foo thing.
+        :param bar: The bar thing.
+        """
+        return f'{foo}'
+
+    agent = Agent(FunctionModel(get_json_schema))
+
+    agent.tool(require_parameter_descriptions=True)(complete_parameter_descriptions_docstring)
+
+
 def test_json_schema_required_parameters(set_event_loop: None):
     agent = Agent(FunctionModel(get_json_schema))
 
