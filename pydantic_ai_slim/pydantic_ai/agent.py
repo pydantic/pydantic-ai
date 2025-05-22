@@ -582,17 +582,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                     model_response=ModelResponse(
                         parts=[TextPart(content='Paris')],
                         usage=Usage(
-                            requests=1,
-                            request_tokens=56,
-                            response_tokens=1,
-                            total_tokens=57,
-                            details=None,
+                            requests=1, request_tokens=56, response_tokens=1, total_tokens=57
                         ),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
                     )
                 ),
-                End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
+                End(data=FinalResult(output='Paris')),
             ]
             '''
             print(agent_run.result.output)
@@ -1844,17 +1840,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 model_response=ModelResponse(
                     parts=[TextPart(content='Paris')],
                     usage=Usage(
-                        requests=1,
-                        request_tokens=56,
-                        response_tokens=1,
-                        total_tokens=57,
-                        details=None,
+                        requests=1, request_tokens=56, response_tokens=1, total_tokens=57
                     ),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                 )
             ),
-            End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
+            End(data=FinalResult(output='Paris')),
         ]
         '''
         print(agent_run.result.output)
@@ -1989,13 +1981,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                                 request_tokens=56,
                                 response_tokens=1,
                                 total_tokens=57,
-                                details=None,
                             ),
                             model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
                         )
                     ),
-                    End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
+                    End(data=FinalResult(output='Paris')),
                 ]
                 '''
                 print('Final result:', agent_run.result.output)

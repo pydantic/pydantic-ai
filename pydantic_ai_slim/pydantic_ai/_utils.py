@@ -45,8 +45,7 @@ def is_model_like(type_: Any) -> bool:
     return (
         isinstance(type_, type)
         and not isinstance(type_, GenericAlias)
-        and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))
-        # pyright: ignore[reportUnknownArgumentType]
+        and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))  # pyright: ignore[reportUnknownArgumentType]
     )
 
 
@@ -295,5 +294,7 @@ def get_traceparent(x: AgentRun | AgentRunResult | GraphRun | GraphRunResult) ->
 
 def dataclasses_no_defaults_repr(self: Any) -> str:
     """Exclude fields with values equal to the field default."""
-    kv_pairs = (f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if getattr(self, f.name) != f.default)
+    kv_pairs = (
+        f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr and getattr(self, f.name) != f.default
+    )
     return f'{self.__class__.__name__}({", ".join(kv_pairs)})'

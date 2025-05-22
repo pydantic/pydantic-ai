@@ -42,13 +42,7 @@ async def model_request(
         '''
         ModelResponse(
             parts=[TextPart(content='Paris')],
-            usage=Usage(
-                requests=1,
-                request_tokens=56,
-                response_tokens=1,
-                total_tokens=57,
-                details=None,
-            ),
+            usage=Usage(requests=1, request_tokens=56, response_tokens=1, total_tokens=57),
             model_name='claude-3-5-haiku-latest',
             timestamp=datetime.datetime(...),
         )
@@ -101,9 +95,7 @@ def model_request_sync(
     '''
     ModelResponse(
         parts=[TextPart(content='Paris')],
-        usage=Usage(
-            requests=1, request_tokens=56, response_tokens=1, total_tokens=57, details=None
-        ),
+        usage=Usage(requests=1, request_tokens=56, response_tokens=1, total_tokens=57),
         model_name='claude-3-5-haiku-latest',
         timestamp=datetime.datetime(...),
     )

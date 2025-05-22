@@ -31,7 +31,7 @@ class Equals(Evaluator[object, object, object]):
     """Check if the output exactly equals the provided value."""
 
     value: Any
-    evaluation_name: str | None = field(default=None, repr=False)
+    evaluation_name: str | None = field(default=None)
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> bool:
         return ctx.output == self.value
@@ -41,7 +41,7 @@ class Equals(Evaluator[object, object, object]):
 class EqualsExpected(Evaluator[object, object, object]):
     """Check if the output exactly equals the expected output."""
 
-    evaluation_name: str | None = field(default=None, repr=False)
+    evaluation_name: str | None = field(default=None)
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> bool | dict[str, bool]:
         if ctx.expected_output is None:
@@ -74,7 +74,7 @@ class Contains(Evaluator[object, object, object]):
     value: Any
     case_sensitive: bool = True
     as_strings: bool = False
-    evaluation_name: str | None = field(default=None, repr=False)
+    evaluation_name: str | None = field(default=None)
 
     def evaluate(
         self,
@@ -134,7 +134,7 @@ class IsInstance(Evaluator[object, object, object]):
     """Check if the output is an instance of a type with the given name."""
 
     type_name: str
-    evaluation_name: str | None = field(default=None, repr=False)
+    evaluation_name: str | None = field(default=None)
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluationReason:
         output = ctx.output
@@ -244,7 +244,7 @@ class HasMatchingSpan(Evaluator[object, object, object]):
     """Check if the span tree contains a span that matches the specified query."""
 
     query: SpanQuery
-    evaluation_name: str | None = field(default=None, repr=False)
+    evaluation_name: str | None = field(default=None)
 
     def evaluate(
         self,
@@ -262,7 +262,7 @@ class Python(Evaluator[object, object, object]):
     """
 
     expression: str
-    evaluation_name: str | None = field(default=None, repr=False)
+    evaluation_name: str | None = field(default=None)
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
         # Evaluate the condition, exposing access to the evaluator context as `ctx`.
