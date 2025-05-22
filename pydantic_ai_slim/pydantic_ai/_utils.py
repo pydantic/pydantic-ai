@@ -5,7 +5,7 @@ import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
@@ -45,7 +45,8 @@ def is_model_like(type_: Any) -> bool:
     return (
         isinstance(type_, type)
         and not isinstance(type_, GenericAlias)
-        and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))  # pyright: ignore[reportUnknownArgumentType]
+        and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))
+        # pyright: ignore[reportUnknownArgumentType]
     )
 
 
@@ -290,3 +291,9 @@ class PeekableAsyncStream(Generic[T]):
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun | GraphRunResult) -> str:
     return x._traceparent(required=False) or ''  # type: ignore[reportPrivateUsage]
+
+
+def dataclasses_no_defaults_repr(self: Any) -> str:
+    """Exclude fields with values equal to the field default."""
+    kv_pairs = (f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if getattr(self, f.name) != f.default)
+    return f'{self.__class__.__name__}({", ".join(kv_pairs)})'

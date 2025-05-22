@@ -574,16 +574,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                             UserPromptPart(
                                 content='What is the capital of France?',
                                 timestamp=datetime.datetime(...),
-                                part_kind='user-prompt',
                             )
-                        ],
-                        instructions=None,
-                        kind='request',
+                        ]
                     )
                 ),
                 CallToolsNode(
                     model_response=ModelResponse(
-                        parts=[TextPart(content='Paris', part_kind='text')],
+                        parts=[TextPart(content='Paris')],
                         usage=Usage(
                             requests=1,
                             request_tokens=56,
@@ -593,8 +590,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                         ),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
-                        kind='response',
-                        vendor_id=None,
                     )
                 ),
                 End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
@@ -1841,16 +1836,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                         UserPromptPart(
                             content='What is the capital of France?',
                             timestamp=datetime.datetime(...),
-                            part_kind='user-prompt',
                         )
-                    ],
-                    instructions=None,
-                    kind='request',
+                    ]
                 )
             ),
             CallToolsNode(
                 model_response=ModelResponse(
-                    parts=[TextPart(content='Paris', part_kind='text')],
+                    parts=[TextPart(content='Paris')],
                     usage=Usage(
                         requests=1,
                         request_tokens=56,
@@ -1860,8 +1852,6 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     ),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
-                    kind='response',
-                    vendor_id=None,
                 )
             ),
             End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
@@ -1987,16 +1977,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                                 UserPromptPart(
                                     content='What is the capital of France?',
                                     timestamp=datetime.datetime(...),
-                                    part_kind='user-prompt',
                                 )
-                            ],
-                            instructions=None,
-                            kind='request',
+                            ]
                         )
                     ),
                     CallToolsNode(
                         model_response=ModelResponse(
-                            parts=[TextPart(content='Paris', part_kind='text')],
+                            parts=[TextPart(content='Paris')],
                             usage=Usage(
                                 requests=1,
                                 request_tokens=56,
@@ -2006,8 +1993,6 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             ),
                             model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
-                            kind='response',
-                            vendor_id=None,
                         )
                     ),
                     End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),

@@ -82,7 +82,6 @@ async def main():
                 tool_name='divide',
                 args={'numerator': '123', 'denominator': '456'},
                 tool_call_id='pyd_ai_2e0e396768a14fe482df90a29a78dc7b',
-                part_kind='tool-call',
             )
         ],
         usage=Usage(
@@ -94,8 +93,6 @@ async def main():
         ),
         model_name='gpt-4.1-nano',
         timestamp=datetime.datetime(...),
-        kind='response',
-        vendor_id=None,
     )
     """
 ```
