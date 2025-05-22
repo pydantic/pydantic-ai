@@ -218,8 +218,8 @@ class OutputSchema(Generic[OutputDataT]):
                 i = 1
                 original_tool_name = tool_name
                 while tool_name in tools:
-                    tool_name = f'{original_tool_name}_{i}'
                     i += 1
+                    tool_name = f'{original_tool_name}_{i}'
 
                 parameters_schema = OutputObjectSchema(
                     output_type=arg, description=tool_description, strict=tool_strict

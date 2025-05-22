@@ -322,7 +322,7 @@ text_responses: dict[str, str | ToolCallPart] = {
         args={'response': ['red', 'blue', 'green']},
     ),
     'square size 10, circle size 20, triangle size 30': ToolCallPart(
-        tool_name='final_result_list_1',
+        tool_name='final_result_list_2',
         args={'response': [10, 20, 30]},
     ),
     'get me users who were last active yesterday.': ToolCallPart(
