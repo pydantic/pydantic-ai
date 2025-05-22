@@ -7,6 +7,7 @@ from typing import Callable, TypeAlias, Union
 from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
+from pydantic_ai._output import ToolOutput
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.tools import ToolDefinition
 
@@ -169,8 +170,27 @@ def foobar_ctx(ctx: RunContext[int], x: str, y: int) -> str:
     return f'{x} {y}'
 
 
-def foobar_plain(x: str, y: int) -> str:
-    return f'{x} {y}'
+async def foobar_plain(x: int, y: int) -> int:
+    return x * y
+
+
+class MyClass:
+    def my_method(self) -> bool:
+        return True
+
+
+agent = Agent(output_type=foobar_ctx)
+assert_type(agent, Agent[None, str])
+
+agent = Agent(output_type=foobar_plain)
+assert_type(agent, Agent[None, int])
+
+agent = Agent(output_type=MyClass().my_method)
+assert_type(agent, Agent[None, bool])
+
+marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[call-overload]
+agent = Agent(output_type=[Foo, Bar, foobar_ctx, ToolOutput(foobar_plain), marker])
+assert_type(agent, Agent[None, Foo | Bar | str | int | bool | tuple[str, int]])
 
 
 Tool(foobar_ctx, takes_ctx=True)
