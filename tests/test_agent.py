@@ -390,8 +390,8 @@ def test_response_tuple():
 
 @pytest.mark.parametrize(
     'input_union_callable',
-    [lambda: Union[str, Foo], lambda: Union[Foo, str], lambda: str | Foo, lambda: Foo | str],
-    ids=['Union[str, Foo]', 'Union[Foo, str]', 'str | Foo', 'Foo | str'],
+    [lambda: Union[str, Foo], lambda: Union[Foo, str], lambda: str | Foo, lambda: Foo | str, lambda: [Foo, str]],
+    ids=['Union[str, Foo]', 'Union[Foo, str]', 'str | Foo', 'Foo | str', '[Foo, str]'],
 )
 def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     try:

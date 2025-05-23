@@ -173,15 +173,19 @@ class OutputSchema(Generic[OutputDataT]):
             return None
 
         multiple = False
+        allow_text_output = False
 
         output_types_or_markers: Sequence[SimpleOutputTypeOrMarker[OutputDataT]]
         if isinstance(output_type, Sequence):
             output_types_or_markers = output_type
-            multiple = True
+            if str in output_types_or_markers:
+                allow_text_output = True
+                output_types_or_markers = [t for t in output_types_or_markers if t is not str]
+            if len(output_types_or_markers) > 1:
+                multiple = True
         else:
             output_types_or_markers = [output_type]
 
-        allow_text_output = False
         tools: dict[str, OutputTool[OutputDataT]] = {}
         for output_type_or_marker in output_types_or_markers:
             tool_name = name
@@ -293,6 +297,7 @@ class OutputObjectSchema(Generic[OutputDataT]):
             self.function_schema = _function_schema.function_schema(output_type, GenerateToolJsonSchema)
             self.validator = self.function_schema.validator
             json_schema = self.function_schema.json_schema
+            json_schema['description'] = self.function_schema.description
         else:
             type_adapter: TypeAdapter[Any]
             if _utils.is_model_like(output_type):
