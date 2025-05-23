@@ -1127,31 +1127,16 @@ I need to use the `get_image` tool to see the image first.
     )
 
 
-async def test_labels_are_not_used_with_gla_provider(
-    client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None
-) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        labels = json.loads(request.content).get('labels')
-        assert labels is None
-
-        return httpx.Response(
-            200,
-            content=_gemini_response_ta.dump_json(
-                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('world')]))),
-                by_alias=True,
-            ),
-            headers={'Content-Type': 'application/json'},
-        )
-
-    gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
+@pytest.mark.vcr()
+async def test_labels_are_ignored_with_gla_provider(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
     result = await agent.run(
-        'hello',
+        'What is the capital of France?',
         model_settings=GeminiModelSettings(gemini_labels={'environment': 'test', 'team': 'analytics'}),
     )
-    assert result.output == 'world'
+    assert result.output == 'The capital of France is **Paris**.\n'
 
 
 @pytest.mark.vcr()

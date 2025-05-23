@@ -82,34 +82,22 @@ class GeminiModelSettings(ModelSettings, total=False):
     gemini_safety_settings: list[GeminiSafetySettings]
     """Safety settings options for Gemini model request."""
 
+    gemini_thinking_config: ThinkingConfig
+    """Thinking is "on" by default in both the API and AI Studio.
+
+    Being on by default doesn't mean the model will send back thoughts. For that, you would need to set `include_thoughts`
+    to `True`, but since end of January 2025, `thoughts` are not returned anymore, and are only displayed in the Google
+    AI Studio. See https://discuss.ai.google.dev/t/thoughts-are-missing-cot-not-included-anymore/63653 for more details.
+
+    If you want to avoid the model spending any tokens on thinking, you can set `thinking_budget` to `0`.
+
+    See more about it on <https://ai.google.dev/gemini-api/docs/thinking>.
+    """
+
     gemini_labels: dict[str, str]
-    """Custom metadata to add to each API request. Only supported by the Vertex AI provider.
+    """User-defined metadata to break down billed charges. Only supported by the Vertex AI provider.
 
     See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
-    """
-
-    gemini_thinking_config: ThinkingConfig
-    """Thinking is "on" by default in both the API and AI Studio.
-
-    Being on by default doesn't mean the model will send back thoughts. For that, you would need to set `include_thoughts`
-    to `True`, but since end of January 2025, `thoughts` are not returned anymore, and are only displayed in the Google
-    AI Studio. See https://discuss.ai.google.dev/t/thoughts-are-missing-cot-not-included-anymore/63653 for more details.
-
-    If you want to avoid the model spending any tokens on thinking, you can set `thinking_budget` to `0`.
-
-    See more about it on <https://ai.google.dev/gemini-api/docs/thinking>.
-    """
-
-    gemini_thinking_config: ThinkingConfig
-    """Thinking is "on" by default in both the API and AI Studio.
-
-    Being on by default doesn't mean the model will send back thoughts. For that, you would need to set `include_thoughts`
-    to `True`, but since end of January 2025, `thoughts` are not returned anymore, and are only displayed in the Google
-    AI Studio. See https://discuss.ai.google.dev/t/thoughts-are-missing-cot-not-included-anymore/63653 for more details.
-
-    If you want to avoid the model spending any tokens on thinking, you can set `thinking_budget` to `0`.
-
-    See more about it on <https://ai.google.dev/gemini-api/docs/thinking>.
     """
 
 
