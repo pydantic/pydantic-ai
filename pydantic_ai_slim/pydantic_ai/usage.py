@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 from copy import copy
 from dataclasses import dataclass
-from typing import Any, cast
 
 from .exceptions import UsageLimitExceeded
 
@@ -26,9 +25,17 @@ class Usage:
     """Tokens used in generating responses."""
     total_tokens: int | None = None
     """Total tokens used in the whole run, should generally be equal to `request_tokens + response_tokens`."""
-    details: dict[str, int | list[dict[str, int]]] | None = None
+    details: dict[str, int] | None = None
     """Any extra details returned by the model."""
 
+    def __post_init__(self):
+        if not self.details:
+            self.details = {}
+        for key, value in self.details.copy().items():
+            if not value:
+                self.details[key] = 0
+            elif isinstance(value, list) and isinstance(value[0], dict):
+                self.details[key] = sum([item.get('token_count', 0) for item in value])
 
     def incr(self, incr_usage: Usage) -> None:
         """Increment the usage in place.
@@ -43,17 +50,13 @@ class Usage:
                 setattr(self, f, (self_value or 0) + (other_value or 0))
 
         if incr_usage.details:
+            if self.details is None:
+                self.details = {}
             for key, value in incr_usage.details.items():
                 value = value or 0
-                if self.details is None:
-                    self.details = {}
                 if key not in self.details:
                     self.details[key] = 0
-                if isinstance(value, list) and all([isinstance(v, dict) for v in value]):
-                    items = cast(list[dict[str, int]], value)
-                    self.details[key] += sum(item.get('token_count', 0) for item in items)
-                else:
-                    self.details[key] += value
+                self.details[key] += value
 
     def __add__(self, other: Usage) -> Usage:
         """Add two Usages together.
