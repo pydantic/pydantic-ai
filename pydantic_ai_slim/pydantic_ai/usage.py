@@ -3,14 +3,14 @@ from __future__ import annotations as _annotations
 from collections import defaultdict
 from copy import copy
 from dataclasses import dataclass
+from typing import Any, cast
 
-from . import _utils
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'Usage', 'UsageLimits'
 
 
-@dataclass(repr=False)
+@dataclass
 class Usage:
     """LLM usage associated with a request or run.
 
@@ -27,7 +27,7 @@ class Usage:
     """Tokens used in generating responses."""
     total_tokens: int | None = None
     """Total tokens used in the whole run, should generally be equal to `request_tokens + response_tokens`."""
-    details: dict[str, int] | None = None
+    details: defaultdict[str, int] | None = None
     """Any extra details returned by the model."""
 
     def incr(self, incr_usage: Usage) -> None:
@@ -43,11 +43,12 @@ class Usage:
                 setattr(self, f, (self_value or 0) + (other_value or 0))
 
         if incr_usage.details:
-            self.details = self.details or defaultdict(int)
+            self.details: defaultdict[str, int] = self.details or defaultdict(int)
             for key, value in incr_usage.details.items():
                 value = value or 0
                 if isinstance(value, list) and all(isinstance(v, dict) for v in value):
-                    self.details[key] += sum(v.get('token_count', 0) for v in value)
+                    items = cast(list[dict[str, Any]], value)
+                    self.details[key] += sum(item.get('token_count', 0) for item in items)
                 else:
                     self.details[key] += value
 
@@ -74,10 +75,8 @@ class Usage:
         """Whether any values are set and non-zero."""
         return bool(self.requests or self.request_tokens or self.response_tokens or self.details)
 
-    __repr__ = _utils.dataclasses_no_defaults_repr
 
-
-@dataclass(repr=False)
+@dataclass
 class UsageLimits:
     """Limits on model usage.
 
@@ -132,5 +131,3 @@ class UsageLimits:
         total_tokens = usage.total_tokens or 0
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})')
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
