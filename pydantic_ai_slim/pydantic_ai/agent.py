@@ -1776,10 +1776,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         from rich.console import Console
 
         from pydantic_ai._cli import run_chat
-
-        # TODO(Marcelo): We need to refactor the CLI code to be able to be able to just pass `agent`, `deps` and
-        # `prog_name` from here.
-
+        
         prog_name = prog_name or 'pydantic-ai'
 
         await run_chat(
