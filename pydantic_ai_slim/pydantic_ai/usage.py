@@ -31,7 +31,7 @@ class Usage:
 
     def __post_init__(self):
         if not self.details:
-            self.details = {}
+            return
         for key, value in self.details.copy().items():
             if not value:
                 self.details[key] = 0
