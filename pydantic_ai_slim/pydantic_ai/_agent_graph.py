@@ -64,12 +64,14 @@ class GraphAgentState:
     retries: int
     run_step: int
 
-    def increment_retries(self, max_result_retries: int) -> None:
+    def increment_retries(self, max_result_retries: int, error: Exception | None = None) -> None:
         self.retries += 1
         if self.retries > max_result_retries:
-            raise exceptions.UnexpectedModelBehavior(
-                f'Exceeded maximum retries ({max_result_retries}) for result validation'
-            )
+            message = f'Exceeded maximum retries ({max_result_retries}) for result validation'
+            if error:
+                raise exceptions.UnexpectedModelBehavior(message) from error
+            else:
+                raise exceptions.UnexpectedModelBehavior(message)
 
 
 @dataclasses.dataclass
@@ -484,7 +486,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 except _output.ToolRetryError as e:
                     # TODO: Should only increment retry stuff once per node execution, not for each tool call
                     #   Also, should increment the tool-specific retry count rather than the run retry count
-                    ctx.state.increment_retries(ctx.deps.max_result_retries)
+                    ctx.state.increment_retries(ctx.deps.max_result_retries, e)
                     parts.append(e.tool_retry)
                 else:
                     final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
@@ -545,7 +547,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             result_data = await _validate_output(result_data, ctx, None)
         except _output.ToolRetryError as e:
-            ctx.state.increment_retries(ctx.deps.max_result_retries)
+            ctx.state.increment_retries(ctx.deps.max_result_retries, e)
             return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
         else:
             return self._handle_final_result(ctx, result.FinalResult(result_data, None, None), [])
