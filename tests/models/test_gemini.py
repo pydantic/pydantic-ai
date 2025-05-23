@@ -1136,7 +1136,7 @@ async def test_labels_are_ignored_with_gla_provider(allow_model_requests: None, 
         'What is the capital of France?',
         model_settings=GeminiModelSettings(gemini_labels={'environment': 'test', 'team': 'analytics'}),
     )
-    assert result.output == 'The capital of France is **Paris**.\n'
+    assert result.output == snapshot('The capital of France is **Paris**.\n')
 
 
 @pytest.mark.vcr()

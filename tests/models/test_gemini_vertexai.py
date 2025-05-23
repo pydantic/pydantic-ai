@@ -1,13 +1,12 @@
-import json
-from pathlib import Path
+import os
 
-import httpx
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
 
-from ..conftest import ClientWithHandler, TestEnv, try_import
+from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
@@ -19,74 +18,17 @@ pytestmark = [
 ]
 
 
-async def mock_refresh_token():
-    return 'my-token'
-
-
-async def test_labels_are_used_with_vertex_provider(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    client_with_handler: ClientWithHandler,
-    env: TestEnv,
-    allow_model_requests: None,
-) -> None:
-    service_account_path = tmp_path / 'service_account.json'
-    save_service_account(service_account_path, 'my-project-id')
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        labels = json.loads(request.content)['labels']
-        assert labels == {'environment': 'test', 'team': 'analytics'}
-
-        return httpx.Response(
-            200,
-            content=json.dumps({'candidates': [{'content': {'role': 'user', 'parts': [{'text': 'world'}]}}]}),
-            headers={'Content-Type': 'application/json'},
-        )
-
-    gemini_client = client_with_handler(handler)
-    provider = GoogleVertexProvider(http_client=gemini_client, service_account_file=service_account_path)
-    monkeypatch.setattr(provider.client.auth, '_refresh_token', mock_refresh_token)
-    m = GeminiModel('gemini-1.5-flash', provider=provider)
+@pytest.mark.skipif(
+    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+)
+@pytest.mark.vcr()
+async def test_labels(allow_model_requests: None) -> None:
+    provider = GoogleVertexProvider(project_id='pydantic-ai', region='us-central1')
+    m = GeminiModel('gemini-2.0-flash', provider=provider)
     agent = Agent(m)
 
     result = await agent.run(
-        'hello',
+        'What is the capital of France?',
         model_settings=GeminiModelSettings(gemini_labels={'environment': 'test', 'team': 'analytics'}),
     )
-    assert result.output == 'world'
-
-
-def save_service_account(service_account_path: Path, project_id: str) -> None:
-    service_account = {
-        'type': 'service_account',
-        'project_id': project_id,
-        'private_key_id': 'abc',
-        # this is just a random private key I created with `openssl genpke ...`, it doesn't do anything
-        'private_key': (
-            '-----BEGIN PRIVATE KEY-----\n'
-            'MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBAMFrZYX4gZ20qv88\n'
-            'jD0QCswXgcxgP7Ta06G47QEFprDVcv4WMUBDJVAKofzVcYyhsasWsOSxcpA8LIi9\n'
-            '/VS2Otf8CmIK6nPBCD17Qgt8/IQYXOS4U2EBh0yjo0HQ4vFpkqium4lLWxrAZohA\n'
-            '8r82clV08iLRUW3J+xvN23iPHyVDAgMBAAECgYBScRJe3iNxMvbHv+kOhe30O/jJ\n'
-            'QiUlUzhtcEMk8mGwceqHvrHTcEtRKJcPC3NQvALcp9lSQQhRzjQ1PLXkC6BcfKFd\n'
-            '03q5tVPmJiqsHbSyUyHWzdlHP42xWpl/RmX/DfRKGhPOvufZpSTzkmKWtN+7osHu\n'
-            '7eiMpg2EDswCvOgf0QJBAPXLYwHbZLaM2KEMDgJSse5ZTE/0VMf+5vSTGUmHkr9c\n'
-            'Wx2G1i258kc/JgsXInPbq4BnK9hd0Xj2T5cmEmQtm4UCQQDJc02DFnPnjPnnDUwg\n'
-            'BPhrCyW+rnBGUVjehveu4XgbGx7l3wsbORTaKdCX3HIKUupgfFwFcDlMUzUy6fPO\n'
-            'IuQnAkA8FhVE/fIX4kSO0hiWnsqafr/2B7+2CG1DOraC0B6ioxwvEqhHE17T5e8R\n'
-            '5PzqH7hEMnR4dy7fCC+avpbeYHvVAkA5W58iR+5Qa49r/hlCtKeWsuHYXQqSuu62\n'
-            'zW8QWBo+fYZapRsgcSxCwc0msBm4XstlFYON+NoXpUlsabiFZOHZAkEA8Ffq3xoU\n'
-            'y0eYGy3MEzxx96F+tkl59lfkwHKWchWZJ95vAKWJaHx9WFxSWiJofbRna8Iim6pY\n'
-            'BootYWyTCfjjwA==\n'
-            '-----END PRIVATE KEY-----\n'
-        ),
-        'client_email': 'testing-pydantic-ai@pydantic-ai.iam.gserviceaccount.com',
-        'client_id': '123',
-        'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
-        'token_uri': 'https://oauth2.googleapis.com/token',
-        'auth_provider_x509_cert_url': 'https://www.googleapis.com/oauth2/v1/certs',
-        'client_x509_cert_url': 'https://www.googleapis.com/...',
-        'universe_domain': 'googleapis.com',
-    }
-
-    service_account_path.write_text(json.dumps(service_account, indent=2))
+    assert result.output == snapshot('The capital of France is **Paris**.\n')
