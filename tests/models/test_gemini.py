@@ -1291,4 +1291,4 @@ async def test_gemini_no_finish_reason(get_gemini_client: GetGeminiClient):
 
     result = await agent.run('Hello World')
     if result.all_messages()[1].vendor_details:
-        assert result.all_messages()[1].vendor_details.get("finish_reason") == None
+        assert result.all_messages()[1].vendor_details.get('finish_reason') == None

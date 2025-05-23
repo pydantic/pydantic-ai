@@ -522,4 +522,4 @@ async def test_google_no_finish_reason(allow_model_requests: None, google_provid
     result = await agent.run('Hello!')
 
     if result.all_messages()[1].vendor_details:
-        assert result.all_messages()[1].vendor_details.get("finish_reason") == None
+        assert result.all_messages()[1].vendor_details.get('finish_reason') == None
