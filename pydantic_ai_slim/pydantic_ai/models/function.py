@@ -88,11 +88,11 @@ class FunctionModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         agent_info = AgentInfo(
             model_request_parameters.function_tools,
-            model_request_parameters.allow_text_result,
-            model_request_parameters.result_tools,
+            model_request_parameters.allow_text_output,
+            model_request_parameters.output_tools,
             model_settings,
         )
 
@@ -105,8 +105,11 @@ class FunctionModel(Model):
             assert isinstance(response_, ModelResponse), response_
             response = response_
         response.model_name = self._model_name
-        # TODO is `messages` right here? Should it just be new messages?
-        return response, _estimate_usage(chain(messages, [response]))
+        # Add usage data if not already present
+        if not response.usage.has_values():  # pragma: no branch
+            response.usage = _estimate_usage(chain(messages, [response]))
+            response.usage.requests = 1
+        return response
 
     @asynccontextmanager
     async def request_stream(
@@ -117,8 +120,8 @@ class FunctionModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         agent_info = AgentInfo(
             model_request_parameters.function_tools,
-            model_request_parameters.allow_text_result,
-            model_request_parameters.result_tools,
+            model_request_parameters.allow_text_output,
+            model_request_parameters.output_tools,
             model_settings,
         )
 
@@ -158,10 +161,10 @@ class AgentInfo:
     These are the tools registered via the [`tool`][pydantic_ai.Agent.tool] and
     [`tool_plain`][pydantic_ai.Agent.tool_plain] decorators.
     """
-    allow_text_result: bool
-    """Whether a plain text result is allowed."""
-    result_tools: list[ToolDefinition]
-    """The tools that can called as the final result of the run."""
+    allow_text_output: bool
+    """Whether a plain text output is allowed."""
+    output_tools: list[ToolDefinition]
+    """The tools that can called to produce the final output of the run."""
     model_settings: ModelSettings | None
     """The model settings passed to the run call."""
 
@@ -273,7 +276,9 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
         else:
             assert_never(message)
     return usage.Usage(
-        request_tokens=request_tokens, response_tokens=response_tokens, total_tokens=request_tokens + response_tokens
+        request_tokens=request_tokens,
+        response_tokens=response_tokens,
+        total_tokens=request_tokens + response_tokens,
     )
 
 
@@ -282,7 +287,7 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
         return 0
     if isinstance(content, str):
         return len(re.split(r'[\s",.:]+', content.strip()))
-    else:  # pragma: no cover
+    else:
         tokens = 0
         for part in content:
             if isinstance(part, str):

@@ -2,13 +2,11 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from itertools import chain
 from typing import Literal, Union, cast
 
-from cohere import TextAssistantMessageContentItem
 from typing_extensions import assert_never
 
-from .. import ModelHTTPError, result
+from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     ModelMessage,
@@ -38,6 +36,7 @@ try:
         ChatMessageV2,
         ChatResponse,
         SystemChatMessageV2,
+        TextAssistantMessageContentItem,
         ToolCallV2,
         ToolCallV2Function,
         ToolChatMessageV2,
@@ -79,7 +78,7 @@ See [Cohere's docs](https://docs.cohere.com/v2/docs/models) for a list of all av
 """
 
 
-class CohereModelSettings(ModelSettings):
+class CohereModelSettings(ModelSettings, total=False):
     """Settings used for a Cohere model request.
 
     ALL FIELDS MUST BE `cohere_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -118,7 +117,7 @@ class CohereModel(Model):
                 'cohere' or an instance of `Provider[AsyncClientV2]`. If not provided, a new provider will be
                 created using the other parameters.
         """
-        self._model_name: CohereModelName = model_name
+        self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
@@ -134,10 +133,12 @@ class CohereModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, result.Usage]:
+    ) -> ModelResponse:
         check_allow_model_requests()
         response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_parameters)
-        return self._process_response(response), _map_usage(response)
+        model_response = self._process_response(response)
+        model_response.usage.requests = 1
+        return model_response
 
     @property
     def model_name(self) -> CohereModelName:
@@ -156,13 +157,14 @@ class CohereModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ChatResponse:
         tools = self._get_tools(model_request_parameters)
-        cohere_messages = list(chain(*(self._map_message(m) for m in messages)))
+        cohere_messages = self._map_messages(messages)
         try:
             return await self.client.chat(
                 model=self._model_name,
                 messages=cohere_messages,
                 tools=tools or OMIT,
                 max_tokens=model_settings.get('max_tokens', OMIT),
+                stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
                 p=model_settings.get('top_p', OMIT),
                 seed=model_settings.get('seed', OMIT),
@@ -172,7 +174,7 @@ class CohereModel(Model):
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise
+            raise  # pragma: lax no cover
 
     def _process_response(self, response: ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -183,7 +185,7 @@ class CohereModel(Model):
             choice = response.message.content[0]
             parts.append(TextPart(choice.text))
         for c in response.message.tool_calls or []:
-            if c.function and c.function.name and c.function.arguments:
+            if c.function and c.function.name and c.function.arguments:  # pragma: no branch
                 parts.append(
                     ToolCallPart(
                         tool_name=c.function.name,
@@ -191,35 +193,40 @@ class CohereModel(Model):
                         tool_call_id=c.id or _generate_tool_call_id(),
                     )
                 )
-        return ModelResponse(parts=parts, model_name=self._model_name)
+        return ModelResponse(parts=parts, usage=_map_usage(response), model_name=self._model_name)
 
-    def _map_message(self, message: ModelMessage) -> Iterable[ChatMessageV2]:
+    def _map_messages(self, messages: list[ModelMessage]) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
-        if isinstance(message, ModelRequest):
-            yield from self._map_user_message(message)
-        elif isinstance(message, ModelResponse):
-            texts: list[str] = []
-            tool_calls: list[ToolCallV2] = []
-            for item in message.parts:
-                if isinstance(item, TextPart):
-                    texts.append(item.content)
-                elif isinstance(item, ToolCallPart):
-                    tool_calls.append(self._map_tool_call(item))
-                else:
-                    assert_never(item)
-            message_param = AssistantChatMessageV2(role='assistant')
-            if texts:
-                message_param.content = [TextAssistantMessageContentItem(text='\n\n'.join(texts))]
-            if tool_calls:
-                message_param.tool_calls = tool_calls
-            yield message_param
-        else:
-            assert_never(message)
+        cohere_messages: list[ChatMessageV2] = []
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                cohere_messages.extend(self._map_user_message(message))
+            elif isinstance(message, ModelResponse):
+                texts: list[str] = []
+                tool_calls: list[ToolCallV2] = []
+                for item in message.parts:
+                    if isinstance(item, TextPart):
+                        texts.append(item.content)
+                    elif isinstance(item, ToolCallPart):
+                        tool_calls.append(self._map_tool_call(item))
+                    else:
+                        assert_never(item)
+                message_param = AssistantChatMessageV2(role='assistant')
+                if texts:
+                    message_param.content = [TextAssistantMessageContentItem(text='\n\n'.join(texts))]
+                if tool_calls:
+                    message_param.tool_calls = tool_calls
+                cohere_messages.append(message_param)
+            else:
+                assert_never(message)
+        if instructions := self._get_instructions(messages):
+            cohere_messages.insert(0, SystemChatMessageV2(role='system', content=instructions))
+        return cohere_messages
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolV2]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
     @staticmethod
@@ -262,7 +269,7 @@ class CohereModel(Model):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield UserChatMessageV2(role='user', content=part.model_response())
+                    yield UserChatMessageV2(role='user', content=part.model_response())  # pragma: no cover
                 else:
                     yield ToolChatMessageV2(
                         role='tool',
@@ -273,25 +280,25 @@ class CohereModel(Model):
                 assert_never(part)
 
 
-def _map_usage(response: ChatResponse) -> result.Usage:
-    usage = response.usage
-    if usage is None:
-        return result.Usage()
+def _map_usage(response: ChatResponse) -> usage.Usage:
+    u = response.usage
+    if u is None:
+        return usage.Usage()
     else:
         details: dict[str, int] = {}
-        if usage.billed_units is not None:
-            if usage.billed_units.input_tokens:
-                details['input_tokens'] = int(usage.billed_units.input_tokens)
-            if usage.billed_units.output_tokens:
-                details['output_tokens'] = int(usage.billed_units.output_tokens)
-            if usage.billed_units.search_units:
-                details['search_units'] = int(usage.billed_units.search_units)
-            if usage.billed_units.classifications:
-                details['classifications'] = int(usage.billed_units.classifications)
+        if u.billed_units is not None:
+            if u.billed_units.input_tokens:  # pragma: no branch
+                details['input_tokens'] = int(u.billed_units.input_tokens)
+            if u.billed_units.output_tokens:
+                details['output_tokens'] = int(u.billed_units.output_tokens)
+            if u.billed_units.search_units:  # pragma: no cover
+                details['search_units'] = int(u.billed_units.search_units)
+            if u.billed_units.classifications:  # pragma: no cover
+                details['classifications'] = int(u.billed_units.classifications)
 
-        request_tokens = int(usage.tokens.input_tokens) if usage.tokens and usage.tokens.input_tokens else None
-        response_tokens = int(usage.tokens.output_tokens) if usage.tokens and usage.tokens.output_tokens else None
-        return result.Usage(
+        request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else None
+        response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else None
+        return usage.Usage(
             request_tokens=request_tokens,
             response_tokens=response_tokens,
             total_tokens=(request_tokens or 0) + (response_tokens or 0),

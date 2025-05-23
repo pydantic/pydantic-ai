@@ -7,7 +7,6 @@ from typing import Any
 
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
-from ..usage import Usage
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 
@@ -24,7 +23,7 @@ class WrapperModel(Model):
     def __init__(self, wrapped: Model | KnownModelName):
         self.wrapped = infer_model(wrapped)
 
-    async def request(self, *args: Any, **kwargs: Any) -> tuple[ModelResponse, Usage]:
+    async def request(self, *args: Any, **kwargs: Any) -> ModelResponse:
         return await self.wrapped.request(*args, **kwargs)
 
     @asynccontextmanager
@@ -37,6 +36,9 @@ class WrapperModel(Model):
         async with self.wrapped.request_stream(messages, model_settings, model_request_parameters) as response_stream:
             yield response_stream
 
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        return self.wrapped.customize_request_parameters(model_request_parameters)
+
     @property
     def model_name(self) -> str:
         return self.wrapped.model_name
@@ -46,4 +48,4 @@ class WrapperModel(Model):
         return self.wrapped.system
 
     def __getattr__(self, item: str):
-        return getattr(self.wrapped, item)
+        return getattr(self.wrapped, item)  # pragma: no cover

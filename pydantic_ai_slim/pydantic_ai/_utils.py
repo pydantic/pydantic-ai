@@ -5,17 +5,25 @@ import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union
 
+from anyio.to_thread import run_sync
 from pydantic import BaseModel
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import ParamSpec, TypeAlias, TypeGuard, is_typeddict
 
+from pydantic_graph._utils import AbstractSpan
+
+AbstractSpan = AbstractSpan
+
 if TYPE_CHECKING:
+    from pydantic_ai.agent import AgentRun, AgentRunResult
+    from pydantic_graph import GraphRun, GraphRunResult
+
     from . import messages as _messages
     from .tools import ObjectJsonSchema
 
@@ -24,11 +32,8 @@ _R = TypeVar('_R')
 
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    if kwargs:
-        # noinspection PyTypeChecker
-        return await asyncio.get_running_loop().run_in_executor(None, partial(func, *args, **kwargs))
-    else:
-        return await asyncio.get_running_loop().run_in_executor(None, func, *args)  # type: ignore
+    wrapped_func = partial(func, *args, **kwargs)
+    return await run_sync(wrapped_func)
 
 
 def is_model_like(type_: Any) -> bool:
@@ -50,7 +55,11 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
     if schema.get('type') == 'object':
         return schema
     elif schema.get('$ref') is not None:
-        return schema.get('$defs', {}).get(schema['$ref'][8:])  # This removes the initial "#/$defs/".
+        maybe_result = schema.get('$defs', {}).get(schema['$ref'][8:])  # This removes the initial "#/$defs/".
+
+        if "'$ref': '#/$defs/" in str(maybe_result):
+            return schema  # We can't remove the $defs because the schema contains other references
+        return maybe_result
     else:
         raise UserError('Schema must be an object')
 
@@ -277,3 +286,15 @@ class PeekableAsyncStream(Generic[T]):
         except StopAsyncIteration:
             self._exhausted = True
             raise
+
+
+def get_traceparent(x: AgentRun | AgentRunResult | GraphRun | GraphRunResult) -> str:
+    return x._traceparent(required=False) or ''  # type: ignore[reportPrivateUsage]
+
+
+def dataclasses_no_defaults_repr(self: Any) -> str:
+    """Exclude fields with values equal to the field default."""
+    kv_pairs = (
+        f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr and getattr(self, f.name) != f.default
+    )
+    return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'

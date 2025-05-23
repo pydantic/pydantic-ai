@@ -53,7 +53,7 @@ async def test_labels_are_used_with_vertex_provider(
         'hello',
         model_settings=GeminiModelSettings(gemini_labels={'environment': 'test', 'team': 'analytics'}),
     )
-    assert result.data == 'world'
+    assert result.output == 'world'
 
 
 def save_service_account(service_account_path: Path, project_id: str) -> None:

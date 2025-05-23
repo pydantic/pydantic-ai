@@ -4,7 +4,7 @@ It'll run the example with both OpenAI and Google Gemini models if the required 
 
 Demonstrates:
 
-* [streaming text responses](../results.md#streaming-text)
+* [streaming text responses](../output.md#streaming-text)
 
 ## Running the Example
 

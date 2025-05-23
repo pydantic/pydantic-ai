@@ -5,7 +5,6 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from itertools import chain
 from typing import Literal, Union, cast, overload
 
 from typing_extensions import assert_never
@@ -31,7 +30,7 @@ from ..messages import (
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, get_user_agent
 
 try:
     from groq import NOT_GIVEN, APIStatusError, AsyncGroq, AsyncStream
@@ -83,7 +82,7 @@ See <https://console.groq.com/docs/models> for an up to date date list of models
 """
 
 
-class GroqModelSettings(ModelSettings):
+class GroqModelSettings(ModelSettings, total=False):
     """Settings used for a Groq model request.
 
     ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -131,12 +130,14 @@ class GroqModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         check_allow_model_requests()
         response = await self._completions_create(
             messages, False, cast(GroqModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response), _map_usage(response)
+        model_response = self._process_response(response)
+        model_response.usage.requests = 1
+        return model_response
 
     @asynccontextmanager
     async def request_stream(
@@ -193,14 +194,16 @@ class GroqModel(Model):
         # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_result:
+        elif not model_request_parameters.allow_text_output:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
 
-        groq_messages = list(chain(*(self._map_message(m) for m in messages)))
+        groq_messages = self._map_messages(messages)
 
         try:
+            extra_headers = model_settings.get('extra_headers', {})
+            extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.chat.completions.create(
                 model=str(self._model_name),
                 messages=groq_messages,
@@ -208,6 +211,7 @@ class GroqModel(Model):
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
+                stop=model_settings.get('stop_sequences', NOT_GIVEN),
                 stream=stream,
                 max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 temperature=model_settings.get('temperature', NOT_GIVEN),
@@ -217,11 +221,13 @@ class GroqModel(Model):
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+                extra_headers=extra_headers,
+                extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise
+            raise  # pragma: lax no cover
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -233,14 +239,18 @@ class GroqModel(Model):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
-        return ModelResponse(items, model_name=response.model, timestamp=timestamp)
+        return ModelResponse(
+            items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp, vendor_id=response.id
+        )
 
     async def _process_streamed_response(self, response: AsyncStream[chat.ChatCompletionChunk]) -> GroqStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise UnexpectedModelBehavior(  # pragma: no cover
+                'Streamed response ended without content or tool calls'
+            )
 
         return GroqStreamedResponse(
             _response=peekable_response,
@@ -250,34 +260,39 @@ class GroqModel(Model):
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.result_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.result_tools]
+        if model_request_parameters.output_tools:
+            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
-    def _map_message(self, message: ModelMessage) -> Iterable[chat.ChatCompletionMessageParam]:
+    def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
-        if isinstance(message, ModelRequest):
-            yield from self._map_user_message(message)
-        elif isinstance(message, ModelResponse):
-            texts: list[str] = []
-            tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
-            for item in message.parts:
-                if isinstance(item, TextPart):
-                    texts.append(item.content)
-                elif isinstance(item, ToolCallPart):
-                    tool_calls.append(self._map_tool_call(item))
-                else:
-                    assert_never(item)
-            message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
-            if texts:
-                # Note: model responses from this model should only have one text item, so the following
-                # shouldn't merge multiple texts into one unless you switch models between runs:
-                message_param['content'] = '\n\n'.join(texts)
-            if tool_calls:
-                message_param['tool_calls'] = tool_calls
-            yield message_param
-        else:
-            assert_never(message)
+        groq_messages: list[chat.ChatCompletionMessageParam] = []
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                groq_messages.extend(self._map_user_message(message))
+            elif isinstance(message, ModelResponse):
+                texts: list[str] = []
+                tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
+                for item in message.parts:
+                    if isinstance(item, TextPart):
+                        texts.append(item.content)
+                    elif isinstance(item, ToolCallPart):
+                        tool_calls.append(self._map_tool_call(item))
+                    else:
+                        assert_never(item)
+                message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
+                if texts:
+                    # Note: model responses from this model should only have one text item, so the following
+                    # shouldn't merge multiple texts into one unless you switch models between runs:
+                    message_param['content'] = '\n\n'.join(texts)
+                if tool_calls:
+                    message_param['tool_calls'] = tool_calls
+                groq_messages.append(message_param)
+            else:
+                assert_never(message)
+        if instructions := self._get_instructions(messages):
+            groq_messages.insert(0, chat.ChatCompletionSystemMessageParam(role='system', content=instructions))
+        return groq_messages
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
@@ -311,9 +326,11 @@ class GroqModel(Model):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
-            elif isinstance(part, RetryPromptPart):
+            elif isinstance(part, RetryPromptPart):  # pragma: no branch
                 if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
+                    yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
+                        role='user', content=part.model_response()
+                    )
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
@@ -398,7 +415,7 @@ def _map_usage(completion: chat.ChatCompletionChunk | chat.ChatCompletion) -> us
     if isinstance(completion, chat.ChatCompletion):
         response_usage = completion.usage
     elif completion.x_groq is not None:
-        response_usage = completion.x_groq.usage
+        response_usage = completion.x_groq.usage  # pragma: no cover
 
     if response_usage is None:
         return usage.Usage()

@@ -16,7 +16,7 @@ async def test_my_agent():
     m = TestModel()
     with my_agent.override(model=m):
         result = await my_agent.run('Testing my agent...')
-        assert result.data == 'success (no tool calls)'
+        assert result.output == 'success (no tool calls)'
     assert m.last_model_request_parameters.function_tools == []
 ```
 

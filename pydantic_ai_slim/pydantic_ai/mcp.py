@@ -1,23 +1,35 @@
 from __future__ import annotations
 
+import base64
+import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from types import TracebackType
 from typing import Any
 
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from mcp.types import JSONRPCMessage
-from typing_extensions import Self
+from mcp.types import (
+    BlobResourceContents,
+    EmbeddedResource,
+    ImageContent,
+    JSONRPCMessage,
+    LoggingLevel,
+    TextContent,
+    TextResourceContents,
+)
+from typing_extensions import Self, assert_never
 
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import ToolDefinition
 
 try:
     from mcp.client.session import ClientSession
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
-    from mcp.types import CallToolResult
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `mcp` package to use the MCP server, '
@@ -34,6 +46,13 @@ class MCPServer(ABC):
     """
 
     is_running: bool = False
+    tool_prefix: str | None = None
+    """A prefix to add to all tools that are registered with the server.
+
+    If not empty, will include a trailing underscore(`_`).
+
+    e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
+    """
 
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[JSONRPCMessage | Exception]
@@ -45,11 +64,27 @@ class MCPServer(ABC):
     async def client_streams(
         self,
     ) -> AsyncIterator[
-        tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
+        tuple[
+            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
+            MemoryObjectSendStream[JSONRPCMessage],
+        ]
     ]:
         """Create the streams for the MCP server."""
         raise NotImplementedError('MCP Server subclasses must implement this method.')
         yield
+
+    @abstractmethod
+    def _get_log_level(self) -> LoggingLevel | None:
+        """Get the log level for the MCP server."""
+        raise NotImplementedError('MCP Server subclasses must implement this method.')
+
+    def get_prefixed_tool_name(self, tool_name: str) -> str:
+        """Get the tool name with prefix if `tool_prefix` is set."""
+        return f'{self.tool_prefix}_{tool_name}' if self.tool_prefix else tool_name
+
+    def get_unprefixed_tool_name(self, tool_name: str) -> str:
+        """Get original tool name without prefix for calling tools."""
+        return tool_name.removeprefix(f'{self.tool_prefix}_') if self.tool_prefix else tool_name
 
     async def list_tools(self) -> list[ToolDefinition]:
         """Retrieve tools that are currently active on the server.
@@ -61,14 +96,16 @@ class MCPServer(ABC):
         tools = await self._client.list_tools()
         return [
             ToolDefinition(
-                name=tool.name,
+                name=self.get_prefixed_tool_name(tool.name),
                 description=tool.description or '',
                 parameters_json_schema=tool.inputSchema,
             )
             for tool in tools.tools
         ]
 
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> CallToolResult:
+    async def call_tool(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> str | BinaryContent | dict[str, Any] | list[Any] | Sequence[str | BinaryContent | dict[str, Any] | list[Any]]:
         """Call a tool on the server.
 
         Args:
@@ -77,8 +114,21 @@ class MCPServer(ABC):
 
         Returns:
             The result of the tool call.
+
+        Raises:
+            ModelRetry: If the tool call fails.
         """
-        return await self._client.call_tool(tool_name, arguments)
+        result = await self._client.call_tool(self.get_unprefixed_tool_name(tool_name), arguments)
+
+        content = [self._map_tool_result_part(part) for part in result.content]
+
+        if result.isError:
+            text = '\n'.join(str(part) for part in content)
+            raise ModelRetry(text)
+
+        if len(content) == 1:
+            return content[0]
+        return content
 
     async def __aenter__(self) -> Self:
         self._exit_stack = AsyncExitStack()
@@ -88,14 +138,48 @@ class MCPServer(ABC):
         self._client = await self._exit_stack.enter_async_context(client)
 
         await self._client.initialize()
+        if log_level := self._get_log_level():
+            await self._client.set_logging_level(log_level)
         self.is_running = True
         return self
 
     async def __aexit__(
-        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
     ) -> bool | None:
         await self._exit_stack.aclose()
         self.is_running = False
+
+    def _map_tool_result_part(
+        self, part: TextContent | ImageContent | EmbeddedResource
+    ) -> str | BinaryContent | dict[str, Any] | list[Any]:
+        # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
+
+        if isinstance(part, TextContent):
+            text = part.text
+            if text.startswith(('[', '{')):
+                try:
+                    return json.loads(text)
+                except ValueError:
+                    pass
+            return text
+        elif isinstance(part, ImageContent):
+            return BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
+        elif isinstance(part, EmbeddedResource):
+            resource = part.resource
+            if isinstance(resource, TextResourceContents):
+                return resource.text
+            elif isinstance(resource, BlobResourceContents):
+                return BinaryContent(
+                    data=base64.b64decode(resource.blob),
+                    media_type=resource.mimeType or 'application/octet-stream',
+                )
+            else:
+                assert_never(resource)
+        else:
+            assert_never(part)
 
 
 @dataclass
@@ -114,7 +198,18 @@ class MCPServerStdio(MCPServer):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerStdio
 
-    server = MCPServerStdio('npx', ['-y', '@pydantic/mcp-run-python', 'stdio'])  # (1)!
+    server = MCPServerStdio(  # (1)!
+        'deno',
+        args=[
+            'run',
+            '-N',
+            '-R=node_modules',
+            '-W=node_modules',
+            '--node-modules-dir=auto',
+            'jsr:@pydantic/mcp-run-python',
+            'stdio',
+        ]
+    )
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
@@ -138,16 +233,43 @@ class MCPServerStdio(MCPServer):
     By default the subprocess will not inherit any environment variables from the parent process.
     If you want to inherit the environment variables from the parent process, use `env=os.environ`.
     """
+    log_level: LoggingLevel | None = None
+    """The log level to set when connecting to the server, if any.
+
+    See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
+
+    If `None`, no log level will be set.
+    """
+
+    cwd: str | Path | None = None
+    """The working directory to use when spawning the process."""
+
+    tool_prefix: str | None = None
+    """A prefix to add to all tools that are registered with the server.
+
+    If not empty, will include a trailing underscore(`_`).
+
+    e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
+    """
 
     @asynccontextmanager
     async def client_streams(
         self,
     ) -> AsyncIterator[
-        tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
+        tuple[
+            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
+            MemoryObjectSendStream[JSONRPCMessage],
+        ]
     ]:
-        server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env)
+        server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
         async with stdio_client(server=server) as (read_stream, write_stream):
             yield read_stream, write_stream
+
+    def _get_log_level(self) -> LoggingLevel | None:
+        return self.log_level
+
+    def __repr__(self) -> str:
+        return f'MCPServerStdio(command={self.command!r}, args={self.args!r}, tool_prefix={self.tool_prefix!r})'
 
 
 @dataclass
@@ -177,8 +299,7 @@ class MCPServerHTTP(MCPServer):
             ...
     ```
 
-    1. E.g. you might be connecting to a server run with `npx @pydantic/mcp-run-python sse`,
-      see [MCP Run Python](../mcp/run-python.md) for more information.
+    1. E.g. you might be connecting to a server run with [`mcp-run-python`](../mcp/run-python.md).
     2. This will connect to a server running on `localhost:3001`.
     """
 
@@ -209,14 +330,41 @@ class MCPServerHTTP(MCPServer):
     If no new messages are received within this time, the connection will be considered stale
     and may be closed. Defaults to 5 minutes (300 seconds).
     """
+    log_level: LoggingLevel | None = None
+    """The log level to set when connecting to the server, if any.
+
+    See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
+
+    If `None`, no log level will be set.
+    """
+
+    tool_prefix: str | None = None
+    """A prefix to add to all tools that are registered with the server.
+
+    If not empty, will include a trailing underscore (`_`).
+
+    For example, if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
+    """
 
     @asynccontextmanager
     async def client_streams(
         self,
     ) -> AsyncIterator[
-        tuple[MemoryObjectReceiveStream[JSONRPCMessage | Exception], MemoryObjectSendStream[JSONRPCMessage]]
+        tuple[
+            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
+            MemoryObjectSendStream[JSONRPCMessage],
+        ]
     ]:  # pragma: no cover
         async with sse_client(
-            url=self.url, headers=self.headers, timeout=self.timeout, sse_read_timeout=self.sse_read_timeout
+            url=self.url,
+            headers=self.headers,
+            timeout=self.timeout,
+            sse_read_timeout=self.sse_read_timeout,
         ) as (read_stream, write_stream):
             yield read_stream, write_stream
+
+    def _get_log_level(self) -> LoggingLevel | None:
+        return self.log_level
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f'MCPServerHTTP(url={self.url!r}, tool_prefix={self.tool_prefix!r})'

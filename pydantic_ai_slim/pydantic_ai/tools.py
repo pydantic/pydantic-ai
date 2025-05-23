@@ -29,6 +29,7 @@ __all__ = (
     'ToolFuncEither',
     'ToolParams',
     'ToolPrepareFunc',
+    'ToolsPrepareFunc',
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
@@ -38,7 +39,7 @@ AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(repr=False)
 class RunContext(Generic[AgentDepsT]):
     """Information about the current call."""
 
@@ -48,7 +49,7 @@ class RunContext(Generic[AgentDepsT]):
     """The model used in this run."""
     usage: Usage
     """LLM usage associated with the run."""
-    prompt: str | Sequence[_messages.UserContent]
+    prompt: str | Sequence[_messages.UserContent] | None
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""
@@ -68,9 +69,11 @@ class RunContext(Generic[AgentDepsT]):
         kwargs = {}
         if retry is not None:
             kwargs['retry'] = retry
-        if tool_name is not _utils.UNSET:
+        if tool_name is not _utils.UNSET:  # pragma: no branch
             kwargs['tool_name'] = tool_name
         return dataclasses.replace(self, **kwargs)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 ToolParams = ParamSpec('ToolParams', default=...)
@@ -133,6 +136,37 @@ hitchhiker = Tool(hitchhiker, prepare=only_if_42)
 Usage `ToolPrepareFunc[AgentDepsT]`.
 """
 
+ToolsPrepareFunc: TypeAlias = (
+    'Callable[[RunContext[AgentDepsT], list[ToolDefinition]], Awaitable[list[ToolDefinition] | None]]'
+)
+"""Definition of a function that can prepare the tool definition of all tools for each step.
+This is useful if you want to customize the definition of multiple tools or you want to register
+a subset of tools for a given step.
+
+Example — here `turn_on_strict_if_openai` is valid as a `ToolsPrepareFunc`:
+
+```python {noqa="I001"}
+from dataclasses import replace
+from typing import Union
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.tools import ToolDefinition
+
+
+async def turn_on_strict_if_openai(
+    ctx: RunContext[None], tool_defs: list[ToolDefinition]
+) -> Union[list[ToolDefinition], None]:
+    if ctx.model.system == 'openai':
+        return [replace(tool_def, strict=True) for tool_def in tool_defs]
+    return tool_defs
+
+agent = Agent('openai:gpt-4o', prepare_tools=turn_on_strict_if_openai)
+```
+
+Usage `ToolsPrepareFunc[AgentDepsT]`.
+"""
+
+
 DocstringFormat = Literal['google', 'numpy', 'sphinx', 'auto']
 """Supported docstring formats.
 
@@ -173,12 +207,18 @@ class Tool(Generic[AgentDepsT]):
     prepare: ToolPrepareFunc[AgentDepsT] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
+    strict: bool | None
     _is_async: bool = field(init=False)
     _single_arg_name: str | None = field(init=False)
     _positional_fields: list[str] = field(init=False)
     _var_positional_field: str | None = field(init=False)
     _validator: SchemaValidator = field(init=False, repr=False)
-    _parameters_json_schema: ObjectJsonSchema = field(init=False)
+    _base_parameters_json_schema: ObjectJsonSchema = field(init=False)
+    """
+    The base JSON schema for the tool's parameters.
+
+    This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
+    """
 
     # TODO: Move this state off the Tool class, which is otherwise stateless.
     #   This should be tracked inside a specific agent run, not the tool.
@@ -196,6 +236,7 @@ class Tool(Generic[AgentDepsT]):
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
     ):
         """Create a new tool instance.
 
@@ -246,6 +287,8 @@ class Tool(Generic[AgentDepsT]):
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
+            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
         if takes_ctx is None:
             takes_ctx = _pydantic.takes_ctx(function)
@@ -261,12 +304,13 @@ class Tool(Generic[AgentDepsT]):
         self.prepare = prepare
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
+        self.strict = strict
         self._is_async = inspect.iscoroutinefunction(self.function)
         self._single_arg_name = f['single_arg_name']
         self._positional_fields = f['positional_fields']
         self._var_positional_field = f['var_positional_field']
         self._validator = f['validator']
-        self._parameters_json_schema = f['json_schema']
+        self._base_parameters_json_schema = f['json_schema']
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
@@ -280,7 +324,8 @@ class Tool(Generic[AgentDepsT]):
         tool_def = ToolDefinition(
             name=self.name,
             description=self.description,
-            parameters_json_schema=self._parameters_json_schema,
+            parameters_json_schema=self._base_parameters_json_schema,
+            strict=self.strict,
         )
         if self.prepare is not None:
             return await self.prepare(ctx, tool_def)
@@ -322,9 +367,9 @@ class Tool(Generic[AgentDepsT]):
     ) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
         try:
             if isinstance(message.args, str):
-                args_dict = self._validator.validate_json(message.args)
+                args_dict = self._validator.validate_json(message.args or '{}')
             else:
-                args_dict = self._validator.validate_python(message.args)
+                args_dict = self._validator.validate_python(message.args or {})
         except ValidationError as e:
             return self._on_error(e, message)
 
@@ -363,7 +408,7 @@ class Tool(Generic[AgentDepsT]):
         )
         args = [ctx] if self.takes_ctx else []
         for positional_field in self._positional_fields:
-            args.append(args_dict.pop(positional_field))
+            args.append(args_dict.pop(positional_field))  # pragma: no cover
         if self._var_positional_field:
             args.extend(args_dict.pop(self._var_positional_field))
 
@@ -396,11 +441,11 @@ With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `ext
 """
 
 
-@dataclass
+@dataclass(repr=False)
 class ToolDefinition:
     """Definition of a tool passed to a model.
 
-    This is used for both function tools result tools.
+    This is used for both function tools and output tools.
     """
 
     name: str
@@ -413,7 +458,21 @@ class ToolDefinition:
     """The JSON schema for the tool's parameters."""
 
     outer_typed_dict_key: str | None = None
-    """The key in the outer [TypedDict] that wraps a result tool.
+    """The key in the outer [TypedDict] that wraps an output tool.
 
-    This will only be set for result tools which don't have an `object` JSON schema.
+    This will only be set for output tools which don't have an `object` JSON schema.
     """
+
+    strict: bool | None = None
+    """Whether to enforce (vendor-specific) strict JSON schema validation for tool calls.
+
+    Setting this to `True` while using a supported model generally imposes some restrictions on the tool's JSON schema
+    in exchange for guaranteeing the API responses strictly match that schema.
+
+    When `False`, the model may be free to generate other properties or types (depending on the vendor).
+    When `None` (the default), the value will be inferred based on the compatibility of the parameters_json_schema.
+
+    Note: this is currently only supported by OpenAI models.
+    """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr

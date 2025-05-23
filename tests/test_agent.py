@@ -8,13 +8,15 @@ import httpx
 import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, TypeAdapter, field_validator
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
+from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -30,21 +32,21 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from .conftest import IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
 
 def test_result_tuple():
     def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
-        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_tuple), result_type=tuple[str, str])
+    agent = Agent(FunctionModel(return_tuple), output_type=tuple[str, str])
 
     result = agent.run_sync('Hello')
-    assert result.data == ('foo', 'bar')
+    assert result.output == ('foo', 'bar')
 
 
 class Foo(BaseModel):
@@ -54,39 +56,40 @@ class Foo(BaseModel):
 
 def test_result_pydantic_model():
     def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         args_json = '{"a": 1, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_model), result_type=Foo)
+    agent = Agent(FunctionModel(return_model), output_type=Foo)
 
     result = agent.run_sync('Hello')
-    assert isinstance(result.data, Foo)
-    assert result.data.model_dump() == {'a': 1, 'b': 'foo'}
+    assert isinstance(result.output, Foo)
+    assert result.output.model_dump() == {'a': 1, 'b': 'foo'}
 
 
 def test_result_pydantic_model_retry():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         if len(messages) == 1:
             args_json = '{"a": "wrong", "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_model), result_type=Foo)
+    agent = Agent(FunctionModel(return_model), output_type=Foo)
 
     assert agent.name is None
 
     result = agent.run_sync('Hello')
     assert agent.name == 'agent'
-    assert isinstance(result.data, Foo)
-    assert result.data.model_dump() == {'a': 42, 'b': 'foo'}
+    assert isinstance(result.output, Foo)
+    assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": "wrong", "b": "foo"}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=7, total_tokens=58),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -109,6 +112,7 @@ def test_result_pydantic_model_retry():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=87, response_tokens=14, total_tokens=101),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -129,12 +133,12 @@ def test_result_pydantic_model_retry():
 
 def test_result_pydantic_model_validation_error():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         if len(messages) == 1:
             args_json = '{"a": 1, "b": "foo"}'
         else:
             args_json = '{"a": 1, "b": "bar"}'
-        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     class Bar(BaseModel):
         a: int
@@ -146,11 +150,11 @@ def test_result_pydantic_model_validation_error():
                 raise ValueError('must not be foo')
             return v
 
-    agent = Agent(FunctionModel(return_model), result_type=Bar)
+    agent = Agent(FunctionModel(return_model), output_type=Bar)
 
     result = agent.run_sync('Hello')
-    assert isinstance(result.data, Bar)
-    assert result.data.model_dump() == snapshot({'a': 1, 'b': 'bar'})
+    assert isinstance(result.output, Bar)
+    assert result.output.model_dump() == snapshot({'a': 1, 'b': 'bar'})
     messages_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result.all_messages()]
     assert messages_part_kinds == snapshot(
         [
@@ -181,33 +185,34 @@ def test_result_pydantic_model_validation_error():
 Fix the errors and try again.""")
 
 
-def test_result_validator():
+def test_output_validator():
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         if len(messages) == 1:
             args_json = '{"a": 41, "b": "foo"}'
         else:
             args_json = '{"a": 42, "b": "foo"}'
-        return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_model), result_type=Foo)
+    agent = Agent(FunctionModel(return_model), output_type=Foo)
 
-    @agent.result_validator
-    def validate_result(ctx: RunContext[None], r: Foo) -> Foo:
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
         assert ctx.tool_name == 'final_result'
-        if r.a == 42:
-            return r
+        if o.a == 42:
+            return o
         else:
             raise ModelRetry('"a" should be 42')
 
     result = agent.run_sync('Hello')
-    assert isinstance(result.data, Foo)
-    assert result.data.model_dump() == {'a': 42, 'b': 'foo'}
+    assert isinstance(result.output, Foo)
+    assert result.output.model_dump() == {'a': 42, 'b': 'foo'}
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 41, "b": "foo"}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=7, total_tokens=58),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -223,6 +228,7 @@ def test_result_validator():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=63, response_tokens=14, total_tokens=77),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -246,31 +252,32 @@ def test_plain_response_then_tuple():
     def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_index
 
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         call_index += 1
         if call_index == 1:
             return ModelResponse(parts=[TextPart('hello')])
         else:
             args_json = '{"response": ["foo", "bar"]}'
-            return ModelResponse(parts=[ToolCallPart(info.result_tools[0].name, args_json)])
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_tuple), result_type=tuple[str, str])
+    agent = Agent(FunctionModel(return_tuple), output_type=tuple[str, str])
 
     result = agent.run_sync('Hello')
-    assert result.data == ('foo', 'bar')
+    assert result.output == ('foo', 'bar')
     assert call_index == 2
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='hello')],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=1, total_tokens=52),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Plain text responses are not permitted, please call one of the functions instead.',
+                        content='Plain text responses are not permitted, please include your response in a tool call',
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     )
@@ -280,6 +287,7 @@ def test_plain_response_then_tuple():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
                 ],
+                usage=Usage(requests=1, request_tokens=72, response_tokens=8, total_tokens=80),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -295,8 +303,8 @@ def test_plain_response_then_tuple():
             ),
         ]
     )
-    assert result._result_tool_name == 'final_result'  # pyright: ignore[reportPrivateUsage]
-    assert result.all_messages(result_tool_return_content='foobar')[-1] == snapshot(
+    assert result._output_tool_name == 'final_result'  # pyright: ignore[reportPrivateUsage]
+    assert result.all_messages(output_tool_return_content='foobar')[-1] == snapshot(
         ModelRequest(
             parts=[
                 ToolReturnPart(
@@ -319,43 +327,43 @@ def test_plain_response_then_tuple():
     )
 
 
-def test_result_tool_return_content_str_return():
+def test_output_tool_return_content_str_return():
     agent = Agent('test')
 
     result = agent.run_sync('Hello')
-    assert result.data == 'success (no tool calls)'
+    assert result.output == 'success (no tool calls)'
 
-    msg = re.escape('Cannot set result tool return content when the return type is `str`.')
+    msg = re.escape('Cannot set output tool return content when the return type is `str`.')
     with pytest.raises(ValueError, match=msg):
-        result.all_messages(result_tool_return_content='foobar')
+        result.all_messages(output_tool_return_content='foobar')
 
 
-def test_result_tool_return_content_no_tool():
-    agent = Agent('test', result_type=int)
+def test_output_tool_return_content_no_tool():
+    agent = Agent('test', output_type=int)
 
     result = agent.run_sync('Hello')
-    assert result.data == 0
-    result._result_tool_name = 'wrong'  # pyright: ignore[reportPrivateUsage]
+    assert result.output == 0
+    result._output_tool_name = 'wrong'  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(LookupError, match=re.escape("No tool call found with tool name 'wrong'.")):
-        result.all_messages(result_tool_return_content='foobar')
+        result.all_messages(output_tool_return_content='foobar')
 
 
 def test_response_tuple():
     m = TestModel()
 
-    agent = Agent(m, result_type=tuple[str, str])
-    assert agent._result_schema.allow_text_result is False  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
+    agent = Agent(m, output_type=tuple[str, str])
+    assert agent._output_schema.allow_text_output is False  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
 
     result = agent.run_sync('Hello')
-    assert result.data == snapshot(('a', 'a'))
+    assert result.output == snapshot(('a', 'a'))
 
     assert m.last_model_request_parameters is not None
     assert m.last_model_request_parameters.function_tools == snapshot([])
-    assert m.last_model_request_parameters.allow_text_result is False
+    assert m.last_model_request_parameters.allow_text_output is False
 
-    assert m.last_model_request_parameters.result_tools is not None
-    assert len(m.last_model_request_parameters.result_tools) == 1
-    assert m.last_model_request_parameters.result_tools == snapshot(
+    assert m.last_model_request_parameters.output_tools is not None
+    assert len(m.last_model_request_parameters.output_tools) == 1
+    assert m.last_model_request_parameters.output_tools == snapshot(
         [
             ToolDefinition(
                 name='final_result',
@@ -387,34 +395,34 @@ def test_response_tuple():
 def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     try:
         union = input_union_callable()
-    except TypeError:
+    except TypeError:  # pragma: lax no cover
         pytest.skip('Python version does not support `|` syntax for unions')
 
     m = TestModel()
-    agent: Agent[None, Union[str, Foo]] = Agent(m, result_type=union)
+    agent: Agent[None, Union[str, Foo]] = Agent(m, output_type=union)
 
     got_tool_call_name = 'unset'
 
-    @agent.result_validator
-    def validate_result(ctx: RunContext[None], r: Any) -> Any:
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Any) -> Any:
         nonlocal got_tool_call_name
         got_tool_call_name = ctx.tool_name
-        return r
+        return o
 
-    assert agent._result_schema.allow_text_result is True  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
+    assert agent._output_schema.allow_text_output is True  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
 
     result = agent.run_sync('Hello')
-    assert result.data == snapshot('success (no tool calls)')
+    assert result.output == snapshot('success (no tool calls)')
     assert got_tool_call_name == snapshot(None)
 
     assert m.last_model_request_parameters is not None
     assert m.last_model_request_parameters.function_tools == snapshot([])
-    assert m.last_model_request_parameters.allow_text_result is True
+    assert m.last_model_request_parameters.allow_text_output is True
 
-    assert m.last_model_request_parameters.result_tools is not None
-    assert len(m.last_model_request_parameters.result_tools) == 1
+    assert m.last_model_request_parameters.output_tools is not None
+    assert len(m.last_model_request_parameters.output_tools) == 1
 
-    assert m.last_model_request_parameters.result_tools == snapshot(
+    assert m.last_model_request_parameters.output_tools == snapshot(
         [
             ToolDefinition(
                 name='final_result',
@@ -437,14 +445,14 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
 @pytest.mark.parametrize(
     'union_code',
     [
-        pytest.param('ResultType = Union[Foo, Bar]'),
-        pytest.param('ResultType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='3.10+')),
+        pytest.param('OutputType = Union[Foo, Bar]'),
+        pytest.param('OutputType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='3.10+')),
         pytest.param(
-            'ResultType: TypeAlias = Foo | Bar',
+            'OutputType: TypeAlias = Foo | Bar',
             marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='Python 3.10+'),
         ),
         pytest.param(
-            'type ResultType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 12), reason='3.12+')
+            'type OutputType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 12), reason='3.12+')
         ),
     ],
 )
@@ -470,27 +478,27 @@ class Bar(BaseModel):
     mod = create_module(module_code)
 
     m = TestModel()
-    agent = Agent(m, result_type=mod.ResultType)
+    agent = Agent(m, output_type=mod.OutputType)
     got_tool_call_name = 'unset'
 
-    @agent.result_validator
-    def validate_result(ctx: RunContext[None], r: Any) -> Any:
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Any) -> Any:
         nonlocal got_tool_call_name
         got_tool_call_name = ctx.tool_name
-        return r
+        return o
 
     result = agent.run_sync('Hello')
-    assert result.data == mod.Foo(a=0, b='a')
+    assert result.output == mod.Foo(a=0, b='a')
     assert got_tool_call_name == snapshot('final_result_Foo')
 
     assert m.last_model_request_parameters is not None
     assert m.last_model_request_parameters.function_tools == snapshot([])
-    assert m.last_model_request_parameters.allow_text_result is False
+    assert m.last_model_request_parameters.allow_text_output is False
 
-    assert m.last_model_request_parameters.result_tools is not None
-    assert len(m.last_model_request_parameters.result_tools) == 2
+    assert m.last_model_request_parameters.output_tools is not None
+    assert len(m.last_model_request_parameters.output_tools) == 2
 
-    assert m.last_model_request_parameters.result_tools == snapshot(
+    assert m.last_model_request_parameters.output_tools == snapshot(
         [
             ToolDefinition(
                 name='final_result_Foo',
@@ -519,7 +527,7 @@ class Bar(BaseModel):
     )
 
     result = agent.run_sync('Hello', model=TestModel(seed=1))
-    assert result.data == mod.Bar(b='b')
+    assert result.output == mod.Bar(b='b')
     assert got_tool_call_name == snapshot('final_result_Bar')
 
 
@@ -543,6 +551,7 @@ def test_run_with_history_new():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -554,7 +563,10 @@ def test_run_with_history_new():
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -571,6 +583,7 @@ def test_run_with_history_new():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -582,17 +595,23 @@ def test_run_with_history_new():
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                usage=Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
     assert result2._new_message_index == snapshot(4)  # pyright: ignore[reportPrivateUsage]
-    assert result2.data == snapshot('{"ret_a":"a-apple"}')
-    assert result2._result_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
+    assert result2.output == snapshot('{"ret_a":"a-apple"}')
+    assert result2._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
     assert result2.usage() == snapshot(
         Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None)
     )
@@ -623,6 +642,7 @@ def test_run_with_history_new():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -634,17 +654,23 @@ def test_run_with_history_new():
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='{"ret_a":"a-apple"}')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                usage=Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
     assert result3._new_message_index == snapshot(4)  # pyright: ignore[reportPrivateUsage]
-    assert result3.data == snapshot('{"ret_a":"a-apple"}')
-    assert result3._result_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
+    assert result3.output == snapshot('{"ret_a":"a-apple"}')
+    assert result3._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
     assert result3.usage() == snapshot(
         Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None)
     )
@@ -656,7 +682,7 @@ def test_run_with_history_new_structured():
     class Response(BaseModel):
         a: int
 
-    agent = Agent(m, system_prompt='Foobar', result_type=Response)
+    agent = Agent(m, system_prompt='Foobar', output_type=Response)
 
     @agent.tool_plain
     async def ret_a(x: str) -> str:
@@ -673,6 +699,7 @@ def test_run_with_history_new_structured():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -691,6 +718,7 @@ def test_run_with_history_new_structured():
                         tool_call_id=IsStr(),
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -718,6 +746,7 @@ def test_run_with_history_new_structured():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -730,6 +759,7 @@ def test_run_with_history_new_structured():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'a': 0}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -751,6 +781,7 @@ def test_run_with_history_new_structured():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'a': 0}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=59, response_tokens=13, total_tokens=72),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -766,9 +797,9 @@ def test_run_with_history_new_structured():
             ),
         ]
     )
-    assert result2.data == snapshot(Response(a=0))
+    assert result2.output == snapshot(Response(a=0))
     assert result2._new_message_index == snapshot(5)  # pyright: ignore[reportPrivateUsage]
-    assert result2._result_tool_name == snapshot('final_result')  # pyright: ignore[reportPrivateUsage]
+    assert result2._output_tool_name == snapshot('final_result')  # pyright: ignore[reportPrivateUsage]
     assert result2.usage() == snapshot(
         Usage(requests=1, request_tokens=59, response_tokens=13, total_tokens=72, details=None)
     )
@@ -812,6 +843,7 @@ def test_unknown_tool():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=2, total_tokens=53),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -827,6 +859,7 @@ def test_unknown_tool():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=65, response_tokens=4, total_tokens=69),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -844,12 +877,13 @@ def test_unknown_tool_fix():
     agent = Agent(FunctionModel(empty))
 
     result = agent.run_sync('Hello')
-    assert result.data == 'success'
+    assert result.output == 'success'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=2, total_tokens=53),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -865,6 +899,7 @@ def test_unknown_tool_fix():
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
+                usage=Usage(requests=1, request_tokens=65, response_tokens=3, total_tokens=68),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -874,7 +909,7 @@ def test_unknown_tool_fix():
 
 def test_model_requests_blocked(env: TestEnv):
     env.set('GEMINI_API_KEY', 'foobar')
-    agent = Agent('google-gla:gemini-1.5-flash', result_type=tuple[str, str], defer_model_check=True)
+    agent = Agent('google-gla:gemini-1.5-flash', output_type=tuple[str, str], defer_model_check=True)
 
     with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
         agent.run_sync('Hello')
@@ -882,21 +917,21 @@ def test_model_requests_blocked(env: TestEnv):
 
 def test_override_model(env: TestEnv):
     env.set('GEMINI_API_KEY', 'foobar')
-    agent = Agent('google-gla:gemini-1.5-flash', result_type=tuple[int, str], defer_model_check=True)
+    agent = Agent('google-gla:gemini-1.5-flash', output_type=tuple[int, str], defer_model_check=True)
 
     with agent.override(model='test'):
         result = agent.run_sync('Hello')
-        assert result.data == snapshot((0, 'a'))
+        assert result.output == snapshot((0, 'a'))
 
 
 def test_set_model(env: TestEnv):
     env.set('GEMINI_API_KEY', 'foobar')
-    agent = Agent(result_type=tuple[int, str])
+    agent = Agent(output_type=tuple[int, str])
 
     agent.model = 'test'
 
     result = agent.run_sync('Hello')
-    assert result.data == snapshot((0, 'a'))
+    assert result.output == snapshot((0, 'a'))
 
 
 def test_override_model_no_model():
@@ -923,7 +958,7 @@ def test_run_sync_multiple():
 
     for _ in range(2):
         result = agent.run_sync('Hello')
-        assert result.data == '{"make_request":"200"}'
+        assert result.output == '{"make_request":"200"}'
 
 
 async def test_agent_name():
@@ -968,7 +1003,7 @@ my_agent = Agent('test')
 
 def foo():
     result = my_agent.run_sync('Hello')
-    return result.data
+    return result.output
 """
 
     mod = create_module(module_code)
@@ -983,7 +1018,7 @@ class TestMultipleToolCalls:
 
     pytestmark = pytest.mark.usefixtures('set_event_loop')
 
-    class ResultType(BaseModel):
+    class OutputType(BaseModel):
         """Result type used by all tests."""
 
         value: str
@@ -993,16 +1028,16 @@ class TestMultipleToolCalls:
         tool_called = []
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            assert info.result_tools is not None
+            assert info.output_tools is not None
             return ModelResponse(
                 parts=[
                     ToolCallPart('final_result', {'value': 'final'}),
                     ToolCallPart('regular_tool', {'x': 1}),
                     ToolCallPart('another_tool', {'y': 2}),
-                ]
+                ],
             )
 
-        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
+        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:  # pragma: no cover
@@ -1050,19 +1085,19 @@ class TestMultipleToolCalls:
         """Test that 'early' strategy uses the first final result and ignores subsequent ones."""
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            assert info.result_tools is not None
+            assert info.output_tools is not None
             return ModelResponse(
                 parts=[
                     ToolCallPart('final_result', {'value': 'first'}),
                     ToolCallPart('final_result', {'value': 'second'}),
-                ]
+                ],
             )
 
-        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
+        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
         result = agent.run_sync('test multiple final results')
 
         # Verify the result came from the first final tool
-        assert result.data.value == 'first'
+        assert result.output.value == 'first'
 
         # Verify we got appropriate tool returns
         assert result.new_messages()[-1].parts == snapshot(
@@ -1075,7 +1110,7 @@ class TestMultipleToolCalls:
                 ),
                 ToolReturnPart(
                     tool_name='final_result',
-                    content='Result tool not used - a final result was already processed.',
+                    content='Output tool not used - a final result was already processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -1087,7 +1122,7 @@ class TestMultipleToolCalls:
         tool_called: list[str] = []
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            assert info.result_tools is not None
+            assert info.output_tools is not None
             return ModelResponse(
                 parts=[
                     ToolCallPart('regular_tool', {'x': 42}),
@@ -1095,10 +1130,10 @@ class TestMultipleToolCalls:
                     ToolCallPart('another_tool', {'y': 2}),
                     ToolCallPart('final_result', {'value': 'second'}),
                     ToolCallPart('unknown_tool', {'value': '???'}),
-                ]
+                ],
             )
 
-        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='exhaustive')
+        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='exhaustive')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:
@@ -1115,7 +1150,7 @@ class TestMultipleToolCalls:
         result = agent.run_sync('test exhaustive strategy')
 
         # Verify the result came from the first final tool
-        assert result.data.value == 'first'
+        assert result.output.value == 'first'
 
         # Verify all regular tools were called
         assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
@@ -1134,6 +1169,7 @@ class TestMultipleToolCalls:
                         ToolCallPart(tool_name='final_result', args={'value': 'second'}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
                     ],
+                    usage=Usage(requests=1, request_tokens=53, response_tokens=23, total_tokens=76),
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -1147,7 +1183,7 @@ class TestMultipleToolCalls:
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
-                            content='Result tool not used - a final result was already processed.',
+                            content='Output tool not used - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
@@ -1176,17 +1212,17 @@ class TestMultipleToolCalls:
         tool_called = []
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            assert info.result_tools is not None
+            assert info.output_tools is not None
             return ModelResponse(
                 parts=[
                     ToolCallPart('regular_tool', {'x': 1}),
                     ToolCallPart('final_result', {'value': 'final'}),
                     ToolCallPart('another_tool', {'y': 2}),
                     ToolCallPart('unknown_tool', {'value': '???'}),
-                ]
+                ],
             )
 
-        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
+        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:  # pragma: no cover
@@ -1222,6 +1258,7 @@ class TestMultipleToolCalls:
                         ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
                     ],
+                    usage=Usage(requests=1, request_tokens=58, response_tokens=18, total_tokens=76),
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -1259,7 +1296,7 @@ class TestMultipleToolCalls:
     def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool(self):
         """Test that 'early' strategy does not apply to tool calls without final tool."""
         tool_called = []
-        agent = Agent(TestModel(), result_type=self.ResultType, end_strategy='early')
+        agent = Agent(TestModel(), output_type=self.OutputType, end_strategy='early')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:
@@ -1277,19 +1314,19 @@ class TestMultipleToolCalls:
         """Tests that if multiple final results are returned, but one fails validation, the other is used."""
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            assert info.result_tools is not None
+            assert info.output_tools is not None
             return ModelResponse(
                 parts=[
                     ToolCallPart('final_result', {'bad_value': 'first'}, tool_call_id='first'),
                     ToolCallPart('final_result', {'value': 'second'}, tool_call_id='second'),
-                ]
+                ],
             )
 
-        agent = Agent(FunctionModel(return_model), result_type=self.ResultType, end_strategy='early')
+        agent = Agent(FunctionModel(return_model), output_type=self.OutputType, end_strategy='early')
         result = agent.run_sync('test multiple final results')
 
         # Verify the result came from the second final tool
-        assert result.data.value == 'second'
+        assert result.output.value == 'second'
 
         # Verify we got appropriate tool returns
         assert result.new_messages()[-1].parts == snapshot(
@@ -1297,7 +1334,7 @@ class TestMultipleToolCalls:
                 ToolReturnPart(
                     tool_name='final_result',
                     tool_call_id='first',
-                    content='Result tool not used - result failed validation.',
+                    content='Output tool not used - result failed validation.',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ToolReturnPart(
@@ -1315,36 +1352,36 @@ async def test_model_settings_override() -> None:
         return ModelResponse(parts=[TextPart(to_json(info.model_settings).decode())])
 
     my_agent = Agent(FunctionModel(return_settings))
-    assert (await my_agent.run('Hello')).data == IsJson(None)
-    assert (await my_agent.run('Hello', model_settings={'temperature': 0.5})).data == IsJson({'temperature': 0.5})
+    assert (await my_agent.run('Hello')).output == IsJson(None)
+    assert (await my_agent.run('Hello', model_settings={'temperature': 0.5})).output == IsJson({'temperature': 0.5})
 
     my_agent = Agent(FunctionModel(return_settings), model_settings={'temperature': 0.1})
-    assert (await my_agent.run('Hello')).data == IsJson({'temperature': 0.1})
-    assert (await my_agent.run('Hello', model_settings={'temperature': 0.5})).data == IsJson({'temperature': 0.5})
+    assert (await my_agent.run('Hello')).output == IsJson({'temperature': 0.1})
+    assert (await my_agent.run('Hello', model_settings={'temperature': 0.5})).output == IsJson({'temperature': 0.5})
 
 
 async def test_empty_text_part():
     def return_empty_text(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
         return ModelResponse(
             parts=[
                 TextPart(''),
-                ToolCallPart(info.result_tools[0].name, args_json),
-            ]
+                ToolCallPart(info.output_tools[0].name, args_json),
+            ],
         )
 
-    agent = Agent(FunctionModel(return_empty_text), result_type=tuple[str, str])
+    agent = Agent(FunctionModel(return_empty_text), output_type=tuple[str, str])
 
     result = await agent.run('Hello')
-    assert result.data == ('foo', 'bar')
+    assert result.output == ('foo', 'bar')
 
 
 def test_heterogeneous_responses_non_streaming() -> None:
     """Indicates that tool calls are prioritized over text in heterogeneous responses."""
 
     def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.result_tools is not None
+        assert info.output_tools is not None
         parts: list[ModelResponsePart] = []
         if len(messages) == 1:
             parts = [TextPart(content='foo'), ToolCallPart('get_location', {'loc_name': 'London'})]
@@ -1359,10 +1396,10 @@ def test_heterogeneous_responses_non_streaming() -> None:
         if loc_name == 'London':
             return json.dumps({'lat': 51, 'lng': 0})
         else:
-            raise ModelRetry('Wrong location, please try again')
+            raise ModelRetry('Wrong location, please try again')  # pragma: no cover
 
     result = agent.run_sync('Hello')
-    assert result.data == 'final response'
+    assert result.output == 'final response'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -1371,6 +1408,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                     TextPart(content='foo'),
                     ToolCallPart(tool_name='get_location', args={'loc_name': 'London'}, tool_call_id=IsStr()),
                 ],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=6, total_tokens=57),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1386,6 +1424,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(requests=1, request_tokens=56, response_tokens=8, total_tokens=64),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1409,13 +1448,16 @@ def test_nested_capture_run_messages() -> None:
             assert messages2 == []
             assert messages1 is messages2
             result = agent.run_sync('Hello')
-            assert result.data == 'success (no tool calls)'
+            assert result.output == 'success (no tool calls)'
 
     assert messages1 == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='success (no tool calls)')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -1428,14 +1470,17 @@ def test_double_capture_run_messages() -> None:
     with capture_run_messages() as messages:
         assert messages == []
         result = agent.run_sync('Hello')
-        assert result.data == 'success (no tool calls)'
+        assert result.output == 'success (no tool calls)'
         result2 = agent.run_sync('Hello 2')
-        assert result2.data == 'success (no tool calls)'
+        assert result2.output == 'success (no tool calls)'
     assert messages == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='success (no tool calls)')], model_name='test', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -1471,6 +1516,7 @@ def test_dynamic_false_no_reevaluate():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=4, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -1498,6 +1544,7 @@ def test_dynamic_false_no_reevaluate():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=4, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -1508,6 +1555,7 @@ def test_dynamic_false_no_reevaluate():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                usage=Usage(requests=1, request_tokens=54, response_tokens=8, total_tokens=62),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -1549,6 +1597,7 @@ def test_dynamic_true_reevaluate_system_prompt():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=4, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -1577,6 +1626,7 @@ def test_dynamic_true_reevaluate_system_prompt():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=4, total_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -1587,6 +1637,7 @@ def test_dynamic_true_reevaluate_system_prompt():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
+                usage=Usage(requests=1, request_tokens=54, response_tokens=8, total_tokens=62),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -1597,22 +1648,23 @@ def test_dynamic_true_reevaluate_system_prompt():
 
 def test_capture_run_messages_tool_agent() -> None:
     agent_outer = Agent('test')
-    agent_inner = Agent(TestModel(custom_result_text='inner agent result'))
+    agent_inner = Agent(TestModel(custom_output_text='inner agent result'))
 
     @agent_outer.tool_plain
     async def foobar(x: str) -> str:
         result_ = await agent_inner.run(x)
-        return result_.data
+        return result_.output
 
     with capture_run_messages() as messages:
         result = agent_outer.run_sync('foobar')
 
-    assert result.data == snapshot('{"foobar":"inner agent result"}')
+    assert result.output == snapshot('{"foobar":"inner agent result"}')
     assert messages == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='foobar', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args={'x': 'a'}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=5, total_tokens=56),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1628,6 +1680,7 @@ def test_capture_run_messages_tool_agent() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='{"foobar":"inner agent result"}')],
+                usage=Usage(requests=1, request_tokens=54, response_tokens=11, total_tokens=65),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1640,43 +1693,46 @@ class Bar(BaseModel):
     d: str
 
 
-def test_custom_result_type_sync() -> None:
-    agent = Agent('test', result_type=Foo)
+def test_custom_output_type_sync() -> None:
+    agent = Agent('test', output_type=Foo)
 
-    assert agent.run_sync('Hello').data == snapshot(Foo(a=0, b='a'))
-    assert agent.run_sync('Hello', result_type=Bar).data == snapshot(Bar(c=0, d='a'))
-    assert agent.run_sync('Hello', result_type=str).data == snapshot('success (no tool calls)')
-    assert agent.run_sync('Hello', result_type=int).data == snapshot(0)
+    assert agent.run_sync('Hello').output == snapshot(Foo(a=0, b='a'))
+    assert agent.run_sync('Hello', output_type=Bar).output == snapshot(Bar(c=0, d='a'))
+    assert agent.run_sync('Hello', output_type=str).output == snapshot('success (no tool calls)')
+    assert agent.run_sync('Hello', output_type=int).output == snapshot(0)
 
 
-async def test_custom_result_type_async() -> None:
+async def test_custom_output_type_async() -> None:
     agent = Agent('test')
 
     result = await agent.run('Hello')
-    assert result.data == snapshot('success (no tool calls)')
+    assert result.output == snapshot('success (no tool calls)')
 
-    result = await agent.run('Hello', result_type=Foo)
-    assert result.data == snapshot(Foo(a=0, b='a'))
-    result = await agent.run('Hello', result_type=int)
-    assert result.data == snapshot(0)
+    result = await agent.run('Hello', output_type=Foo)
+    assert result.output == snapshot(Foo(a=0, b='a'))
+    result = await agent.run('Hello', output_type=int)
+    assert result.output == snapshot(0)
 
 
-def test_custom_result_type_invalid() -> None:
+def test_custom_output_type_invalid() -> None:
     agent = Agent('test')
 
-    @agent.result_validator
-    def validate_result(ctx: RunContext[None], r: Any) -> Any:  # pragma: no cover
-        return r
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Any) -> Any:  # pragma: no cover
+        return o
 
-    with pytest.raises(UserError, match='Cannot set a custom run `result_type` when the agent has result validators'):
-        agent.run_sync('Hello', result_type=int)
+    with pytest.raises(UserError, match='Cannot set a custom run `output_type` when the agent has output validators'):
+        agent.run_sync('Hello', output_type=int)
 
 
 def test_binary_content_all_messages_json():
     agent = Agent('test')
 
-    result = agent.run_sync(['Hello', BinaryContent(data=b'Hello', media_type='text/plain')])
-    assert json.loads(result.all_messages_json()) == snapshot(
+    content = BinaryContent(data=b'Hello', media_type='text/plain')
+    result = agent.run_sync(['Hello', content])
+
+    serialized = result.all_messages_json()
+    assert json.loads(serialized) == snapshot(
         [
             {
                 'parts': [
@@ -1686,13 +1742,236 @@ def test_binary_content_all_messages_json():
                         'part_kind': 'user-prompt',
                     }
                 ],
+                'instructions': None,
                 'kind': 'request',
             },
             {
                 'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text'}],
+                'usage': {
+                    'requests': 1,
+                    'request_tokens': 56,
+                    'response_tokens': 4,
+                    'total_tokens': 60,
+                    'details': None,
+                },
                 'model_name': 'test',
+                'vendor_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
+                'vendor_details': None,
             },
         ]
+    )
+
+    # We also need to be able to round trip the serialized messages.
+    messages = ModelMessagesTypeAdapter.validate_json(serialized)
+    assert messages == result.all_messages()
+
+
+def test_instructions_raise_error_when_system_prompt_is_set():
+    agent = Agent('test', instructions='An instructions!')
+
+    @agent.system_prompt
+    def system_prompt() -> str:
+        return 'A system prompt!'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            instructions='An instructions!',
+        )
+    )
+
+
+def test_instructions_raise_error_when_instructions_is_set():
+    agent = Agent('test', system_prompt='A system prompt!')
+
+    @agent.instructions
+    def instructions() -> str:
+        return 'An instructions!'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            instructions='An instructions!',
+        )
+    )
+
+
+def test_instructions_both_instructions_and_system_prompt_are_set():
+    agent = Agent('test', instructions='An instructions!', system_prompt='A system prompt!')
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='A system prompt!', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            instructions='An instructions!',
+        )
+    )
+
+
+def test_instructions_decorator_without_parenthesis():
+    agent = Agent('test')
+
+    @agent.instructions
+    def instructions() -> str:
+        return 'You are a helpful assistant.'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+            instructions='You are a helpful assistant.',
+        )
+    )
+
+
+def test_instructions_decorator_with_parenthesis():
+    agent = Agent('test')
+
+    @agent.instructions()
+    def instructions_2() -> str:
+        return 'You are a helpful assistant.'
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+            instructions='You are a helpful assistant.',
+        )
+    )
+
+
+def test_instructions_with_message_history():
+    agent = Agent('test', instructions='You are a helpful assistant.')
+    result = agent.run_sync(
+        'Hello',
+        message_history=[ModelRequest(parts=[SystemPromptPart(content='You are a helpful assistant')])],
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='You are a helpful assistant', timestamp=IsNow(tz=timezone.utc))]
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=Usage(requests=1, request_tokens=56, response_tokens=4, total_tokens=60),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+
+
+def test_instructions_parameter_with_sequence():
+    def instructions() -> str:
+        return 'You are a potato.'
+
+    agent = Agent('test', instructions=('You are a helpful assistant.', instructions))
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+            instructions="""\
+You are a helpful assistant.
+You are a potato.\
+""",
+        )
+    )
+
+
+def test_empty_final_response():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('foo'), ToolCallPart('my_tool', {'x': 1})])
+        elif len(messages) == 3:
+            return ModelResponse(parts=[TextPart('bar'), ToolCallPart('my_tool', {'x': 2})])
+        else:
+            return ModelResponse(parts=[])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        return x * 2
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'bar'
+
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='foo'),
+                    ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id=IsStr()),
+                ],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=5, total_tokens=56),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='bar'),
+                    ToolCallPart(tool_name='my_tool', args={'x': 2}, tool_call_id=IsStr()),
+                ],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=10, total_tokens=62),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool', content=4, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=10, total_tokens=63),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+
+
+def test_agent_run_result_serialization() -> None:
+    agent = Agent('test', output_type=Foo)
+    result = agent.run_sync('Hello')
+
+    # Check that dump_json doesn't raise an error
+    adapter = TypeAdapter(AgentRunResult[Foo])
+    serialized_data = adapter.dump_json(result)
+
+    # Check that we can load the data back
+    deserialized_result = adapter.validate_json(serialized_data)
+    assert deserialized_result == result
+
+
+def test_agent_repr() -> None:
+    agent = Agent()
+    assert repr(agent) == snapshot(
+        "Agent(model=None, name=None, end_strategy='early', model_settings=None, output_type=<class 'str'>, instrument=None)"
     )

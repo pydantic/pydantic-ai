@@ -21,9 +21,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import Usage
 
-from ..conftest import IsNow, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsNow, raise_if_exception, try_import
 
 with try_import() as imports_successful:
     import cohere
@@ -65,9 +66,7 @@ class MockAsyncClientV2:
     def create_mock(cls, completions: MockChatResponse | Sequence[MockChatResponse]) -> AsyncClientV2:
         return cast(AsyncClientV2, cls(completions=completions))
 
-    async def chat(  # pragma: no cover
-        self, *_args: Any, **_kwargs: Any
-    ) -> ChatResponse:
+    async def chat(self, *_args: Any, **_kwargs: Any) -> ChatResponse:
         assert self.completions is not None
         if isinstance(self.completions, Sequence):
             raise_if_exception(self.completions[self.index])
@@ -101,24 +100,30 @@ async def test_request_simple_success(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('hello')
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(Usage(requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(Usage(requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='world')], model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='world')],
+                usage=Usage(requests=1),
+                model_name='command-r7b-12-2024',
+                timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
-                parts=[TextPart(content='world')], model_name='command-r7b-12-2024', timestamp=IsNow(tz=timezone.utc)
+                parts=[TextPart(content='world')],
+                usage=Usage(requests=1),
+                model_name='command-r7b-12-2024',
+                timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
@@ -140,7 +145,7 @@ async def test_request_simple_usage(allow_model_requests: None):
     agent = Agent(m)
 
     result = await agent.run('Hello')
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage() == snapshot(
         Usage(
             requests=1,
@@ -171,10 +176,10 @@ async def test_request_structured_response(allow_model_requests: None):
     )
     mock_client = MockAsyncClientV2.create_mock(c)
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
-    agent = Agent(m, result_type=list[int])
+    agent = Agent(m, output_type=list[int])
 
     result = await agent.run('Hello')
-    assert result.data == [1, 2, 123]
+    assert result.output == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -186,6 +191,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                usage=Usage(requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -255,7 +261,7 @@ async def test_request_tool_call(allow_model_requests: None):
             raise ModelRetry('Wrong location, please try again')
 
     result = await agent.run('Hello')
-    assert result.data == 'final response'
+    assert result.output == 'final response'
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -272,6 +278,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(requests=1, total_tokens=0, details={}),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -293,6 +300,13 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=5,
+                    response_tokens=3,
+                    total_tokens=8,
+                    details={'input_tokens': 4, 'output_tokens': 2},
+                ),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -308,6 +322,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -360,4 +375,40 @@ async def test_request_simple_success_with_vcr(allow_model_requests: None, co_ap
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
     agent = Agent(m)
     result = await agent.run('hello')
-    assert result.data == snapshot('Hello! How can I assist you today?')
+    assert result.output == snapshot('Hello! How can I assist you today?')
+
+
+@pytest.mark.vcr()
+async def test_cohere_model_instructions(allow_model_requests: None, co_api_key: str):
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+
+    def simple_instructions(ctx: RunContext):
+        return 'You are a helpful assistant.'
+
+    agent = Agent(m, instructions=simple_instructions)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="The capital of France is Paris. It is the country's largest city and serves as the economic, cultural, and political center of France. Paris is known for its rich history, iconic landmarks such as the Eiffel Tower and the Louvre Museum, and its significant influence on fashion, cuisine, and the arts."
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=542,
+                    response_tokens=63,
+                    total_tokens=605,
+                    details={'input_tokens': 13, 'output_tokens': 61},
+                ),
+                model_name='command-r7b-12-2024',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )

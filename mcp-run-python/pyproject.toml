@@ -17,4 +17,4 @@ dev = [
 ]
 
 [tool.uv.sources]
-pydantic-graph = { workspace = true }
+mcp-run-python = { workspace = true }

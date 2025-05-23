@@ -1,0 +1,123 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '472'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: Give me the name and age of Brazil, Argentina, and Chile.
+        role: user
+      instructions: ''
+      model: gpt-4o
+      stream: false
+      tool_choice: required
+      tools:
+      - description: The final response which ends this conversation
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            age:
+              type: integer
+            name:
+              type: string
+          required:
+          - name
+          - age
+          title: MyOutput
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1656'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '853'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1743090725
+      error: null
+      id: resp_67e5742504ac819191829f922689e4f0009eb9aa6872824c
+      incomplete_details: null
+      instructions: ''
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - arguments: '{"name":"Brazil","age":2023}'
+        call_id: call_Ve7O5nYyD0JkuZuqOwBVkNe0
+        id: fc_67e57425a6b48191b74a3c62b1df1a19009eb9aa6872824c
+        name: final_result
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        generate_summary: null
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: required
+      tools:
+      - description: The final response which ends this conversation
+        name: final_result
+        parameters:
+          additionalProperties: false
+          properties:
+            age:
+              type: integer
+            name:
+              type: string
+          required:
+          - name
+          - age
+          title: MyOutput
+          type: object
+        strict: true
+        type: function
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 286
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 11
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 297
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

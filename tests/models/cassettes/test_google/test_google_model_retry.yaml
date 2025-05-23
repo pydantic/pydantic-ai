@@ -1,0 +1,172 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '473'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      generationConfig:
+        temperature: 0.0
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Get the capital of a country.
+          name: get_capital
+          parameters:
+            properties:
+              country:
+                description: The country name.
+                type: STRING
+            required:
+            - country
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-03-25:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '683'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2475
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                country: France
+              name: get_capital
+            thought: true
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: models/gemini-2.5-pro-preview-05-06
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 57
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 57
+        thoughtsTokenCount: 101
+        totalTokenCount: 173
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '845'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              country: France
+            id: pyd_ai_8d96b47e83ef4bb59f9700c358038c90
+            name: get_capital
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_8d96b47e83ef4bb59f9700c358038c90
+            name: get_capital
+            response:
+              call_error: |-
+                The country is not supported.
+
+                Fix the errors and try again.
+        role: user
+      generationConfig:
+        temperature: 0.0
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Get the capital of a country.
+          name: get_capital
+          parameters:
+            properties:
+              country:
+                description: The country name.
+                type: STRING
+            required:
+            - country
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-03-25:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '576'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1017
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: I am sorry, I cannot fulfill this request. The country you provided is not supported.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: models/gemini-2.5-pro-preview-05-06
+      usageMetadata:
+        candidatesTokenCount: 18
+        promptTokenCount: 104
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 104
+        totalTokenCount: 122
+    status:
+      code: 200
+      message: OK
+version: 1

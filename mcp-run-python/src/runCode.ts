@@ -1,6 +1,6 @@
 /* eslint @typescript-eslint/no-explicit-any: off */
 import { loadPyodide } from 'pyodide'
-import { preparePythonCode } from './prepareEnvCode.js'
+import { preparePythonCode } from './prepareEnvCode.ts'
 import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js'
 
 export interface CodeFile {
@@ -15,6 +15,7 @@ export async function runCode(
 ): Promise<RunSuccess | RunError> {
   // remove once https://github.com/pyodide/pyodide/pull/5514 is released
   const realConsoleLog = console.log
+  // deno-lint-ignore no-explicit-any
   console.log = (...args: any[]) => log('debug', args.join(' '))
 
   const output: string[] = []
@@ -111,7 +112,9 @@ interface RunError {
 export function asXml(runResult: RunSuccess | RunError): string {
   const xml = [`<status>${runResult.status}</status>`]
   if (runResult.dependencies?.length) {
-    xml.push(`<dependencies>${JSON.stringify(runResult.dependencies)}</dependencies>`)
+    xml.push(
+      `<dependencies>${JSON.stringify(runResult.dependencies)}</dependencies>`,
+    )
   }
   if (runResult.output.length) {
     xml.push('<output>')
@@ -141,11 +144,15 @@ function escapeClosing(closingTag: string): (str: string) => string {
   return (str) => str.replace(regex, onMatch)
 }
 
+// deno-lint-ignore no-explicit-any
 function formatError(err: any): string {
   let errStr = err.toString()
   errStr = errStr.replace(/^PythonError: +/, '')
   // remove frames from inside pyodide
-  errStr = errStr.replace(/ {2}File "\/lib\/python\d+\.zip\/_pyodide\/.*\n {4}.*\n(?: {4,}\^+\n)?/g, '')
+  errStr = errStr.replace(
+    / {2}File "\/lib\/python\d+\.zip\/_pyodide\/.*\n {4}.*\n(?: {4,}\^+\n)?/g,
+    '',
+  )
   return errStr
 }
 
@@ -159,5 +166,6 @@ interface PrepareError {
 }
 interface PreparePyEnv {
   prepare_env: (files: CodeFile[]) => Promise<PrepareSuccess | PrepareError>
+  // deno-lint-ignore no-explicit-any
   dump_json: (value: any) => string | null
 }

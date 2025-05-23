@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 if TYPE_CHECKING:
-    from yaml import Dumper, Loader
+    from yaml import Dumper
 else:
     try:
-        from yaml import CDumper as Dumper, CLoader as Loader
-    except ImportError:
-        from yaml import Dumper, Loader
+        from yaml import CDumper as Dumper
+    except ImportError:  # pragma: no cover
+        from yaml import Dumper
 
 FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
 FILTERED_HEADERS = {'authorization', 'date', 'request-id', 'server', 'user-agent', 'via', 'set-cookie', 'api-key'}
@@ -35,7 +35,7 @@ LiteralDumper.add_representer(str, str_presenter)
 
 
 def deserialize(cassette_string: str):
-    cassette_dict = yaml.load(cassette_string, Loader=Loader)
+    cassette_dict = yaml.safe_load(cassette_string)
     for interaction in cassette_dict['interactions']:
         for kind, data in interaction.items():
             parsed_body = data.pop('parsed_body', None)
@@ -45,7 +45,7 @@ def deserialize(cassette_string: str):
     return cassette_dict
 
 
-def serialize(cassette_dict: Any):
+def serialize(cassette_dict: Any):  # pragma: lax no cover
     for interaction in cassette_dict['interactions']:
         for _kind, data in interaction.items():
             headers: dict[str, list[str]] = data.get('headers', {})

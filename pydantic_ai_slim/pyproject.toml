@@ -14,7 +14,12 @@ bump = true
 name = "pydantic-ai-slim"
 dynamic = ["version", "dependencies", "optional-dependencies"]
 description = "Agent Framework / shim to use Pydantic with LLMs, slim package"
-authors = [{ name = "Samuel Colvin", email = "samuel@pydantic.dev" }]
+authors = [
+  { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+  { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+  { name = "David Montague", email = "david@pydantic.dev" },
+  { name = "Alex Hall", email = "alex@pydantic.dev" },
+]
 license = "MIT"
 readme = "README.md"
 classifiers = [
@@ -56,26 +61,30 @@ dependencies = [
 # WARNING if you add optional groups, please update docs/install.md
 logfire = ["logfire>=3.11.0"]
 # Models
-openai = ["openai>=1.67.0"]
+openai = ["openai>=1.75.0"]
 cohere = ["cohere>=5.13.11; platform_system != 'Emscripten'"]
-vertexai = ["google-auth>=2.36.0", "requests>=2.32.3"]
+vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
+google = ["google-genai>=1.15.0"]
 anthropic = ["anthropic>=0.49.0"]
 groq = ["groq>=0.15.0"]
 mistral = ["mistralai>=1.2.5"]
-bedrock = ["boto3>=1.34.116"]
+bedrock = ["boto3>=1.35.74"]
 # Tools
 duckduckgo = ["duckduckgo-search>=7.0.0"]
 tavily = ["tavily-python>=0.5.0"]
 # CLI
 cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0"]
 # MCP
-mcp = ["mcp>=1.4.1; python_version >= '3.10'"]
+mcp = ["mcp>=1.6.0; python_version >= '3.10'"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
+# A2A
+a2a = ["fasta2a=={{ version }}"]
 
 [dependency-groups]
 dev = [
     "anyio>=4.5.0",
+    "asgi-lifespan>=2.1.0",
     "devtools>=0.12.2",
     "coverage[toml]>=7.6.2",
     "dirty-equals>=0.9.0",
@@ -87,13 +96,15 @@ dev = [
     "pytest-recording>=0.13.2",
     "diff-cover>=9.2.0",
     "boto3-stubs[bedrock-runtime]",
+    "strict-no-cover>=0.1.1",
+    "pytest-xdist>=3.6.1",
 ]
 
 [tool.hatch.metadata]
 allow-direct-references = true
 
 [project.scripts]
-pai = "pydantic_ai._cli:app"
+pai = "pydantic_ai._cli:cli_exit"  # TODO remove this when clai has been out for a while
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai"]

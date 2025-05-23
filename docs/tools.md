@@ -15,6 +15,8 @@ There are a number of ways to register tools with an agent:
 * via the [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
 * via the [`tools`][pydantic_ai.Agent.__init__] keyword argument to `Agent` which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
 
+## Registering Function Tools via Decorator
+
 `@agent.tool` is considered the default decorator since in the majority of cases tools will need access to the agent context.
 
 Here's an example using both:
@@ -48,7 +50,7 @@ def get_player_name(ctx: RunContext[str]) -> str:
 
 
 dice_result = agent.run_sync('My guess is 4', deps='Anne')  # (5)!
-print(dice_result.data)
+print(dice_result.output)
 #> Congratulations Anne, you guessed correctly! You're a winner!
 ```
 
@@ -73,29 +75,22 @@ print(dice_result.all_messages())
             SystemPromptPart(
                 content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
                 timestamp=datetime.datetime(...),
-                dynamic_ref=None,
-                part_kind='system-prompt',
             ),
             UserPromptPart(
                 content='My guess is 4',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
             ),
-        ],
-        kind='request',
+        ]
     ),
     ModelResponse(
         parts=[
             ToolCallPart(
-                tool_name='roll_die',
-                args={},
-                tool_call_id='pyd_ai_tool_call_id',
-                part_kind='tool-call',
+                tool_name='roll_die', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
+        usage=Usage(requests=1, request_tokens=90, response_tokens=2, total_tokens=92),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
-        kind='response',
     ),
     ModelRequest(
         parts=[
@@ -104,23 +99,18 @@ print(dice_result.all_messages())
                 content='4',
                 tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
-                part_kind='tool-return',
             )
-        ],
-        kind='request',
+        ]
     ),
     ModelResponse(
         parts=[
             ToolCallPart(
-                tool_name='get_player_name',
-                args={},
-                tool_call_id='pyd_ai_tool_call_id',
-                part_kind='tool-call',
+                tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
+        usage=Usage(requests=1, request_tokens=91, response_tokens=4, total_tokens=95),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
-        kind='response',
     ),
     ModelRequest(
         parts=[
@@ -129,21 +119,20 @@ print(dice_result.all_messages())
                 content='Anne',
                 tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
-                part_kind='tool-return',
             )
-        ],
-        kind='request',
+        ]
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content="Congratulations Anne, you guessed correctly! You're a winner!",
-                part_kind='text',
+                content="Congratulations Anne, you guessed correctly! You're a winner!"
             )
         ],
+        usage=Usage(
+            requests=1, request_tokens=92, response_tokens=12, total_tokens=104
+        ),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
-        kind='response',
     ),
 ]
 """
@@ -185,7 +174,7 @@ sequenceDiagram
     Note over Agent: Game session complete
 ```
 
-## Registering Function Tools via kwarg
+## Registering Function Tools via Agent Argument
 
 As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to reuse tools, and can also give more fine-grained control over the tools.
 
@@ -230,9 +219,9 @@ agent_b = Agent(
 dice_result = {}
 dice_result['a'] = agent_a.run_sync('My guess is 6', deps='Yashar')
 dice_result['b'] = agent_b.run_sync('My guess is 4', deps='Anne')
-print(dice_result['a'].data)
+print(dice_result['a'].output)
 #> Tough luck, Yashar, you rolled a 4. Better luck next time.
-print(dice_result['b'].data)
+print(dice_result['b'].output)
 #> Congratulations Anne, you guessed correctly! You're a winner!
 ```
 
@@ -241,9 +230,70 @@ print(dice_result['b'].data)
 
 _(This example is complete, it can be run "as is")_
 
-## Function Tools vs. Structured Results
+## Function Tool Output
 
-As the name suggests, function tools use the model's "tools" or "functions" API to let the model know what is available to call. Tools or functions are also used to define the schema(s) for structured responses, thus a model might have access to many tools, some of which call function tools while others end the run and return a result.
+Tools can return anything that Pydantic can serialize to JSON, as well as audio, video, image or document content depending on the types of [multi-modal input](input.md) the model supports:
+
+```python {title="function_tool_output.py"}
+from datetime import datetime
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, DocumentUrl, ImageUrl
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+
+class User(BaseModel):
+    name: str
+    age: int
+
+
+agent = Agent(model=OpenAIResponsesModel('gpt-4o'))
+
+
+@agent.tool_plain
+def get_current_time() -> datetime:
+    return datetime.now()
+
+
+@agent.tool_plain
+def get_user() -> User:
+    return User(name='John', age=30)
+
+
+@agent.tool_plain
+def get_company_logo() -> ImageUrl:
+    return ImageUrl(url='https://iili.io/3Hs4FMg.png')
+
+
+@agent.tool_plain
+def get_document() -> DocumentUrl:
+    return DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
+
+
+result = agent.run_sync('What time is it?')
+print(result.output)
+#> The current time is 10:45 PM on April 17, 2025.
+
+result = agent.run_sync('What is the user name?')
+print(result.output)
+#> The user's name is John.
+
+result = agent.run_sync('What is the company name in the logo?')
+print(result.output)
+#> The company name in the logo is "Pydantic."
+
+result = agent.run_sync('What is the main content of the document?')
+print(result.output)
+#> The document contains just the text "Dummy PDF file."
+```
+_(This example is complete, it can be run "as is")_
+
+Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
+
+## Function Tools vs. Structured Outputs
+
+As the name suggests, function tools use the model's "tools" or "functions" API to let the model know what is available to call. Tools or functions are also used to define the schema(s) for structured responses, thus a model might have access to many tools, some of which call function tools while others end the run and produce a final output.
 
 ## Function tools and schema
 
@@ -304,8 +354,6 @@ agent.run_sync('hello', model=FunctionModel(print_schema))
 
 _(This example is complete, it can be run "as is")_
 
-The return type of tool can be anything which Pydantic can serialize to JSON as some models (e.g. Gemini) support semi-structured return values, some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
-
 If a tool has a single parameter that can be represented as an object in JSON schema (e.g. dataclass, TypedDict, pydantic model), the schema for the tool is simplified to be just that object.
 
 Here's an example where we use [`TestModel.last_model_request_parameters`][pydantic_ai.models.test.TestModel.last_model_request_parameters] to inspect the tool schema that would be passed to the model.
@@ -334,7 +382,7 @@ def foobar(f: Foobar) -> str:
 
 test_model = TestModel()
 result = agent.run_sync('hello', model=test_model)
-print(result.data)
+print(result.output)
 #> {"foobar":"x=0 y='a' z=3.14"}
 print(test_model.last_model_request_parameters.function_tools)
 """
@@ -352,7 +400,6 @@ print(test_model.last_model_request_parameters.function_tools)
             'title': 'Foobar',
             'type': 'object',
         },
-        outer_typed_dict_key=None,
     )
 ]
 """
@@ -399,10 +446,10 @@ def hitchhiker(ctx: RunContext[int], answer: str) -> str:
 
 
 result = agent.run_sync('testing...', deps=41)
-print(result.data)
+print(result.output)
 #> success (no tool calls)
 result = agent.run_sync('testing...', deps=42)
-print(result.data)
+print(result.output)
 #> {"hitchhiker":"42 a"}
 ```
 
@@ -439,7 +486,7 @@ test_model = TestModel()
 agent = Agent(test_model, tools=[greet_tool], deps_type=Literal['human', 'machine'])
 
 result = agent.run_sync('testing...', deps='human')
-print(result.data)
+print(result.output)
 #> {"greet":"hello a"}
 print(test_model.last_model_request_parameters.function_tools)
 """
@@ -455,10 +502,123 @@ print(test_model.last_model_request_parameters.function_tools)
             'required': ['name'],
             'type': 'object',
         },
-        outer_typed_dict_key=None,
     )
 ]
 """
 ```
 
 _(This example is complete, it can be run "as is")_
+
+## Agent-wide Dynamic Tool Preparation {#prepare-tools}
+
+In addition to per-tool `prepare` methods, you can also define an agent-wide `prepare_tools` function. This function is called at each step of a run and allows you to filter or modify the list of all tool definitions available to the agent for that step. This is especially useful if you want to enable or disable multiple tools at once, or apply global logic based on the current context.
+
+The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns a new list of tool definitions (or `None` to disable all tools for that step).
+
+!!! note
+    The list of tool definitions passed to `prepare_tools` includes both regular tools and tools from any MCP servers attached to the agent.
+
+Here's an example that makes all tools strict if the model is an OpenAI model:
+
+```python {title="agent_prepare_tools_customize.py" noqa="I001"}
+from dataclasses import replace
+from typing import Union
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.models.test import TestModel
+
+
+async def turn_on_strict_if_openai(
+    ctx: RunContext[None], tool_defs: list[ToolDefinition]
+) -> Union[list[ToolDefinition], None]:
+    if ctx.model.system == 'openai':
+        return [replace(tool_def, strict=True) for tool_def in tool_defs]
+    return tool_defs
+
+
+test_model = TestModel()
+agent = Agent(test_model, prepare_tools=turn_on_strict_if_openai)
+
+
+@agent.tool_plain
+def echo(message: str) -> str:
+    return message
+
+
+agent.run_sync('testing...')
+assert test_model.last_model_request_parameters.function_tools[0].strict is None
+
+# Set the system attribute of the test_model to 'openai'
+test_model._system = 'openai'
+
+agent.run_sync('testing with openai...')
+assert test_model.last_model_request_parameters.function_tools[0].strict
+```
+
+_(This example is complete, it can be run "as is")_
+
+Here's another example that conditionally filters out the tools by name if the dependency (`ctx.deps`) is `True`:
+
+```python {title="agent_prepare_tools_filter_out.py" noqa="I001"}
+from typing import Union
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.tools import Tool, ToolDefinition
+
+
+def launch_potato(target: str) -> str:
+    return f'Potato launched at {target}!'
+
+
+async def filter_out_tools_by_name(
+    ctx: RunContext[bool], tool_defs: list[ToolDefinition]
+) -> Union[list[ToolDefinition], None]:
+    if ctx.deps:
+        return [tool_def for tool_def in tool_defs if tool_def.name != 'launch_potato']
+    return tool_defs
+
+
+agent = Agent(
+    'test',
+    tools=[Tool(launch_potato)],
+    prepare_tools=filter_out_tools_by_name,
+    deps_type=bool,
+)
+
+result = agent.run_sync('testing...', deps=False)
+print(result.output)
+#> {"launch_potato":"Potato launched at a!"}
+result = agent.run_sync('testing...', deps=True)
+print(result.output)
+#> success (no tool calls)
+```
+
+_(This example is complete, it can be run "as is")_
+
+You can use `prepare_tools` to:
+
+- Dynamically enable or disable tools based on the current model, dependencies, or other context
+- Modify tool definitions globally (e.g., set all tools to strict mode, change descriptions, etc.)
+
+If both per-tool `prepare` and agent-wide `prepare_tools` are used, the per-tool `prepare` is applied first to each tool, and then `prepare_tools` is called with the resulting list of tool definitions.
+
+
+## Tool Execution and Retries {#tool-retries}
+
+When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic. If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
+
+Beyond automatic validation errors, the tool's own internal logic can also explicitly request a retry by raising the [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception. This is useful for situations where the parameters were technically valid, but an issue occurred during execution (like a transient network error, or the tool determining the initial attempt needs modification).
+
+```python
+from pydantic_ai import ModelRetry
+
+
+def my_flaky_tool(query: str) -> str:
+    if query == 'bad':
+        # Tell the LLM the query was bad and it should try again
+        raise ModelRetry("The query 'bad' is not allowed. Please provide a different query.")
+    # ... process query ...
+    return 'Success!'
+```
+Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the `retries` setting configured on the `Tool` or `Agent`.

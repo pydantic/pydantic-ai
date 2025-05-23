@@ -22,7 +22,7 @@ class TimeRangeDeps:
 
 time_range_agent = Agent[TimeRangeDeps, TimeRangeResponse](
     'gpt-4o',
-    result_type=TimeRangeResponse,  # type: ignore  # we can't yet annotate something as receiving a TypeForm
+    output_type=TimeRangeResponse,  # type: ignore  # we can't yet annotate something as receiving a TypeForm
     deps_type=TimeRangeDeps,
     system_prompt="Convert the user's request into a structured time range.",
     retries=1,
@@ -45,4 +45,4 @@ def get_current_time(ctx: RunContext[TimeRangeDeps]) -> str:
 async def infer_time_range(inputs: TimeRangeInputs) -> TimeRangeResponse:
     """Infer a time range from a user prompt."""
     deps = TimeRangeDeps(now=inputs['now'])
-    return (await time_range_agent.run(inputs['prompt'], deps=deps)).data
+    return (await time_range_agent.run(inputs['prompt'], deps=deps)).output

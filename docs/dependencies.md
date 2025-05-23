@@ -1,6 +1,6 @@
 # Dependencies
 
-PydanticAI uses a dependency injection system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [result validators](results.md#result-validators-functions).
+PydanticAI uses a dependency injection system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [output validators](output.md#output-validator-functions).
 
 Matching PydanticAI's design philosophy, our dependency system tries to use existing best practice in Python development rather than inventing esoteric "magic", this should make dependencies type-safe, understandable easier to test and ultimately easier to deploy in production.
 
@@ -39,7 +39,7 @@ async def main():
             'Tell me a joke.',
             deps=deps,  # (3)!
         )
-        print(result.data)
+        print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
@@ -52,7 +52,6 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 ## Accessing Dependencies
 
 Dependencies are accessed through the [`RunContext`][pydantic_ai.tools.RunContext] type, this should be the first parameter of system prompt functions etc.
-
 
 ```python {title="system_prompt_dependencies.py" hl_lines="20-27"}
 from dataclasses import dataclass
@@ -88,7 +87,7 @@ async def main():
     async with httpx.AsyncClient() as client:
         deps = MyDeps('foobar', client)
         result = await agent.run('Tell me a joke.', deps=deps)
-        print(result.data)
+        print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
@@ -101,7 +100,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ### Asynchronous vs. Synchronous dependencies
 
-[System prompt functions](agents.md#system-prompts), [function tools](tools.md) and [result validators](results.md#result-validators-functions) are all run in the async context of an agent run.
+[System prompt functions](agents.md#system-prompts), [function tools](tools.md) and [output validators](output.md#output-validator-functions) are all run in the async context of an agent run.
 
 If these functions are not coroutines (e.g. `async def`) they are called with
 [`run_in_executor`][asyncio.loop.run_in_executor] in a thread pool, it's therefore marginally preferable
@@ -147,7 +146,7 @@ async def main():
         'Tell me a joke.',
         deps=deps,
     )
-    print(result.data)
+    print(result.output)
     #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
@@ -158,7 +157,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ## Full Example
 
-As well as system prompts, dependencies can be used in [tools](tools.md) and [result validators](results.md#result-validators-functions).
+As well as system prompts, dependencies can be used in [tools](tools.md) and [output validators](output.md#output-validator-functions).
 
 ```python {title="full_example.py" hl_lines="27-35 38-48"}
 from dataclasses import dataclass
@@ -198,29 +197,29 @@ async def get_joke_material(ctx: RunContext[MyDeps], subject: str) -> str:
     return response.text
 
 
-@agent.result_validator  # (2)!
-async def validate_result(ctx: RunContext[MyDeps], final_response: str) -> str:
+@agent.output_validator  # (2)!
+async def validate_output(ctx: RunContext[MyDeps], output: str) -> str:
     response = await ctx.deps.http_client.post(
         'https://example.com#validate',
         headers={'Authorization': f'Bearer {ctx.deps.api_key}'},
-        params={'query': final_response},
+        params={'query': output},
     )
     if response.status_code == 400:
         raise ModelRetry(f'invalid response: {response.text}')
     response.raise_for_status()
-    return final_response
+    return output
 
 
 async def main():
     async with httpx.AsyncClient() as client:
         deps = MyDeps('foobar', client)
         result = await agent.run('Tell me a joke.', deps=deps)
-        print(result.data)
+        print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
 1. To pass `RunContext` to a tool, use the [`tool`][pydantic_ai.Agent.tool] decorator.
-2. `RunContext` may optionally be passed to a [`result_validator`][pydantic_ai.Agent.result_validator] function as the first argument.
+2. `RunContext` may optionally be passed to a [`output_validator`][pydantic_ai.Agent.output_validator] function as the first argument.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -267,7 +266,7 @@ async def application_code(prompt: str) -> str:  # (3)!
     async with httpx.AsyncClient() as client:
         app_deps = MyDeps('foobar', client)
         result = await joke_agent.run(prompt, deps=app_deps)  # (4)!
-    return result.data
+    return result.output
 ```
 
 1. Define a method on the dependency to make the system prompt easier to customise.

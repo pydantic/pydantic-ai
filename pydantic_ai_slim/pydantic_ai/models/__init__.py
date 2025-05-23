@@ -12,20 +12,16 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cache
-from typing import TYPE_CHECKING
 
 import httpx
 from typing_extensions import Literal, TypeAliasType
 
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
-from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
+from ..messages import ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent
 from ..settings import ModelSettings
+from ..tools import ToolDefinition
 from ..usage import Usage
-
-if TYPE_CHECKING:
-    from ..tools import ToolDefinition
-
 
 KnownModelName = TypeAliasType(
     'KnownModelName',
@@ -106,6 +102,9 @@ KnownModelName = TypeAliasType(
         'google-gla:gemini-2.0-flash',
         'google-gla:gemini-2.0-flash-lite-preview-02-05',
         'google-gla:gemini-2.0-pro-exp-02-05',
+        'google-gla:gemini-2.5-flash-preview-04-17',
+        'google-gla:gemini-2.5-pro-exp-03-25',
+        'google-gla:gemini-2.5-pro-preview-03-25',
         'google-vertex:gemini-1.0-pro',
         'google-vertex:gemini-1.5-flash',
         'google-vertex:gemini-1.5-flash-8b',
@@ -116,6 +115,9 @@ KnownModelName = TypeAliasType(
         'google-vertex:gemini-2.0-flash',
         'google-vertex:gemini-2.0-flash-lite-preview-02-05',
         'google-vertex:gemini-2.0-pro-exp-02-05',
+        'google-vertex:gemini-2.5-flash-preview-04-17',
+        'google-vertex:gemini-2.5-pro-exp-03-25',
+        'google-vertex:gemini-2.5-pro-preview-03-25',
         'gpt-3.5-turbo',
         'gpt-3.5-turbo-0125',
         'gpt-3.5-turbo-0301',
@@ -135,6 +137,12 @@ KnownModelName = TypeAliasType(
         'gpt-4-turbo-2024-04-09',
         'gpt-4-turbo-preview',
         'gpt-4-vision-preview',
+        'gpt-4.1',
+        'gpt-4.1-2025-04-14',
+        'gpt-4.1-mini',
+        'gpt-4.1-mini-2025-04-14',
+        'gpt-4.1-nano',
+        'gpt-4.1-nano-2025-04-14',
         'gpt-4o',
         'gpt-4o-2024-05-13',
         'gpt-4o-2024-08-06',
@@ -182,6 +190,8 @@ KnownModelName = TypeAliasType(
         'o1-mini-2024-09-12',
         'o1-preview',
         'o1-preview-2024-09-12',
+        'o3',
+        'o3-2025-04-16',
         'o3-mini',
         'o3-mini-2025-01-31',
         'openai:chatgpt-4o-latest',
@@ -204,6 +214,12 @@ KnownModelName = TypeAliasType(
         'openai:gpt-4-turbo-2024-04-09',
         'openai:gpt-4-turbo-preview',
         'openai:gpt-4-vision-preview',
+        'openai:gpt-4.1',
+        'openai:gpt-4.1-2025-04-14',
+        'openai:gpt-4.1-mini',
+        'openai:gpt-4.1-mini-2025-04-14',
+        'openai:gpt-4.1-nano',
+        'openai:gpt-4.1-nano-2025-04-14',
         'openai:gpt-4o',
         'openai:gpt-4o-2024-05-13',
         'openai:gpt-4o-2024-08-06',
@@ -225,8 +241,12 @@ KnownModelName = TypeAliasType(
         'openai:o1-mini-2024-09-12',
         'openai:o1-preview',
         'openai:o1-preview-2024-09-12',
+        'openai:o3',
+        'openai:o3-2025-04-16',
         'openai:o3-mini',
         'openai:o3-mini-2025-01-31',
+        'openai:o4-mini',
+        'openai:o4-mini-2025-04-16',
         'test',
     ],
 )
@@ -238,11 +258,11 @@ KnownModelName = TypeAliasType(
 
 @dataclass
 class ModelRequestParameters:
-    """Configuration for an agent's request to a model, specifically related to tools and result handling."""
+    """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
-    function_tools: list[ToolDefinition]
-    allow_text_result: bool
-    result_tools: list[ToolDefinition]
+    function_tools: list[ToolDefinition] = field(default_factory=list)
+    allow_text_output: bool = True
+    output_tools: list[ToolDefinition] = field(default_factory=list)
 
 
 class Model(ABC):
@@ -254,7 +274,7 @@ class Model(ABC):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
+    ) -> ModelResponse:
         """Make a request to the model."""
         raise NotImplementedError()
 
@@ -271,6 +291,15 @@ class Model(ABC):
         # yield is required to make this a generator for type checking
         # noinspection PyUnreachableCode
         yield  # pragma: no cover
+
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        """Customize the request parameters for the model.
+
+        This method can be overridden by subclasses to modify the request parameters before sending them to the model.
+        In particular, this method can be used to make modifications to the generated tool JSON schemas if necessary
+        for vendor/model-specific reasons.
+        """
+        return model_request_parameters
 
     @property
     @abstractmethod
@@ -293,6 +322,49 @@ class Model(ABC):
     @property
     def base_url(self) -> str | None:
         """The base URL for the provider API, if available."""
+        return None
+
+    @staticmethod
+    def _get_instructions(messages: list[ModelMessage]) -> str | None:
+        """Get instructions from the first ModelRequest found when iterating messages in reverse.
+
+        In the case that a "mock" request was generated to include a tool-return part for a result tool,
+        we want to use the instructions from the second-to-most-recent request (which should correspond to the
+        original request that generated the response that resulted in the tool-return part).
+        """
+        last_two_requests: list[ModelRequest] = []
+        for message in reversed(messages):
+            if isinstance(message, ModelRequest):
+                last_two_requests.append(message)
+                if len(last_two_requests) == 2:
+                    break
+                if message.instructions is not None:
+                    return message.instructions
+
+        # If we don't have two requests, and we didn't already return instructions, there are definitely not any:
+        if len(last_two_requests) != 2:
+            return None
+
+        most_recent_request = last_two_requests[0]
+        second_most_recent_request = last_two_requests[1]
+
+        # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt parts,
+        # we use the instructions from the second-to-most-recent request. This is necessary because when handling
+        # result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that ModelRequest will not
+        # have the relevant instructions from the agent.
+
+        # While it's possible that you could have a message history where the most recent request has only tool returns,
+        # I believe there is no way to achieve that would _change_ the instructions without manually crafting the most
+        # recent message. That might make sense in principle for some usage pattern, but it's enough of an edge case
+        # that I think it's not worth worrying about, since you can work around this by inserting another ModelRequest
+        # with no parts at all immediately before the request that has the tool calls (that works because we only look
+        # at the two most recent ModelRequests here).
+
+        # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
+
+        if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
+            return second_most_recent_request.instructions
+
         return None
 
 
@@ -326,7 +398,10 @@ class StreamedResponse(ABC):
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
         return ModelResponse(
-            parts=self._parts_manager.get_parts(), model_name=self.model_name, timestamp=self.timestamp
+            parts=self._parts_manager.get_parts(),
+            model_name=self.model_name,
+            timestamp=self.timestamp,
+            usage=self.usage(),
         )
 
     def usage(self) -> Usage:
@@ -410,13 +485,13 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
             raise UserError(f'Unknown model: {model}')
 
     if provider == 'vertexai':
-        provider = 'google-vertex'
+        provider = 'google-vertex'  # pragma: no cover
 
     if provider == 'cohere':
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
-    elif provider in ('deepseek', 'openai'):
+    elif provider in ('deepseek', 'openai', 'azure', 'openrouter'):
         from .openai import OpenAIModel
 
         return OpenAIModel(model_name, provider=provider)
@@ -441,7 +516,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
 
         return BedrockConverseModel(model_name, provider=provider)
     else:
-        raise UserError(f'Unknown model: {model}')
+        raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
 def cached_async_http_client(*, provider: str | None = None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:

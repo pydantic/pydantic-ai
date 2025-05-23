@@ -15,13 +15,23 @@ nav:
   - help.md
   - contributing.md
   - troubleshooting.md
+  - changelog.md
   - Documentation:
       - agents.md
-      - models.md
+      - Models:
+          - models/index.md
+          - models/openai.md
+          - models/anthropic.md
+          - models/gemini.md
+          - models/google.md
+          - models/bedrock.md
+          - models/cohere.md
+          - models/groq.md
+          - models/mistral.md
       - dependencies.md
       - tools.md
       - common-tools.md
-      - results.md
+      - output.md
       - message-history.md
       - testing.md
       - logfire.md
@@ -29,11 +39,13 @@ nav:
       - graph.md
       - evals.md
       - input.md
+      - direct.md
       - MCP:
-        - mcp/index.md
-        - mcp/client.md
-        - mcp/server.md
-        - mcp/run-python.md
+          - mcp/index.md
+          - mcp/client.md
+          - mcp/server.md
+          - mcp/run-python.md
+      - A2A: a2a.md
       - cli.md
   - Examples:
       - examples/index.md
@@ -58,12 +70,14 @@ nav:
       - api/usage.md
       - api/mcp.md
       - api/format_as_xml.md
+      - api/direct.md
       - api/models/base.md
       - api/models/openai.md
       - api/models/anthropic.md
       - api/models/bedrock.md
       - api/models/cohere.md
       - api/models/gemini.md
+      - api/models/google.md
       - api/models/groq.md
       - api/models/instrumented.md
       - api/models/mistral.md
@@ -82,6 +96,7 @@ nav:
       - api/pydantic_evals/reporting.md
       - api/pydantic_evals/otel.md
       - api/pydantic_evals/generation.md
+      - api/fasta2a.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
@@ -92,25 +107,24 @@ theme:
   custom_dir: docs/.overrides
   palette:
     - media: "(prefers-color-scheme)"
-      scheme: default
       primary: pink
       accent: pink
       toggle:
-        icon: material/lightbulb
+        icon: material/brightness-auto
         name: "Switch to light mode"
     - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: pink
       accent: pink
       toggle:
-        icon: material/lightbulb-outline
+        icon: material/brightness-7
         name: "Switch to dark mode"
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: pink
       accent: pink
       toggle:
-        icon: material/lightbulb-auto-outline
+        icon: material/brightness-4
         name: "Switch to system preference"
   features:
     - search.suggest
@@ -120,12 +134,10 @@ theme:
     - content.code.copy
     - content.code.select
     - navigation.path
-    #    - navigation.expand
     - navigation.indexes
     - navigation.sections
     - navigation.tracking
     - toc.follow
-  #    - navigation.tabs  # don't use navbar tabs
   logo: "img/logo-white.svg"
   favicon: "favicon.ico"
 
@@ -201,6 +213,7 @@ plugins:
             # 3 because docs are in pages with an H2 just above them
             heading_level: 3
           import:
+            - url: https://logfire.pydantic.dev/docs/objects.inv
             - url: https://docs.python.org/3/objects.inv
             - url: https://docs.pydantic.dev/latest/objects.inv
             - url: https://dirty-equals.helpmanual.io/latest/objects.inv
@@ -208,8 +221,35 @@ plugins:
             - url: https://typing-extensions.readthedocs.io/en/latest/objects.inv
             - url: https://rich.readthedocs.io/en/stable/objects.inv
             # waiting for https://github.com/encode/httpx/discussions/3091#discussioncomment-11205594
+  - llmstxt:
+      enabled: !ENV [CI, false]
+      full_output: llms-full.txt
+      markdown_description: |-
+        PydanticAI is a Python agent framework designed to make it less painful to build production grade
+        applications with Generative AI.
+      sections:
+        Concepts documentation:
+          - agents.md
+          - dependencies.md
+          - tools.md
+          - common-tools.md
+          - results.md
+          - message-history.md
+          - multi-agent-applications.md
+        Models:
+          - models/*.md
+        Graphs:
+          - graph.md
+        Evals:
+          - evals.md
+        MCP:
+          - mcp/*.md
+        Optional:
+          - testing.md
+          - cli.md
+          - logfire.md
+          - examples/*.md
 
 hooks:
   - "docs/.hooks/main.py"
-  - "docs/.hooks/build_llms_txt.py"
   - "docs/.hooks/algolia.py"

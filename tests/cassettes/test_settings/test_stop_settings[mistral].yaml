@@ -1,0 +1,69 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '153'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: ministral-8b-latest
+      n: 1
+      stop:
+      - Paris
+      stream: false
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '322'
+      content-type:
+      - application/json
+      ratelimitbysize-limit:
+      - '500000'
+      ratelimitbysize-query-cost:
+      - '32008'
+      ratelimitbysize-remaining:
+      - '467992'
+      ratelimitbysize-reset:
+      - '42'
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 'The capital of France is '
+          role: assistant
+          tool_calls: null
+      created: 1744190898
+      id: 0bbc8cf8fc76455fae759fb9109f8547
+      model: ministral-8b-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 6
+        prompt_tokens: 10
+        total_tokens: 16
+    status:
+      code: 200
+      message: OK
+version: 1
