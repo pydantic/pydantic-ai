@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-from collections import defaultdict
 from copy import copy
 from dataclasses import dataclass
 from typing import Any, cast
@@ -27,7 +26,7 @@ class Usage:
     """Tokens used in generating responses."""
     total_tokens: int | None = None
     """Total tokens used in the whole run, should generally be equal to `request_tokens + response_tokens`."""
-    details: dict[str, int] | defaultdict[str, int] | None = None
+    details: dict[str, int] | None = None
     """Any extra details returned by the model."""
 
 
@@ -44,10 +43,10 @@ class Usage:
                 setattr(self, f, (self_value or 0) + (other_value or 0))
 
         if incr_usage.details:
-            if not isinstance(self.details, defaultdict):
-                self.details = defaultdict(int, self.details)
             for key, value in incr_usage.details.items():
                 value = value or 0
+                if key not in self.details:
+                    self.details[key] = 0
                 if isinstance(value, list) and all(isinstance(v, dict) for v in value):
                     items = cast(list[dict[str, Any]], value)
                     self.details[key] += sum(item.get('token_count', 0) for item in items)
