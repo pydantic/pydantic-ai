@@ -120,6 +120,7 @@ Here's an example of all of these features in action:
 
 ```python {title="output_functions.py"}
 import re
+from typing import Union
 
 from pydantic import BaseModel
 
@@ -167,7 +168,7 @@ def run_sql_query(query: str) -> list[Row]:
     raise ModelRetry(f"Unsupported query: '{query}'.")
 
 
-sql_agent: Agent[None, list[Row] | SQLFailure] = Agent(
+sql_agent: Agent[None, Union[list[Row], SQLFailure]] = Agent(
     'openai:gpt-4o',
     output_type=[run_sql_query, SQLFailure],
     instructions='You are a SQL agent that can run SQL queries on a database.',
@@ -199,7 +200,7 @@ class RouterFailure(BaseModel):
     explanation: str
 
 
-router_agent: Agent[None, float | list[Row] | RouterFailure] = Agent(
+router_agent: Agent[None, Union[list[Row], RouterFailure]] = Agent(
     'openai:gpt-4o',
     output_type=[hand_off_to_sql_agent, RouterFailure],
     instructions='You are a router to other agents. Never try to solve a problem yourself, just pass it on.',
@@ -227,7 +228,7 @@ explanation = 'I am not equipped to provide travel information, such as flights 
 """
 ```
 
-### Output validators
+### Output validators {#output-validator-functions}
 
 Some validation is inconvenient or impossible to do in Pydantic validators, in particular when the validation requires IO and is asynchronous. PydanticAI provides a way to add validation functions via the [`agent.output_validator`][pydantic_ai.Agent.output_validator] decorator.
 
