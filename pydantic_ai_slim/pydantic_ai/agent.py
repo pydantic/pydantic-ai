@@ -1776,7 +1776,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         from rich.console import Console
 
         from pydantic_ai._cli import run_chat
-        
+
+        # use prog_name or 'pydantic-ai'
+
         prog_name = prog_name or 'pydantic-ai'
 
         await run_chat(
