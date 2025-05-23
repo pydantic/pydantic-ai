@@ -72,8 +72,12 @@ def find_filter_examples() -> Iterable[ParameterSet]:
 
     for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if ex.path.name != '_utils.py':
+            try:
+                path = ex.path.relative_to(Path.cwd())
+            except ValueError:
+                path = ex.path
+            test_id = f'{path}:{ex.start_line}'
             prefix_settings = ex.prefix_settings()
-            test_id = str(ex)
             if opt_title := prefix_settings.get('title'):
                 test_id += f':{opt_title}'
             yield pytest.param(ex, id=test_id)
