@@ -1760,8 +1760,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             lifespan=lifespan,
         )
 
-    async def to_cli(self: Self, deps: AgentDepsT = None, prog_name: str | None = None) -> None:
+    async def to_cli(self: Self, deps: AgentDepsT = None, prog_name: str = 'pydantic-ai') -> None:
         """Run the agent in a CLI chat interface.
+
+        Args:
+            deps: The dependencies to pass to the agent.
+            prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
@@ -1777,21 +1781,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         from pydantic_ai._cli import run_chat
 
-        # use prog_name or 'pydantic-ai'
+        await run_chat(stream=True, agent=self, deps=deps, console=Console(), code_theme='monokai', prog_name=prog_name)
 
-        prog_name = prog_name or 'pydantic-ai'
-
-        await run_chat(
-            stream=True,
-            agent=self,
-            deps=deps,
-            console=Console(),
-            code_theme='monokai',
-            prog_name=prog_name,
-        )
-
-    def to_cli_sync(self: Self, deps: AgentDepsT = None, prog_name: str | None = None) -> None:
+    def to_cli_sync(self: Self, deps: AgentDepsT = None, prog_name: str = 'pydantic-ai') -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
+
+        Args:
+            deps: The dependencies to pass to the agent.
+            prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent
