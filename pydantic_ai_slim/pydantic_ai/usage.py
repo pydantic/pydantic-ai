@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from copy import copy
 from dataclasses import dataclass
-
+from typing import cast
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'Usage', 'UsageLimits'
@@ -35,7 +35,8 @@ class Usage:
             if not value:
                 self.details[key] = 0
             elif isinstance(value, list) and isinstance(value[0], dict):
-                self.details[key] = sum([item.get('token_count', 0) for item in value])
+                items = cast(List[Dict[str, Any]], value)
+                self.details[key] = sum([item.get('token_count', 0) for item in items])
 
     def incr(self, incr_usage: Usage) -> None:
         """Increment the usage in place.
