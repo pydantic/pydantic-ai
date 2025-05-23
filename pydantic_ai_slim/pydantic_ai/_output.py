@@ -231,9 +231,13 @@ class OutputSchemaTool(Generic[OutputDataT]):
         try:
             pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
             if isinstance(tool_call.args, str):
-                output = self.type_adapter.validate_json(tool_call.args, experimental_allow_partial=pyd_allow_partial)
+                output = self.type_adapter.validate_json(
+                    tool_call.args or '{}', experimental_allow_partial=pyd_allow_partial
+                )
             else:
-                output = self.type_adapter.validate_python(tool_call.args, experimental_allow_partial=pyd_allow_partial)
+                output = self.type_adapter.validate_python(
+                    tool_call.args or {}, experimental_allow_partial=pyd_allow_partial
+                )
         except ValidationError as e:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(

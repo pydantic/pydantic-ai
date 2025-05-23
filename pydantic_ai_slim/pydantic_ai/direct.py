@@ -41,18 +41,10 @@ async def model_request(
         print(model_response)
         '''
         ModelResponse(
-            parts=[TextPart(content='Paris', part_kind='text')],
-            usage=Usage(
-                requests=1,
-                request_tokens=56,
-                response_tokens=1,
-                total_tokens=57,
-                details=None,
-            ),
+            parts=[TextPart(content='Paris')],
+            usage=Usage(requests=1, request_tokens=56, response_tokens=1, total_tokens=57),
             model_name='claude-3-5-haiku-latest',
             timestamp=datetime.datetime(...),
-            kind='response',
-            vendor_id=None,
         )
         '''
     ```
@@ -102,14 +94,10 @@ def model_request_sync(
     print(model_response)
     '''
     ModelResponse(
-        parts=[TextPart(content='Paris', part_kind='text')],
-        usage=Usage(
-            requests=1, request_tokens=56, response_tokens=1, total_tokens=57, details=None
-        ),
+        parts=[TextPart(content='Paris')],
+        usage=Usage(requests=1, request_tokens=56, response_tokens=1, total_tokens=57),
         model_name='claude-3-5-haiku-latest',
         timestamp=datetime.datetime(...),
-        kind='response',
-        vendor_id=None,
     )
     '''
     ```
@@ -163,23 +151,11 @@ def model_request_stream(
             print(chunks)
             '''
             [
-                PartStartEvent(
-                    index=0,
-                    part=TextPart(content='Albert Einstein was ', part_kind='text'),
-                    event_kind='part_start',
-                ),
+                PartStartEvent(index=0, part=TextPart(content='Albert Einstein was ')),
                 PartDeltaEvent(
-                    index=0,
-                    delta=TextPartDelta(
-                        content_delta='a German-born theoretical ', part_delta_kind='text'
-                    ),
-                    event_kind='part_delta',
+                    index=0, delta=TextPartDelta(content_delta='a German-born theoretical ')
                 ),
-                PartDeltaEvent(
-                    index=0,
-                    delta=TextPartDelta(content_delta='physicist.', part_delta_kind='text'),
-                    event_kind='part_delta',
-                ),
+                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='physicist.')),
             ]
             '''
     ```
