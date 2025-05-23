@@ -442,7 +442,7 @@ def _process_response_from_parts(parts: list[Part], model_name: GoogleModelName,
             items.append(TextPart(content=part.text))
         elif part.function_call:
             assert part.function_call.name is not None
-            tool_call_part = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args or {})
+            tool_call_part = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
             if part.function_call.id is not None:
                 tool_call_part.tool_call_id = part.function_call.id  # pragma: no cover
             items.append(tool_call_part)
