@@ -35,7 +35,7 @@ class Usage:
             if not value:
                 self.details[key] = 0
             elif isinstance(value, list) and isinstance(value[0], dict):
-                items = cast(List[Dict[str, Any]], value)
+                items = cast(list[dict[str, int]], value)
                 self.details[key] = sum([item.get('token_count', 0) for item in items])
 
     def incr(self, incr_usage: Usage) -> None:
