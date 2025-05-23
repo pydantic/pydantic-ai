@@ -196,8 +196,8 @@ if MYPY:
     two_models_output_agent = Agent[None, Foo | Bar](output_type=[Foo, Bar])
     assert_type(two_models_output_agent, Agent[None, Foo | Bar])
 
-    two_scalars_output_agent = Agent[None, int | bool](output_type=[int, bool])
-    assert_type(two_scalars_output_agent, Agent[None, int | bool])
+    two_scalars_output_agent = Agent[None, int | str](output_type=[int, str])
+    assert_type(two_scalars_output_agent, Agent[None, int | str])
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
     complex_output_agent = Agent[None, Foo | Bar | str | int | bool | tuple[str, int]](
@@ -212,9 +212,8 @@ else:
     two_models_output_agent = Agent(output_type=[Foo, Bar])
     assert_type(two_models_output_agent, Agent[None, Foo | Bar])
 
-    # this doesn't work in pyright without the generic parameters specified explicitly
-    two_scalars_output_agent = Agent[None, int | bool](output_type=[int, bool])
-    assert_type(two_scalars_output_agent, Agent[None, int | bool])
+    two_scalars_output_agent = Agent(output_type=[int, str])
+    assert_type(two_scalars_output_agent, Agent[None, int | str])
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
     complex_output_agent = Agent(output_type=[Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker])
