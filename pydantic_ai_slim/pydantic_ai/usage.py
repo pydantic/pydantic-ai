@@ -26,7 +26,7 @@ class Usage:
     """Tokens used in generating responses."""
     total_tokens: int | None = None
     """Total tokens used in the whole run, should generally be equal to `request_tokens + response_tokens`."""
-    details: dict[str, int] | None = None
+    details: dict[str, int | list[dict[str, int]]] | None = None
     """Any extra details returned by the model."""
 
 
@@ -49,8 +49,8 @@ class Usage:
                     self.details = {}
                 if key not in self.details:
                     self.details[key] = 0
-                if isinstance(value, list) and all(isinstance(v, dict) for v in value):
-                    items = cast(list[dict[str, Any]], value)
+                if isinstance(value, list) and all([isinstance(v, dict) for v in value]):
+                    items = cast(list[dict[str, int]], value)
                     self.details[key] += sum(item.get('token_count', 0) for item in items)
                 else:
                     self.details[key] += value
