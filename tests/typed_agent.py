@@ -182,16 +182,22 @@ class MyClass:
         return True
 
 
+str_function_agent = Agent(output_type=foobar_ctx)
+assert_type(str_function_agent, Agent[None, str])
+
+bool_method_agent = Agent(output_type=MyClass().my_method)
+assert_type(bool_method_agent, Agent[None, bool])
+
 if MYPY:
-    # mypy requires the generic parameters to be specified explicitly to figure out what's going on here
-    str_function_agent = Agent[None, str](output_type=foobar_ctx)
-    assert_type(str_function_agent, Agent[None, str])
+    # mypy requires the generic parameters to be specified explicitly to be happy here
+    async_int_function_agent = Agent[None, int](output_type=foobar_plain)
+    assert_type(async_int_function_agent, Agent[None, int])
 
-    int_function_agent = Agent[None, int](output_type=foobar_plain)
-    assert_type(int_function_agent, Agent[None, int])
+    two_models_output_agent = Agent[None, Foo | Bar](output_type=[Foo, Bar])
+    assert_type(two_models_output_agent, Agent[None, Foo | Bar])
 
-    bool_method_agent = Agent[None, bool](output_type=MyClass().my_method)
-    assert_type(bool_method_agent, Agent[None, bool])
+    two_scalars_output_agent = Agent[None, int | bool](output_type=[int, bool])
+    assert_type(two_scalars_output_agent, Agent[None, int | bool])
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
     complex_output_agent = Agent[None, Foo | Bar | str | int | bool | tuple[str, int]](
@@ -199,15 +205,16 @@ if MYPY:
     )
     assert_type(complex_output_agent, Agent[None, Foo | Bar | str | int | bool | tuple[str, int]])
 else:
-    # pyright is able to correctly infer the output type here
-    str_function_agent = Agent(output_type=foobar_ctx)
-    assert_type(str_function_agent, Agent[None, str])
+    # pyright is able to correctly infer the type here
+    async_int_function_agent = Agent(output_type=foobar_plain)
+    assert_type(async_int_function_agent, Agent[None, int])
 
-    int_function_agent = Agent(output_type=foobar_plain)
-    assert_type(int_function_agent, Agent[None, int])
+    two_models_output_agent = Agent(output_type=[Foo, Bar])
+    assert_type(two_models_output_agent, Agent[None, Foo | Bar])
 
-    bool_method_agent = Agent(output_type=MyClass().my_method)
-    assert_type(bool_method_agent, Agent[None, bool])
+    # this doesn't work in pyright without the generic parameters specified explicitly
+    two_scalars_output_agent = Agent[None, int | bool](output_type=[int, bool])
+    assert_type(two_scalars_output_agent, Agent[None, int | bool])
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
     complex_output_agent = Agent(output_type=[Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker])
