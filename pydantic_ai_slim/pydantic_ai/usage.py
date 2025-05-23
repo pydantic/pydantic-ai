@@ -83,8 +83,10 @@ class Usage:
         """Whether any values are set and non-zero."""
         return bool(self.requests or self.request_tokens or self.response_tokens or self.details)
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False)
 class UsageLimits:
     """Limits on model usage.
 
@@ -139,3 +141,5 @@ class UsageLimits:
         total_tokens = usage.total_tokens or 0
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})')
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
