@@ -11,6 +11,9 @@ from pydantic_ai._output import ToolOutput
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.tools import ToolDefinition
 
+# Define here so we can check `if MYPY` below. This will not be executed, MYPY will always set it to True
+MYPY = False
+
 
 @dataclass
 class MyDeps:
@@ -179,18 +182,36 @@ class MyClass:
         return True
 
 
-agent = Agent(output_type=foobar_ctx)
-assert_type(agent, Agent[None, str])
+if MYPY:
+    # mypy requires the generic parameters to be specified explicitly to figure out what's going on here
+    str_function_agent = Agent[None, str](output_type=foobar_ctx)
+    assert_type(str_function_agent, Agent[None, str])
 
-agent = Agent(output_type=foobar_plain)
-assert_type(agent, Agent[None, int])
+    int_function_agent = Agent[None, int](output_type=foobar_plain)
+    assert_type(int_function_agent, Agent[None, int])
 
-agent = Agent(output_type=MyClass().my_method)
-assert_type(agent, Agent[None, bool])
+    bool_method_agent = Agent[None, bool](output_type=MyClass().my_method)
+    assert_type(bool_method_agent, Agent[None, bool])
 
-marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore[call-overload]
-agent = Agent(output_type=[Foo, Bar, foobar_ctx, ToolOutput(foobar_plain), marker])
-assert_type(agent, Agent[None, Foo | Bar | str | int | bool | tuple[str, int]])
+    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
+    complex_output_agent = Agent[None, Foo | Bar | str | int | bool | tuple[str, int]](
+        output_type=[Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker]
+    )
+    assert_type(complex_output_agent, Agent[None, Foo | Bar | str | int | bool | tuple[str, int]])
+else:
+    # pyright is able to correctly infer the output type here
+    str_function_agent = Agent(output_type=foobar_ctx)
+    assert_type(str_function_agent, Agent[None, str])
+
+    int_function_agent = Agent(output_type=foobar_plain)
+    assert_type(int_function_agent, Agent[None, int])
+
+    bool_method_agent = Agent(output_type=MyClass().my_method)
+    assert_type(bool_method_agent, Agent[None, bool])
+
+    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
+    complex_output_agent = Agent(output_type=[Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker])
+    assert_type(complex_output_agent, Agent[None, Foo | Bar | str | int | bool | tuple[str, int]])
 
 
 Tool(foobar_ctx, takes_ctx=True)
@@ -237,7 +258,6 @@ greet_agent = Agent[str, str]('test', tools=[greet_tool], deps_type=str)
 result = greet_agent.run_sync('testing...', deps='human')
 assert result.output == '{"greet":"hello a"}'
 
-MYPY = False
 if not MYPY:
     default_agent = Agent()
     assert_type(default_agent, Agent[None, str])
