@@ -6,16 +6,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent
 from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
 
-from ..conftest import try_import
-
-with try_import() as imports_successful:
-    from pydantic_ai.providers.google_vertex import GoogleVertexProvider
-
-
-pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='google-auth not installed'),
-    pytest.mark.anyio,
-]
+pytestmark = [pytest.mark.anyio()]
 
 
 @pytest.mark.skipif(
@@ -23,8 +14,7 @@ pytestmark = [
 )
 @pytest.mark.vcr()
 async def test_labels(allow_model_requests: None) -> None:
-    provider = GoogleVertexProvider(project_id='pydantic-ai', region='us-central1')
-    m = GeminiModel('gemini-2.0-flash', provider=provider)
+    m = GeminiModel('gemini-2.0-flash', provider='google-vertex')
     agent = Agent(m)
 
     result = await agent.run(
