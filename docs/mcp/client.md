@@ -18,19 +18,19 @@ pip/uv-add "pydantic-ai-slim[mcp]"
 
 PydanticAI comes with two ways to connect to MCP servers:
 
-- [`MCPServerHTTP`][pydantic_ai.mcp.MCPServerHTTP] which connects to an MCP server using the [HTTP SSE](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport
+- [`MCPServerHTTP`][pydantic_ai.mcp.MCPServerHTTP] which connects to an MCP server using the [Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) transport
 - [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] which runs the server as a subprocess and connects to it using the [stdio](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) transport
 
 Examples of both are shown below; [mcp-run-python](run-python.md) is used as the MCP server in both examples.
 
-### SSE Client
+### HTTP Client
 
-[`MCPServerHTTP`][pydantic_ai.mcp.MCPServerHTTP] connects over HTTP using the [Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports) to a server.
+[`MCPServerHTTP`][pydantic_ai.mcp.MCPServerHTTP] connects over HTTP using the [Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) to a server.
 
 !!! note
     [`MCPServerHTTP`][pydantic_ai.mcp.MCPServerHTTP] requires an MCP server to be running and accepting HTTP connections before calling [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers]. Running the server is not managed by PydanticAI.
 
-The StreamableHTTP Transport is able to connect to both stateless http and sse servers.
+The StreamableHTTP Transport is able to connect to both stateless HTTP and older Server Sent Events (SSE) servers.
 
 Before creating the HTTP client, we need to run the server (docs [here](run-python.md)):
 
@@ -55,7 +55,7 @@ async def main():
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
 
-1. Define the MCP server with the URL used to connect.
+1. Define the MCP server with the URL used to connect. This will typically end in `/mcp` for HTTP servers and `/sse` for SSE.
 2. Create an agent with the MCP server attached.
 3. Create a client session to connect to the server.
 

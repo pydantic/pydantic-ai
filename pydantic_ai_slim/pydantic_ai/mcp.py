@@ -275,6 +275,9 @@ class MCPServerHTTP(MCPServer):
     This class implements the Streamable HTTP transport from the MCP specification.
     See <https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http> for more information.
 
+    The Streamable HTTP transport is intended to replace the SSE transport from the previous protocol, but it is fully
+    backwards compatible with SSE-based servers.
+
     !!! note
         Using this class as an async context manager will create a new pool of HTTP connections to connect
         to a server which should already be running.
