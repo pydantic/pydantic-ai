@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from collections import defaultdict
 from copy import copy
 from dataclasses import dataclass
 
@@ -42,9 +43,13 @@ class Usage:
                 setattr(self, f, (self_value or 0) + (other_value or 0))
 
         if incr_usage.details:
-            self.details = self.details or {}
+            self.details = self.details or defaultdict(int)
             for key, value in incr_usage.details.items():
-                self.details[key] = self.details.get(key, 0) + value
+                value = value or 0
+                if isinstance(value, list) and all(isinstance(v, dict) for v in value):
+                    self.details[key] += sum(v.get('token_count', 0) for v in value)
+                else:
+                    self.details[key] += value
 
     def __add__(self, other: Usage) -> Usage:
         """Add two Usages together.
