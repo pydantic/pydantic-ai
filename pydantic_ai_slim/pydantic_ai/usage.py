@@ -27,8 +27,9 @@ class Usage:
     """Tokens used in generating responses."""
     total_tokens: int | None = None
     """Total tokens used in the whole run, should generally be equal to `request_tokens + response_tokens`."""
-    details: defaultdict[str, int] | None = None
+    details: dict[str, int] | defaultdict[str, int] | None = None
     """Any extra details returned by the model."""
+
 
     def incr(self, incr_usage: Usage) -> None:
         """Increment the usage in place.
@@ -43,7 +44,8 @@ class Usage:
                 setattr(self, f, (self_value or 0) + (other_value or 0))
 
         if incr_usage.details:
-            self.details: defaultdict[str, int] = self.details or defaultdict(int)
+            if not isinstance(self.details, defaultdict):
+                self.details = defaultdict(int, self.details)
             for key, value in incr_usage.details.items():
                 value = value or 0
                 if isinstance(value, list) and all(isinstance(v, dict) for v in value):
