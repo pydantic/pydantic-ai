@@ -45,6 +45,8 @@ class Usage:
         if incr_usage.details:
             for key, value in incr_usage.details.items():
                 value = value or 0
+                if self.details is None:
+                    self.details = {}
                 if key not in self.details:
                     self.details[key] = 0
                 if isinstance(value, list) and all(isinstance(v, dict) for v in value):
