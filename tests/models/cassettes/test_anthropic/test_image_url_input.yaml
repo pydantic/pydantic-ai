@@ -27,25 +27,27 @@ interactions:
         role: user
       model: claude-3-5-haiku-latest
       stream: false
-    uri: https://api.anthropic.com/v1/messages
+    uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '660'
+      - '736'
       content-type:
       - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       content:
-      - text: This is a potato. It's a yellow-brown, oblong-shaped potato with a smooth skin and some small eyes or blemishes
-          visible on its surface. Potatoes are starchy root vegetables that are a staple food in many cuisines around the
-          world. They can be prepared in numerous ways, such as boiling, baking, frying, or mashing, and are rich in carbohydrates
-          and nutrients.
+      - text: This is a potato. It's a yellow/golden-colored potato with a characteristic oblong, slightly irregular shape
+          and a skin covered in small eyes or indentations. Potatoes are a starchy root vegetable that belongs to the nightshade
+          family and are a staple food in many cuisines around the world. This particular potato looks like it's in good condition,
+          with a smooth, unblemished skin and a uniform yellow color.
         type: text
-      id: msg_01WCNHqrhEGCXhoC4G1ojDHN
+      id: msg_01ARmKzMzXFrmzKbSgShSuGw
       model: claude-3-5-haiku-20241022
       role: assistant
       stop_reason: end_turn
@@ -55,7 +57,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 296
-        output_tokens: 93
+        output_tokens: 95
+        service_tier: standard
     status:
       code: 200
       message: OK
