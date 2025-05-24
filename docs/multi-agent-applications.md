@@ -52,11 +52,7 @@ result = joke_selection_agent.run_sync(
 print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 print(result.usage())
-"""
-Usage(
-    requests=3, request_tokens=204, response_tokens=24, total_tokens=228, details=None
-)
-"""
+#> Usage(requests=3, request_tokens=204, response_tokens=24, total_tokens=228)
 ```
 
 1. The "parent" or controlling agent.
@@ -147,15 +143,7 @@ async def main():
         print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
         print(result.usage())  # (6)!
-        """
-        Usage(
-            requests=4,
-            request_tokens=309,
-            response_tokens=32,
-            total_tokens=341,
-            details=None,
-        )
-        """
+        #> Usage(requests=4, request_tokens=309, response_tokens=32, total_tokens=341)
 ```
 
 1. Define a dataclass to hold the client and API key dependencies.

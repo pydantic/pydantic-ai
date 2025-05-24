@@ -73,13 +73,25 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 """
 
 
-class GeminiModelSettings(ModelSettings):
+class GeminiModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request.
 
     ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
     gemini_safety_settings: list[GeminiSafetySettings]
+
+    gemini_thinking_config: ThinkingConfig
+    """Thinking is "on" by default in both the API and AI Studio.
+
+    Being on by default doesn't mean the model will send back thoughts. For that, you would need to set `include_thoughts`
+    to `True`, but since end of January 2025, `thoughts` are not returned anymore, and are only displayed in the Google
+    AI Studio. See https://discuss.ai.google.dev/t/thoughts-are-missing-cot-not-included-anymore/63653 for more details.
+
+    If you want to avoid the model spending any tokens on thinking, you can set `thinking_budget` to `0`.
+
+    See more about it on <https://ai.google.dev/gemini-api/docs/thinking>.
+    """
 
 
 @dataclass(init=False)
@@ -125,22 +137,22 @@ class GeminiModel(Model):
 
     @property
     def base_url(self) -> str:
-        assert self._url is not None, 'URL not initialized'
-        return self._url
+        assert self._url is not None, 'URL not initialized'  # pragma: no cover
+        return self._url  # pragma: no cover
 
     async def request(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         check_allow_model_requests()
         async with self._make_request(
             messages, False, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
         ) as http_response:
             data = await http_response.aread()
             response = _gemini_response_ta.validate_json(data)
-        return self._process_response(response), _metadata_as_usage(response)
+        return self._process_response(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -189,7 +201,7 @@ class GeminiModel(Model):
         elif tools:
             return _tool_config([t['name'] for t in tools['function_declarations']])
         else:
-            return _tool_config([])
+            return _tool_config([])  # pragma: no cover
 
     @asynccontextmanager
     async def _make_request(
@@ -223,7 +235,9 @@ class GeminiModel(Model):
                 generation_config['presence_penalty'] = presence_penalty
             if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
                 generation_config['frequency_penalty'] = frequency_penalty
-            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) != []:
+            if (thinkingConfig := model_settings.get('gemini_thinking_config')) is not None:
+                generation_config['thinking_config'] = thinkingConfig  # pragma: no cover
+            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) is not None:
                 request_data['safetySettings'] = gemini_safety_settings
         if generation_config:
             request_data['generationConfig'] = generation_config
@@ -243,19 +257,25 @@ class GeminiModel(Model):
                 await r.aread()
                 if status_code >= 400:
                     raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=r.text)
-                raise UnexpectedModelBehavior(f'Unexpected response from gemini {status_code}', r.text)
+                raise UnexpectedModelBehavior(  # pragma: no cover
+                    f'Unexpected response from gemini {status_code}', r.text
+                )
             yield r
 
     def _process_response(self, response: _GeminiResponse) -> ModelResponse:
         if len(response['candidates']) != 1:
-            raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')
+            raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
         if 'content' not in response['candidates'][0]:
             if response['candidates'][0].get('finish_reason') == 'SAFETY':
                 raise UnexpectedModelBehavior('Safety settings triggered', str(response))
             else:
-                raise UnexpectedModelBehavior('Content field missing from Gemini response', str(response))
+                raise UnexpectedModelBehavior(  # pragma: no cover
+                    'Content field missing from Gemini response', str(response)
+                )
         parts = response['candidates'][0]['content']['parts']
-        return _process_response_from_parts(parts, model_name=response.get('model_version', self._model_name))
+        usage = _metadata_as_usage(response)
+        usage.requests = 1
+        return _process_response_from_parts(parts, response.get('model_version', self._model_name), usage)
 
     async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -269,7 +289,7 @@ class GeminiModel(Model):
                 _ensure_decodeable(content),
                 experimental_allow_partial='trailing-strings',
             )
-            if responses:
+            if responses:  # pragma: no branch
                 last = responses[-1]
                 if last['candidates'] and last['candidates'][0].get('content', {}).get('parts'):
                     start_response = last
@@ -298,14 +318,14 @@ class GeminiModel(Model):
                         message_parts.append(_response_part_from_response(part.tool_name, part.model_response_object()))
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
-                            message_parts.append(_GeminiTextPart(text=part.model_response()))
+                            message_parts.append(_GeminiTextPart(text=part.model_response()))  # pragma: no cover
                         else:
                             response = {'call_error': part.model_response()}
                             message_parts.append(_response_part_from_response(part.tool_name, response))
                     else:
                         assert_never(part)
 
-                if message_parts:
+                if message_parts:  # pragma: no branch
                     contents.append(_GeminiContent(role='user', parts=message_parts))
             elif isinstance(m, ModelResponse):
                 contents.append(_content_model_response(m))
@@ -328,7 +348,7 @@ class GeminiModel(Model):
                     content.append(
                         _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
                     )
-                elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl)):
+                elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl, VideoUrl)):
                     client = cached_async_http_client()
                     response = await client.get(item.url, follow_redirects=True)
                     response.raise_for_status()
@@ -337,8 +357,6 @@ class GeminiModel(Model):
                         inline_data={'data': base64.b64encode(response.content).decode('utf-8'), 'mime_type': mime_type}
                     )
                     content.append(inline_data)
-                elif isinstance(item, VideoUrl):  # pragma: no cover
-                    raise NotImplementedError('VideoUrl is not supported for Gemini.')
                 else:
                     assert_never(item)
         return content
@@ -358,7 +376,7 @@ class ApiKeyAuth:
 
     async def headers(self) -> dict[str, str]:
         # https://cloud.google.com/docs/authentication/api-keys-use#using-with-rest
-        return {'X-Goog-Api-Key': self.api_key}
+        return {'X-Goog-Api-Key': self.api_key}  # pragma: no cover
 
 
 @dataclass
@@ -374,7 +392,7 @@ class GeminiStreamedResponse(StreamedResponse):
         async for gemini_response in self._get_gemini_responses():
             candidate = gemini_response['candidates'][0]
             if 'content' not in candidate:
-                raise UnexpectedModelBehavior('Streamed response has no content field')
+                raise UnexpectedModelBehavior('Streamed response has no content field')  # pragma: no cover
             gemini_part: _GeminiPartUnion
             for gemini_part in candidate['content']['parts']:
                 if 'text' in gemini_part:
@@ -393,10 +411,10 @@ class GeminiStreamedResponse(StreamedResponse):
                         args=gemini_part['function_call']['args'],
                         tool_call_id=None,
                     )
-                    if maybe_event is not None:
+                    if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 else:
-                    assert 'function_response' in gemini_part, f'Unexpected part: {gemini_part}'
+                    assert 'function_response' in gemini_part, f'Unexpected part: {gemini_part}'  # pragma: no cover
 
     async def _get_gemini_responses(self) -> AsyncIterator[_GeminiResponse]:
         # This method exists to ensure we only yield completed items, so we don't need to worry about
@@ -424,7 +442,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield r
 
         # Now yield the final response, which should be complete
-        if gemini_responses:
+        if gemini_responses:  # pragma: no branch
             r = gemini_responses[-1]
             self._usage += _metadata_as_usage(r)
             yield r
@@ -499,6 +517,16 @@ class GeminiSafetySettings(TypedDict):
     """
 
 
+class ThinkingConfig(TypedDict, total=False):
+    """The thinking features configuration."""
+
+    include_thoughts: Annotated[bool, pydantic.Field(alias='includeThoughts')]
+    """Indicates whether to include thoughts in the response. If true, thoughts are returned only if the model supports thought and thoughts are available."""
+
+    thinking_budget: Annotated[int, pydantic.Field(alias='thinkingBudget')]
+    """Indicates the thinking budget in tokens."""
+
+
 class _GeminiGenerationConfig(TypedDict, total=False):
     """Schema for an API request to the Gemini API.
 
@@ -513,6 +541,7 @@ class _GeminiGenerationConfig(TypedDict, total=False):
     presence_penalty: float
     frequency_penalty: float
     stop_sequences: list[str]
+    thinking_config: ThinkingConfig
 
 
 class _GeminiContent(TypedDict):
@@ -568,7 +597,7 @@ def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart
 
 
 def _process_response_from_parts(
-    parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, timestamp: datetime | None = None
+    parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, usage: usage.Usage
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
@@ -576,11 +605,11 @@ def _process_response_from_parts(
             items.append(TextPart(content=part['text']))
         elif 'function_call' in part:
             items.append(ToolCallPart(tool_name=part['function_call']['name'], args=part['function_call']['args']))
-        elif 'function_response' in part:
+        elif 'function_response' in part:  # pragma: no cover
             raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
-    return ModelResponse(parts=items, model_name=model_name, timestamp=timestamp or _utils.now_utc())
+    return ModelResponse(parts=items, usage=usage, model_name=model_name)
 
 
 class _GeminiFunctionCall(TypedDict):
@@ -606,13 +635,13 @@ class _GeminiFunctionResponse(TypedDict):
 
 
 def _part_discriminator(v: Any) -> str:
-    if isinstance(v, dict):
+    if isinstance(v, dict):  # pragma: no branch
         if 'text' in v:
             return 'text'
         elif 'inlineData' in v:
-            return 'inline_data'
+            return 'inline_data'  # pragma: no cover
         elif 'fileData' in v:
-            return 'file_data'
+            return 'file_data'  # pragma: no cover
         elif 'functionCall' in v or 'function_call' in v:
             return 'function_call'
         elif 'functionResponse' in v or 'function_response' in v:
@@ -723,10 +752,10 @@ class _GeminiUsageMetaData(TypedDict, total=False):
 def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
     metadata = response.get('usage_metadata')
     if metadata is None:
-        return usage.Usage()
+        return usage.Usage()  # pragma: no cover
     details: dict[str, int] = {}
     if cached_content_token_count := metadata.get('cached_content_token_count'):
-        details['cached_content_token_count'] = cached_content_token_count
+        details['cached_content_token_count'] = cached_content_token_count  # pragma: no cover
     return usage.Usage(
         request_tokens=metadata.get('prompt_token_count', 0),
         response_tokens=metadata.get('candidates_token_count', 0),
@@ -782,7 +811,7 @@ class _GeminiJsonSchema(WalkJsonSchema):
         additional_properties = schema.pop(
             'additionalProperties', None
         )  # don't pop yet so it's included in the warning
-        if additional_properties:  # pragma: no cover
+        if additional_properties:
             original_schema = {**schema, 'additionalProperties': additional_properties}
             warnings.warn(
                 '`additionalProperties` is not supported by Gemini; it will be removed from the tool JSON schema.'
@@ -807,6 +836,12 @@ class _GeminiJsonSchema(WalkJsonSchema):
         #   where we add notes about these properties to the field description?
         schema.pop('exclusiveMaximum', None)
         schema.pop('exclusiveMinimum', None)
+
+        # Gemini only supports string enums, so we need to convert any enum values to strings.
+        # Pydantic will take care of transforming the transformed string values to the correct type.
+        if enum := schema.get('enum'):
+            schema['type'] = 'string'
+            schema['enum'] = [str(val) for val in enum]
 
         type_ = schema.get('type')
         if 'oneOf' in schema and 'type' not in schema:  # pragma: no cover
@@ -835,10 +870,10 @@ class _GeminiJsonSchema(WalkJsonSchema):
                     unique_items.append(item)
             if len(unique_items) > 1:  # pragma: no cover
                 schema['items'] = {'anyOf': unique_items}
-            elif len(unique_items) == 1:
+            elif len(unique_items) == 1:  # pragma: no branch
                 schema['items'] = unique_items[0]
             schema.setdefault('minItems', len(prefix_items))
-            if items is None:
+            if items is None:  # pragma: no branch
                 schema.setdefault('maxItems', len(prefix_items))
 
         return schema

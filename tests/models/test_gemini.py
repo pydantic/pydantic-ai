@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
+from enum import IntEnum
 from typing import Annotated
 
 import httpx
@@ -28,6 +29,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.gemini import (
@@ -162,9 +164,17 @@ async def test_require_response_tool(allow_model_requests: None):
 
 
 async def test_json_def_replaced(allow_model_requests: None):
+    class Axis(BaseModel):
+        label: str
+
+    class Chart(BaseModel):
+        x_axis: Axis
+        y_axis: Axis
+
     class Location(BaseModel):
         lat: float
         lng: float = 1.1
+        chart: Chart
 
     class Locations(BaseModel):
         locations: list[Location]
@@ -173,15 +183,28 @@ async def test_json_def_replaced(allow_model_requests: None):
     assert json_schema == snapshot(
         {
             '$defs': {
+                'Axis': {
+                    'properties': {'label': {'title': 'Label', 'type': 'string'}},
+                    'required': ['label'],
+                    'title': 'Axis',
+                    'type': 'object',
+                },
+                'Chart': {
+                    'properties': {'x_axis': {'$ref': '#/$defs/Axis'}, 'y_axis': {'$ref': '#/$defs/Axis'}},
+                    'required': ['x_axis', 'y_axis'],
+                    'title': 'Chart',
+                    'type': 'object',
+                },
                 'Location': {
                     'properties': {
                         'lat': {'title': 'Lat', 'type': 'number'},
                         'lng': {'default': 1.1, 'title': 'Lng', 'type': 'number'},
+                        'chart': {'$ref': '#/$defs/Chart'},
                     },
-                    'required': ['lat'],
+                    'required': ['lat', 'chart'],
                     'title': 'Location',
                     'type': 'object',
-                }
+                },
             },
             'properties': {'locations': {'items': {'$ref': '#/$defs/Location'}, 'title': 'Locations', 'type': 'array'}},
             'required': ['locations'],
@@ -199,6 +222,87 @@ async def test_json_def_replaced(allow_model_requests: None):
     mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
     mrp = m.customize_request_parameters(mrp)
     assert m._get_tools(mrp) == snapshot(
+        {
+            'function_declarations': [
+                {
+                    'name': 'result',
+                    'description': 'This is the tool for the final Result',
+                    'parameters': {
+                        'properties': {
+                            'locations': {
+                                'items': {
+                                    'properties': {
+                                        'lat': {'type': 'number'},
+                                        'lng': {'type': 'number'},
+                                        'chart': {
+                                            'properties': {
+                                                'x_axis': {
+                                                    'properties': {'label': {'type': 'string'}},
+                                                    'required': ['label'],
+                                                    'type': 'object',
+                                                },
+                                                'y_axis': {
+                                                    'properties': {'label': {'type': 'string'}},
+                                                    'required': ['label'],
+                                                    'type': 'object',
+                                                },
+                                            },
+                                            'required': ['x_axis', 'y_axis'],
+                                            'type': 'object',
+                                        },
+                                    },
+                                    'required': ['lat', 'chart'],
+                                    'type': 'object',
+                                },
+                                'type': 'array',
+                            }
+                        },
+                        'required': ['locations'],
+                        'type': 'object',
+                    },
+                }
+            ]
+        }
+    )
+
+
+async def test_json_def_enum(allow_model_requests: None):
+    class ProgressEnum(IntEnum):
+        DONE = 100
+        ALMOST_DONE = 80
+        IN_PROGRESS = 60
+        BARELY_STARTED = 40
+        NOT_STARTED = 20
+
+    class QueryDetails(BaseModel):
+        progress: list[ProgressEnum] | None = None
+
+    json_schema = QueryDetails.model_json_schema()
+    assert json_schema == snapshot(
+        {
+            '$defs': {'ProgressEnum': {'enum': [100, 80, 60, 40, 20], 'title': 'ProgressEnum', 'type': 'integer'}},
+            'properties': {
+                'progress': {
+                    'anyOf': [{'items': {'$ref': '#/$defs/ProgressEnum'}, 'type': 'array'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Progress',
+                }
+            },
+            'title': 'QueryDetails',
+            'type': 'object',
+        }
+    )
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    output_tool = ToolDefinition(
+        'result',
+        'This is the tool for the final Result',
+        json_schema,
+    )
+    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+    mrp = m.customize_request_parameters(mrp)
+
+    # This tests that the enum values are properly converted to strings for Gemini
+    assert m._get_tools(mrp) == snapshot(
         _GeminiTools(
             function_declarations=[
                 _GeminiFunction(
@@ -206,19 +310,12 @@ async def test_json_def_replaced(allow_model_requests: None):
                     description='This is the tool for the final Result',
                     parameters={
                         'properties': {
-                            'locations': {
-                                'items': {
-                                    'properties': {
-                                        'lat': {'type': 'number'},
-                                        'lng': {'type': 'number'},
-                                    },
-                                    'required': ['lat'],
-                                    'type': 'object',
-                                },
+                            'progress': {
+                                'items': {'enum': ['100', '80', '60', '40', '20'], 'type': 'string'},
                                 'type': 'array',
+                                'nullable': True,
                             }
                         },
-                        'required': ['locations'],
                         'type': 'object',
                     },
                 )
@@ -309,7 +406,6 @@ async def test_json_def_recursive(allow_model_requests: None):
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
         mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
         mrp = m.customize_request_parameters(mrp)
-        m._get_tools(mrp)
 
 
 async def test_json_def_date(allow_model_requests: None):
@@ -419,7 +515,7 @@ async def get_gemini_client(
 
 def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | None = 'STOP') -> _GeminiResponse:
     candidate = _GeminiCandidates(content=content, index=0, safety_ratings=[])
-    if finish_reason:  # pragma: no cover
+    if finish_reason:  # pragma: no branch
         candidate['finish_reason'] = finish_reason
     return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage(), model_version='gemini-1.5-flash-123')
 
@@ -441,6 +537,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -455,12 +552,14 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -483,6 +582,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2, 123]}, tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -511,7 +611,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     parts=[
                         ToolCallPart('get_location', {'loc_name': 'London'}),
                         ToolCallPart('get_location', {'loc_name': 'New York'}),
-                    ]
+                    ],
                 )
             )
         ),
@@ -544,6 +644,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 parts=[
                     ToolCallPart(tool_name='get_location', args={'loc_name': 'San Fransisco'}, tool_call_id=IsStr())
                 ],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -562,6 +663,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                     ToolCallPart(tool_name='get_location', args={'loc_name': 'London'}, tool_call_id=IsStr()),
                     ToolCallPart(tool_name='get_location', args={'loc_name': 'New York'}, tool_call_id=IsStr()),
                 ],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -583,6 +685,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -746,6 +849,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                     ToolCallPart(tool_name='foo', args={'x': 'a'}, tool_call_id=IsStr()),
                     ToolCallPart(tool_name='bar', args={'y': 'b'}, tool_call_id=IsStr()),
                 ],
+                usage=Usage(request_tokens=2, response_tokens=4, total_tokens=6),
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -761,6 +865,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2]}, tool_call_id=IsStr())],
+                usage=Usage(request_tokens=1, response_tokens=2, total_tokens=3),
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -875,7 +980,7 @@ def gemini_no_content_response(
     safety_ratings: list[_GeminiSafetyRating], finish_reason: Literal['SAFETY'] | None = 'SAFETY'
 ) -> _GeminiResponse:
     candidate = _GeminiCandidates(safety_ratings=safety_ratings)
-    if finish_reason:
+    if finish_reason:  # pragma: no branch
         candidate['finish_reason'] = finish_reason
     return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage())
 
@@ -960,6 +1065,69 @@ async def test_safety_settings_safe(
 
 
 @pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
+) -> None:
+    m = GeminiModel('gemini-2.5-pro-preview-03-25', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+I need to use the `get_image` tool to see the image first.
+
+"""
+                    ),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
+                ],
+                usage=Usage(requests=1, request_tokens=38, response_tokens=28, total_tokens=427, details={}),
+                model_name='gemini-2.5-pro-preview-03-25',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1c8566',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1c8566:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The image shows a kiwi fruit, sliced in half.')],
+                usage=Usage(requests=1, request_tokens=360, response_tokens=11, total_tokens=572, details={}),
+                model_name='gemini-2.5-pro-preview-03-25',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
 async def test_image_as_binary_content_input(
     allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
 ) -> None:
@@ -979,6 +1147,43 @@ async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) 
 
     result = await agent.run(['What is the name of this fruit?', image_url])
     assert result.output == snapshot("This is not a fruit; it's a pipe organ console.")
+
+
+@pytest.mark.vcr()
+async def test_video_as_binary_content_input(
+    allow_model_requests: None, gemini_api_key: str, video_content: BinaryContent
+) -> None:
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+
+    result = await agent.run(['Explain me this video', video_content])
+    assert result.output.strip() == snapshot(
+        "That's a picture of a small, portable monitor attached to a camera, likely used for filming. The monitor displays a scene of a canyon or similar rocky landscape.  This suggests the camera is being used to film this landscape. The camera itself is mounted on a tripod, indicating a stable and likely professional setup.  The background is out of focus, but shows the same canyon as seen on the monitor. This makes it clear that the image shows the camera's viewfinder or recording output, rather than an unrelated display."
+    )
+
+
+@pytest.mark.vcr()
+async def test_video_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+
+    video_url = VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4')
+
+    result = await agent.run(['Explain me this video', video_url])
+    assert result.output.strip() == snapshot(
+        """That's a lovely picture!  It shows a picturesque outdoor cafe or restaurant situated in a narrow, whitewashed alleyway.
+
+
+Here's a breakdown of what we see:
+
+* **Location:** The cafe is nestled between two white buildings, typical of Greek island architecture (possibly Mykonos or a similar island, judging by the style).  The alleyway opens up to a view of the Aegean Sea, which is visible in the background. The sea appears somewhat choppy.
+
+* **Setting:** The cafe has several wooden tables and chairs set out along the alley. The tables are simple and seem to be made of light-colored wood. There are cushions on a built-in bench along one wall providing seating. Small potted plants are on some tables, adding to the ambiance. The cobblestone ground in the alley adds to the charming, traditional feel.
+
+* **Atmosphere:** The overall feel is relaxed and serene, despite the somewhat windy conditions indicated by the sea. The bright white buildings and the blue sea create a classic Mediterranean vibe. The picture evokes a sense of calmness and escape.
+
+In short, the image depicts an idyllic scene of a charming seaside cafe in a picturesque Greek island setting."""
+    )
 
 
 @pytest.mark.vcr()
@@ -1024,6 +1229,7 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.\n')],
+                usage=Usage(requests=1, request_tokens=13, response_tokens=8, total_tokens=21, details={}),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
             ),

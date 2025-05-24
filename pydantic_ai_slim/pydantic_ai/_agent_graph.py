@@ -2,14 +2,14 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-import json
+import hashlib
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
-from opentelemetry.trace import Span, Tracer
+from opentelemetry.trace import Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_graph import BaseNode, Graph, GraphRunContext
@@ -24,10 +24,9 @@ from . import (
     result,
     usage as _usage,
 )
-from .models.instrumented import InstrumentedModel
 from .result import OutputDataT, ToolOutput
 from .settings import ModelSettings, merge_model_settings
-from .tools import RunContext, Tool, ToolDefinition
+from .tools import RunContext, Tool, ToolDefinition, ToolsPrepareFunc
 
 if TYPE_CHECKING:
     from .mcp import MCPServer
@@ -94,9 +93,11 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
     mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
+    default_retries: int
 
-    run_span: Span
     tracer: Tracer
+
+    prepare_tools: ToolsPrepareFunc[DepsT] | None = None
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -197,7 +198,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     for i, part in enumerate(msg.parts):
                         if isinstance(part, _messages.SystemPromptPart) and part.dynamic_ref:
                             # Look up the runner by its ref
-                            if runner := self.system_prompt_dynamic_functions.get(part.dynamic_ref):
+                            if runner := self.system_prompt_dynamic_functions.get(  # pragma: lax no cover
+                                part.dynamic_ref
+                            ):
                                 updated_part_content = await runner.run(run_context)
                                 msg.parts[i] = _messages.SystemPromptPart(
                                     updated_part_content, dynamic_ref=part.dynamic_ref
@@ -219,26 +222,44 @@ async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
-    function_tool_defs: list[ToolDefinition] = []
+    function_tool_defs_map: dict[str, ToolDefinition] = {}
 
     run_context = build_run_context(ctx)
 
     async def add_tool(tool: Tool[DepsT]) -> None:
         ctx = run_context.replace_with(retry=tool.current_retry, tool_name=tool.name)
         if tool_def := await tool.prepare_tool_def(ctx):
-            function_tool_defs.append(tool_def)
+            # prepare_tool_def may change tool_def.name
+            if tool_def.name in function_tool_defs_map:
+                if tool_def.name != tool.name:
+                    # Prepare tool def may have renamed the tool
+                    raise exceptions.UserError(
+                        f"Renaming tool '{tool.name}' to '{tool_def.name}' conflicts with existing tool."
+                    )
+                else:
+                    raise exceptions.UserError(f'Tool name conflicts with existing tool: {tool.name!r}.')
+            function_tool_defs_map[tool_def.name] = tool_def
 
     async def add_mcp_server_tools(server: MCPServer) -> None:
         if not server.is_running:
             raise exceptions.UserError(f'MCP server is not running: {server}')
         tool_defs = await server.list_tools()
-        # TODO(Marcelo): We should check if the tool names are unique. If not, we should raise an error.
-        function_tool_defs.extend(tool_defs)
+        for tool_def in tool_defs:
+            if tool_def.name in function_tool_defs_map:
+                raise exceptions.UserError(
+                    f"MCP Server '{server}' defines a tool whose name conflicts with existing tool: {tool_def.name!r}. Consider using `tool_prefix` to avoid name conflicts."
+                )
+            function_tool_defs_map[tool_def.name] = tool_def
 
     await asyncio.gather(
         *map(add_tool, ctx.deps.function_tools.values()),
         *map(add_mcp_server_tools, ctx.deps.mcp_servers),
     )
+    function_tool_defs = list(function_tool_defs_map.values())
+    if ctx.deps.prepare_tools:
+        # Prepare the tools using the provided function
+        # This also acts over tool definitions pulled from MCP servers
+        function_tool_defs = await ctx.deps.prepare_tools(run_context, function_tool_defs) or []
 
     output_schema = ctx.deps.output_schema
     return models.ModelRequestParameters(
@@ -266,7 +287,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._did_stream:
             # `self._result` gets set when exiting the `stream` contextmanager, so hitting this
             # means that the stream was started but not finished before `run()` was called
-            raise exceptions.AgentRunError('You must finish streaming before calling run()')
+            raise exceptions.AgentRunError('You must finish streaming before calling run()')  # pragma: no cover
 
         return await self._make_request(ctx)
 
@@ -302,32 +323,31 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.message_history, model_settings, model_request_parameters
         ) as streamed_response:
             self._did_stream = True
-            ctx.state.usage.incr(_usage.Usage(), requests=1)
+            ctx.state.usage.requests += 1
             yield streamed_response
             # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
             # otherwise usage won't be properly counted:
             async for _ in streamed_response:
                 pass
         model_response = streamed_response.get()
-        request_usage = streamed_response.usage()
 
-        self._finish_handling(ctx, model_response, request_usage)
+        self._finish_handling(ctx, model_response)
         assert self._result is not None  # this should be set by the previous line
 
     async def _make_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
         if self._result is not None:
-            return self._result
+            return self._result  # pragma: no cover
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        model_response, request_usage = await ctx.deps.model.request(
+        model_response = await ctx.deps.model.request(
             ctx.state.message_history, model_settings, model_request_parameters
         )
-        ctx.state.usage.incr(_usage.Usage(), requests=1)
+        ctx.state.usage.incr(_usage.Usage())
 
-        return self._finish_handling(ctx, model_response, request_usage)
+        return self._finish_handling(ctx, model_response)
 
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -335,7 +355,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.message_history.append(self.request)
 
         # Check usage
-        if ctx.deps.usage_limits:
+        if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_before_request(ctx.state.usage)
 
         # Increment run_step
@@ -349,11 +369,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
-        usage: _usage.Usage,
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
         # Update usage
-        ctx.state.usage.incr(usage, requests=0)
-        if ctx.deps.usage_limits:
+        ctx.state.usage.incr(response.usage)
+        if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
 
         # Append the model response to state.message_history
@@ -498,38 +517,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         final_result: result.FinalResult[NodeRunEndT],
         tool_responses: list[_messages.ModelRequestPart],
     ) -> End[result.FinalResult[NodeRunEndT]]:
-        run_span = ctx.deps.run_span
-        usage = ctx.state.usage
         messages = ctx.state.message_history
 
         # For backwards compatibility, append a new ModelRequest using the tool returns and retries
         if tool_responses:
             messages.append(_messages.ModelRequest(parts=tool_responses))
-
-        run_span.set_attributes(
-            {
-                **usage.opentelemetry_attributes(),
-                'all_messages_events': json.dumps(
-                    [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)]
-                ),
-                'final_result': final_result.output
-                if isinstance(final_result.output, str)
-                else json.dumps(InstrumentedModel.serialize_any(final_result.output)),
-            }
-        )
-        run_span.set_attributes(
-            {
-                'logfire.json_schema': json.dumps(
-                    {
-                        'type': 'object',
-                        'properties': {
-                            'all_messages_events': {'type': 'array'},
-                            'final_result': {'type': 'object'},
-                        },
-                    }
-                ),
-            }
-        )
 
         return End(final_result)
 
@@ -576,7 +568,14 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     )
 
 
-async def process_function_tools(
+def multi_modal_content_identifier(identifier: str | bytes) -> str:
+    """Generate stable identifier for multi-modal content to help LLM in finding a specific file in tool call responses."""
+    if isinstance(identifier, str):
+        identifier = identifier.encode('utf-8')
+    return hashlib.sha1(identifier).hexdigest()[:6]
+
+
+async def process_function_tools(  # noqa C901
     tool_calls: list[_messages.ToolCallPart],
     output_tool_name: str | None,
     output_tool_call_id: str | None,
@@ -662,6 +661,8 @@ async def process_function_tools(
     if not calls_to_run:
         return
 
+    user_parts: list[_messages.UserPromptPart] = []
+
     # Run all tool tasks in parallel
     results_by_index: dict[int, _messages.ModelRequestPart] = {}
     with ctx.deps.tracer.start_as_current_span(
@@ -675,6 +676,7 @@ async def process_function_tools(
             asyncio.create_task(tool.run(call, run_context, ctx.deps.tracer), name=call.tool_name)
             for tool, call in calls_to_run
         ]
+
         pending = tasks
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
@@ -682,7 +684,43 @@ async def process_function_tools(
                 index = tasks.index(task)
                 result = task.result()
                 yield _messages.FunctionToolResultEvent(result, tool_call_id=call_index_to_event_id[index])
-                if isinstance(result, (_messages.ToolReturnPart, _messages.RetryPromptPart)):
+
+                if isinstance(result, _messages.RetryPromptPart):
+                    results_by_index[index] = result
+                elif isinstance(result, _messages.ToolReturnPart):
+                    contents: list[Any]
+                    single_content: bool
+                    if isinstance(result.content, list):
+                        contents = result.content  # type: ignore
+                        single_content = False
+                    else:
+                        contents = [result.content]
+                        single_content = True
+
+                    processed_contents: list[Any] = []
+                    for content in contents:
+                        if isinstance(content, _messages.MultiModalContentTypes):
+                            if isinstance(content, _messages.BinaryContent):
+                                identifier = multi_modal_content_identifier(content.data)
+                            else:
+                                identifier = multi_modal_content_identifier(content.url)
+
+                            user_parts.append(
+                                _messages.UserPromptPart(
+                                    content=[f'This is file {identifier}:', content],
+                                    timestamp=result.timestamp,
+                                    part_kind='user-prompt',
+                                )
+                            )
+                            processed_contents.append(f'See file {identifier}')
+                        else:
+                            processed_contents.append(content)
+
+                    if single_content:
+                        result.content = processed_contents[0]
+                    else:
+                        result.content = processed_contents
+
                     results_by_index[index] = result
                 else:
                     assert_never(result)
@@ -691,6 +729,8 @@ async def process_function_tools(
     # This is mostly just to simplify testing
     for k in sorted(results_by_index):
         output_parts.append(results_by_index[k])
+
+    output_parts.extend(user_parts)
 
 
 async def _tool_from_mcp_server(
@@ -717,8 +757,8 @@ async def _tool_from_mcp_server(
 
     for server in ctx.deps.mcp_servers:
         tools = await server.list_tools()
-        if tool_name in {tool.name for tool in tools}:
-            return Tool(name=tool_name, function=run_tool, takes_ctx=True)
+        if tool_name in {tool.name for tool in tools}:  # pragma: no branch
+            return Tool(name=tool_name, function=run_tool, takes_ctx=True, max_retries=ctx.deps.default_retries)
     return None
 
 

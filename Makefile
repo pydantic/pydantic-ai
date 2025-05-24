@@ -63,6 +63,10 @@ test: ## Run tests and collect coverage data
 	uv run coverage run -m pytest
 	@uv run coverage report
 
+.PHONY: test-fast
+test-fast: ## Same as test except no coverage. ~1/4th the time depending on hardware.
+	uv run pytest -n auto --dist=loadgroup
+
 .PHONY: test-all-python
 test-all-python: ## Run tests on Python 3.9 to 3.13
 	UV_PROJECT_ENVIRONMENT=.venv39 uv run --python 3.9 --all-extras --all-packages coverage run -p -m pytest

@@ -86,11 +86,12 @@ class TestModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
+    ) -> ModelResponse:
         self.last_model_request_parameters = model_request_parameters
         model_response = self._request(messages, model_settings, model_request_parameters)
-        usage = _estimate_usage([*messages, model_response])
-        return model_response, usage
+        model_response.usage = _estimate_usage([*messages, model_response])
+        model_response.usage.requests = 1
+        return model_response
 
     @asynccontextmanager
     async def request_stream(
@@ -149,7 +150,7 @@ class TestModel(Model):
         elif model_request_parameters.output_tools:
             return _WrappedToolOutput(None)
         else:
-            return _WrappedTextOutput(None)  # pragma: no cover
+            return _WrappedTextOutput(None)
 
     def _request(
         self,
@@ -168,7 +169,7 @@ class TestModel(Model):
                 model_name=self._model_name,
             )
 
-        if messages:
+        if messages:  # pragma: no branch
             last_message = messages[-1]
             assert isinstance(last_message, ModelRequest), 'Expected last message to be a `ModelRequest`.'
 

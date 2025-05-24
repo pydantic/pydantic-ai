@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import timezone
 from functools import cached_property
-from typing import Any, TypeVar, Union, cast
+from typing import Any, Callable, TypeVar, Union, cast
 
 import httpx
 import pytest
@@ -52,7 +52,11 @@ with try_import() as imports_successful:
     )
     from anthropic.types.raw_message_delta_event import Delta
 
-    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.anthropic import (
+        AnthropicModel,
+        AnthropicModelSettings,
+        _map_usage,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
     # note: we use Union here so that casting works with Python 3.9
@@ -108,7 +112,9 @@ class MockAnthropic:
             if isinstance(self.stream[0], Sequence):
                 response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream[self.index])))
             else:
-                response = MockAsyncStream(iter(cast(list[MockRawMessageStreamEvent], self.stream)))
+                response = MockAsyncStream(  # pragma: no cover
+                    iter(cast(list[MockRawMessageStreamEvent], self.stream))
+                )
         else:
             assert self.messages_ is not None, '`messages` must be provided'
             if isinstance(self.messages_, Sequence):
@@ -141,29 +147,92 @@ async def test_sync_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=5, response_tokens=10, total_tokens=15))
-
+    assert result.usage() == snapshot(
+        Usage(
+            requests=1,
+            request_tokens=5,
+            response_tokens=10,
+            total_tokens=15,
+            details={'input_tokens': 5, 'output_tokens': 10},
+        )
+    )
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=5, response_tokens=10, total_tokens=15))
+    assert result.usage() == snapshot(
+        Usage(
+            requests=1,
+            request_tokens=5,
+            response_tokens=10,
+            total_tokens=15,
+            details={'input_tokens': 5, 'output_tokens': 10},
+        )
+    )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=5,
+                    response_tokens=10,
+                    total_tokens=15,
+                    details={'input_tokens': 5, 'output_tokens': 10},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=5,
+                    response_tokens=10,
+                    total_tokens=15,
+                    details={'input_tokens': 5, 'output_tokens': 10},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
         ]
+    )
+
+
+async def test_async_request_prompt_caching(allow_model_requests: None):
+    c = completion_message(
+        [TextBlock(text='world', type='text')],
+        usage=AnthropicUsage(
+            input_tokens=3,
+            output_tokens=5,
+            cache_creation_input_tokens=4,
+            cache_read_input_tokens=6,
+        ),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+    assert result.usage() == snapshot(
+        Usage(
+            requests=1,
+            request_tokens=13,
+            response_tokens=5,
+            total_tokens=18,
+            details={
+                'input_tokens': 3,
+                'output_tokens': 5,
+                'cache_creation_input_tokens': 4,
+                'cache_read_input_tokens': 6,
+            },
+        )
     )
 
 
@@ -178,7 +247,15 @@ async def test_async_request_text_response(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=3, response_tokens=5, total_tokens=8))
+    assert result.usage() == snapshot(
+        Usage(
+            requests=1,
+            request_tokens=3,
+            response_tokens=5,
+            total_tokens=8,
+            details={'input_tokens': 3, 'output_tokens': 5},
+        )
+    )
 
 
 async def test_request_structured_response(allow_model_requests: None):
@@ -203,8 +280,16 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=3,
+                    response_tokens=5,
+                    total_tokens=8,
+                    details={'input_tokens': 3, 'output_tokens': 5},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -265,8 +350,16 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=2,
+                    response_tokens=1,
+                    total_tokens=3,
+                    details={'input_tokens': 2, 'output_tokens': 1},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -286,8 +379,16 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=3,
+                    response_tokens=2,
+                    total_tokens=5,
+                    details={'input_tokens': 3, 'output_tokens': 2},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -301,8 +402,16 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=3,
+                    response_tokens=5,
+                    total_tokens=8,
+                    details={'input_tokens': 3, 'output_tokens': 5},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -335,7 +444,7 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
         if loc_name == 'London':
-            return json.dumps({'lat': 51, 'lng': 0})
+            return json.dumps({'lat': 51, 'lng': 0})  # pragma: no cover
         else:
             raise ModelRetry('Wrong location, please try again')
 
@@ -474,18 +583,23 @@ async def test_stream_structured(allow_model_requests: None):
         RawContentBlockStartEvent(
             type='content_block_start',
             index=0,
-            content_block=ToolUseBlock(type='tool_use', id='tool_1', name='my_tool', input={'first': 'One'}),
+            content_block=ToolUseBlock(type='tool_use', id='tool_1', name='my_tool', input={}),
         ),
         # Add more data through an incomplete JSON delta
         RawContentBlockDeltaEvent(
             type='content_block_delta',
             index=0,
-            delta=InputJSONDelta(type='input_json_delta', partial_json='{"second":'),
+            delta=InputJSONDelta(type='input_json_delta', partial_json='{"first": "One'),
         ),
         RawContentBlockDeltaEvent(
             type='content_block_delta',
             index=0,
-            delta=InputJSONDelta(type='input_json_delta', partial_json='"Two"}'),
+            delta=InputJSONDelta(type='input_json_delta', partial_json='", "second": "Two"'),
+        ),
+        RawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=0,
+            delta=InputJSONDelta(type='input_json_delta', partial_json='}'),
         ),
         # Mark tool block as complete
         RawContentBlockStopEvent(type='content_block_stop', index=0),
@@ -551,7 +665,15 @@ async def test_stream_structured(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage() == snapshot(Usage(requests=2, request_tokens=20, response_tokens=5, total_tokens=25))
+        assert result.usage() == snapshot(
+            Usage(
+                requests=2,
+                request_tokens=20,
+                response_tokens=5,
+                total_tokens=25,
+                details={'input_tokens': 20, 'output_tokens': 5},
+            )
+        )
         assert tool_called
 
 
@@ -572,6 +694,19 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
 
 
 @pytest.mark.vcr()
+async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str):
+    # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
+    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        model_settings=AnthropicModelSettings(
+            anthropic_metadata={'user_id': '123'}, extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}
+        ),
+    )
+    await agent.run('hello')
+
+
+@pytest.mark.vcr()
 async def test_image_url_input_invalid_mime_type(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -586,6 +721,92 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
     )
     assert result.output == snapshot(
         'This is a Great Horned Owl (Bubo virginianus), a large and powerful owl species. It has distinctive ear tufts (the "horns"), large yellow eyes, and a mottled gray-brown plumage that provides excellent camouflage. In this image, the owl is perched on a branch, surrounded by soft yellow and green vegetation, which creates a beautiful, slightly blurred background that highlights the owl\'s sharp features. Great Horned Owls are known for their adaptability, wide distribution across the Americas, and their status as powerful nocturnal predators.'
+    )
+
+
+@pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, anthropic_api_key: str, image_content: BinaryContent
+):
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Let me get the image and check what fruit is shown.'),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01VMGXdexE1Fy5xdWgoom9Te'),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=372,
+                    response_tokens=49,
+                    total_tokens=421,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 372,
+                        'output_tokens': 49,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_01BPu4UTHXhqtR1TvsRhBLYY',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1c8566',
+                        tool_call_id='toolu_01VMGXdexE1Fy5xdWgoom9Te',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1c8566:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The kiwi's fuzzy brown skin is visible around the edges of the slice."
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=2025,
+                    response_tokens=57,
+                    total_tokens=2082,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 2025,
+                        'output_tokens': 57,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_01Ua6uyZUF15YV3G1PusaqSq',
+            ),
+        ]
     )
 
 
@@ -702,8 +923,108 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=20,
+                    response_tokens=10,
+                    total_tokens=30,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 20,
+                        'output_tokens': 10,
+                    },
+                ),
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
+                vendor_id='msg_01U58nruzfn9BrXrrF2hhb4m',
             ),
         ]
     )
+
+
+async def test_multiple_system_prompt_formatting(allow_model_requests: None):
+    c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic().create_mock(c)
+    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, system_prompt='this is the system prompt')
+
+    @agent.system_prompt
+    def system_prompt() -> str:
+        return 'and this is another'
+
+    await agent.run('hello')
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'system' in completion_kwargs
+    assert completion_kwargs['system'] == 'this is the system prompt\n\nand this is another'
+
+
+def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
+    return AnthropicMessage(
+        id='x',
+        content=[],
+        model='claude-3-7-sonnet-latest',
+        role='assistant',
+        type='message',
+        usage=usage,
+    )
+
+
+@pytest.mark.parametrize(
+    'message_callback,usage',
+    [
+        pytest.param(
+            lambda: anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)),
+            snapshot(
+                Usage(
+                    request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
+                )
+            ),
+            id='AnthropicMessage',
+        ),
+        pytest.param(
+            lambda: anth_msg(
+                AnthropicUsage(
+                    input_tokens=1, output_tokens=1, cache_creation_input_tokens=2, cache_read_input_tokens=3
+                )
+            ),
+            snapshot(
+                Usage(
+                    request_tokens=6,
+                    response_tokens=1,
+                    total_tokens=7,
+                    details={
+                        'cache_creation_input_tokens': 2,
+                        'cache_read_input_tokens': 3,
+                        'input_tokens': 1,
+                        'output_tokens': 1,
+                    },
+                )
+            ),
+            id='AnthropicMessage-cached',
+        ),
+        pytest.param(
+            lambda: RawMessageStartEvent(
+                message=anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)), type='message_start'
+            ),
+            snapshot(
+                Usage(
+                    request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
+                )
+            ),
+            id='RawMessageStartEvent',
+        ),
+        pytest.param(
+            lambda: RawMessageDeltaEvent(
+                delta=Delta(),
+                usage=MessageDeltaUsage(output_tokens=5),
+                type='message_delta',
+            ),
+            snapshot(Usage(response_tokens=5, total_tokens=5, details={'output_tokens': 5})),
+            id='RawMessageDeltaEvent',
+        ),
+        pytest.param(lambda: RawMessageStopEvent(type='message_stop'), snapshot(Usage()), id='RawMessageStopEvent'),
+    ],
+)
+def test_usage(message_callback: Callable[[], AnthropicMessage | RawMessageStreamEvent], usage: Usage):
+    assert _map_usage(message_callback()) == usage

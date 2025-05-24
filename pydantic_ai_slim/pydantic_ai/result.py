@@ -114,7 +114,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         async for response in self.stream_responses(debounce_by=debounce_by):
             if self._final_result_event is not None:
                 yield await self._validate_response(response, self._final_result_event.tool_name, allow_partial=True)
-        if self._final_result_event is not None:
+        if self._final_result_event is not None:  # pragma: no branch
             yield await self._validate_response(
                 self._raw_stream_response.get(), self._final_result_event.tool_name, allow_partial=False
             )
@@ -124,7 +124,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         # if the message currently has any parts with content, yield before streaming
         msg = self._raw_stream_response.get()
         for part in msg.parts:
-            if part.has_content():
+            if part.has_content():  # pragma: no cover
                 yield msg
                 break
 
@@ -147,7 +147,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         if self._output_schema is not None and output_tool_name is not None:
             match = self._output_schema.find_named_tool(message.parts, output_tool_name)
             if match is None:
-                raise exceptions.UnexpectedModelBehavior(
+                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     f'Invalid response, unable to find tool: {self._output_schema.tool_names()}'
                 )
 
@@ -188,11 +188,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     new_part = e.part
                     if isinstance(new_part, _messages.ToolCallPart):
                         if output_schema:
-                            for call, _ in output_schema.find_tool([new_part]):
+                            for call, _ in output_schema.find_tool([new_part]):  # pragma: no branch
                                 return _messages.FinalResultEvent(
                                     tool_name=call.tool_name, tool_call_id=call.tool_call_id
                                 )
-                    elif allow_text_output:
+                    elif allow_text_output:  # pragma: no branch
                         assert_type(e, _messages.PartStartEvent)
                         return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
 
@@ -461,7 +461,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         if self._output_schema is not None and self._output_tool_name is not None:
             match = self._output_schema.find_named_tool(message.parts, self._output_tool_name)
             if match is None:
-                raise exceptions.UnexpectedModelBehavior(
+                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     f'Invalid response, unable to find tool: {self._output_schema.tool_names()}'
                 )
 
@@ -469,26 +469,18 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             result_data = output_tool.validate(call, allow_partial=allow_partial, wrap_validation_errors=False)
 
             for validator in self._output_validators:
-                result_data = await validator.validate(result_data, call, self._run_ctx)
+                result_data = await validator.validate(result_data, call, self._run_ctx)  # pragma: no cover
             return result_data
         else:
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
             for validator in self._output_validators:
-                text = await validator.validate(
-                    text,
-                    None,
-                    self._run_ctx,
-                )
+                text = await validator.validate(text, None, self._run_ctx)  # pragma: no cover
             # Since there is no output tool, we can assume that str is compatible with OutputDataT
             return cast(OutputDataT, text)
 
     async def _validate_text_output(self, text: str) -> str:
         for validator in self._output_validators:
-            text = await validator.validate(
-                text,
-                None,
-                self._run_ctx,
-            )
+            text = await validator.validate(text, None, self._run_ctx)  # pragma: no cover
         return text
 
     async def _marked_completed(self, message: _messages.ModelResponse) -> None:
@@ -526,8 +518,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     and isinstance(event.part, _messages.TextPart)
                     and event.part.content
                 ):
-                    yield event.part.content, event.index
-                elif (
+                    yield event.part.content, event.index  # pragma: no cover
+                elif (  # pragma: no branch
                     isinstance(event, _messages.PartDeltaEvent)
                     and isinstance(event.delta, _messages.TextPartDelta)
                     and event.delta.content_delta
@@ -552,21 +544,23 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 yield ''.join(deltas)
 
 
-@dataclass
+@dataclass(repr=False)
 class FinalResult(Generic[OutputDataT]):
     """Marker class storing the final output of an agent run and associated metadata."""
 
     output: OutputDataT
     """The final result data."""
-    tool_name: str | None
+    tool_name: str | None = None
     """Name of the final output tool; `None` if the output came from unstructured text content."""
-    tool_call_id: str | None
+    tool_call_id: str | None = None
     """ID of the tool call that produced the final output; `None` if the output came from unstructured text content."""
 
     @property
     @deprecated('`data` is deprecated, use `output` instead.')
     def data(self) -> OutputDataT:
         return self.output
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 def _get_usage_checking_stream_response(
@@ -576,12 +570,12 @@ def _get_usage_checking_stream_response(
 ) -> AsyncIterable[_messages.ModelResponseStreamEvent]:
     if limits is not None and limits.has_token_limits():
 
-        async def _usage_checking_iterator():
+        async def _usage_checking_iterator():  # pragma: no cover
             async for item in stream_response:
                 limits.check_tokens(get_usage())
                 yield item
 
-        return _usage_checking_iterator()
+        return _usage_checking_iterator()  # pragma: no cover
     else:
         return stream_response
 

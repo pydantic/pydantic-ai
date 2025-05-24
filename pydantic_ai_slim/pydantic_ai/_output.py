@@ -140,8 +140,8 @@ class OutputSchema(Generic[OutputDataT]):
         self, parts: Iterable[_messages.ModelResponsePart], tool_name: str
     ) -> tuple[_messages.ToolCallPart, OutputSchemaTool[OutputDataT]] | None:
         """Find a tool that matches one of the calls, with a specific name."""
-        for part in parts:
-            if isinstance(part, _messages.ToolCallPart):
+        for part in parts:  # pragma: no branch
+            if isinstance(part, _messages.ToolCallPart):  # pragma: no branch
                 if part.tool_name == tool_name:
                     return part, self.tools[tool_name]
 
@@ -151,7 +151,7 @@ class OutputSchema(Generic[OutputDataT]):
     ) -> Iterator[tuple[_messages.ToolCallPart, OutputSchemaTool[OutputDataT]]]:
         """Find a tool that matches one of the calls."""
         for part in parts:
-            if isinstance(part, _messages.ToolCallPart):
+            if isinstance(part, _messages.ToolCallPart):  # pragma: no branch
                 if result := self.tools.get(part.tool_name):
                     yield part, result
 
@@ -201,7 +201,7 @@ class OutputSchemaTool(Generic[OutputDataT]):
             if description is None:
                 tool_description = json_schema_description
             else:
-                tool_description = f'{description}. {json_schema_description}'
+                tool_description = f'{description}. {json_schema_description}'  # pragma: no cover
         else:
             tool_description = description or DEFAULT_DESCRIPTION
             if multiple:
@@ -231,9 +231,13 @@ class OutputSchemaTool(Generic[OutputDataT]):
         try:
             pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
             if isinstance(tool_call.args, str):
-                output = self.type_adapter.validate_json(tool_call.args, experimental_allow_partial=pyd_allow_partial)
+                output = self.type_adapter.validate_json(
+                    tool_call.args or '{}', experimental_allow_partial=pyd_allow_partial
+                )
             else:
-                output = self.type_adapter.validate_python(tool_call.args, experimental_allow_partial=pyd_allow_partial)
+                output = self.type_adapter.validate_python(
+                    tool_call.args or {}, experimental_allow_partial=pyd_allow_partial
+                )
         except ValidationError as e:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -243,7 +247,7 @@ class OutputSchemaTool(Generic[OutputDataT]):
                 )
                 raise ToolRetryError(m) from e
             else:
-                raise
+                raise  # pragma: lax no cover
         else:
             if k := self.tool_def.outer_typed_dict_key:
                 output = output[k]
@@ -269,11 +273,11 @@ def extract_str_from_union(output_type: Any) -> _utils.Option[Any]:
                 includes_str = True
             else:
                 remain_args.append(arg)
-        if includes_str:
+        if includes_str:  # pragma: no branch
             if len(remain_args) == 1:
                 return _utils.Some(remain_args[0])
             else:
-                return _utils.Some(Union[tuple(remain_args)])
+                return _utils.Some(Union[tuple(remain_args)])  # pragma: no cover
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:

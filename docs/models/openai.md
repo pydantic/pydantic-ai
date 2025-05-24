@@ -225,9 +225,7 @@ result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
 print(result.usage())
-"""
-Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details=None)
-"""
+#> Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65)
 ```
 
 #### Example using a remote server
@@ -256,9 +254,7 @@ result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
 print(result.usage())
-"""
-Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65, details=None)
-"""
+#> Usage(requests=1, request_tokens=57, response_tokens=8, total_tokens=65)
 ```
 
 1. The name of the model running on the remote server
@@ -294,14 +290,11 @@ Once you have the API key, you can use it with the `OpenAIProvider`:
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 model = OpenAIModel(
     'anthropic/claude-3.5-sonnet',
-    provider=OpenAIProvider(
-        base_url='https://openrouter.ai/api/v1',
-        api_key='your-openrouter-api-key',
-    ),
+    provider=OpenRouterProvider(api_key='your-openrouter-api-key'),
 )
 agent = Agent(model)
 ...
