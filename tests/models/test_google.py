@@ -6,15 +6,15 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from dirty_equals import IsInstance
 from httpx import Request
-from inline_snapshot import snapshot
+from inline_snapshot import Is, snapshot
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryContent,
     DocumentUrl,
     FinalResultEvent,
@@ -36,7 +36,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import Usage
 
-from ..conftest import IsDatetime, IsStr, try_import
+from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     from google.genai import _api_client
@@ -46,7 +46,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
 
 pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='google not installed'),
+    pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
@@ -507,3 +507,104 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
 
     with pytest.raises(UnexpectedModelBehavior, match='Safety settings triggered'):
         await agent.run('Tell me a joke about a Brazilians.')
+
+
+@pytest.mark.skipif(
+    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+)
+@pytest.mark.parametrize(
+    'url,expected_output',
+    [
+        pytest.param(
+            AudioUrl(url='https://cdn.openai.com/API/docs/audio/alloy.wav'),
+            'The URL discusses the daily cycle of the sun, its rise in the east, and its setting in the west, a fundamental and ancient human observation.',
+            id='AudioUrl',
+        ),
+        pytest.param(
+            DocumentUrl(url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf'),
+            (
+                'The URL points to a report titled "Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context."'
+                '\n\n'
+                'The report introduces Gemini 1.5 Pro, a highly compute-efficient multimodal mixture-of-experts model capable of recalling and'
+                ' reasoning over fine-grained information from millions of tokens of context, including multiple long documents and hours of video and audio.'
+                " The report details the model's capabilities, including long-context retrieval, long-document QA, long-video QA, long-context ASR, and its ability to learn and translate languages with limited training data by leveraging in-context learning from grammar manuals."
+                " The report also discusses the model's architecture, evaluations across various benchmarks, and its approach to responsible deployment, including impact assessment and safety mitigations. The report emphasizes Gemini 1.5 Pro's performance improvements compared to previous Gemini models and its potential for applications in areas like preserving endangered languages.\n"
+            ),
+            id='DocumentUrl',
+        ),
+        pytest.param(
+            ImageUrl(url='https://upload.wikimedia.org/wikipedia/commons/6/6a/Www.wikipedia_screenshot_%282021%29.png'),
+            'The main content of the URL is the multilingual portal page for Wikipedia, The Free Encyclopedia. It presents a list of Wikipedia versions in various languages, each with the respective number of articles. The page also features a search bar to find specific content and provides links to other Wikimedia projects.\n',
+            id='ImageUrl',
+        ),
+        pytest.param(
+            VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4'),
+            'The image shows a narrow alleyway in a Greek island town. The alley is lined with whitewashed buildings, and there are several tables and chairs set up for outdoor dining. In the distance, the blue sea is visible. The overall impression is one of a charming and picturesque Mediterranean scene.',
+            id='VideoUrl',
+        ),
+        pytest.param(
+            VideoUrl(url='https://youtu.be/lCdaVNyHtjU'),
+            (
+                'The main content of the URL is an analysis of recent 404 HTTP responses using logflre.'
+                ' It identifies several patterns, including common endpoints with 404s, request patterns, timeline-related issues, organization/project access, and configuration/authentication issues. It also provides recommendations for addressing these issues.'
+                ' Additionally, the URL shows code related to browser routing, specifically a BrowserRouter.tsx file defining routes for organization and project-related pages.'
+            ),
+            id='VideoUrl (YouTube)',
+        ),
+        pytest.param(
+            AudioUrl(url='gs://pydantic-ai-dev/openai-alloy.wav'),
+            'The URL discusses the observation that the sun rises in the east and sets in the west.',
+            id='AudioUrl (gs)',
+        ),
+        pytest.param(
+            DocumentUrl(url='gs://pydantic-ai-dev/Gemini_1_5_Pro_Technical_Report_Arxiv_1805.pdf'),
+            "The main content of this URL is a technical report introducing Google DeepMind's Gemini 1.5 Pro, a highly compute-efficient multimodal mixture-of-experts model capable of recalling and reasoning over millions of tokens of context. The report details its performance, architecture, and approach to responsible deployment. Key highlights include:"
+            '\n\n*   Near-perfect recall on long-context retrieval tasks across modalities.'
+            '\n*   State-of-the-art performance in long-document QA, long-video QA, and long-context ASR.'
+            '\n*   The ability to translate English to Kalamang, a low-resource language, with similar quality to a human learner.'
+            '\n*   Extensive evaluations on both synthetic and real-world tasks, covering text, code, image, video, and audio modalities.'
+            '\n*   A discussion on responsible deployment strategies.'
+            '\n*   Comparisons against Gemini 1.0 Pro and Gemini 1.0 Ultra, Claude 2.1 and GPT-4 Turbo.'
+            '\n* A model card outlining usage, limitations and ethical considerations.',
+            id='DocumentUrl (gs)',
+        ),
+        pytest.param(
+            ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png'),
+            'The main content of the URL is the Wikipedia main page, listing the different language versions of the online encyclopedia with the number of articles each contains. It also provides access to other Wikimedia projects.',
+            id='ImageUrl (gs)',
+        ),
+        pytest.param(
+            VideoUrl(url='gs://pydantic-ai-dev/grepit-tiny-video.mp4'),
+            "The main content of the URL appears to be a picturesque alleyway in a Greek island town. The alleyway has whitewashed buildings on either side, with outdoor seating for a cafe or restaurant. At the end of the alleyway, there's a view of the sea. The scene evokes a sense of relaxation and Mediterranean charm.",
+            id='VideoUrl (gs)',
+        ),
+    ],
+)
+@pytest.mark.vcr()
+async def test_google_url_input(
+    url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl, expected_output: str, allow_model_requests: None
+) -> None:
+    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
+    m = GoogleModel('gemini-2.0-flash', provider=provider)
+    agent = Agent(m)
+    result = await agent.run(['What is the main content of this URL?', url])
+
+    assert result.output == snapshot(Is(expected_output))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What is the main content of this URL?', Is(url)],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content=Is(expected_output))],
+                usage=IsInstance(Usage),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
