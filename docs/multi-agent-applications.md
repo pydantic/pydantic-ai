@@ -12,6 +12,7 @@ Of course, you can combine multiple strategies in a single application.
 ## Agent delegation
 
 "Agent delegation" refers to the scenario where an agent delegates work to another agent, then takes back control when the delegate agent (the agent called from within a tool) finishes.
+If you want to hand off control to another agent completely, without coming back to the first agent, you can use an [output function](output.md#output-functions).
 
 Since agents are stateless and designed to be global, you do not need to include the agent itself in agent [dependencies](dependencies.md).
 

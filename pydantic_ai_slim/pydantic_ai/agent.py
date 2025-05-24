@@ -29,7 +29,7 @@ from . import (
     usage as _usage,
 )
 from .models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
-from .result import FinalResult, OutputDataT, StreamedRunResult, ToolOutput
+from .result import FinalResult, OutputDataT, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDepsT,
@@ -127,7 +127,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     be merged with this value, with the runtime argument taking priority.
     """
 
-    output_type: type[OutputDataT] | ToolOutput[OutputDataT]
+    output_type: _output.OutputType[OutputDataT]
     """
     The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`.
     """
@@ -162,7 +162,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        output_type: type[OutputDataT] | ToolOutput[OutputDataT] = str,
+        output_type: _output.OutputType[OutputDataT] = str,
         instructions: str
         | _system_prompt.SystemPromptFunc[AgentDepsT]
         | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
@@ -199,7 +199,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         name: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
-        result_tool_name: str = 'final_result',
+        result_tool_name: str = _output.DEFAULT_OUTPUT_TOOL_NAME,
         result_tool_description: str | None = None,
         result_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
@@ -214,7 +214,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        # TODO change this back to `output_type: type[OutputDataT] | ToolOutput[OutputDataT] = str,` when we remove the overloads
+        # TODO change this back to `output_type: _output.OutputType[OutputDataT] = str,` when we remove the overloads
         output_type: Any = str,
         instructions: str
         | _system_prompt.SystemPromptFunc[AgentDepsT]
@@ -374,7 +374,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT],
+        output_type: _output.OutputType[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -404,7 +404,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None = None,
+        output_type: _output.OutputType[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -492,7 +492,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT],
+        output_type: _output.OutputType[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -524,7 +524,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None = None,
+        output_type: _output.OutputType[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -770,7 +770,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None,
+        output_type: _output.OutputType[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -800,7 +800,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None = None,
+        output_type: _output.OutputType[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -883,7 +883,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent],
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT],
+        output_type: _output.OutputType[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -914,7 +914,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None = None,
+        output_type: _output.OutputType[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -994,7 +994,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                 if isinstance(maybe_part_event, _messages.PartStartEvent):
                                     new_part = maybe_part_event.part
                                     if isinstance(new_part, _messages.TextPart):
-                                        if _agent_graph.allow_text_output(output_schema):
+                                        if _output.allow_text_output(output_schema):
                                             return FinalResult(s, None, None)
                                     elif isinstance(new_part, _messages.ToolCallPart) and output_schema:
                                         for call, _ in output_schema.find_tool([new_part]):
@@ -1628,7 +1628,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         raise AttributeError('The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.')
 
     def _prepare_output_schema(
-        self, output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None
+        self, output_type: _output.OutputType[RunOutputDataT] | None
     ) -> _output.OutputSchema[RunOutputDataT] | None:
         if output_type is not None:
             if self._output_validators:

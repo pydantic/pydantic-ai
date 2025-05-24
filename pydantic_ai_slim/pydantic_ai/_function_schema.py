@@ -5,6 +5,9 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
+import inspect
+from collections.abc import Awaitable
+from dataclasses import dataclass
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, Callable, cast
 
@@ -15,10 +18,12 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import TypedDict, get_origin
+from typing_extensions import get_origin
+
+from pydantic_ai.tools import RunContext
 
 from ._griffe import doc_descriptions
-from ._utils import check_object_json_schema, is_model_like
+from ._utils import check_object_json_schema, is_model_like, run_in_executor
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat, ObjectJsonSchema
@@ -27,24 +32,53 @@ if TYPE_CHECKING:
 __all__ = ('function_schema',)
 
 
-class FunctionSchema(TypedDict):
+@dataclass
+class FunctionSchema:
     """Internal information about a function schema."""
 
+    function: Callable[..., Any]
     description: str
     validator: SchemaValidator
     json_schema: ObjectJsonSchema
     # if not None, the function takes a single by that name (besides potentially `info`)
+    takes_ctx: bool
+    is_async: bool
     single_arg_name: str | None
     positional_fields: list[str]
     var_positional_field: str | None
 
+    async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
+        args, kwargs = self._call_args(args_dict, ctx)
+        if self.is_async:
+            function = cast(Callable[[Any], Awaitable[str]], self.function)
+            return await function(*args, **kwargs)
+        else:
+            function = cast(Callable[[Any], str], self.function)
+            return await run_in_executor(function, *args, **kwargs)
+
+    def _call_args(
+        self,
+        args_dict: dict[str, Any],
+        ctx: RunContext[Any],
+    ) -> tuple[list[Any], dict[str, Any]]:
+        if self.single_arg_name:
+            args_dict = {self.single_arg_name: args_dict}
+
+        args = [ctx] if self.takes_ctx else []
+        for positional_field in self.positional_fields:
+            args.append(args_dict.pop(positional_field))  # pragma: no cover
+        if self.var_positional_field:
+            args.extend(args_dict.pop(self.var_positional_field))
+
+        return args, args_dict
+
 
 def function_schema(  # noqa: C901
     function: Callable[..., Any],
-    takes_ctx: bool,
-    docstring_format: DocstringFormat,
-    require_parameter_descriptions: bool,
     schema_generator: type[GenerateJsonSchema],
+    takes_ctx: bool | None = None,
+    docstring_format: DocstringFormat = 'auto',
+    require_parameter_descriptions: bool = False,
 ) -> FunctionSchema:
     """Build a Pydantic validator and JSON schema from a tool function.
 
@@ -58,6 +92,9 @@ def function_schema(  # noqa: C901
     Returns:
         A `FunctionSchema` instance.
     """
+    if takes_ctx is None:
+        takes_ctx = _takes_ctx(function)
+
     config = ConfigDict(title=function.__name__, use_attribute_docstrings=True)
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper)
@@ -176,10 +213,13 @@ def function_schema(  # noqa: C901
         single_arg_name=single_arg_name,
         positional_fields=positional_fields,
         var_positional_field=var_positional_field,
+        takes_ctx=takes_ctx,
+        is_async=inspect.iscoroutinefunction(function),
+        function=function,
     )
 
 
-def takes_ctx(function: Callable[..., Any]) -> bool:
+def _takes_ctx(function: Callable[..., Any]) -> bool:
     """Check if a function takes a `RunContext` first argument.
 
     Args:
@@ -196,7 +236,7 @@ def takes_ctx(function: Callable[..., Any]) -> bool:
     else:
         type_hints = _typing_extra.get_function_type_hints(function)
         annotation = type_hints[first_param_name]
-        return annotation is not sig.empty and _is_call_ctx(annotation)
+        return True is not sig.empty and _is_call_ctx(annotation)
 
 
 def _build_schema(

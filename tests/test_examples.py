@@ -72,8 +72,12 @@ def find_filter_examples() -> Iterable[ParameterSet]:
 
     for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if ex.path.name != '_utils.py':
+            try:
+                path = ex.path.relative_to(Path.cwd())
+            except ValueError:
+                path = ex.path
+            test_id = f'{path}:{ex.start_line}'
             prefix_settings = ex.prefix_settings()
-            test_id = str(ex)
             if opt_title := prefix_settings.get('title'):
                 test_id += f':{opt_title}'
             yield pytest.param(ex, id=test_id)
@@ -401,6 +405,32 @@ text_responses: dict[str, str | ToolCallPart] = {
         args={'numerator': '123', 'denominator': '456'},
         tool_call_id='pyd_ai_2e0e396768a14fe482df90a29a78dc7b',
     ),
+    'Select the names and countries of all capitals': ToolCallPart(
+        tool_name='final_result_hand_off_to_sql_agent',
+        args={'query': 'SELECT name, country FROM capitals;'},
+    ),
+    'SELECT name, country FROM capitals;': ToolCallPart(
+        tool_name='final_result_run_sql_query',
+        args={'query': 'SELECT name, country FROM capitals;'},
+    ),
+    'SELECT * FROM capital_cities;': ToolCallPart(
+        tool_name='final_result_run_sql_query',
+        args={'query': 'SELECT * FROM capital_cities;'},
+    ),
+    'Select all pets': ToolCallPart(
+        tool_name='final_result_hand_off_to_sql_agent',
+        args={'query': 'SELECT * FROM pets;'},
+    ),
+    'SELECT * FROM pets;': ToolCallPart(
+        tool_name='final_result_run_sql_query',
+        args={'query': 'SELECT * FROM pets;'},
+    ),
+    'How do I fly from Amsterdam to Mexico City?': ToolCallPart(
+        tool_name='final_result_RouterFailure',
+        args={
+            'explanation': 'I am not equipped to provide travel information, such as flights from Amsterdam to Mexico City.'
+        },
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -581,6 +611,69 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document':
         return ModelResponse(
             parts=[ToolCallPart(tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id')]
+        )
+    elif (
+        isinstance(m, RetryPromptPart)
+        and m.tool_name == 'final_result_run_sql_query'
+        and m.content == "Only 'SELECT *' is supported, you'll have to do column filtering manually."
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result_run_sql_query',
+                    args={'query': 'SELECT * FROM capitals;'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
+    elif (
+        isinstance(m, RetryPromptPart)
+        and m.tool_name == 'final_result_hand_off_to_sql_agent'
+        and m.content
+        == "SQL agent failed: Unknown table 'capitals' in query 'SELECT * FROM capitals;'. Available tables: capital_cities."
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result_hand_off_to_sql_agent',
+                    args={'query': 'SELECT * FROM capital_cities;'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
+    elif (
+        isinstance(m, RetryPromptPart)
+        and m.tool_name == 'final_result_run_sql_query'
+        and m.content == "Unknown table 'pets' in query 'SELECT * FROM pets;'. Available tables: capital_cities."
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result_SQLFailure',
+                    args={
+                        'explanation': "The table 'pets' does not exist in the database. Only the table 'capital_cities' is available."
+                    },
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
+    # SQL agent failed: The table 'pets' does not exist in the database. Only the table 'capital_cities' is available.
+    elif (
+        isinstance(m, RetryPromptPart)
+        and m.tool_name == 'final_result_hand_off_to_sql_agent'
+        and m.content
+        == "SQL agent failed: The table 'pets' does not exist in the database. Only the table 'capital_cities' is available."
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result_RouterFailure',
+                    args={
+                        'explanation': "The requested table 'pets' does not exist in the database. The only available table is 'capital_cities', which does not contain data about pets."
+                    },
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
         )
     else:
         sys.stdout.write(str(debug.format(messages, info)))

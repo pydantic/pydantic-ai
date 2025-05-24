@@ -1,8 +1,12 @@
-"Output" refers to the final value returned from [running an agent](agents.md#running-agents) these can be either plain text or structured data.
+"Output" refers to the final value returned from [running an agent](agents.md#running-agents). This can be either plain text, [structured data](#structured-output), or the result of a [function](#output-functions) called with arguments provided by the model.
 
-The output is wrapped in [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] or [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] so you can access other data like [usage][pydantic_ai.usage.Usage] of the run and [message history](message-history.md#accessing-messages-from-results)
+The output is wrapped in [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] or [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] so that you can access other data, like [usage][pydantic_ai.usage.Usage] of the run and [message history](message-history.md#accessing-messages-from-results).
 
 Both `AgentRunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
+
+A run ends when a plain text response is received (assuming no output type is specified or `str` is one of the allowed options), or when the model responds with one of the structured output types by calling a special output tool. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agents.md#usage-limits).
+
+Here's an example using a Pydantic model as the `output_type`, forcing the model to respond with data matching our specification:
 
 ```python {title="olympics.py" line_length="90"}
 from pydantic import BaseModel
@@ -25,27 +29,32 @@ print(result.usage())
 
 _(This example is complete, it can be run "as is")_
 
-Runs end when either a plain text response is received or the model calls a tool associated with one of the structured output types (run can also be cancelled if usage limits are exceeded, see [Usage Limits](agents.md#usage-limits)).
-
 ## Output data {#structured-output}
 
-When the output type is `str`, or a union including `str`, plain text responses are enabled on the model, and the raw text response from the model is used as the response data.
+The [`Agent`][pydantic_ai.Agent] class constructor takes an `output_type` argument that takes one or more types or [output functions](#output-functions). It supports both type unions and lists of types and functions.
 
-If the output type is a union with multiple members (after removing `str` from the members), each member is registered as a separate tool with the model in order to reduce the complexity of the tool schemas and maximise the chances a model will respond correctly.
+When no output type is specified, or when the output type is `str` or a union or list of types including `str`, the model is allowed to respond with plain text, and this text is used as the output data.
+If `str` is not among the allowed output types, the model is not allowed to respond with plain text and is forced to return structured data (or arguments to an output function).
+
+If the output type is a union or list with multiple members, each member (except for `str`, if it is a member) is registered with the model as a separate output tool in order to reduce the complexity of the tool schemas and maximise the chances a model will respond correctly.
 
 If the output type schema is not of type `"object"` (e.g. it's `int` or `list[int]`), the output type is wrapped in a single element object, so the schema of all tools registered with the model are object schemas.
 
 Structured outputs (like tools) use Pydantic to build the JSON schema used for the tool, and to validate the data returned by the model.
 
-!!! note "Bring on PEP-747"
-    Until [PEP-747](https://peps.python.org/pep-0747/) "Annotating Type Forms" lands, unions are not valid as `type`s in Python.
+!!! note "Type checking considerations"
+    The Agent class is generic in its output type, and this type is carried through to `AgentRunResult.output` and `StreamedRunResult.output` so that your IDE or static type checker can warn you when your code doesn't properly take into account all the possible values those outputs could have.
 
-    When creating the agent we need to `# type: ignore` the `output_type` argument, and add a type hint to tell type checkers about the type of the agent.
+    Static type checkers like pyright and mypy will do their best the infer the agent's output type from the `output_type` you've specified, but they're not always able to do so correctly when you provide functions or multiple types in a union or list, even though PydanticAI will behave correctly. When this happens, your type checker will complain even when you're confident you've passed a valid `output_type`, and you'll need to help the type checker by explicitly specifying the generic parameters on the `Agent` constructor. This is shown in the second example below and the output functions example further down.
 
-Here's an example of returning either text or a structured value
+    Specifically, there are three valid uses of `output_type` where you'll need to do this:
+    1. When using a union of types, e.g. `output_type=Foo | Bar` or in older Python, `output_type=Union[Foo, Bar]`. Until [PEP-747](https://peps.python.org/pep-0747/) "Annotating Type Forms" lands in Python 3.15, type checkers do not consider these a valid value for `output_type`. In addition to the generic parameters on the `Agent` constructor, you'll need to add `# type: ignore` to the line that passes the union to `output_type`.
+    2. With mypy: When using a list, as a functionally equivalent alternative to a union, or because you're passing in [output functions](#output-functions). Pyright does handle this correctly, and we've filed [an issue](https://github.com/python/mypy/issues/19142) with mypy to try and get this fixed.
+    3. With mypy: when using an async output function. Pyright does handle this correctly, and we've filed [an issue](https://github.com/python/mypy/issues/19143) with mypy to try and get this fixed.
+
+Here's an example of returning either text or structured data:
 
 ```python {title="box_or_error.py"}
-from typing import Union
 
 from pydantic import BaseModel
 
@@ -59,9 +68,9 @@ class Box(BaseModel):
     units: str
 
 
-agent: Agent[None, Union[Box, str]] = Agent(
+agent = Agent(
     'openai:gpt-4o-mini',
-    output_type=Union[Box, str],  # type: ignore
+    output_type=[Box, str],
     system_prompt=(
         "Extract me the dimensions of a box, "
         "if you can't extract all data, ask the user to try again."
@@ -79,14 +88,14 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-Here's an example of using a union return type which registers multiple tools, and wraps non-object schemas in an object:
+Here's an example of using a union return type, for which PydanticAI will register multiple tools and wraps non-object schemas in an object:
 
 ```python {title="colors_or_sizes.py"}
 from typing import Union
 
 from pydantic_ai import Agent
 
-agent: Agent[None, Union[list[str], list[int]]] = Agent(
+agent = Agent[None, Union[list[str], list[int]]](
     'openai:gpt-4o-mini',
     output_type=Union[list[str], list[int]],  # type: ignore
     system_prompt='Extract either colors or sizes from the shapes provided.',
@@ -103,9 +112,134 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-### Output validator functions
+### Output functions
+
+Instead of plain text or structured data, you may want the output of your agent run to be the result of a function called with arguments provided by the model, for example to further process or validate the data provided through the arguments (with the option to tell the model to try again), or to hand off to another agent.
+
+Output functions are similar to [function tools](tools.md), but the model is forced to call one of them, the call ends the agent run, and the result is not passed back to the model.
+
+As with tool functions, output function arguments provided by the model are validated using Pydantic, they can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and they can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
+
+To specify output functions, you set the agent's `output_type` to either a single function (or bound instance method), or a list of functions. The list can also contain other output types like simple scalars or entire Pydantic models.
+You typically do not want to also register your output function as a tool (using the `@agent.tool` decorator or `tools` argument), as this could confuse the model about which it should be calling.
+
+Here's an example of all of these features in action:
+
+```python {title="output_functions.py"}
+import re
+from typing import Union
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai._output import ToolRetryError
+from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+
+class Row(BaseModel):
+    name: str
+    country: str
+
+
+tables = {
+    'capital_cities': [
+        Row(name='Amsterdam', country='Netherlands'),
+        Row(name='Mexico City', country='Mexico'),
+    ]
+}
+
+
+class SQLFailure(BaseModel):
+    """An unrecoverable failure. Only use this when you can't change the query to make it work."""
+
+    explanation: str
+
+
+def run_sql_query(query: str) -> list[Row]:
+    """Run a SQL query on the database."""
+
+    select_table = re.match(r'SELECT (.+) FROM (\w+)', query)
+    if select_table:
+        column_names = select_table.group(1)
+        if column_names != '*':
+            raise ModelRetry("Only 'SELECT *' is supported, you'll have to do column filtering manually.")
+
+        table_name = select_table.group(2)
+        if table_name not in tables:
+            raise ModelRetry(
+                f"Unknown table '{table_name}' in query '{query}'. Available tables: {', '.join(tables.keys())}."
+            )
+
+        return tables[table_name]
+
+    raise ModelRetry(f"Unsupported query: '{query}'.")
+
+
+sql_agent = Agent[None, Union[list[Row], SQLFailure]](
+    'openai:gpt-4o',
+    output_type=[run_sql_query, SQLFailure],
+    instructions='You are a SQL agent that can run SQL queries on a database.',
+)
+
+
+async def hand_off_to_sql_agent(ctx: RunContext, query: str) -> list[Row]:
+    """I take natural language queries, turn them into SQL, and run them on a database."""
+
+    # Drop the final message with the output tool call, as it shouldn't be passed on to the SQL agent
+    messages = ctx.messages[:-1]
+    try:
+        result = await sql_agent.run(query, message_history=messages)
+        output = result.output
+        if isinstance(output, SQLFailure):
+            raise ModelRetry(f'SQL agent failed: {output.explanation}')
+        return output
+    except UnexpectedModelBehavior as e:
+        # Bubble up potentially retryable errors to the router agent
+        if (cause := e.__cause__) and isinstance(cause, ToolRetryError):
+            raise ModelRetry(f'SQL agent failed: {cause.tool_retry.content}') from e
+        else:
+            raise
+
+
+class RouterFailure(BaseModel):
+    """Use me when no appropriate agent is found or the used agent failed."""
+
+    explanation: str
+
+
+router_agent = Agent[None, Union[list[Row], RouterFailure]](
+    'openai:gpt-4o',
+    output_type=[hand_off_to_sql_agent, RouterFailure],
+    instructions='You are a router to other agents. Never try to solve a problem yourself, just pass it on.',
+)
+
+result = router_agent.run_sync('Select the names and countries of all capitals')
+print(result.output)
+"""
+[
+    Row(name='Amsterdam', country='Netherlands'),
+    Row(name='Mexico City', country='Mexico'),
+]
+"""
+
+result = router_agent.run_sync('Select all pets')
+print(result.output)
+"""
+explanation = "The requested table 'pets' does not exist in the database. The only available table is 'capital_cities', which does not contain data about pets."
+"""
+
+result = router_agent.run_sync('How do I fly from Amsterdam to Mexico City?')
+print(result.output)
+"""
+explanation = 'I am not equipped to provide travel information, such as flights from Amsterdam to Mexico City.'
+"""
+```
+
+### Output validators {#output-validator-functions}
 
 Some validation is inconvenient or impossible to do in Pydantic validators, in particular when the validation requires IO and is asynchronous. PydanticAI provides a way to add validation functions via the [`agent.output_validator`][pydantic_ai.Agent.output_validator] decorator.
+
+If you want to implement separate validation logic for different output types, it's recommended to use [output functions](#output-functions) instead, to save you from having to do `isinstance` checks inside the output validator.
 
 Here's a simplified variant of the [SQL Generation example](examples/sql-gen.md):
 
@@ -127,7 +261,7 @@ class InvalidRequest(BaseModel):
 
 
 Output = Union[Success, InvalidRequest]
-agent: Agent[DatabaseConn, Output] = Agent(
+agent = Agent[DatabaseConn, Output](
     'google-gla:gemini-1.5-flash',
     output_type=Output,  # type: ignore
     deps_type=DatabaseConn,
