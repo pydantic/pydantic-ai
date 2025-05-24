@@ -45,6 +45,7 @@ from . import (
     check_allow_model_requests,
     get_user_agent,
 )
+from ._google_common import GeminiUsageMetaData as _GeminiUsageMetaData, parse_usage_details
 from ._json_schema import JsonSchema, WalkJsonSchema
 
 LatestGeminiModelNames = Literal[
@@ -438,13 +439,12 @@ class GeminiStreamedResponse(StreamedResponse):
             responses_to_yield = gemini_responses[:-1]
             for r in responses_to_yield[current_gemini_response_index:]:
                 current_gemini_response_index += 1
-                self._usage += _metadata_as_usage(r)
                 yield r
 
         # Now yield the final response, which should be complete
         if gemini_responses:  # pragma: no branch
             r = gemini_responses[-1]
-            self._usage += _metadata_as_usage(r)
+            self._usage = _metadata_as_usage(r)
             yield r
 
     @property
@@ -737,30 +737,16 @@ class _GeminiCandidates(TypedDict):
     safety_ratings: NotRequired[Annotated[list[_GeminiSafetyRating], pydantic.Field(alias='safetyRatings')]]
 
 
-class _GeminiUsageMetaData(TypedDict, total=False):
-    """See <https://ai.google.dev/api/generate-content#FinishReason>.
-
-    The docs suggest all fields are required, but some are actually not required, so we assume they are all optional.
-    """
-
-    prompt_token_count: Annotated[int, pydantic.Field(alias='promptTokenCount')]
-    candidates_token_count: NotRequired[Annotated[int, pydantic.Field(alias='candidatesTokenCount')]]
-    total_token_count: Annotated[int, pydantic.Field(alias='totalTokenCount')]
-    cached_content_token_count: NotRequired[Annotated[int, pydantic.Field(alias='cachedContentTokenCount')]]
-
-
 def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
     metadata = response.get('usage_metadata')
     if metadata is None:
         return usage.Usage()  # pragma: no cover
-    details: dict[str, int] = {}
-    if cached_content_token_count := metadata.get('cached_content_token_count'):
-        details['cached_content_token_count'] = cached_content_token_count  # pragma: no cover
+
     return usage.Usage(
         request_tokens=metadata.get('prompt_token_count', 0),
         response_tokens=metadata.get('candidates_token_count', 0),
         total_tokens=metadata.get('total_token_count', 0),
-        details=details,
+        details=parse_usage_details(metadata),
     )
 
 
