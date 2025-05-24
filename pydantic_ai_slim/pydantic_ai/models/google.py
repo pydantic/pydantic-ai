@@ -115,6 +115,12 @@ class GoogleModelSettings(ModelSettings, total=False):
     See <https://ai.google.dev/gemini-api/docs/thinking> for more information.
     """
 
+    google_labels: dict[str, str]
+    """User-defined metadata to break down billed charges. Only supported by the Vertex AI API.
+
+    See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
+    """
+
 
 @dataclass(init=False)
 class GoogleModel(Model):
@@ -269,6 +275,7 @@ class GoogleModel(Model):
             frequency_penalty=model_settings.get('frequency_penalty'),
             safety_settings=model_settings.get('google_safety_settings'),
             thinking_config=model_settings.get('google_thinking_config'),
+            labels=model_settings.get('google_labels'),
             tools=cast(ToolListUnionDict, tools),
             tool_config=tool_config,
         )
