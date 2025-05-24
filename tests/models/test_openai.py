@@ -188,7 +188,6 @@ async def test_request_simple_success(allow_model_requests: None):
         {
             'messages': [{'content': 'hello', 'role': 'user'}],
             'model': 'gpt-4o',
-            'n': 1,
             'extra_headers': {'User-Agent': IsStr(regex=r'pydantic-ai\/.*')},
             'extra_body': None,
         },
@@ -199,7 +198,6 @@ async def test_request_simple_success(allow_model_requests: None):
                 {'content': 'hello', 'role': 'user'},
             ],
             'model': 'gpt-4o',
-            'n': 1,
             'extra_headers': {'User-Agent': IsStr(regex=r'pydantic-ai\/.*')},
             'extra_body': None,
         },
@@ -497,6 +495,7 @@ async def test_stream_structured(allow_model_requests: None):
         assert not result.is_complete
         assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
             [
+                {},
                 {'first': 'One'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
@@ -585,7 +584,6 @@ async def test_system_prompt_role(
                 {'content': 'hello', 'role': 'user'},
             ],
             'model': 'gpt-4o',
-            'n': 1,
             'extra_headers': {'User-Agent': IsStr(regex=r'pydantic-ai\/.*')},
             'extra_body': None,
         }
@@ -662,7 +660,6 @@ async def test_image_url_input(allow_model_requests: None):
                         ],
                     }
                 ],
-                'n': 1,
                 'extra_headers': {'User-Agent': IsStr(regex=r'pydantic-ai\/.*')},
                 'extra_body': None,
             }

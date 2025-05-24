@@ -224,27 +224,21 @@ def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli([])
-    mock_run_chat.assert_awaited_once_with(
-        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai'
-    )
+    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai')
 
 
 def test_code_theme_light(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=light'])
-    mock_run_chat.assert_awaited_once_with(
-        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'default', 'pai'
-    )
+    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'default', 'pai')
 
 
 def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=dark'])
-    mock_run_chat.assert_awaited_once_with(
-        IsInstance(PromptSession), True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai'
-    )
+    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'pai')
 
 
 def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
@@ -252,7 +246,6 @@ def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli_agent.to_cli_sync()
     mock_run_chat.assert_awaited_once_with(
-        session=IsInstance(PromptSession),
         stream=True,
         agent=IsInstance(Agent),
         console=IsInstance(Console),
@@ -268,7 +261,6 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     await cli_agent.to_cli()
     mock_run_chat.assert_awaited_once_with(
-        session=IsInstance(PromptSession),
         stream=True,
         agent=IsInstance(Agent),
         console=IsInstance(Console),

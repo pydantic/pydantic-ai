@@ -41,8 +41,7 @@ class AgentCard(TypedDict):
     capabilities: Capabilities
     """The capabilities of the agent."""
 
-    # TODO(Marcelo): The spec makes authentication required.
-    authentication: NotRequired[Authentication]
+    authentication: Authentication
     """The authentication schemes supported by the agent.
 
     Intended to match OpenAPI authentication structure.
