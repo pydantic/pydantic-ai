@@ -18,8 +18,9 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.usage import Usage
 
-from ..conftest import IsDatetime, try_import
+from ..conftest import IsDatetime, IsInstance, try_import
 
 with try_import() as imports_successful:
     from google.auth.transport.requests import Request
@@ -118,7 +119,8 @@ async def test_url_input(
     url: Union[AudioUrl, DocumentUrl, ImageUrl, VideoUrl], expected_output: str, allow_model_requests: None
 ) -> None:
     provider = GoogleVertexProvider(project_id='pydantic-ai', region='us-central1')
-    agent = Agent(model=GeminiModel('gemini-2.0-flash', provider=provider))
+    m = GeminiModel('gemini-2.0-flash', provider=provider)
+    agent = Agent(m)
     result = await agent.run(['What is the main content of this URL?', url])
 
     assert result.output == snapshot(Is(expected_output))
@@ -134,6 +136,7 @@ async def test_url_input(
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(expected_output))],
+                usage=IsInstance(Usage),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
             ),
