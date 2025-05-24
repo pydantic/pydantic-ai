@@ -1347,6 +1347,7 @@ async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini
                         content='The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several patterns, including the most common endpoints with 404 errors, request patterns (such as all requests being GET requests), timeline-related issues, and configuration/authentication problems. The analysis also provides recommendations for addressing the 404 errors.'
                     ),
                 ],
+                usage=Usage(requests=1, request_tokens=9, response_tokens=72, total_tokens=81, details={}),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
             ),
