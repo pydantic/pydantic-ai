@@ -1,8 +1,10 @@
 import os
+from dataclasses import dataclass
 from typing import Union
 
 import pytest
 from inline_snapshot import Is, snapshot
+from pytest_mock import MockerFixture
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
@@ -20,6 +22,8 @@ from pydantic_ai.models.gemini import GeminiModel
 from ..conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
+    from google.auth.transport.requests import Request
+
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 
 
@@ -27,6 +31,22 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-auth not installed'),
     pytest.mark.anyio,
 ]
+
+
+@pytest.fixture(autouse=True)
+def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
+    # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
+    if not os.getenv('CI'):
+        return
+
+    @dataclass
+    class NoOpCredentials:
+        token = 'my-token'
+
+        def refresh(self, request: Request): ...
+
+    return_value = (NoOpCredentials(), 'pydantic-ai')
+    mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
 
 
 @pytest.mark.skipif(
