@@ -1,0 +1,284 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '312'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 1024
+      messages:
+      - content:
+        - text: What day is today?
+          type: text
+        role: user
+      model: claude-3-5-sonnet-latest
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - allowed_domains: null
+        blocked_domains: null
+        name: web_search
+        type: web_search_20250305
+        user_location: null
+    uri: https://api.anthropic.com/v1/messages
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '25971'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: Let me search for information about today's date and any significant events.
+        type: text
+      - id: srvtoolu_01ALRFK59SkK8D9e1Xj2exhq
+        input:
+          query: current date today May 23 2025 events news
+        name: web_search
+        type: server_tool_use
+      - content:
+        - encrypted_content: EvYKCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDI/hbUSxQZPSWMwO7xoMxyuxfcQKb+8mOPpjIjAKK+ApU1RaFto5mWlwM5k8iEi5juZVRU1xY18ez4rV7YiJHtssA7lBadfIzGGJ3qoq+QlWiTqY/hH75J03S+I+HUn4NkcVZAUIJXPRbhhEuFMj8w1EdI2hhLGeOPnNHZ1fuykYebO7akF1fcbtzEm2ok04u8mAE4oUdg8NzIWmO2QyH9cs0QM0MfIyM2pdGcKPqVMIAek4HrHO4OfGANUDpnVsnNO9XvABIgWXltfv9EWH+iuhzms+GG46hrJxMpy5qDefjHsHzTfr9Rv538S6Hk/JSc/v2cbmoiY4LP++58eKxhQabyI2HM4iT473MCP0OjhA8lCe0VV/5KuMfQL8ywFhThrkIUXu0AdhlgBQSAcu5SI3JkVYcr/ss8Xxbhxjg9tK6xyNkvYj7bJj4q+glR6fTwn9dWkRn0umBN8jUL/tw9BTXYcD3W35J+rdLfLgS8Y1QRnhI51OFFLYAmMj1aiscjKNEoANJtXDDQXjGcQdZTcWBPu6wG4vv3N2sIF3hDE/atxFGI53EZdh/43p6jeGra9Y0seQT9mhA3Dsqxq2QdK2n6z2Aj5RzhN/kBvVfF9xq/o87RJ2QuTr6tubJOYaQUit1/O2wk2Eem07nuoUL7H+W6lEY3gIZmlJ2gmssivIcDeCCZj+/oQETVJDq5bpUvAisiWJ/kmFjahy9Pf95YS8aML65BDdsSKbfOJZSUfOapF4YzO3n2qIlQNWMAppVuausHpkVao7GzmtntSeTYyNH8wxVTIjwmMGSr1+kFoe189d6Gf6bm23h6elaeQAQRHAHdrGZv1cn3N9VmymJJ2siKmTL4wCkbn5ElKFFqK+731+O90gKdoNUgbDVvknf/BKY524XkiBZ4qKK9pYz5H0V/o5KqE1qe8X/sfqCEQEw4KyHORGSrKAfO4gcieInr4dbzNTYTxS+MVTqiSqF5Qb/tvj/soIkW/yg3J44zYgucKA7R7vnhc3EnUvLnAugijouEeVE0rD3GFUPf31wqbG8uwtsPv+SmGAntNQQxSUJHg88bgtORiCpTjKbTPm4w7tFku0A2kgZN5+VBLZm9Z9qz6lWQ0YCAk9n0C2W5kZhIM7K/dMMShAPHjEVtPq7OkPInoENd3a6VMcwbGlXWbZNSJ0RCR+5aL16lyT0UoSdHvgBQ3cYK9x0jmaE1JEkbRha6IxZxp2ZNyGFre/KQ4vtirh9NA1zbqWTXmccd8TXY60pHrROMcbHQ1nPwuvEVAPKIuILCOQwA4WSGr4h0rjUeQ7T5kCbYSbi8WYllK+Y0huo+XERWRKK5NwgsCI20UHMK9NEdEHITDuw8OUytqRxJWttXd01fWMDlFM42nF2SN0zrA9ZNRugmfug0U1HNag9ZXK7mqhs7zyrgPGw/p+9S00VJJtJT59+IylqZz9L+v3oRjYnzhJS1LFXLWK44hx22r8jCyIci94jYZQ2U1tKYGm9ioyJLNFgZ4sqnmt6dgThIgB99vyLKQ3RyTBdJkqBC4JHU/BvvutAp9xQBdevrGDISe/IIt1lZIV4r0eFxME9K29QdAYs8FZpbcduSL8ql1NiW+G3zHBwmlBwz2eoHIOZ1MUjXc1ZxZ9Gd5CrNLGLkiKR0KH5u9fwVLFFgZTtqSu+Ym3x7YBbo9hQeuofKAl8RAqmxPtUiuXdvdn8VTbqXPajspdX8AjCb10b4j5Kt0xp93d5/nNePkaMu/FTaNwCV7IlbVqpiiKgkYez++VnSjKvtq5dA0gVoWfHghv8xv7vU6RGAM=
+          page_age: 7 hours ago
+          title: 'Horoscope Today: May 23, 2025 | Vogue India'
+          type: web_search_result
+          url: https://www.vogue.in/content/horoscope-today-may-23-2025
+        - encrypted_content: EqMICioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDH4w3jlL4QRvd7HQhhoMpAJGlWscx4DnjE6xIjAZz0vEaZS1UVwE+tsfKjSwYQXvn3voAgj89JY5K+4TVOvVGX0CM9KNq9bYWBSIGe0qpgcLcS/qlQV/hD67LZEvqzZnHh5ChSAr5C/UPKvl3BPhiFM6fQNz49lWvCwx24f7WUzLN6HCTRR8uGjLxOA/nx243f5Gl6F7YGR26q4+/ObdvCiQAYGYL/fH8HV++qqxuLX0QC2PcQeif2LBh4TNGVG7D1VpeURfGMPpaX3GPMXUCO1e/Fls3if9vQxK5cWqIPL8VLNqLWiztLiARbN7FVlc5HiGqCtp273rK0fdOER6q78xz3v6si8XbJxtv/hgVFznzf+nKM4yrSNhBT9vaibQjmhnYEjknwcdF3Yj16vbRTVeM5LKhuxhZp15aHxv3Xhmda3/DuejBMJ2AjOMay1NObRN4ZH6MaeqGxVUitU9Q2bUB7fbAt1WjYFU/GQETLEtJgfHSMF5rtafq1a0dGYtOnJcg73MqL//9FUIEayZqhWoFqBHlenmfC+nxqpDC5tDUxp9c0EMouTQPwNZ5U6BxMnJUUTMRyHc6kWIPQYjrstgBrMcXslPzi1lx8o2lGmv15dOk/c2WzQ8adda3inWQqbfG4HEXYx/BeygpUSaWORHNe6GnxwxougOLaxhS+yHeD9ICnngOlM4kOZMTpiatATPM4Xe732vdXHJ1RZkxlmY4JjHayvi2xi6VyBvgGAsQ7Q/G0iiMa2IbAVx3oC9ClHvl0YTbL6AJq2F3tKjWDufnaKanhIMJjNVqGa4d9zZkYaTVBE0ZYAZftH5TVUKqjES/CYGekHcomZ3Xj0QoiMXawyVbwOtXRxjzCgjM17cL7/nNy78+9Kp0ConZ69Y16hFZGgqFbD0qtDNAVI2kQZa6F8EtFD6v+484uNjpxTaEGTe1DK2Rg3ebK322dfJn7AYE5yPqCMTcLL3Ex4LFWBxUopFNO9PAdBtC7eFqb3XIVEp658hjo0Oz6Ih9cApzJfiXY3Iine2d+jHbGBO+d68th9rwW2TGKUG1WxleTf6EFSsq07wDp7QorY0i009fNEnKjNZno0iyg+wwg9hrSFKZEP54bL3Ggco1IfcC7GbZQuzMtTn11Ghxum1QSxZdn5t0zxZeBLCoHdv17kP7OAAk56825DVNsCw2WNwFfUZk5jyHAOzvMjLL+s7ROrhvAWS0e5n0r2wk2pycd6eAvdcBZg9wHrw6oRRO6ieiv7CWB5ZUifh70Z0PBS+vLabwEbv94YmnlHI61zbQETeIvPdfx0vhC3aKdwOiHAh1oKEaUYvX/I2GbsvQ5EvsmvQN2PifBI+GAM=
+          page_age: 7 hours ago
+          title: 'Sagittarius Horoscope Today, 23 May 2025: Today favours real estate exploration and property-related investment
+            | Horoscope Today - The Indian Express'
+          type: web_search_result
+          url: https://indianexpress.com/article/horoscope/sagittarius-horoscope-today-23-may-2025-daily-astrology-prediction-for-sagittarius-career-finance-money-love-10020998/
+        - encrypted_content: EtAJCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDD3tFx9a2iDqJWl6WRoMBVqhD6dltrjObVsgIjCVGW1c5PmYPcrXvq0c78H7gjjxs+M+yJkoIz2pfjBchm8LajiEpkfIynRSvd+Ym4oq0wg0evN5iA8qD3woyOAJqikGVSvs2nTDRmKBpKdHDdgDf3Na9XAw1n/uQnWWLn2+wtZbB3dXUekFZ+c0zzeQxo74Jrn6I964ykL9xq/w7Z+D4wr28WLbK5ITEq8lkH3Sacqysh2tegSHixLmnfTO4DkAEnlFpKpu+V2Rbs/Mu223BAcztshvXqUvkuXsvKSBVSOPK5Mig8HEvHG3uipWZ1Oug0GnE0pVlWiyjbGT8MnYExZGnORIobr6lVN3CXXf3I7dbK37PGpEjIAu5XJtvam4XqrhIS2xCMHniBefKYGdwTX2OH8HJ1rRybcVto/imdvGbOalGKMto8jMD5bNrWdA4qDCmpY9sK40a+xcrAXu74u5XTlw9Ifif1kWv+BQSX5KQ2XbR8KnjW6C35UrL6s996Rhy1dpbBufKsyabDzzBSe5yKNp6Od4O5hCLiTA8EVZzQX/WzwQ7lMr+cxRiRoQ/Kzb5z9ZC0ZioLKQl7P7OR1xrZ/zPCg99a2NrIFHULUuLjO6nIGV0i+GOQE4r8F4YW2EFKvaKvNT1/wsERQ89doWf1Liohgk1Lg3t2urBsp2ysrqsamOKzMitvyoeihziHPvJ9mD5WeW0uoyz2RJGqx7/fKbBRLoHERAS5bXhXyU24LkJwsJE+cYeXudqyQ6ORezdmQXIyvzuJQMFMSeYkOQ3+gSQJzDD/1sf30jnd/ZVdL/8w7xAlFHyhNjC11pq6RJmyOwzpnP0/Yd+5c+gEDZCx5NrLDe9Xvk9ihloriS8U36wfJgv1x24ay5lfFB8wKmVczrxpYMJujjsXHQ2XE5CW5LFz0zzv6Y4ZvatDO4gEAInj/zrSoAi3kMOPyOZiKohpcjey54LJEoxaz8J6sjOKTOdhFTaYmUI3z+dAukx6ztJ2oCjXS0cqbHmlQxJNwdvz0V9+kwUURH11MeSLspoVn9G4BJO05Bkhv8SyMTu+DJalTrDmmN7bB1OXPNDhYD/Ri4iE3Ovlzl8pgTNnviAg8VHPcScphOXlgvZuSVhDcFUfwPyMd4D4FSUpeG/nXhjKg10upKfsrV3lBzzQ7a5NNfAd6sMv0WCW8YVKk1IOwJAjQ1V3B1Z5UV9M5kwQYAewChj/LJGJikpTbdKqAVIudBTCgUdl5M5cU7iYMJxVIMC3XrJ4h9cJozrAuxKGYN0Lj9NoxMWwezGPuDyr6b84Ic4G+OP9DFwALVseAcrkysdyDSZlcmqZqJroHqC50SQktIYriGtDFZm5LFQCLYUvJ0wqsYIL8ELiwcw3KTCRhUL3o/UVHU/zVSkihCEbeuScwxqmsh4QcqVjI9pHNaSXaW09vg6QoCcJIdJq/XJSP1zZ79c7eXK+ASwhpzQVbl69wXtyFYI5F1tnTU/unK+yBtUuyjWaPRhGxfPA/u43MpHhVI8hTlMbWD7uzZVlPmWuDNwJPZlSCT7UcnWTaQmJz6xwip2waafNo+yQ3gFKoYAw==
+          page_age: 7 hours ago
+          title: 'Aries Horoscope Today, 23 May 2025: Ganesha sees you leaning toward creative projects | Horoscope Today
+            - The Indian Express'
+          type: web_search_result
+          url: https://indianexpress.com/article/horoscope/aries-horoscope-today-23-may-2025-daily-astrology-prediction-for-aries-career-finance-money-love-10020982/
+        - encrypted_content: Et0KCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDBq4olrZFHF+J7dt1xoM4bAEoHkWzZty0vJVIjA5Dmomb4aD1Bnw3XVZyhywjrUcaGHukZRPGuUuU+YpIAfSSidBXqmlvJNiz5Uy4QEq4AnKQQzJ8iu/iVDcg0mmgTHr1Hon4M4Ct3zN9VN93hiRethoP9r9/1CHIqe3vr0K+YiWikm5s9uxYYEJjEb10aTnCTZQ4xi5APbn25GsjVhQCDgjvQ0tCQDREYXtFb1wpGk5jCBZka+2nmnGAIF+BTz6tXbvdOylcuGx8S6BxmuEfXGCFlhTiNSqY8/7Q2R37jo6J54pbwGuT743R3jqldQZNyN0kqjUhBGvbt8urASu4Wb/kj8UEf57QlvN088SKYJaXql5wIx9Fp5l/RNrXAdPjq8MmLNTH6r1fWAz4VwdY7Iy63y1Dk0yUQSokMjlLrFgj1WIQ1lPyRdElbqLzv61xVyEOwRPdSmV2ndlbXjlrIoGjw5cX6L6epC2YqPmBmqt4E18JRid1kHky4mhN7ri9SHTAc2aeNXvlLiVZWyG+tQ//2KUYvJFWVEh8WRSspmPbtll0oS5x5qRD+IrC26yX69Ntykj9wuCsqE87WgnVD0oI/+yI5jxw5kKrFWWzvQ0ZSJvU4dx3vEPxlyhWXf2f4WnoFFsnu6gShDNNQ11M4WJBdmX+3mqnBCVCCUoydiQNfNOG9pRxygmwjQoHJW165knIWw8ezFE0m+wT1J0jQkGWu3AuGivU9+hZyUkS8s6H8oTKUFzKCltxnoKJiV7Q240nW1MaOaGP4/4pdGArdq+o0PJeOKqqo5u307LZNuHY4pptG3KHWxSgrHQQvcWKhTc5Mk3MOMyz7P7K8aV4GrRiXoJ2PzH1nM/87HFtSPBwJG7xNlBPURLnW6j4GLrLEEuAUrmnRAeDaA/vlvTZLWa21lenjAwfv00zaZ3WZyYp12qOnbnvTXRQJZvnTJiWdCiQW2VBOt+L0Go+ZUyj7y9zQmQ3C/1hZRl/ZFvAmhqtdwtYf2/i0PBMPF3DUZJIYP3ly7TI8lrzzmLvyjldlPOJ86tFLAPOWpf6BtEXLlJqVIJ1TbxWlsPIUYIk8P93HTnCVINmNlGRCeNqw2ZlmQORHOKKCynFR4Ihgfd3/whfYYp3wq714X31YB5sMpIfUE4MjYPGuyv7i9gYVtiLsvkQYcysEgbVleaAa4WtkJxW2np5386GIwaeCDa1VNIx2/NsFCzBIzGnlVXJhvAEDdHGZ36qHH9ObKa2eFodkxIwpyqJS+4Ommu2LuOzIu3W0LcAhphXnpTgHhh1PjBriqb2kyIBNn8Q84w5XUux5HViy2Q9NKINNmftQn3uKLvKfs3idQYIizwW5GrBkv+TmSAYIAgigtr7YlnAjHyxy/79av029p0ZxxAcH12uEFBLFFFJIBgX5amErn62AdhyCpr5z0H+Ck7sX5J+FVHIKmOeWN8ptCcYeg/D219XUZYEDhacblCbIDBrb5o3KdM1LPVwfFeox/EjOEC185UC/N/mZMPVSb21XdWTAcWZ9PPzUqwAMb+9DKbtCFPx6ZbN1h5in+k/rts5+QUKCbgaall0a9hKSAMr7AHMi17iAc0vYBjG7UZpIw1dsuyWDo1NPELzoDBwRzCtAxm4BSHnt0cdxyaf/41Xj8QAclunFwR8HYGBKVcFDfMqh94O7reBCHiXmiaeGul+K9KMa/fdfT3FKx1X779fpG0+EbTGxeTPqYAWp2IQ/LxXfa0hnX+Que5U2iQowLkjjyiU07a5PMYAw==
+          page_age: 7 hours ago
+          title: 'Pisces Daily Horoscope Today, May 23, 2025: Meaning Is Hidden in Simple Belongings - Times of India'
+          type: web_search_result
+          url: https://timesofindia.indiatimes.com/astrology/horoscope/pisces-daily-horoscope-today-may-23-2025-meaning-is-hidden-in-simple-belongings/articleshow/121343860.cms
+        - encrypted_content: Eq0ICioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLOvJkD5k12EJV0xFRoMMZpX7u/ZhJlnMy3NIjAQ1LwSNr3eZ9XTu0sQXza6xp7J2/P+ed46KYL7Nap4nyl0q2LoydtpMnvPMh90g10qsAfAGdqlb4eoF2zJ4ejehLLv0N0s2mrLzzWFUrv71ox2mpVfqwnkjq3VYnonsQyJKERY7S0pnRwTlaO4c2WYV644c+xvnaYGpY+IlYfkJ/71kBO5hglWG2valdWZ2v9omGbNiXMqKSMgt7hFKgRAr/rhHqxeNYtApWalZckzxX0DvdtbN5HVWSyqGBYlUgDDTsvLHTWaxfDur5Zfe2EFTbtdzNfV3dT69I07iol/bZsOMBcDRhXp0HoMvpClNo5VrntvSGBSet5nzJfiowmm6zF7nBrWnOWwQQSou2AQnUTviUrdEA61+92OQLSXbi2/qvF9gDu+jpIsjfbfcQNTLN/kVNYGLpSDl05aI0iqP6m6kCcPUaUvxNAkA+I5t09RhcVzg7Etnd/9kWZFHoXxybR2K4YFai2obUacDR7OpRFAwAqQ6Pgd+rNOYjew+8uC6ix4JIfnHXqcyXsysCUXfKxhjXblqL9Bliz4bBpN1o8h8xlj29A8701EgZkSNIMFamhOys7jXc1wjmqY9aXU8Y459vwLYFCfKGFbAmxIFv30zWvevZ8iCrkq6+hCP7r1Uzi0XBX1ZDJrqlWZtqMqxKbby5NDFoemsXpdeJyvxYfrNLLSAJreYJ918PymfGmUIH0RDvv6wsYnGPeQvuq2SF7Rc+ITy/6JfQlWAD8BuPCJJkNBGhYTgvB87EH0urdua3gvIpNVCQ8xu/QZGmgF7Ob1/sAXYJ307OkTwPs5D0Dh6MJEbgkV5uZIGR/4qdkeqDs/aFmdOkAa6dE+WdNwGHzVD0p3GPgILmj0n+3s2+EtQR6KAk4By/UCuX2CqZL2bk39b2qe4zFYfYbwZHoHQjpPM8cdUlNB2oiEy68NMZDLoQ0TjlEDli0+DDtqy5aHvGX/dUUF1apMIVwZMZrAenQ1VuczNKwKhLM3XId0fTkdwKfPxatWYML8mY1W0pJZZxU/DN7gGGG5q7XsCPVOyHf3lu4M9Bapt6sJe0VBOAsAgmVoiDvtGa1oGfFvlLJU5/w4sknLVqm1/oA1eOEnFdxvoSiOnkyojw2mlmbqNrY5iw7gK64juvypzqUt8IcwHJTaIBXPcCtY3bLqQ42ADmoPCdYosYD6/Y29LaA+cue5XLx/CcpOZZMdOueoxTDFckRNOp5qzZjzCwfiZnLpBJA0SLFjD+mWhEDqRmZjnUW0wsY6Ued9xPEBXfUM6X07CrwhNMnj6BxfBmCn2OZuzJASAriXoZabcxT1QrxfM47z5hgD
+          page_age: 6 hours ago
+          title: 'Tarot Horoscope Today: Zodiac sign predictions for May 23, 2025 - Hindustan Times'
+          type: web_search_result
+          url: https://www.hindustantimes.com/astrology/tarot-horoscope-today-zodiac-sign-predictions-for-may-23-2025-101747812397776.html
+        - encrypted_content: ErIICioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDEoFc6QoKjloLSzLGhoMyxbWSt2S58TJ3hxSIjCX/IaQvPakDfV4z05AuEC3Pt56rlk09aIfD9o3a/lMbiWo+EmB2GrtRoA4ZLn11G8qtQdImlz4GkvUtHQPJf1XrRLswnxP8S855kdWVbia3okuGk5pk+9Ly2UDPDthFTM0JzuZIdqKHr9jrWL0r3Z8U97NNQdoiYn1CkIX5tRNjD1AnLIXqAFHI9F97c/3L5tIAEpz4LNp9hy79W1wevZF7QHDA2iNM9LMiCXA0M2dpGTUn6YGnEhtlw5KTi2pkJe+VNn+L19SOjYqCyrcQKa4jKhTZN7YGdWnKSWIAR8v5IuZNuhjLeecVpY8+dsyJb2H3wvvV2l83nkTeZLWdcq6vpAHaQinfe24BBW5b6kmCz9kPQ9rytEhRsjMwr7jntSf/RvejNW3PX7ZWkgfDiAxvV31sJOyw0b/sJTDFHU7eNjnvkJOIRtMK5Mh5bQqERJ2//ZfSeMdUzjcNWkP6evqW9g7BepfEjCezIfW9ndVD9ZWK2qnyX1VVX+Lr1eF3DFGQRyZv/yhjwR/heEqiwo8mHySVBoiJ7oZWI4YJPssqgIfz30V6QCVCNRYdMyNoDNzDtuaVMnO1mIoUK5iNlK2bfWIyy2zzrGXB0cmpUK9LbESXNG+Le2ZRAQr6nx/ufgNBx8o3tkmb1409xV+C2U2acs+8JiaVmWFXy3e9gzyDyf59i4ZhA9B8E4w4DvSw6p72FS1qwXkmR2cSefN4ebfsIxuquvHFPDPoPnoPGx+ajPdVPZUO4LHjkzJF4Dft0hnDwYnO9nQGtNa6oBG/XvhL64bijAOzttai3Mm2x1q4v0+WLg4HR5JzzFODBjo3gkYjYKx1yGdGNEBReDuMo3SRDExW8O57sSD1cFGNHZQq9qqILYf+3JkyE5smvDCiCQadKXbCdcXOoaeMB7LHtUnnSdAedj+5TacMIC4D6Lm9BDPc0KZU6URbaRY1L8lJnPPZWycbefU0SI+DymFgMWFH6UsJw2jCmb1njQPitmfyHYJ+cFaJuak6xGtzeYmMJbhQD8KYhVncpM21yRDKndCUuNjCf4OBoNZTO6v/vvYaUZEnDeXjovFww23pEAaUaBBXVz9oeUMS1/ArQjL0vg6d7HFZofx9Osmgv5+uURtCASNJrfOcB6nFLdC6pg6/aXu9znM+IKtSb7b3rRnbAq+1Qi99SmCcK8HM1nve6gLYzm/5vMrsxhWq/QdEvG9sGSSTAICIicgfE+6mysGV5SdIMiWDpysRRQrg/HWIFNRFxno/Vg1Q5Q+1rKk92p9aSCgZowByNrQcq05uluvnDV4WiMviaMtsJ0vFQeoi8jhkYqR/MVMoE09GAM=
+          page_age: 8 hours ago
+          title: Libra Daily Horoscope Today, May 23, 2025, predicts creative breakthroughs | Astrology - Hindustan Times
+          type: web_search_result
+          url: https://www.hindustantimes.com/astrology/horoscope/libra-daily-horoscope-today-may-23-2025-predicts-creative-breakthroughs-101747924124810.html
+        - encrypted_content: EpwICioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKPDaaqaz0k5YUrSAhoMsYnGse65ktdFJ+VjIjBQCTS7izJVJkJRjg30JNTZYqM7HW5wnLXF5lxp4EQYnmaf5nefFH89U77jPFaDfmkqnwf2PYyTEkuVuCXK7oerw5/K6fIlkjnoAdCdoP9+2xO2dculHBQhlABRQDCFbnClLvQG7pJHLExLpSrYicn02hIq17lp079SkdMzbAhIEnI/M+z37ckzndxCQWmo18pBRWT2QfPgAOgxzr/Fsn/gD7Hxq8VRyznhU3FfHTlOWP4tqWDdyzYb2h1zC3va5FL7YF9Jk78wEr3R2ZT8Ig8ZefVc9+039CUXQ649zphHy8C9AB6C6mrGVWg/Lf/RTjXqq7Cjw7sipciIc1pKng4FWjFXOQAUA9SbdVpk/8zXzeFZ4wUCWDHHParKoqAAGvi99f7br0wYvtcaoeFJ1jmXkQWGqqRtnmpthwIaQBZ3f3gf1/kHO0ywvy3PqH50ToUF7fasg4VG3dQtvp3ewJv2aOeE8fsSCvbtJ5hor25b6xbwdUM9AysYLNkRDXDzqsBzqb8XOVjZvaOrlsK6Qjd+O+VlY2ck2dre1tLIgZLO8CyF53rz4gn8fn2qqilkhnC/QX8uww2RL9dml8r8oqLn4XKUu9/F3Cha48KX0sYy+LRGUIlX94bcTWTfV3cxyplWxGTagAVnV1JTz2aqBbplKjmIUv50WGhS0B/eJY8OYrpuyNhVDHee7DwelfxtvRQ9br4IyXXNM4XOZnD1P5tgnYawZguVWvTphn08D60jSpAGXzR1fpwiQ6qz9YDZGV/ZwDygap70HBkNMaKJ+h6bZsjUsHau1jWj+3Mq8KvTgju+Eb8cROo5eGQK0pG/8hJWJoa7BxSrb5ine53EJVauHGeoGbFown2ckPbd6ELWwvduaMJITmBTwcS7vR/TypGUtQ2ydGLE3JFQBs4LlPC1I/2MjedIn352YP3reJ3blXNXvC70azNXwEBOpdTjcXoYQyGKSPnXPMls+fMAuXll7WKSOFUZxM46bgyaa3fZAc0eFGf4ylt/3ItrKYEc4+TJhfXJWgZWGzHocWF1qGVtyoZhim+EHBjVhAySd2Y+Vzw1tRcptUcEGsa7dfCE27qn4Gmi8j7nm4bcmWgd4VxXGgXHJWFLJo1+vhGhGgD2OQtxtuseTF7xqEeLWpcXulkLWizzDhuN0CuQIzo+zskFknAmMzqj4Y17STrPWIJT1pnR4IR0fPCDbpymibAcQpTpuysPQrTMMShMkRWuu7QF1iBEdFkY3pUWHqSRA8x0gEXkf2jYzydQf4D8GTBsyAtzBO5xcBpmEIP9bvunCSnHDAkYAw==
+          page_age: 7 hours ago
+          title: 'Virgo Horoscope Today, 23 May 2025: This is a promising day for financial expansion | Horoscope Today -
+            The Indian Express'
+          type: web_search_result
+          url: https://indianexpress.com/article/horoscope/virgo-horoscope-today-23-may-2025-daily-astrology-prediction-for-virgo-career-finance-money-love-10020992/
+        - encrypted_content: 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
+          page_age: 7 hours ago
+          title: 'Daily Horoscope Today - 23rd May 2025, Astrology Predictions: Spiritual growth, silent strength, and mental
+            clarity guide your day - The Economic Times'
+          type: web_search_result
+          url: https://economictimes.indiatimes.com/astrology/daily-horoscope-today-19th-may-2025-astrology-predictions-spiritual-growth-silent-strength-and-mental-clarity-guide-your-day/articleshow/121348740.cms?from=mdr
+        - encrypted_content: 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
+          page_age: 6 hours ago
+          title: 'Tarot Horoscope Today - 23rd May 2025: Tarot Card Reading & Daily Predictions for All Zodiac Signs - The
+            Economic Times'
+          type: web_search_result
+          url: https://economictimes.indiatimes.com/astrology/tarot-horoscope-today-23rd-may-2025-tarot-card-reading-daily-predictions-for-all-zodiac-signs/articleshow/121348972.cms?from=mdr
+        - encrypted_content: EocHCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAMNJCKKM9JFtCOyCBoMS6iYVNGva0wsk2M1IjBcz53eGg2p4ed8/Fo4TJpHCZijWYTp+/0zD5emMRzUxudo/K+oq5lrQncGcHeByicqigbu4Xzs8lcxcMJ4zxJDunx89H0AFJ/MfItmOnHeqFFY1xNVMlye3BqukSuKfuj+7p+mpkbBVqDmIS4qJdl2q7h10JR7yesca145kRbCSZvVYSPsIZZwy8CFVwxQExaXdhkUkvD5XB8QaL6uRHspQUXSKdH6wWjNJO3Y/xD0jfF7KZXaOHE2RlJzGCyf8+WLspuHYPOtdxAryHTdQpe9hzfw42yAZ8ZWGzaYZeHD56Bc2R2BC5aqJKj9z2KzAGxe+0xaFPsvxgyYJmWBUrad44rJ/CsYwGQox9UXEXyDzHVWskutc0PZvddAiaZ38rpy2c9qXEu9m+FhSHP1y2LtUqVT6lHznKWYkSOFsQNUPogr9ahFdDOTL2bqnueHztMHhXe+TNITRr4xkb3mW434fvKo/1CteKn8YyiI95tj+W8MX0deKWyRBJumtc2UoHxBEpmw+BiN0kjBcTgwuAiaFYhIGQpqyK0ZPiNQeKEB/1velKYFKLvHtzioUAljcoKMF20clzSqomqTnBXKzExlW4jJy07R8akhdfd2CGNDZXbmgzvQKhLFIJV3Py7ommqO6F4fIStYJq7E5gfr1QRCzgQEYEq0lTAEf7TkS/fta0fbTmgUAn3xfT4GU9GPbH8Lff0nYuRIa/BBestwetOg4obTbAOB/VzyQliuV+FTFECchDpAtZRLHyS48V7JMkAGWyT8QCX1hPFg/qzylmZupJq4TrzoSx50KU+xFsQnnZpXcbDbDzvB5bn582A6Oo7MkBpu0WJh7IRRac8wQzutyMoRPYs/yusGSl2WAvsa1FNN+Y1cHuk4OEcgOaR+RGxeb390i48sh5tg25Jz52UU81TbJF9Vr3veWhwsq4LKboKnOxmF4NcoNorLNaTSMaqyQ+2L2QOHJrrt9Ozs45RAxY19x9vpO90l5ns2QZH66RxHcB+8GgDcKgnKBZjvuhR8l+2LuSbL9Cl9iz12vE1gGVgq8fg+c/cQO0MUhHW0F0lJCgIs+w8TVUh/SirDwY79TifD6Fv3T5qCjMWkGAM=
+          page_age: 14 hours ago
+          title: Top Stocks for Today - 23rd May 2025 | India Infoline
+          type: web_search_result
+          url: https://www.indiainfoline.com/news/markets/top-stocks-for-today-23rd-may-2025
+        tool_use_id: srvtoolu_01ALRFK59SkK8D9e1Xj2exhq
+        type: web_search_tool_result
+      - text: "\n\nBased on the search results, today is "
+        type: text
+      - citations:
+        - cited_text: 'Sagittarius Horoscope <strong>Today</strong>, <strong>23</strong> <strong>May</strong> <strong>2025</strong>:
+            <strong>Today</strong>, domestic concern...'
+          encrypted_index: Eo8BCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCbDDdUiTyDBbTGQOxoMQGhGUwXGrNo/GROYIjC8zO+WNZgsdFFZ6CBsCJztRqmFgQ7D4a94Eh84prfkFPXTjHB2K5x6iPykb604r0cqE86OhsBbKKpHZLCblw8RmEPihCYYBA==
+          title: 'Sagittarius Horoscope Today, 23 May 2025: Today favours real estate exploration and property-related investment
+            | Horoscope Today - The Indian Express'
+          type: web_search_result_location
+          url: https://indianexpress.com/article/horoscope/sagittarius-horoscope-today-23-may-2025-daily-astrology-prediction-for-sagittarius-career-finance-money-love-10020998/
+        - cited_text: 'Tarot Horoscope <strong>Today</strong>: As the first day of Gemini season <strong>2025</strong>, find
+            the tarot readings based on zodiac signs for <st...'
+          encrypted_index: Eo8BCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDOCwXqzGxbWvbLOgVRoMzmWzu8vaOzyZ5K0rIjDGbugxeX0WhrEQRSbSLnTmrF7XojQOqAFJxecG0kJEjgKn/oydiyHtAyGhxjpiXlYqE5y/aqbD3kAfQb5KIAalWmfNhEMYBA==
+          title: 'Tarot Horoscope Today: Zodiac sign predictions for May 23, 2025 - Hindustan Times'
+          type: web_search_result_location
+          url: https://www.hindustantimes.com/astrology/tarot-horoscope-today-zodiac-sign-predictions-for-may-23-2025-101747812397776.html
+        text: Friday, May 23, 2025
+        type: text
+      - text: ". Several significant events are happening today, including:\n\n1. In the financial markets, "
+        type: text
+      - citations:
+        - cited_text: 'Here are some of the stocks that <strong>may</strong> see significant price movement <strong>today</strong>:
+            Tata Steel, Hindustan Copper, Grasim Indu...'
+          encrypted_index: EpIBCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDPzwkG7Dwu30Hg823hoMR/Jqy9OxGs1/psXBIjCYx4k0xNP4gBbE8XinduUuG9+UUyuqx4QLn0fNLN6V1PgqbEfaBhisa/NPDguHKqIqFgM8TrUPp2yRMNuJm+IrmxaEv3Z+n8sYBA==
+          title: Top Stocks for Today - 23rd May 2025 | India Infoline
+          type: web_search_result_location
+          url: https://www.indiainfoline.com/news/markets/top-stocks-for-today-23rd-may-2025
+        text: there are expected to be significant stock movements, and the BSE is planning to rejig several indices, including
+          the 30-stock benchmark Sensex. This restructuring will take effect from June 23, 2025
+        type: text
+      - text: ".\n\n2. In sports, "
+        type: text
+      - citations:
+        - cited_text: 'IPL 2025, GT vs LSG highlights: Lucknow Super Giants beat Gujarat Titans by 33 runs5 hours ago'
+          encrypted_index: Eo8BCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDASI2eDqhP9h3zqSNhoM0nVV8tu71M95gZI2IjDg+u22h1i+CM2eNScuVF8UNOdtqm/Pvrkl38bxu1WVQl1rhsUfxVXnNJzJ3oI8HHgqE9kCGCtcHMyfZRyF6dyCKN8zL68YBA==
+          title: 'Sagittarius Horoscope Today, 23 May 2025: Today favours real estate exploration and property-related investment
+            | Horoscope Today - The Indian Express'
+          type: web_search_result_location
+          url: https://indianexpress.com/article/horoscope/sagittarius-horoscope-today-23-may-2025-daily-astrology-prediction-for-sagittarius-career-finance-money-love-10020998/
+        text: there was an IPL 2025 match where Lucknow Super Giants defeated Gujarat Titans by 33 runs
+        type: text
+      - text: ".\n\n3. Astrologically, "
+        type: text
+      - citations:
+        - cited_text: 'Horoscope <strong>Today</strong> – 23rd <strong>May</strong> <strong>2025</strong>: The Moon will continue
+            its transit from the Pisces sign <strong>to...'
+          encrypted_index: Eo8BCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDYbMWXQmhoGwKRD2xoMhRr0U2J7j1hQBqtvIjDhKoHAEs149pR//GkmoFgYw6pJlgSpb7FGOQEt9udtTdYJefbmzQ3vP+jVHKmw5dQqEx6ddQitTWUlmf48PF1mx9+uyE4YBA==
+          title: 'Daily Horoscope Today - 23rd May 2025, Astrology Predictions: Spiritual growth, silent strength, and mental
+            clarity guide your day - The Economic Times'
+          type: web_search_result_location
+          url: https://economictimes.indiatimes.com/astrology/daily-horoscope-today-19th-may-2025-astrology-predictions-spiritual-growth-silent-strength-and-mental-clarity-guide-your-day/articleshow/121348740.cms?from=mdr
+        - cited_text: 'Mercury will be transiting into the Taurus sign <strong>today</strong>. This will bring a steady tone
+            to your communication and thoughts. '
+          encrypted_index: EpEBCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMt/spapnaqCS+9pcBoMsdh9Y6/tpNkdCeG4IjAlWGsDiLQoRi9Pn0xVHj8IYjBxoYPBt7T9t+YBITynjqXWWzQuns3vjkGbhBkRjFMqFfPsz3VBsXKeFpa2gO3/cAfrlu1MLxgE
+          title: 'Daily Horoscope Today - 23rd May 2025, Astrology Predictions: Spiritual growth, silent strength, and mental
+            clarity guide your day - The Economic Times'
+          type: web_search_result_location
+          url: https://economictimes.indiatimes.com/astrology/daily-horoscope-today-19th-may-2025-astrology-predictions-spiritual-growth-silent-strength-and-mental-clarity-guide-your-day/articleshow/121348740.cms?from=mdr
+        text: the Moon is transiting through Pisces, and Mercury is moving into Taurus, which is expected to bring a steady
+          tone to communication and thoughts
+        type: text
+      - text: .
+        type: text
+      id: msg_01Va2uREGK2xDeCM9twM17NR
+      model: claude-3-5-sonnet-20241022
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 11844
+        output_tokens: 327
+        server_tool_use:
+          web_search_requests: 1
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1671'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 1024
+      messages:
+      - content:
+        - text: What day is today?
+          type: text
+        role: user
+      - content:
+        - text: Let me search for information about today's date and any significant events.
+          type: text
+        - id: srvtoolu_01ALRFK59SkK8D9e1Xj2exhq
+          input:
+            query: current date today May 23 2025 events news
+          name: web_search
+          type: tool_use
+        - text: "\n\nBased on the search results, today is "
+          type: text
+        - text: Friday, May 23, 2025
+          type: text
+        - text: ". Several significant events are happening today, including:\n\n1. In the financial markets, "
+          type: text
+        - text: there are expected to be significant stock movements, and the BSE is planning to rejig several indices, including
+            the 30-stock benchmark Sensex. This restructuring will take effect from June 23, 2025
+          type: text
+        - text: ".\n\n2. In sports, "
+          type: text
+        - text: there was an IPL 2025 match where Lucknow Super Giants defeated Gujarat Titans by 33 runs
+          type: text
+        - text: ".\n\n3. Astrologically, "
+          type: text
+        - text: the Moon is transiting through Pisces, and Mercury is moving into Taurus, which is expected to bring a steady
+            tone to communication and thoughts
+          type: text
+        - text: .
+          type: text
+        role: assistant
+      - content:
+        - content: |-
+            Unknown tool name: 'web_search'. No tools available.
+
+            Fix the errors and try again.
+          is_error: true
+          tool_use_id: srvtoolu_01ALRFK59SkK8D9e1Xj2exhq
+          type: tool_result
+        role: user
+      model: claude-3-5-sonnet-latest
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - allowed_domains: null
+        blocked_domains: null
+        name: web_search
+        type: web_search_20250305
+        user_location: null
+    uri: https://api.anthropic.com/v1/messages
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '279'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      error:
+        message: 'messages.1: `tool_use` ids were found without `tool_result` blocks immediately after: srvtoolu_01ALRFK59SkK8D9e1Xj2exhq.
+          Each `tool_use` block must have a corresponding `tool_result` block in the next message.'
+        type: invalid_request_error
+      type: error
+    status:
+      code: 400
+      message: Bad Request
+version: 1

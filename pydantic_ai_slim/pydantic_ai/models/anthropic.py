@@ -7,7 +7,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, Union, cast, overload
 
+from anthropic.types.beta import BetaMessage, BetaRawMessageStreamEvent, BetaToolUnionParam
 from typing_extensions import assert_never
+
+from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -21,6 +24,8 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
+    ServerToolCallPart,
+    ServerToolReturnPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -57,15 +62,21 @@ try:
         RawMessageStartEvent,
         RawMessageStopEvent,
         RawMessageStreamEvent,
+        ServerToolUseBlock,
         TextBlock,
         TextBlockParam,
         TextDelta,
         ToolChoiceParam,
         ToolParam,
         ToolResultBlockParam,
+        ToolUnionParam,
         ToolUseBlock,
         ToolUseBlockParam,
+        WebSearchTool20250305Param,
+        WebSearchToolResultBlock,
     )
+    from anthropic.types.beta.beta_code_execution_tool_20250522_param import BetaCodeExecutionTool20250522Param
+    from anthropic.types.web_search_tool_20250305_param import UserLocation
 except ImportError as _import_error:
     raise ImportError(
         'Please install `anthropic` to use the Anthropic model, '
@@ -203,9 +214,11 @@ class AnthropicModel(Model):
         stream: bool,
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent]:
+    ) -> AnthropicMessage | AsyncStream[RawMessageStreamEvent] | BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
         # standalone function to make it easier to override
         tools = self._get_tools(model_request_parameters)
+        tools += self._get_builtin_tools(model_request_parameters)
+        beta_tools = self._get_beta_tools(model_request_parameters)
         tool_choice: ToolChoiceParam | None
 
         if not tools:
@@ -251,8 +264,25 @@ class AnthropicModel(Model):
         for item in response.content:
             if isinstance(item, TextBlock):
                 items.append(TextPart(content=item.text))
+            elif isinstance(item, WebSearchToolResultBlock):
+                items.append(
+                    ServerToolReturnPart(
+                        tool_name='web_search',
+                        content=item.content,
+                        tool_call_id=item.tool_use_id,
+                    )
+                )
+            elif isinstance(item, ServerToolUseBlock):
+                items.append(
+                    ServerToolCallPart(
+                        model_name='anthropic',
+                        tool_name=item.name,
+                        args=cast(dict[str, Any], item.input),
+                        tool_call_id=item.id,
+                    )
+                )
             else:
-                assert isinstance(item, ToolUseBlock), 'unexpected item type'
+                assert isinstance(item, ToolUseBlock), f'unexpected item type {type(item)}'
                 items.append(
                     ToolCallPart(
                         tool_name=item.name,
@@ -279,6 +309,29 @@ class AnthropicModel(Model):
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
         if model_request_parameters.output_tools:
             tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
+        return tools
+
+    def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolUnionParam]:
+        tools: list[ToolUnionParam] = []
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, WebSearchTool):
+                user_location = UserLocation(type='approximate', **tool.user_location) if tool.user_location else None
+                tools.append(
+                    WebSearchTool20250305Param(
+                        name='web_search',
+                        type='web_search_20250305',
+                        allowed_domains=tool.allowed_domains,
+                        blocked_domains=tool.blocked_domains,
+                        user_location=user_location,
+                    )
+                )
+        return tools
+
+    def _get_beta_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolUnionParam]:
+        tools: list[BetaToolUnionParam] = []
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, CodeExecutionTool):
+                tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
         return tools
 
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[MessageParam]]:

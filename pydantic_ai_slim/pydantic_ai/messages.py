@@ -349,8 +349,8 @@ tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(Any, config=pyd
 
 
 @dataclass(repr=False)
-class ToolReturnPart:
-    """A tool return message, this encodes the result of running a tool."""
+class BaseToolReturnPart:
+    """Base class for tool return parts."""
 
     tool_name: str
     """The name of the "tool" was called."""
@@ -363,9 +363,6 @@ class ToolReturnPart:
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
-
-    part_kind: Literal['tool-return'] = 'tool-return'
-    """Part type identifier, this is available on all parts as a discriminator."""
 
     def model_response_str(self) -> str:
         """Return a string representation of the content for the model."""
@@ -389,6 +386,22 @@ class ToolReturnPart:
         )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class ToolReturnPart(BaseToolReturnPart):
+    """A tool return message, this encodes the result of running a tool."""
+
+    part_kind: Literal['tool-return'] = 'tool-return'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+@dataclass(repr=False)
+class ServerToolReturnPart(BaseToolReturnPart):
+    """A tool return message from a server tool."""
+
+    part_kind: Literal['server-tool-return'] = 'server-tool-return'
+    """Part type identifier, this is available on all parts as a discriminator."""
 
 
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
@@ -503,7 +516,7 @@ class TextPart:
 
 
 @dataclass(repr=False)
-class ToolCallPart:
+class BaseToolCallPart:
     """A tool call from a model."""
 
     tool_name: str
@@ -520,9 +533,6 @@ class ToolCallPart:
 
     In case the tool call id is not provided by the model, PydanticAI will generate a random one.
     """
-
-    part_kind: Literal['tool-call'] = 'tool-call'
-    """Part type identifier, this is available on all parts as a discriminator."""
 
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
@@ -560,7 +570,28 @@ class ToolCallPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discriminator('part_kind')]
+@dataclass(repr=False)
+class ToolCallPart(BaseToolCallPart):
+    """A tool call from a model."""
+
+    part_kind: Literal['tool-call'] = 'tool-call'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+@dataclass(repr=False)
+class ServerToolCallPart(BaseToolCallPart):
+    """A tool call from a server tool."""
+
+    model_name: str | None = None
+    """The name of the model that generated the response."""
+
+    part_kind: Literal['server-tool-call'] = 'server-tool-call'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+ModelResponsePart = Annotated[
+    Union[TextPart, ToolCallPart, ServerToolCallPart, ServerToolReturnPart], pydantic.Discriminator('part_kind')
+]
 """A message part returned by a model."""
 
 

@@ -234,6 +234,7 @@ class GroqModel(Model):
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+        # TODO(Marcelo): The `choice.message.executed_tools` has the server tools executed by Groq.
         if choice.message.content is not None:
             items.append(TextPart(content=choice.message.content))
         if choice.message.tool_calls is not None:
