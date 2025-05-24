@@ -574,30 +574,21 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                             UserPromptPart(
                                 content='What is the capital of France?',
                                 timestamp=datetime.datetime(...),
-                                part_kind='user-prompt',
                             )
-                        ],
-                        instructions=None,
-                        kind='request',
+                        ]
                     )
                 ),
                 CallToolsNode(
                     model_response=ModelResponse(
-                        parts=[TextPart(content='Paris', part_kind='text')],
+                        parts=[TextPart(content='Paris')],
                         usage=Usage(
-                            requests=1,
-                            request_tokens=56,
-                            response_tokens=1,
-                            total_tokens=57,
-                            details=None,
+                            requests=1, request_tokens=56, response_tokens=1, total_tokens=57
                         ),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
-                        kind='response',
-                        vendor_id=None,
                     )
                 ),
-                End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
+                End(data=FinalResult(output='Paris')),
             ]
             '''
             print(agent_run.result.output)
@@ -1760,8 +1751,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             lifespan=lifespan,
         )
 
-    async def to_cli(self: Self, deps: AgentDepsT = None) -> None:
+    async def to_cli(self: Self, deps: AgentDepsT = None, prog_name: str = 'pydantic-ai') -> None:
         """Run the agent in a CLI chat interface.
+
+        Args:
+            deps: The dependencies to pass to the agent.
+            prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
@@ -1777,29 +1772,24 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         from pydantic_ai._cli import run_chat
 
-        # TODO(Marcelo): We need to refactor the CLI code to be able to be able to just pass `agent`, `deps` and
-        # `prog_name` from here.
+        await run_chat(stream=True, agent=self, deps=deps, console=Console(), code_theme='monokai', prog_name=prog_name)
 
-        await run_chat(
-            stream=True,
-            agent=self,
-            deps=deps,
-            console=Console(),
-            code_theme='monokai',
-            prog_name='pydantic-ai',
-        )
-
-    def to_cli_sync(self: Self, deps: AgentDepsT = None) -> None:
+    def to_cli_sync(self: Self, deps: AgentDepsT = None, prog_name: str = 'pydantic-ai') -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
+
+        Args:
+            deps: The dependencies to pass to the agent.
+            prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent
 
         agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
         agent.to_cli_sync()
+        agent.to_cli_sync(prog_name='assistant')
         ```
         """
-        return get_event_loop().run_until_complete(self.to_cli(deps=deps))
+        return get_event_loop().run_until_complete(self.to_cli(deps=deps, prog_name=prog_name))
 
 
 @dataclasses.dataclass(repr=False)
@@ -1841,30 +1831,21 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                         UserPromptPart(
                             content='What is the capital of France?',
                             timestamp=datetime.datetime(...),
-                            part_kind='user-prompt',
                         )
-                    ],
-                    instructions=None,
-                    kind='request',
+                    ]
                 )
             ),
             CallToolsNode(
                 model_response=ModelResponse(
-                    parts=[TextPart(content='Paris', part_kind='text')],
+                    parts=[TextPart(content='Paris')],
                     usage=Usage(
-                        requests=1,
-                        request_tokens=56,
-                        response_tokens=1,
-                        total_tokens=57,
-                        details=None,
+                        requests=1, request_tokens=56, response_tokens=1, total_tokens=57
                     ),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
-                    kind='response',
-                    vendor_id=None,
                 )
             ),
-            End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
+            End(data=FinalResult(output='Paris')),
         ]
         '''
         print(agent_run.result.output)
@@ -1987,30 +1968,24 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                                 UserPromptPart(
                                     content='What is the capital of France?',
                                     timestamp=datetime.datetime(...),
-                                    part_kind='user-prompt',
                                 )
-                            ],
-                            instructions=None,
-                            kind='request',
+                            ]
                         )
                     ),
                     CallToolsNode(
                         model_response=ModelResponse(
-                            parts=[TextPart(content='Paris', part_kind='text')],
+                            parts=[TextPart(content='Paris')],
                             usage=Usage(
                                 requests=1,
                                 request_tokens=56,
                                 response_tokens=1,
                                 total_tokens=57,
-                                details=None,
                             ),
                             model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
-                            kind='response',
-                            vendor_id=None,
                         )
                     ),
-                    End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
+                    End(data=FinalResult(output='Paris')),
                 ]
                 '''
                 print('Final result:', agent_run.result.output)

@@ -132,7 +132,7 @@ class ModelResponsePartsManager:
     ) -> ModelResponseStreamEvent | None:
         """Handle or update a tool call, creating or updating a `ToolCallPart` or `ToolCallPartDelta`.
 
-        Managed items remain as `ToolCallPartDelta`s until they have both a tool_name and arguments, at which
+        Managed items remain as `ToolCallPartDelta`s until they have at least a tool_name, at which
         point they are upgraded to `ToolCallPart`s.
 
         If `vendor_part_id` is None, updates the latest matching ToolCallPart (or ToolCallPartDelta)
@@ -143,11 +143,11 @@ class ModelResponsePartsManager:
                 If None, the latest matching tool call may be updated.
             tool_name: The name of the tool. If None, the manager does not enforce
                 a name match when `vendor_part_id` is None.
-            args: Arguments for the tool call, either as a string or a dictionary of key-value pairs.
+            args: Arguments for the tool call, either as a string, a dictionary of key-value pairs, or None.
             tool_call_id: An optional string representing an identifier for this tool call.
 
         Returns:
-            - A `PartStartEvent` if a new (fully realized) ToolCallPart is created.
+            - A `PartStartEvent` if a new ToolCallPart is created.
             - A `PartDeltaEvent` if an existing part is updated.
             - `None` if no new event is emitted (e.g., the part is still incomplete).
 
@@ -207,7 +207,7 @@ class ModelResponsePartsManager:
         *,
         vendor_part_id: Hashable | None,
         tool_name: str,
-        args: str | dict[str, Any],
+        args: str | dict[str, Any] | None,
         tool_call_id: str | None = None,
     ) -> ModelResponseStreamEvent:
         """Immediately create or fully-overwrite a ToolCallPart with the given information.
@@ -218,7 +218,7 @@ class ModelResponsePartsManager:
             vendor_part_id: The vendor's ID for this tool call part. If not
                 None and an existing part is found, that part is overwritten.
             tool_name: The name of the tool being invoked.
-            args: The arguments for the tool call, either as a string or a dictionary.
+            args: The arguments for the tool call, either as a string, a dictionary, or None.
             tool_call_id: An optional string identifier for this tool call.
 
         Returns:

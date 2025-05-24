@@ -470,8 +470,9 @@ async def test_stream_structure():
         assert agent_info.output_tools is not None
         assert len(agent_info.output_tools) == 1
         name = agent_info.output_tools[0].name
-        yield {0: DeltaToolCall(name=name)}
+        # Args don't typically come before the tool name, but it's technically possible and this ensures test coverage
         yield {0: DeltaToolCall(json_args='{"x": ')}
+        yield {0: DeltaToolCall(name=name)}
         yield {0: DeltaToolCall(json_args='1}')}
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), output_type=Foo)
