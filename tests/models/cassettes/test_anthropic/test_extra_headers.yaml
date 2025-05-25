@@ -8,13 +8,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '202'
+      - '169'
       content-type:
       - application/json
+      extra-header-key:
+      - Extra-Header-Value
       host:
       - api.anthropic.com
-      xProxy-Limit-IDs:
-      - monthly_budget
     method: POST
     parsed_body:
       max_tokens: 1024
@@ -23,25 +23,29 @@ interactions:
         - text: hello
           type: text
         role: user
-      model: claude-3-opus-latest
+      metadata:
+        user_id: '123'
+      model: claude-3-5-haiku-latest
       stream: false
-    uri: https://api.anthropic.com/v1/messages
+    uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '328'
+      - '398'
       content-type:
       - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       content:
-      - text: Hello! How can I assist you today?
+      - text: Hi there! How are you doing today? Is there anything I can help you with?
         type: text
-      id: msg_01U58nruzfn9BrXrrF2hhb4m
-      model: claude-3-5-haiku-latest
+      id: msg_016xQfqVwNtY1LLF1xHTN5Sk
+      model: claude-3-5-haiku-20241022
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
@@ -49,8 +53,9 @@ interactions:
       usage:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 20
-        output_tokens: 10
+        input_tokens: 8
+        output_tokens: 21
+        service_tier: standard
     status:
       code: 200
       message: OK
