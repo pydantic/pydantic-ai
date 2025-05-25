@@ -34,23 +34,24 @@ from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic
-    from anthropic.types import (
-        ContentBlock,
-        InputJSONDelta,
-        Message as AnthropicMessage,
-        MessageDeltaUsage,
-        RawContentBlockDeltaEvent,
-        RawContentBlockStartEvent,
-        RawContentBlockStopEvent,
-        RawMessageDeltaEvent,
-        RawMessageStartEvent,
-        RawMessageStopEvent,
-        RawMessageStreamEvent,
-        TextBlock,
-        ToolUseBlock,
-        Usage as AnthropicUsage,
+    from anthropic.resources.beta import AsyncBeta
+    from anthropic.types.beta import (
+        BetaContentBlock,
+        BetaInputJSONDelta,
+        BetaMessage,
+        BetaMessageDeltaUsage,
+        BetaRawContentBlockDeltaEvent,
+        BetaRawContentBlockStartEvent,
+        BetaRawContentBlockStopEvent,
+        BetaRawMessageDeltaEvent,
+        BetaRawMessageStartEvent,
+        BetaRawMessageStopEvent,
+        BetaRawMessageStreamEvent,
+        BetaTextBlock,
+        BetaToolUseBlock,
+        BetaUsage,
     )
-    from anthropic.types.raw_message_delta_event import Delta
+    from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
     from pydantic_ai.models.anthropic import (
         AnthropicModel,
@@ -60,8 +61,8 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
     # note: we use Union here so that casting works with Python 3.9
-    MockAnthropicMessage = Union[AnthropicMessage, Exception]
-    MockRawMessageStreamEvent = Union[RawMessageStreamEvent, Exception]
+    MockAnthropicMessage = Union[BetaMessage, Exception]
+    MockRawMessageStreamEvent = Union[BetaRawMessageStreamEvent, Exception]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -89,6 +90,10 @@ class MockAnthropic:
     base_url: str | None = None
 
     @cached_property
+    def beta(self) -> AsyncBeta:
+        return cast(AsyncBeta, self)
+
+    @cached_property
     def messages(self) -> Any:
         return type('Messages', (), {'create': self.messages_create})
 
@@ -104,7 +109,7 @@ class MockAnthropic:
 
     async def messages_create(
         self, *_args: Any, stream: bool = False, **kwargs: Any
-    ) -> AnthropicMessage | MockAsyncStream[MockRawMessageStreamEvent]:
+    ) -> BetaMessage | MockAsyncStream[MockRawMessageStreamEvent]:
         self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
 
         if stream:
@@ -119,16 +124,16 @@ class MockAnthropic:
             assert self.messages_ is not None, '`messages` must be provided'
             if isinstance(self.messages_, Sequence):
                 raise_if_exception(self.messages_[self.index])
-                response = cast(AnthropicMessage, self.messages_[self.index])
+                response = cast(BetaMessage, self.messages_[self.index])
             else:
                 raise_if_exception(self.messages_)
-                response = cast(AnthropicMessage, self.messages_)
+                response = cast(BetaMessage, self.messages_)
         self.index += 1
         return response
 
 
-def completion_message(content: list[ContentBlock], usage: AnthropicUsage) -> AnthropicMessage:
-    return AnthropicMessage(
+def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> BetaMessage:
+    return BetaMessage(
         id='123',
         content=content,
         model='claude-3-5-haiku-123',
@@ -140,7 +145,7 @@ def completion_message(content: list[ContentBlock], usage: AnthropicUsage) -> An
 
 
 async def test_sync_request_text_response(allow_model_requests: None):
-    c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
+    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
@@ -206,8 +211,8 @@ async def test_sync_request_text_response(allow_model_requests: None):
 
 async def test_async_request_prompt_caching(allow_model_requests: None):
     c = completion_message(
-        [TextBlock(text='world', type='text')],
-        usage=AnthropicUsage(
+        [BetaTextBlock(text='world', type='text')],
+        usage=BetaUsage(
             input_tokens=3,
             output_tokens=5,
             cache_creation_input_tokens=4,
@@ -238,8 +243,8 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
 
 async def test_async_request_text_response(allow_model_requests: None):
     c = completion_message(
-        [TextBlock(text='world', type='text')],
-        usage=AnthropicUsage(input_tokens=3, output_tokens=5),
+        [BetaTextBlock(text='world', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -260,8 +265,8 @@ async def test_async_request_text_response(allow_model_requests: None):
 
 async def test_request_structured_response(allow_model_requests: None):
     c = completion_message(
-        [ToolUseBlock(id='123', input={'response': [1, 2, 3]}, name='final_result', type='tool_use')],
-        usage=AnthropicUsage(input_tokens=3, output_tokens=5),
+        [BetaToolUseBlock(id='123', input={'response': [1, 2, 3]}, name='final_result', type='tool_use')],
+        usage=BetaUsage(input_tokens=3, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -308,16 +313,16 @@ async def test_request_structured_response(allow_model_requests: None):
 async def test_request_tool_call(allow_model_requests: None):
     responses = [
         completion_message(
-            [ToolUseBlock(id='1', input={'loc_name': 'San Francisco'}, name='get_location', type='tool_use')],
-            usage=AnthropicUsage(input_tokens=2, output_tokens=1),
+            [BetaToolUseBlock(id='1', input={'loc_name': 'San Francisco'}, name='get_location', type='tool_use')],
+            usage=BetaUsage(input_tokens=2, output_tokens=1),
         ),
         completion_message(
-            [ToolUseBlock(id='2', input={'loc_name': 'London'}, name='get_location', type='tool_use')],
-            usage=AnthropicUsage(input_tokens=3, output_tokens=2),
+            [BetaToolUseBlock(id='2', input={'loc_name': 'London'}, name='get_location', type='tool_use')],
+            usage=BetaUsage(input_tokens=3, output_tokens=2),
         ),
         completion_message(
-            [TextBlock(text='final response', type='text')],
-            usage=AnthropicUsage(input_tokens=3, output_tokens=5),
+            [BetaTextBlock(text='final response', type='text')],
+            usage=BetaUsage(input_tokens=3, output_tokens=5),
         ),
     ]
 
@@ -428,12 +433,12 @@ def get_mock_chat_completion_kwargs(async_anthropic: AsyncAnthropic) -> list[dic
 async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_calls: bool) -> None:
     responses = [
         completion_message(
-            [ToolUseBlock(id='1', input={'loc_name': 'San Francisco'}, name='get_location', type='tool_use')],
-            usage=AnthropicUsage(input_tokens=2, output_tokens=1),
+            [BetaToolUseBlock(id='1', input={'loc_name': 'San Francisco'}, name='get_location', type='tool_use')],
+            usage=BetaUsage(input_tokens=2, output_tokens=1),
         ),
         completion_message(
-            [TextBlock(text='final response', type='text')],
-            usage=AnthropicUsage(input_tokens=3, output_tokens=5),
+            [BetaTextBlock(text='final response', type='text')],
+            usage=BetaUsage(input_tokens=3, output_tokens=5),
         ),
     ]
 
@@ -488,54 +493,58 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
     all_messages = result.all_messages()
     first_response = all_messages[1]
     second_request = all_messages[2]
-    assert first_response.parts == [
-        TextPart(
-            content="I'll retrieve the information about each family member to determine their ages.",
-            part_kind='text',
-        ),
-        ToolCallPart(
-            tool_name='retrieve_entity_info', args={'name': 'Alice'}, tool_call_id=IsStr(), part_kind='tool-call'
-        ),
-        ToolCallPart(
-            tool_name='retrieve_entity_info', args={'name': 'Bob'}, tool_call_id=IsStr(), part_kind='tool-call'
-        ),
-        ToolCallPart(
-            tool_name='retrieve_entity_info', args={'name': 'Charlie'}, tool_call_id=IsStr(), part_kind='tool-call'
-        ),
-        ToolCallPart(
-            tool_name='retrieve_entity_info', args={'name': 'Daisy'}, tool_call_id=IsStr(), part_kind='tool-call'
-        ),
-    ]
-    assert second_request.parts == [
-        ToolReturnPart(
-            tool_name='retrieve_entity_info',
-            content="alice is bob's wife",
-            tool_call_id=IsStr(),
-            timestamp=IsDatetime(),
-            part_kind='tool-return',
-        ),
-        ToolReturnPart(
-            tool_name='retrieve_entity_info',
-            content="bob is alice's husband",
-            tool_call_id=IsStr(),
-            timestamp=IsDatetime(),
-            part_kind='tool-return',
-        ),
-        ToolReturnPart(
-            tool_name='retrieve_entity_info',
-            content="charlie is alice's son",
-            tool_call_id=IsStr(),
-            timestamp=IsDatetime(),
-            part_kind='tool-return',
-        ),
-        ToolReturnPart(
-            tool_name='retrieve_entity_info',
-            content="daisy is bob's daughter and charlie's younger sister",
-            tool_call_id=IsStr(),
-            timestamp=IsDatetime(),
-            part_kind='tool-return',
-        ),
-    ]
+    assert first_response.parts == snapshot(
+        [
+            TextPart(
+                content="I'll help you find out who is the youngest by retrieving information about each family member.",
+                part_kind='text',
+            ),
+            ToolCallPart(
+                tool_name='retrieve_entity_info', args={'name': 'Alice'}, tool_call_id=IsStr(), part_kind='tool-call'
+            ),
+            ToolCallPart(
+                tool_name='retrieve_entity_info', args={'name': 'Bob'}, tool_call_id=IsStr(), part_kind='tool-call'
+            ),
+            ToolCallPart(
+                tool_name='retrieve_entity_info', args={'name': 'Charlie'}, tool_call_id=IsStr(), part_kind='tool-call'
+            ),
+            ToolCallPart(
+                tool_name='retrieve_entity_info', args={'name': 'Daisy'}, tool_call_id=IsStr(), part_kind='tool-call'
+            ),
+        ]
+    )
+    assert second_request.parts == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='retrieve_entity_info',
+                content="alice is bob's wife",
+                tool_call_id=IsStr(),
+                timestamp=IsDatetime(),
+                part_kind='tool-return',
+            ),
+            ToolReturnPart(
+                tool_name='retrieve_entity_info',
+                content="bob is alice's husband",
+                tool_call_id=IsStr(),
+                timestamp=IsDatetime(),
+                part_kind='tool-return',
+            ),
+            ToolReturnPart(
+                tool_name='retrieve_entity_info',
+                content="charlie is alice's son",
+                tool_call_id=IsStr(),
+                timestamp=IsDatetime(),
+                part_kind='tool-return',
+            ),
+            ToolReturnPart(
+                tool_name='retrieve_entity_info',
+                content="daisy is bob's daughter and charlie's younger sister",
+                tool_call_id=IsStr(),
+                timestamp=IsDatetime(),
+                part_kind='tool-return',
+            ),
+        ]
+    )
 
     # Ensure the tool call IDs match between the tool calls and the tool returns
     tool_call_part_ids = [part.tool_call_id for part in first_response.parts if part.part_kind == 'tool-call']
@@ -545,7 +554,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
 
 
 async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
-    c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
+    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
@@ -567,77 +576,73 @@ async def test_stream_structured(allow_model_requests: None):
     6. Message stop
     """
     stream = [
-        RawMessageStartEvent(
+        BetaRawMessageStartEvent(
             type='message_start',
-            message=AnthropicMessage(
+            message=BetaMessage(
                 id='msg_123',
                 model='claude-3-5-haiku-latest',
                 role='assistant',
                 type='message',
                 content=[],
                 stop_reason=None,
-                usage=AnthropicUsage(input_tokens=20, output_tokens=0),
+                usage=BetaUsage(input_tokens=20, output_tokens=0),
             ),
         ),
         # Start tool block with initial data
-        RawContentBlockStartEvent(
+        BetaRawContentBlockStartEvent(
             type='content_block_start',
             index=0,
-            content_block=ToolUseBlock(type='tool_use', id='tool_1', name='my_tool', input={}),
+            content_block=BetaToolUseBlock(type='tool_use', id='tool_1', name='my_tool', input={}),
         ),
         # Add more data through an incomplete JSON delta
-        RawContentBlockDeltaEvent(
+        BetaRawContentBlockDeltaEvent(
             type='content_block_delta',
             index=0,
-            delta=InputJSONDelta(type='input_json_delta', partial_json='{"first": "One'),
+            delta=BetaInputJSONDelta(type='input_json_delta', partial_json='{"first": "One'),
         ),
-        RawContentBlockDeltaEvent(
+        BetaRawContentBlockDeltaEvent(
             type='content_block_delta',
             index=0,
-            delta=InputJSONDelta(type='input_json_delta', partial_json='", "second": "Two"'),
+            delta=BetaInputJSONDelta(type='input_json_delta', partial_json='", "second": "Two"'),
         ),
-        RawContentBlockDeltaEvent(
+        BetaRawContentBlockDeltaEvent(
             type='content_block_delta',
             index=0,
-            delta=InputJSONDelta(type='input_json_delta', partial_json='}'),
+            delta=BetaInputJSONDelta(type='input_json_delta', partial_json='}'),
         ),
         # Mark tool block as complete
-        RawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
         # Update the top-level message with usage
-        RawMessageDeltaEvent(
+        BetaRawMessageDeltaEvent(
             type='message_delta',
-            delta=Delta(
-                stop_reason='end_turn',
-            ),
-            usage=MessageDeltaUsage(
-                output_tokens=5,
-            ),
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(output_tokens=5),
         ),
         # Mark message as complete
-        RawMessageStopEvent(type='message_stop'),
+        BetaRawMessageStopEvent(type='message_stop'),
     ]
 
     done_stream = [
-        RawMessageStartEvent(
+        BetaRawMessageStartEvent(
             type='message_start',
-            message=AnthropicMessage(
+            message=BetaMessage(
                 id='msg_123',
                 model='claude-3-5-haiku-latest',
                 role='assistant',
                 type='message',
                 content=[],
                 stop_reason=None,
-                usage=AnthropicUsage(input_tokens=0, output_tokens=0),
+                usage=BetaUsage(input_tokens=0, output_tokens=0),
             ),
         ),
         # Text block with final data
-        RawContentBlockStartEvent(
+        BetaRawContentBlockStartEvent(
             type='content_block_start',
             index=0,
-            content_block=TextBlock(type='text', text='FINAL_PAYLOAD'),
+            content_block=BetaTextBlock(type='text', text='FINAL_PAYLOAD'),
         ),
-        RawContentBlockStopEvent(type='content_block_stop', index=0),
-        RawMessageStopEvent(type='message_stop'),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageStopEvent(type='message_stop'),
     ]
 
     mock_client = MockAnthropic.create_stream_mock([stream, done_stream])
@@ -689,7 +694,7 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
         ]
     )
     assert result.output == snapshot(
-        "This is a potato. It's a yellow-brown, oblong-shaped potato with a smooth skin and some small eyes or blemishes visible on its surface. Potatoes are starchy root vegetables that are a staple food in many cuisines around the world. They can be prepared in numerous ways, such as boiling, baking, frying, or mashing, and are rich in carbohydrates and nutrients."
+        "This is a potato. It's a yellow/golden-colored potato with a characteristic oblong, slightly irregular shape and a skin covered in small eyes or indentations. Potatoes are a starchy root vegetable that belongs to the nightshade family and are a staple food in many cuisines around the world. This particular potato looks like it's in good condition, with a smooth, unblemished skin and a uniform yellow color."
     )
 
 
@@ -720,7 +725,7 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
         ]
     )
     assert result.output == snapshot(
-        'This is a Great Horned Owl (Bubo virginianus), a large and powerful owl species. It has distinctive ear tufts (the "horns"), large yellow eyes, and a mottled gray-brown plumage that provides excellent camouflage. In this image, the owl is perched on a branch, surrounded by soft yellow and green vegetation, which creates a beautiful, slightly blurred background that highlights the owl\'s sharp features. Great Horned Owls are known for their adaptability, wide distribution across the Americas, and their status as powerful nocturnal predators.'
+        'This is a Great Horned Owl (Bubo virginianus), a large and powerful owl species native to the Americas. The owl is shown sitting on a branch surrounded by yellow-green foliage, with its distinctive mottled gray-brown feathers and prominent ear tufts (often called "horns"). It has striking yellow eyes that are looking directly at the camera, giving it an intense and alert appearance. Great Horned Owls are known for their excellent camouflage, powerful talons, and nocturnal hunting habits. They are widespread across North and South America and are one of the most common and adaptable owl species.'
     )
 
 
@@ -748,31 +753,31 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='Let me get the image and check what fruit is shown.'),
-                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01VMGXdexE1Fy5xdWgoom9Te'),
+                    TextPart(content='Let me get the image and check.'),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01YJiJ82nETV7aRdJr9f6Np7'),
                 ],
                 usage=Usage(
                     requests=1,
                     request_tokens=372,
-                    response_tokens=49,
-                    total_tokens=421,
+                    response_tokens=45,
+                    total_tokens=417,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 372,
-                        'output_tokens': 49,
+                        'output_tokens': 45,
                     },
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01BPu4UTHXhqtR1TvsRhBLYY',
+                vendor_id='msg_01CC59GmUmYXKCV26rHfr32m',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 1c8566',
-                        tool_call_id='toolu_01VMGXdexE1Fy5xdWgoom9Te',
+                        tool_call_id='toolu_01YJiJ82nETV7aRdJr9f6Np7',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -787,24 +792,24 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The kiwi's fuzzy brown skin is visible around the edges of the slice."
+                        content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The fruit's thin, fuzzy brown skin is visible around the edges of the slice."
                     )
                 ],
                 usage=Usage(
                     requests=1,
-                    request_tokens=2025,
+                    request_tokens=2021,
                     response_tokens=57,
-                    total_tokens=2082,
+                    total_tokens=2078,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 2025,
+                        'input_tokens': 2021,
                         'output_tokens': 57,
                     },
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01Ua6uyZUF15YV3G1PusaqSq',
+                vendor_id='msg_014MJqSsWD1pUC23Vvi57LoY',
             ),
         ]
     )
@@ -812,7 +817,7 @@ async def test_image_as_binary_content_tool_response(
 
 @pytest.mark.parametrize('media_type', ('audio/wav', 'audio/mpeg'))
 async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
-    c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
+    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
@@ -849,7 +854,7 @@ async def test_document_binary_content_input(
 
     result = await agent.run(['What is the main content on this document?', document_content])
     assert result.output == snapshot(
-        'The document appears to be a simple PDF file with only the text "Dummy PDF file" displayed at the top. It appears to be mostly blank otherwise, likely serving as a template or placeholder document.'
+        'The document shows only the text "Dummy PDF file" at the top of what appears to be a blank white page.'
     )
 
 
@@ -862,7 +867,7 @@ async def test_document_url_input(allow_model_requests: None, anthropic_api_key:
 
     result = await agent.run(['What is the main content on this document?', document_url])
     assert result.output == snapshot(
-        'This document appears to be a sample PDF file that primarily contains Lorem ipsum text, which is placeholder text commonly used in design and publishing. The document begins with "Sample PDF" and states "This is a simple PDF file. Fun fun fun." followed by several paragraphs of Lorem ipsum text. The content doesn\'t convey any meaningful information as Lorem ipsum is essentially dummy text used to demonstrate the visual form of a document without the distraction of meaningful content.'
+        'This document appears to be a sample PDF file that contains Lorem ipsum text, which is placeholder text commonly used in design and publishing. The document starts with "Sample PDF" and includes the line "This is a simple PDF file. Fun fun fun." followed by several paragraphs of Lorem ipsum text. Lorem ipsum is dummy text that has no meaningful content - it\'s typically used to demonstrate the visual form of a document or typeface without the distraction of meaningful content.'
     )
 
 
@@ -875,19 +880,23 @@ async def test_text_document_url_input(allow_model_requests: None, anthropic_api
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
     assert result.output == snapshot("""\
-This document is a TXT test file that primarily contains information about the use of placeholder names, specifically focusing on "John Doe" and its variants. The main content explains how these placeholder names are used in legal contexts and popular culture, particularly in English-speaking countries. The text describes:
+This document is primarily about the use of placeholder names, specifically focusing on "John Doe" and its variants. The content explains how these placeholder names are used in legal contexts and other situations when a person's identity is unknown or needs to be withheld. The text describes:
 
-1. The various placeholder names used:
-- "John Doe" for males
-- "Jane Doe" or "Jane Roe" for females
-- "Jonnie Doe" and "Janie Doe" for children
-- "Baby Doe" for unknown children
+1. Various placeholder names like:
+- "John Doe" (for males)
+- "Jane Doe" or "Jane Roe" (for females)
+- "Jonnie Doe" and "Janie Doe" (for children)
+- "Baby Doe" (for unidentified children)
 
-2. The usage of these names in different English-speaking countries, noting that while common in the US and Canada, they're less used in the UK, where "Joe Bloggs" or "John Smith" are preferred.
+2. The usage of these names in:
+- Legal actions and cases
+- Hospital settings for unidentified patients
+- Forms and examples
+- Popular culture
 
-3. How these names are used in legal contexts, forms, and popular culture.
+3. Regional variations, noting that while this practice is common in the United States and Canada, other English-speaking countries like the UK use alternatives such as "Joe Bloggs" or "John Smith."
 
-The document is formatted as a test file with metadata including its purpose, file type, and version. It also includes attribution information indicating the content is from Wikipedia and is licensed under Attribution-ShareAlike 4.0.\
+The document appears to be a test file with example content sourced from Wikipedia, including licensing information and attribution details at the end.\
 """)
 
 
@@ -937,14 +946,14 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 ),
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01U58nruzfn9BrXrrF2hhb4m',
+                vendor_id='msg_01BznVNBje2zyfpCfNQCD5en',
             ),
         ]
     )
 
 
 async def test_multiple_system_prompt_formatting(allow_model_requests: None):
-    c = completion_message([TextBlock(text='world', type='text')], AnthropicUsage(input_tokens=5, output_tokens=10))
+    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic().create_mock(c)
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, system_prompt='this is the system prompt')
@@ -959,8 +968,8 @@ async def test_multiple_system_prompt_formatting(allow_model_requests: None):
     assert completion_kwargs['system'] == 'this is the system prompt\n\nand this is another'
 
 
-def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
-    return AnthropicMessage(
+def anth_msg(usage: BetaUsage) -> BetaMessage:
+    return BetaMessage(
         id='x',
         content=[],
         model='claude-3-7-sonnet-latest',
@@ -974,7 +983,7 @@ def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
     'message_callback,usage',
     [
         pytest.param(
-            lambda: anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)),
+            lambda: anth_msg(BetaUsage(input_tokens=1, output_tokens=1)),
             snapshot(
                 Usage(
                     request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
@@ -984,9 +993,7 @@ def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
         ),
         pytest.param(
             lambda: anth_msg(
-                AnthropicUsage(
-                    input_tokens=1, output_tokens=1, cache_creation_input_tokens=2, cache_read_input_tokens=3
-                )
+                BetaUsage(input_tokens=1, output_tokens=1, cache_creation_input_tokens=2, cache_read_input_tokens=3)
             ),
             snapshot(
                 Usage(
@@ -1004,8 +1011,8 @@ def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
             id='AnthropicMessage-cached',
         ),
         pytest.param(
-            lambda: RawMessageStartEvent(
-                message=anth_msg(AnthropicUsage(input_tokens=1, output_tokens=1)), type='message_start'
+            lambda: BetaRawMessageStartEvent(
+                message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start'
             ),
             snapshot(
                 Usage(
@@ -1015,16 +1022,16 @@ def anth_msg(usage: AnthropicUsage) -> AnthropicMessage:
             id='RawMessageStartEvent',
         ),
         pytest.param(
-            lambda: RawMessageDeltaEvent(
+            lambda: BetaRawMessageDeltaEvent(
                 delta=Delta(),
-                usage=MessageDeltaUsage(output_tokens=5),
+                usage=BetaMessageDeltaUsage(output_tokens=5),
                 type='message_delta',
             ),
             snapshot(Usage(response_tokens=5, total_tokens=5, details={'output_tokens': 5})),
             id='RawMessageDeltaEvent',
         ),
-        pytest.param(lambda: RawMessageStopEvent(type='message_stop'), snapshot(Usage()), id='RawMessageStopEvent'),
+        pytest.param(lambda: BetaRawMessageStopEvent(type='message_stop'), snapshot(Usage()), id='RawMessageStopEvent'),
     ],
 )
-def test_usage(message_callback: Callable[[], AnthropicMessage | RawMessageStreamEvent], usage: Usage):
+def test_usage(message_callback: Callable[[], BetaMessage | BetaRawMessageStreamEvent], usage: Usage):
     assert _map_usage(message_callback()) == usage

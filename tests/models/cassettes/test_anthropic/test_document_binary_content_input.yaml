@@ -28,23 +28,24 @@ interactions:
         role: user
       model: claude-3-5-sonnet-latest
       stream: false
-    uri: https://api.anthropic.com/v1/messages
+    uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '502'
+      - '433'
       content-type:
       - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       content:
-      - text: The document appears to be a simple PDF file with only the text "Dummy PDF file" displayed at the top. It appears
-          to be mostly blank otherwise, likely serving as a template or placeholder document.
+      - text: The document shows only the text "Dummy PDF file" at the top of what appears to be a blank white page.
         type: text
-      id: msg_01MV5d7ebPBUzPV5DerCiRFS
+      id: msg_01Jr6x34UmKgzgrJE96jaYpm
       model: claude-3-5-sonnet-20241022
       role: assistant
       stop_reason: end_turn
@@ -54,7 +55,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 1615
-        output_tokens: 44
+        output_tokens: 28
+        service_tier: standard
     status:
       code: 200
       message: OK
