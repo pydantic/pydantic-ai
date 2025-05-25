@@ -255,7 +255,7 @@ class AnthropicModel(Model):
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
             else:
-                assert isinstance(item, BetaToolUseBlock), 'unexpected item type'
+                assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 items.append(
                     ToolCallPart(
                         tool_name=item.name,
