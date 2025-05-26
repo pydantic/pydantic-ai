@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, Union, cast, overload
 
-from anthropic import AsyncAnthropic
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -41,7 +40,7 @@ from . import (
 )
 
 try:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncStream
+    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
     from anthropic.types.beta import (
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
@@ -68,6 +67,7 @@ try:
         BetaToolUseBlock,
         BetaToolUseBlockParam,
     )
+    from anthropic.types.model_param import ModelParam
 
 except ImportError as _import_error:
     raise ImportError(
@@ -75,12 +75,7 @@ except ImportError as _import_error:
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
-LatestAnthropicModelNames = Literal[
-    'claude-3-7-sonnet-latest',
-    'claude-3-5-haiku-latest',
-    'claude-3-5-sonnet-latest',
-    'claude-3-opus-latest',
-]
+LatestAnthropicModelNames = ModelParam
 """Latest Anthropic models."""
 
 AnthropicModelName = Union[str, LatestAnthropicModelNames]
