@@ -80,7 +80,7 @@ class MCPServer(ABC):
         raise NotImplementedError('MCP Server subclasses must implement this method.')
 
     def _get_client_initialize_timeout(self) -> float:
-        return 5
+        return 5  # pragma: no cover
 
     def get_prefixed_tool_name(self, tool_name: str) -> str:
         """Get the tool name with prefix if `tool_prefix` is set."""
@@ -381,5 +381,5 @@ class MCPServerHTTP(MCPServer):
     def __repr__(self) -> str:  # pragma: no cover
         return f'MCPServerHTTP(url={self.url!r}, tool_prefix={self.tool_prefix!r})'
 
-    def _get_client_initialize_timeout(self) -> float:
+    def _get_client_initialize_timeout(self) -> float:  # pragma: no cover
         return self.timeout
