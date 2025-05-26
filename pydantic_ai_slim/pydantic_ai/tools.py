@@ -19,6 +19,23 @@ from .exceptions import ModelRetry, UnexpectedModelBehavior
 if TYPE_CHECKING:
     from .result import Usage
 
+    try:
+        from langchain_core.tools import BaseTool as LangChainTool # type: ignore
+    except ImportError:
+        from typing import Protocol
+
+        class LangChainTool(Protocol):
+            @property
+            def args(self) -> dict[str, Any]: ...
+
+            @property
+            def name(self) -> str: ...
+
+            @property
+            def description(self) -> str: ...
+
+            def run(self, *args, **kwargs) -> str: ...
+
 __all__ = (
     'AgentDepsT',
     'DocstringFormat',
@@ -313,7 +330,7 @@ class Tool(Generic[AgentDepsT]):
         self._base_parameters_json_schema = f['json_schema']
 
     @staticmethod
-    def from_langchain(langchain_tool: "langchain_core.tools.base.BaseTool") -> Tool[None]:
+    def from_langchain(langchain_tool: LangChainTool) -> Tool[None]:
         """
         Creates a Pydantic tool proxy from a LangChain tool.
 
@@ -323,8 +340,6 @@ class Tool(Generic[AgentDepsT]):
         Returns:
             A Pydantic tool that corresponds to the LangChain tool.
         """
-        import inspect
-
         _JSON_SCHEMA_TO_PYTHON = {
             "array": list,
             "boolean": bool,
@@ -386,7 +401,7 @@ class Tool(Generic[AgentDepsT]):
             for parameter_name, parameter_details in inputs.items()
         ]
         signature = inspect.Signature(parameters=parameters, return_annotation=output_type)
-        proxy.__signature__ = signature
+        proxy.__signature__ = signature # type: ignore
 
         annotations = {
             parameter_name: _JSON_SCHEMA_TO_PYTHON[parameter_details["type"]]

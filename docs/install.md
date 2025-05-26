@@ -56,6 +56,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `cohere` - installs `cohere` [PyPI ↗](https://pypi.org/project/cohere){:target="_blank"}
 * `duckduckgo` - installs `duckduckgo-search` [PyPI ↗](https://pypi.org/project/duckduckgo-search){:target="_blank"}
 * `tavily` - installs `tavily-python` [PyPI ↗](https://pypi.org/project/tavily-python){:target="_blank"}
+* `langchain` - installs `langchain-core` [PyPI ↗](https://pypi.org/project/langchain-core){:target="_blank"}
 
 See the [models](models/index.md) documentation for information on which optional dependencies are required for each model.
 
