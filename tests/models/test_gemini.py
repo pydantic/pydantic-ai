@@ -1128,6 +1128,18 @@ I need to use the `get_image` tool to see the image first.
 
 
 @pytest.mark.vcr()
+async def test_labels_are_ignored_with_gla_provider(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(
+        'What is the capital of France?',
+        model_settings=GeminiModelSettings(gemini_labels={'environment': 'test', 'team': 'analytics'}),
+    )
+    assert result.output == snapshot('The capital of France is **Paris**.\n')
+
+
+@pytest.mark.vcr()
 async def test_image_as_binary_content_input(
     allow_model_requests: None, gemini_api_key: str, image_content: BinaryContent
 ) -> None:
