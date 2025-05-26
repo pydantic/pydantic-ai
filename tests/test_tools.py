@@ -1048,3 +1048,57 @@ def test_dynamic_tools_agent_wide():
 
     result = agent.run_sync('', deps=1)
     assert result.output == snapshot('{"foobar":"1 0 a"}')
+
+
+def test_langchain_tool_conversion():
+    call_args: list[int] = []
+
+    @dataclass
+    class SimulatedLangChainTool:
+        name: str
+        description: str
+        args: dict[str, dict[str, str]]
+
+        def run(
+            self,
+            tool_input: Union[str, dict[str, Any]],
+            verbose: bool | None = None,
+            start_color: str | None = 'green',
+            color: str | None = 'green',
+            callbacks: Any = None,
+            *,
+            tags: list[str] | None = None,
+            metadata: dict[str, Any] | None = None,
+            run_name: str | None = None,
+            run_id: Any | None = None,
+            config: Any | None = None,
+            tool_call_id: str | None = None,
+            **kwargs: Any,
+        ) -> Any:
+            return 'I was called'
+
+    langchain_tool = SimulatedLangChainTool(
+        name='file_search',
+        description='Recursively search for files in a subdirectory that match the regex pattern',
+        args={
+            'dir_path': {
+                'default': '.',
+                'description': 'Subdirectory to search in.',
+                'title': 'Dir Path',
+                'type': 'string',
+            },
+            'pattern': {
+                'description': 'Unix shell regex, where * matches everything.',
+                'title': 'Pattern',
+                'type': 'string',
+            },
+        },
+    )
+    pydantic_tool = Tool.from_langchain(langchain_tool)
+
+    agent = Agent('test', tools=[pydantic_tool], retries=7)
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot('{"file_search":"I was called"}')
+    assert call_args == snapshot([])
+    assert agent._function_tools['file_search'].takes_ctx is False
+    assert agent._function_tools['file_search'].max_retries == 7
