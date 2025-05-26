@@ -17,27 +17,24 @@ from . import _pydantic, _utils, messages as _messages, models
 from .exceptions import ModelRetry, UnexpectedModelBehavior
 
 if TYPE_CHECKING:
+    from typing import Protocol
+
     from .result import Usage
 
-    try:
-        from langchain_core.tools import BaseTool as LangChainTool
-    except ImportError:
-        from typing import Protocol
+    class LangChainTool(Protocol):
+        # args are like
+        # {'dir_path': {'default': '.', 'description': 'Subdirectory to search in.', 'title': 'Dir Path', 'type': 'string'},
+        #  'pattern': {'description': 'Unix shell regex, where * matches everything.', 'title': 'Pattern', 'type': 'string'}}
+        @property
+        def args(self) -> dict[str, dict[str, str]]: ...
 
-        class LangChainTool(Protocol):
-            # args are like
-            # {'dir_path': {'default': '.', 'description': 'Subdirectory to search in.', 'title': 'Dir Path', 'type': 'string'},
-            #  'pattern': {'description': 'Unix shell regex, where * matches everything.', 'title': 'Pattern', 'type': 'string'}}
-            @property
-            def args(self) -> dict[str, dict[str, str]]: ...
+        @property
+        def name(self) -> str: ...
 
-            @property
-            def name(self) -> str: ...
+        @property
+        def description(self) -> str: ...
 
-            @property
-            def description(self) -> str: ...
-
-            def run(self, *args: Any, **kwargs: Any) -> str: ...
+        def run(self, *args: Any, **kwargs: Any) -> str: ...
 
 
 __all__ = (
