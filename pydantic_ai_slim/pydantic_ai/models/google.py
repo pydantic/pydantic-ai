@@ -76,15 +76,12 @@ LatestGoogleModelNames = Literal[
     'gemini-1.5-flash-8b',
     'gemini-1.5-pro',
     'gemini-1.0-pro',
-    'gemini-2.0-flash-exp',
-    'gemini-2.0-flash-thinking-exp-01-21',
-    'gemini-exp-1206',
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite-preview-02-05',
     'gemini-2.0-pro-exp-02-05',
-    'gemini-2.5-flash-preview-04-17',
+    'gemini-2.5-flash-preview-05-20',
     'gemini-2.5-pro-exp-03-25',
-    'gemini-2.5-pro-preview-03-25',
+    'gemini-2.5-pro-preview-05-06',
 ]
 """Latest Gemini models."""
 
@@ -113,6 +110,12 @@ class GoogleModelSettings(ModelSettings, total=False):
     """The thinking configuration to use for the model.
 
     See <https://ai.google.dev/gemini-api/docs/thinking> for more information.
+    """
+
+    google_labels: dict[str, str]
+    """User-defined metadata to break down billed charges. Only supported by the Vertex AI API.
+
+    See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
     """
 
 
@@ -269,6 +272,7 @@ class GoogleModel(Model):
             frequency_penalty=model_settings.get('frequency_penalty'),
             safety_settings=model_settings.get('google_safety_settings'),
             thinking_config=model_settings.get('google_thinking_config'),
+            labels=model_settings.get('google_labels'),
             tools=cast(ToolListUnionDict, tools),
             tool_config=tool_config,
         )

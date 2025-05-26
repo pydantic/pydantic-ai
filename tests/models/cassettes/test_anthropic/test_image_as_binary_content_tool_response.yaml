@@ -32,26 +32,28 @@ interactions:
           properties: {}
           type: object
         name: get_image
-    uri: https://api.anthropic.com/v1/messages
+    uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '441'
+      - '447'
       content-type:
       - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       content:
-      - text: Let me get the image and check what fruit is shown.
+      - text: Let me get the image and check.
         type: text
-      - id: toolu_01VMGXdexE1Fy5xdWgoom9Te
+      - id: toolu_01YJiJ82nETV7aRdJr9f6Np7
         input: {}
         name: get_image
         type: tool_use
-      id: msg_01BPu4UTHXhqtR1TvsRhBLYY
+      id: msg_01CC59GmUmYXKCV26rHfr32m
       model: claude-3-5-sonnet-20241022
       role: assistant
       stop_reason: tool_use
@@ -61,7 +63,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 372
-        output_tokens: 49
+        output_tokens: 45
+        service_tier: standard
     status:
       code: 200
       message: OK
@@ -74,7 +77,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2780301'
+      - '2780281'
       content-type:
       - application/json
       host:
@@ -88,9 +91,9 @@ interactions:
           type: text
         role: user
       - content:
-        - text: Let me get the image and check what fruit is shown.
+        - text: Let me get the image and check.
           type: text
-        - id: toolu_01VMGXdexE1Fy5xdWgoom9Te
+        - id: toolu_01YJiJ82nETV7aRdJr9f6Np7
           input: {}
           name: get_image
           type: tool_use
@@ -98,7 +101,7 @@ interactions:
       - content:
         - content: See file 1c8566
           is_error: false
-          tool_use_id: toolu_01VMGXdexE1Fy5xdWgoom9Te
+          tool_use_id: toolu_01YJiJ82nETV7aRdJr9f6Np7
           type: tool_result
         - text: 'This is file 1c8566:'
           type: text
@@ -119,24 +122,26 @@ interactions:
           properties: {}
           type: object
         name: get_image
-    uri: https://api.anthropic.com/v1/messages
+    uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '559'
+      - '592'
       content-type:
       - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       content:
       - text: The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with
-          small black seeds arranged in a circular pattern around a white center core. The kiwi's fuzzy brown skin is visible
-          around the edges of the slice.
+          small black seeds arranged in a circular pattern around a white center core. The fruit's thin, fuzzy brown skin
+          is visible around the edges of the slice.
         type: text
-      id: msg_01Ua6uyZUF15YV3G1PusaqSq
+      id: msg_014MJqSsWD1pUC23Vvi57LoY
       model: claude-3-5-sonnet-20241022
       role: assistant
       stop_reason: end_turn
@@ -145,8 +150,9 @@ interactions:
       usage:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 2025
+        input_tokens: 2021
         output_tokens: 57
+        service_tier: standard
     status:
       code: 200
       message: OK
