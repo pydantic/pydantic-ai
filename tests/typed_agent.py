@@ -216,7 +216,7 @@ else:
     assert_type(two_scalars_output_agent, Agent[None, int | str])
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
-    complex_output_agent = Agent(output_type=[Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker])
+    complex_output_agent = Agent(output_type=[Foo, Bar, foobar_ctx, ToolOutput(foobar_plain), marker])
     assert_type(complex_output_agent, Agent[None, Foo | Bar | str | int | bool | tuple[str, int]])
 
 
