@@ -474,8 +474,7 @@ def _tool_config(function_names: list[str]) -> ToolConfigDict:
 def _metadata_as_usage(response: GenerateContentResponse) -> usage.Usage:
     metadata = response.usage_metadata
     if metadata is None:
-        u = usage.Usage()
-        return u
+        return usage.Usage()  # pragma: no cover
     metadata = metadata.model_dump(exclude_defaults=True)
 
     details: dict[str, int] = {}
