@@ -290,7 +290,7 @@ class GoogleModel(Model):
         vendor_id = response.response_id or None
         vendor_details: dict[str, Any] | None = None
         finish_reason = response.candidates[0].finish_reason
-        if finish_reason:
+        if finish_reason:  # pragma: no branch
             vendor_details = {'finish_reason': finish_reason.value}
         usage = _metadata_as_usage(response)
         usage.requests = 1

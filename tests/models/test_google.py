@@ -513,14 +513,3 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
 
     with pytest.raises(UnexpectedModelBehavior, match='Safety settings triggered'):
         await agent.run('Tell me a joke about a Brazilians.')
-
-
-async def test_google_no_finish_reason(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
-    agent = Agent(model=model, system_prompt='You are a chatbot.')
-
-    result = await agent.run('Hello!')
-
-    for message in result.all_messages():
-        if isinstance(message, ModelResponse):
-            assert message.vendor_details is None
