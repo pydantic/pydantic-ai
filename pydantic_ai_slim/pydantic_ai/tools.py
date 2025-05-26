@@ -20,13 +20,16 @@ if TYPE_CHECKING:
     from .result import Usage
 
     try:
-        from langchain_core.tools import BaseTool as LangChainTool # type: ignore
+        from langchain_core.tools import BaseTool as LangChainTool
     except ImportError:
         from typing import Protocol
 
         class LangChainTool(Protocol):
+            # args are like
+            # {'dir_path': {'default': '.', 'description': 'Subdirectory to search in.', 'title': 'Dir Path', 'type': 'string'},
+            #  'pattern': {'description': 'Unix shell regex, where * matches everything.', 'title': 'Pattern', 'type': 'string'}}
             @property
-            def args(self) -> dict[str, Any]: ...
+            def args(self) -> dict[str, dict[str, str]]: ...
 
             @property
             def name(self) -> str: ...
@@ -34,7 +37,8 @@ if TYPE_CHECKING:
             @property
             def description(self) -> str: ...
 
-            def run(self, *args, **kwargs) -> str: ...
+            def run(self, *args: Any, **kwargs: Any) -> str: ...
+
 
 __all__ = (
     'AgentDepsT',
@@ -331,8 +335,7 @@ class Tool(Generic[AgentDepsT]):
 
     @staticmethod
     def from_langchain(langchain_tool: LangChainTool) -> Tool[None]:
-        """
-        Creates a Pydantic tool proxy from a LangChain tool.
+        """Creates a Pydantic tool proxy from a LangChain tool.
 
         Args:
             langchain_tool: The LangChain tool to wrap.
@@ -341,34 +344,27 @@ class Tool(Generic[AgentDepsT]):
             A Pydantic tool that corresponds to the LangChain tool.
         """
         _JSON_SCHEMA_TO_PYTHON = {
-            "array": list,
-            "boolean": bool,
-            "null": type(None),
-            "number": float,
-            "object": dict,
-            "string": str,
+            'array': list,
+            'boolean': bool,
+            'null': type(None),
+            'number': float,
+            'object': dict,
+            'string': str,
         }
 
         function_name = langchain_tool.name
         function_description = langchain_tool.description
-        # inputs are like:
-        # {'dir_path': {'default': '.', 'description': 'Subdirectory to search in.', 'title': 'Dir Path', 'type': 'string'},
-        #  'pattern': {'description': 'Unix shell regex, where * matches everything.', 'title': 'Pattern', 'type': 'string'}}
         inputs = langchain_tool.args.copy()
-        defaults = {
-            name: detail["default"]
-            for name, detail in inputs.items()
-            if "default" in detail
-        }
+        defaults = {name: detail['default'] for name, detail in inputs.items() if 'default' in detail}
         # need to reorder the inputs so that the default ones are last
         inputs = dict(
-            [(name, detail) for name, detail in inputs.items() if "default" not in detail]
-            + [(name, detail) for name, detail in inputs.items() if "default" in detail]
+            [(name, detail) for name, detail in inputs.items() if 'default' not in detail]
+            + [(name, detail) for name, detail in inputs.items() if 'default' in detail]
         )
         output_type = str
 
         # restructures the arguments to match langchain tool run
-        def proxy(*args, **kwargs):
+        def proxy(*args: Any, **kwargs: Any) -> str:
             tool_input = kwargs.copy()
             for argument, key in zip(args, inputs.keys()):
                 tool_input[key] = argument
@@ -381,13 +377,10 @@ class Tool(Generic[AgentDepsT]):
         proxy.__name__ = function_name
 
         # Generate the docstring for the proxy
-        input_descriptions = [
-            f"{name} ({detail['type']}): {detail['description']}"
-            for name, detail in inputs.items()
-        ]
-        input_description_str = "\n    ".join(input_descriptions)
-        args_section = f"Args:\n    {input_description_str}"
-        docstring = f"{function_description}\n\n{args_section}"
+        input_descriptions = [f'{name} ({detail["type"]}): {detail["description"]}' for name, detail in inputs.items()]
+        input_description_str = '\n    '.join(input_descriptions)
+        args_section = f'Args:\n    {input_description_str}'
+        docstring = f'{function_description}\n\n{args_section}'
         proxy.__doc__ = docstring
 
         # Replace the proxy signature and annotations with the arguments from the tool
@@ -395,16 +388,16 @@ class Tool(Generic[AgentDepsT]):
             inspect.Parameter(
                 name=parameter_name,
                 kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                default=parameter_details.get("default", inspect.Parameter.empty),
-                annotation=_JSON_SCHEMA_TO_PYTHON[parameter_details["type"]],
+                default=parameter_details.get('default', inspect.Parameter.empty),
+                annotation=_JSON_SCHEMA_TO_PYTHON[parameter_details['type']],
             )
             for parameter_name, parameter_details in inputs.items()
         ]
         signature = inspect.Signature(parameters=parameters, return_annotation=output_type)
-        proxy.__signature__ = signature # type: ignore
+        proxy.__signature__ = signature  # type: ignore
 
         annotations = {
-            parameter_name: _JSON_SCHEMA_TO_PYTHON[parameter_details["type"]]
+            parameter_name: _JSON_SCHEMA_TO_PYTHON[parameter_details['type']]
             for parameter_name, parameter_details in inputs.items()
         }
         proxy.__annotations__ = annotations
