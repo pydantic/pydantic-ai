@@ -1059,7 +1059,10 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     '$defs': {
                         'MyDefaultRecursiveDc': {
                             'properties': {
-                                'field': {'anyOf': [{'$ref': '#/$defs/MyDefaultRecursiveDc'}, {'type': 'null'}]}
+                                'field': {
+                                    'anyOf': [{'$ref': '#/$defs/MyDefaultRecursiveDc'}, {'type': 'null'}],
+                                    'default': None,
+                                }
                             },
                             'type': 'object',
                         },
@@ -1177,7 +1180,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     '$defs': {
                         'MyDefaultDc': {
-                            'properties': {'x': {'type': 'integer'}},
+                            'properties': {'x': {'default': 1, 'type': 'integer'}},
                             'type': 'object',
                         }
                     },
@@ -1217,7 +1220,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     '$defs': {
                         'MyDefaultDc': {
-                            'properties': {'x': {'type': 'integer'}},
+                            'properties': {'x': {'default': 1, 'type': 'integer'}},
                             'type': 'object',
                         }
                     },
@@ -1257,7 +1260,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     '$defs': {
                         'MyDefaultDc': {
-                            'properties': {'x': {'type': 'integer'}},
+                            'properties': {'x': {'default': 1, 'type': 'integer'}},
                             'type': 'object',
                         }
                     },
