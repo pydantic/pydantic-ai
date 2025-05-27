@@ -24,7 +24,7 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
     """
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
-        super().__init__(schema, strict=strict, simplify_nullable_unions=True)
+        super().__init__(schema, strict=strict, prefer_inlined_defs=True, simplify_nullable_unions=True)
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # Note: we need to remove `additionalProperties: False` since it is currently mishandled by Gemini
