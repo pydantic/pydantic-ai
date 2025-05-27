@@ -85,6 +85,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                 usage=Usage(requests=1, request_tokens=7, response_tokens=11, total_tokens=18, details={}),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -138,6 +139,7 @@ async def test_google_model_structured_response(allow_model_requests: None, goog
                 usage=Usage(requests=1, request_tokens=101, response_tokens=14, total_tokens=115, details={}),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -157,6 +159,7 @@ async def test_google_model_structured_response(allow_model_requests: None, goog
                 usage=Usage(requests=1, request_tokens=123, response_tokens=21, total_tokens=144, details={}),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -215,6 +218,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -235,6 +239,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 usage=Usage(requests=1, request_tokens=104, response_tokens=18, total_tokens=122, details={}),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -260,6 +265,28 @@ async def test_google_model_thinking_config(allow_model_requests: None, google_p
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is **Paris**.')
+
+
+@pytest.mark.skipif(
+    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+)
+async def test_google_model_vertex_labels(allow_model_requests: None):
+    provider = GoogleProvider(location='global', project='pydantic-ai')
+    model = GoogleModel('gemini-2.0-flash', provider=provider)
+    settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=settings)
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('The capital of France is Paris.\n')
+
+
+async def test_google_model_gla_labels_raises_value_error(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=settings)
+
+    # Raises before any request is made.
+    with pytest.raises(ValueError, match='labels parameter is not supported in Gemini API.'):
+        await agent.run('What is the capital of France?')
 
 
 @pytest.fixture(autouse=True)
@@ -469,6 +496,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                 usage=Usage(requests=1, request_tokens=13, response_tokens=8, total_tokens=21, details={}),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
