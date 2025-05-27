@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
-from pydantic_core import core_schema
+from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
 from . import _function_schema, _utils, messages as _messages
@@ -338,23 +338,10 @@ class Tool(Generic[AgentDepsT]):
         function_name = function.__name__
         function_description = function.__doc__ or ''
 
-        class AnySchemaValidator:
-            def validate_python(
-                self,
-                input: Any,
-                *,
-                strict: bool | None = None,
-                from_attributes: bool | None = None,
-                context: Any | None = None,
-                self_instance: Any | None = None,
-                allow_partial: bool | Literal['off', 'on', 'trailing-strings'] = False,
-            ) -> Any:
-                return input
-
         function_schema = _function_schema.FunctionSchema(
             function=function,
             description=function_description,
-            validator=AnySchemaValidator(),
+            validator=SchemaValidator(schema=core_schema.any_schema()),
             json_schema=json_schema,
             takes_ctx=False,
             is_async=False,
