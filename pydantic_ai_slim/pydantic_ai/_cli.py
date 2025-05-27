@@ -284,7 +284,7 @@ async def ask_agent(
                         stack.enter_context(live)  # entering multiple times is idempotent
 
                         async for content in handle_stream.stream_output(debounce_by=None):
-                            live.update(Markdown(content, code_theme=code_theme))
+                            live.update(Markdown(str(content), code_theme=code_theme))
 
         assert agent_run.result is not None
         return agent_run.result.all_messages()

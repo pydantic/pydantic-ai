@@ -52,15 +52,12 @@ LatestGeminiModelNames = Literal[
     'gemini-1.5-flash-8b',
     'gemini-1.5-pro',
     'gemini-1.0-pro',
-    'gemini-2.0-flash-exp',
-    'gemini-2.0-flash-thinking-exp-01-21',
-    'gemini-exp-1206',
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite-preview-02-05',
     'gemini-2.0-pro-exp-02-05',
-    'gemini-2.5-flash-preview-04-17',
+    'gemini-2.5-flash-preview-05-20',
     'gemini-2.5-pro-exp-03-25',
-    'gemini-2.5-pro-preview-03-25',
+    'gemini-2.5-pro-preview-05-06',
 ]
 """Latest Gemini models."""
 
@@ -80,6 +77,7 @@ class GeminiModelSettings(ModelSettings, total=False):
     """
 
     gemini_safety_settings: list[GeminiSafetySettings]
+    """Safety settings options for Gemini model request."""
 
     gemini_thinking_config: ThinkingConfig
     """Thinking is "on" by default in both the API and AI Studio.
@@ -91,6 +89,12 @@ class GeminiModelSettings(ModelSettings, total=False):
     If you want to avoid the model spending any tokens on thinking, you can set `thinking_budget` to `0`.
 
     See more about it on <https://ai.google.dev/gemini-api/docs/thinking>.
+    """
+
+    gemini_labels: dict[str, str]
+    """User-defined metadata to break down billed charges. Only supported by the Vertex AI provider.
+
+    See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
     """
 
 
@@ -223,24 +227,16 @@ class GeminiModel(Model):
         if tool_config is not None:
             request_data['toolConfig'] = tool_config
 
-        generation_config: _GeminiGenerationConfig = {}
-        if model_settings:
-            if (max_tokens := model_settings.get('max_tokens')) is not None:
-                generation_config['max_output_tokens'] = max_tokens
-            if (temperature := model_settings.get('temperature')) is not None:
-                generation_config['temperature'] = temperature
-            if (top_p := model_settings.get('top_p')) is not None:
-                generation_config['top_p'] = top_p
-            if (presence_penalty := model_settings.get('presence_penalty')) is not None:
-                generation_config['presence_penalty'] = presence_penalty
-            if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
-                generation_config['frequency_penalty'] = frequency_penalty
-            if (thinkingConfig := model_settings.get('gemini_thinking_config')) is not None:
-                generation_config['thinking_config'] = thinkingConfig  # pragma: no cover
-            if (gemini_safety_settings := model_settings.get('gemini_safety_settings')) is not None:
-                request_data['safetySettings'] = gemini_safety_settings
+        generation_config = _settings_to_generation_config(model_settings)
         if generation_config:
             request_data['generationConfig'] = generation_config
+
+        if gemini_safety_settings := model_settings.get('gemini_safety_settings'):
+            request_data['safetySettings'] = gemini_safety_settings
+
+        if gemini_labels := model_settings.get('gemini_labels'):
+            if self._system == 'google-vertex':
+                request_data['labels'] = gemini_labels
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
@@ -263,6 +259,8 @@ class GeminiModel(Model):
             yield r
 
     def _process_response(self, response: _GeminiResponse) -> ModelResponse:
+        vendor_details: dict[str, Any] | None = None
+
         if len(response['candidates']) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
         if 'content' not in response['candidates'][0]:
@@ -273,9 +271,19 @@ class GeminiModel(Model):
                     'Content field missing from Gemini response', str(response)
                 )
         parts = response['candidates'][0]['content']['parts']
+        vendor_id = response.get('vendor_id', None)
+        finish_reason = response['candidates'][0].get('finish_reason')
+        if finish_reason:
+            vendor_details = {'finish_reason': finish_reason}
         usage = _metadata_as_usage(response)
         usage.requests = 1
-        return _process_response_from_parts(parts, response.get('model_version', self._model_name), usage)
+        return _process_response_from_parts(
+            parts,
+            response.get('model_version', self._model_name),
+            usage,
+            vendor_id=vendor_id,
+            vendor_details=vendor_details,
+        )
 
     async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -370,6 +378,23 @@ class GeminiModel(Model):
                 else:
                     assert_never(item)
         return content
+
+
+def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _GeminiGenerationConfig:
+    config: _GeminiGenerationConfig = {}
+    if (max_tokens := model_settings.get('max_tokens')) is not None:
+        config['max_output_tokens'] = max_tokens
+    if (temperature := model_settings.get('temperature')) is not None:
+        config['temperature'] = temperature
+    if (top_p := model_settings.get('top_p')) is not None:
+        config['top_p'] = top_p
+    if (presence_penalty := model_settings.get('presence_penalty')) is not None:
+        config['presence_penalty'] = presence_penalty
+    if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
+        config['frequency_penalty'] = frequency_penalty
+    if (thinkingConfig := model_settings.get('gemini_thinking_config')) is not None:
+        config['thinking_config'] = thinkingConfig  # pragma: no cover
+    return config
 
 
 class AuthProtocol(Protocol):
@@ -493,6 +518,7 @@ class _GeminiRequest(TypedDict):
     <https://ai.google.dev/gemini-api/docs/system-instructions?lang=rest>
     """
     generationConfig: NotRequired[_GeminiGenerationConfig]
+    labels: NotRequired[dict[str, str]]
 
 
 class GeminiSafetySettings(TypedDict):
@@ -607,7 +633,11 @@ def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart
 
 
 def _process_response_from_parts(
-    parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, usage: usage.Usage
+    parts: Sequence[_GeminiPartUnion],
+    model_name: GeminiModelName,
+    usage: usage.Usage,
+    vendor_id: str | None,
+    vendor_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
@@ -619,7 +649,9 @@ def _process_response_from_parts(
             raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
-    return ModelResponse(parts=items, usage=usage, model_name=model_name)
+    return ModelResponse(
+        parts=items, usage=usage, model_name=model_name, vendor_id=vendor_id, vendor_details=vendor_details
+    )
 
 
 class _GeminiFunctionCall(TypedDict):
@@ -731,6 +763,7 @@ class _GeminiResponse(TypedDict):
     usage_metadata: NotRequired[Annotated[_GeminiUsageMetaData, pydantic.Field(alias='usageMetadata')]]
     prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, pydantic.Field(alias='promptFeedback')]]
     model_version: NotRequired[Annotated[str, pydantic.Field(alias='modelVersion')]]
+    vendor_id: NotRequired[Annotated[str, pydantic.Field(alias='responseId')]]
 
 
 class _GeminiCandidates(TypedDict):

@@ -541,6 +541,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -556,6 +557,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -563,6 +565,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -586,6 +589,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -648,6 +652,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -667,6 +672,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -689,6 +695,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -1100,6 +1107,7 @@ I need to use the `get_image` tool to see the image first.
                 usage=Usage(requests=1, request_tokens=38, response_tokens=28, total_tokens=427, details={}),
                 model_name='gemini-2.5-pro-preview-03-25',
                 timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -1123,9 +1131,22 @@ I need to use the `get_image` tool to see the image first.
                 usage=Usage(requests=1, request_tokens=360, response_tokens=11, total_tokens=572, details={}),
                 model_name='gemini-2.5-pro-preview-03-25',
                 timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_labels_are_ignored_with_gla_provider(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(
+        'What is the capital of France?',
+        model_settings=GeminiModelSettings(gemini_labels={'environment': 'test', 'team': 'analytics'}),
+    )
+    assert result.output == snapshot('The capital of France is **Paris**.\n')
 
 
 @pytest.mark.parametrize(
@@ -1281,6 +1302,7 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
                 usage=Usage(requests=1, request_tokens=13, response_tokens=8, total_tokens=21, details={}),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -1353,3 +1375,18 @@ async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini
             ),
         ]
     )
+
+
+async def test_gemini_no_finish_reason(get_gemini_client: GetGeminiClient):
+    response = gemini_response(
+        _content_model_response(ModelResponse(parts=[TextPart('Hello world')])), finish_reason=None
+    )
+    gemini_client = get_gemini_client(response)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello World')
+
+    for message in result.all_messages():
+        if isinstance(message, ModelResponse):
+            assert message.vendor_details is None
