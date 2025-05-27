@@ -1075,7 +1075,8 @@ def test_function_tool_consistent_with_schema():
 
 
 def test_function_tool_inconsistent_with_schema():
-    def function(three: str, four: int) -> None: ...
+    def function(three: str, four: int) -> str:
+        return 'Coverage made me call this'
 
     json_schema = {
         'type': 'object',
@@ -1091,6 +1092,9 @@ def test_function_tool_inconsistent_with_schema():
     agent = Agent('test', tools=[pydantic_tool], retries=0)
     with pytest.raises(TypeError, match=".* got an unexpected keyword argument 'one'"):
         agent.run_sync('foobar')
+
+    result = function('three', 4)
+    assert result == 'Coverage made me call this'
 
 
 def test_async_function_tool_consistent_with_schema():
