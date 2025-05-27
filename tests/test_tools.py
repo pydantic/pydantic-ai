@@ -1094,6 +1094,30 @@ def test_function_tool_inconsistent_with_schema():
         agent.run_sync('foobar')
 
 
+def test_async_function_tool_consistent_with_schema():
+    async def function(*args: Any, **kwargs: Any) -> str:
+        assert len(args) == 0
+        assert set(kwargs) == {'one', 'two'}
+        return 'I like being called like this'
+
+    json_schema = {
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'one': {'description': 'first argument', 'type': 'string'},
+            'two': {'description': 'second argument', 'type': 'object'},
+        },
+        'required': ['one', 'two'],
+    }
+    pydantic_tool = Tool.from_function(function, json_schema=json_schema)
+
+    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot('{"function":"I like being called like this"}')
+    assert agent._function_tools['function'].takes_ctx is False
+    assert agent._function_tools['function'].max_retries == 0
+
+
 def test_langchain_tool_conversion():
     @dataclass
     class SimulatedLangChainTool:
