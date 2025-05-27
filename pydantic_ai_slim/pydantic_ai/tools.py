@@ -325,7 +325,54 @@ class Tool(Generic[AgentDepsT]):
         self.strict = strict
 
     @staticmethod
-    def from_langchain(langchain_tool: LangChainTool) -> Tool[None]:
+    def from_function(function: Callable[..., Any], json_schema: JsonSchemaValue) -> Tool[None]:
+        """Creates a Pydantic tool from a function and a JSON schema.
+
+        Args:
+            function: The function to call
+            json_schema: The schema for the function arguments
+
+        Returns:
+            A Pydantic tool that calls the function
+        """
+        function_name = function.__name__
+        function_description = function.__doc__ or ''
+
+        class AnySchemaValidator:
+            def validate_python(
+                self,
+                input: Any,
+                *,
+                strict: bool | None = None,
+                from_attributes: bool | None = None,
+                context: Any | None = None,
+                self_instance: Any | None = None,
+                allow_partial: bool | Literal['off', 'on', 'trailing-strings'] = False,
+            ) -> Any:
+                return input
+
+        function_schema = _function_schema.FunctionSchema(
+            function=function,
+            description=function_description,
+            validator=AnySchemaValidator(),
+            json_schema=json_schema,
+            takes_ctx=False,
+            is_async=False,
+            single_arg_name=None,
+            positional_fields=[],
+            var_positional_field=None,
+        )
+
+        return Tool(
+            function,
+            takes_ctx=False,
+            name=function_name,
+            description=function_description,
+            function_schema=function_schema,
+        )
+
+    @classmethod
+    def from_langchain(cls, langchain_tool: LangChainTool) -> Tool[None]:
         """Creates a Pydantic tool proxy from a LangChain tool.
 
         Args:
@@ -359,38 +406,10 @@ class Tool(Generic[AgentDepsT]):
                 kwargs[name] = default_value
             return langchain_tool.run(tool_input)
 
-        class AnySchemaValidator:
-            def validate_python(
-                self,
-                input: Any,
-                *,
-                strict: bool | None = None,
-                from_attributes: bool | None = None,
-                context: Any | None = None,
-                self_instance: Any | None = None,
-                allow_partial: bool | Literal['off', 'on', 'trailing-strings'] = False,
-            ) -> Any:
-                return input
+        proxy.__name__ = function_name
+        proxy.__doc__ = function_description
 
-        function_schema = _function_schema.FunctionSchema(
-            function=proxy,
-            description=function_description,
-            validator=AnySchemaValidator(),
-            json_schema=schema,
-            takes_ctx=False,
-            is_async=False,
-            single_arg_name=None,
-            positional_fields=[],
-            var_positional_field=None,
-        )
-
-        return Tool(
-            proxy,
-            takes_ctx=False,
-            name=function_name,
-            description=function_description,
-            function_schema=function_schema,
-        )
+        return cls.from_function(function=proxy, json_schema=schema)
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
