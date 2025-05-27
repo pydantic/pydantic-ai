@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-import inspect
 import json
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
@@ -335,25 +334,19 @@ class Tool(Generic[AgentDepsT]):
         Returns:
             A Pydantic tool that corresponds to the LangChain tool.
         """
-        _JSON_SCHEMA_TO_PYTHON = {
-            'array': list,
-            'boolean': bool,
-            'null': type(None),
-            'number': float,
-            'object': dict,
-            'string': str,
-        }
-
         function_name = langchain_tool.name
         function_description = langchain_tool.description
         inputs = langchain_tool.args.copy()
+        required = sorted({name for name, detail in inputs.items() if 'default' not in detail})
+        schema = {
+            'type': 'object',
+            'properties': inputs,
+            'additionalProperties': False,
+        }
+        if required:
+            schema['required'] = required
+
         defaults = {name: detail['default'] for name, detail in inputs.items() if 'default' in detail}
-        # need to reorder the inputs so that the default ones are last
-        inputs = dict(
-            [(name, detail) for name, detail in inputs.items() if 'default' not in detail]
-            + [(name, detail) for name, detail in inputs.items() if 'default' in detail]
-        )
-        output_type = str
 
         # restructures the arguments to match langchain tool run
         def proxy(*args: Any, **kwargs: Any) -> str:
@@ -366,39 +359,37 @@ class Tool(Generic[AgentDepsT]):
                 kwargs[name] = default_value
             return langchain_tool.run(tool_input)
 
-        proxy.__name__ = function_name
+        class AnySchemaValidator:
+            def validate_python(
+                self,
+                input: Any,
+                *,
+                strict: bool | None = None,
+                from_attributes: bool | None = None,
+                context: Any | None = None,
+                self_instance: Any | None = None,
+                allow_partial: bool | Literal['off', 'on', 'trailing-strings'] = False,
+            ) -> Any:
+                return input
 
-        # Generate the docstring for the proxy
-        input_descriptions = [f'{name} ({detail["type"]}): {detail["description"]}' for name, detail in inputs.items()]
-        input_description_str = '\n    '.join(input_descriptions)
-        args_section = f'Args:\n    {input_description_str}'
-        docstring = f'{function_description}\n\n{args_section}'
-        proxy.__doc__ = docstring
-
-        # Replace the proxy signature and annotations with the arguments from the tool
-        parameters = [
-            inspect.Parameter(
-                name=parameter_name,
-                kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                default=parameter_details.get('default', inspect.Parameter.empty),
-                annotation=_JSON_SCHEMA_TO_PYTHON[parameter_details['type']],
-            )
-            for parameter_name, parameter_details in inputs.items()
-        ]
-        signature = inspect.Signature(parameters=parameters, return_annotation=output_type)
-        proxy.__signature__ = signature  # type: ignore
-
-        annotations = {
-            parameter_name: _JSON_SCHEMA_TO_PYTHON[parameter_details['type']]
-            for parameter_name, parameter_details in inputs.items()
-        }
-        proxy.__annotations__ = annotations
+        function_schema = _function_schema.FunctionSchema(
+            function=proxy,
+            description=function_description,
+            validator=AnySchemaValidator(),
+            json_schema=schema,
+            takes_ctx=False,
+            is_async=False,
+            single_arg_name=None,
+            positional_fields=[],
+            var_positional_field=None,
+        )
 
         return Tool(
             proxy,
             takes_ctx=False,
             name=function_name,
-            description=docstring,
+            description=function_description,
+            function_schema=function_schema,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
