@@ -385,14 +385,13 @@ class Tool(Generic[AgentDepsT]):
 
         # restructures the arguments to match langchain tool run
         def proxy(*args: Any, **kwargs: Any) -> str:
-            tool_input = kwargs.copy()
             for argument, key in zip(args, inputs.keys()):
-                tool_input[key] = argument
+                kwargs[key] = argument
             for name, default_value in defaults.items():
                 if name in kwargs:
                     continue
                 kwargs[name] = default_value
-            return langchain_tool.run(tool_input)
+            return langchain_tool.run(kwargs)
 
         proxy.__name__ = function_name
         proxy.__doc__ = function_description

@@ -1075,8 +1075,7 @@ def test_function_tool_consistent_with_schema():
 
 
 def test_function_tool_inconsistent_with_schema():
-    def function(three: str, four: int) -> str:
-        return 'How did you even manage this?'
+    def function(three: str, four: int) -> None: ...
 
     json_schema = {
         'type': 'object',
@@ -1118,31 +1117,32 @@ def test_async_function_tool_consistent_with_schema():
     assert agent._function_tools['function'].max_retries == 0
 
 
+@dataclass
+class SimulatedLangChainTool:
+    name: str
+    description: str
+    args: dict[str, dict[str, str]]
+
+    def run(
+        self,
+        tool_input: Union[str, dict[str, Any]],
+        verbose: Union[bool, None] = None,
+        start_color: Union[str, None] = 'green',
+        color: Union[str, None] = 'green',
+        callbacks: Any = None,
+        *,
+        tags: Union[list[str], None] = None,
+        metadata: Union[dict[str, Any], None] = None,
+        run_name: Union[str, None] = None,
+        run_id: Union[Any, None] = None,
+        config: Union[Any, None] = None,
+        tool_call_id: Union[str, None] = None,
+        **kwargs: Any,
+    ) -> Any:
+        return f'I was called with {tool_input}'
+
+
 def test_langchain_tool_conversion():
-    @dataclass
-    class SimulatedLangChainTool:
-        name: str
-        description: str
-        args: dict[str, dict[str, str]]
-
-        def run(
-            self,
-            tool_input: Union[str, dict[str, Any]],
-            verbose: Union[bool, None] = None,
-            start_color: Union[str, None] = 'green',
-            color: Union[str, None] = 'green',
-            callbacks: Any = None,
-            *,
-            tags: Union[list[str], None] = None,
-            metadata: Union[dict[str, Any], None] = None,
-            run_name: Union[str, None] = None,
-            run_id: Union[Any, None] = None,
-            config: Union[Any, None] = None,
-            tool_call_id: Union[str, None] = None,
-            **kwargs: Any,
-        ) -> Any:
-            return 'I was called'
-
     langchain_tool = SimulatedLangChainTool(
         name='file_search',
         description='Recursively search for files in a subdirectory that match the regex pattern',
@@ -1164,6 +1164,54 @@ def test_langchain_tool_conversion():
 
     agent = Agent('test', tools=[pydantic_tool], retries=7)
     result = agent.run_sync('foobar')
-    assert result.output == snapshot('{"file_search":"I was called"}')
+    assert result.output == snapshot("{\"file_search\":\"I was called with {'pattern': 'a', 'dir_path': '.'}\"}")
     assert agent._function_tools['file_search'].takes_ctx is False
     assert agent._function_tools['file_search'].max_retries == 7
+
+
+def test_langchain_tool_defaults():
+    langchain_tool = SimulatedLangChainTool(
+        name='file_search',
+        description='Recursively search for files in a subdirectory that match the regex pattern',
+        args={
+            'dir_path': {
+                'default': '.',
+                'description': 'Subdirectory to search in.',
+                'title': 'Dir Path',
+                'type': 'string',
+            },
+            'pattern': {
+                'description': 'Unix shell regex, where * matches everything.',
+                'title': 'Pattern',
+                'type': 'string',
+            },
+        },
+    )
+    pydantic_tool = Tool.from_langchain(langchain_tool)
+
+    result = pydantic_tool.function(pattern='something')
+    assert result == snapshot("I was called with {'pattern': 'something', 'dir_path': '.'}")
+
+
+def test_langchain_tool_positional():
+    langchain_tool = SimulatedLangChainTool(
+        name='file_search',
+        description='Recursively search for files in a subdirectory that match the regex pattern',
+        args={
+            'pattern': {
+                'description': 'Unix shell regex, where * matches everything.',
+                'title': 'Pattern',
+                'type': 'string',
+            },
+            'dir_path': {
+                'default': '.',
+                'description': 'Subdirectory to search in.',
+                'title': 'Dir Path',
+                'type': 'string',
+            },
+        },
+    )
+    pydantic_tool = Tool.from_langchain(langchain_tool)
+
+    result = pydantic_tool.function('something')
+    assert result == snapshot("I was called with {'pattern': 'something', 'dir_path': '.'}")
