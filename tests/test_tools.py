@@ -1050,9 +1050,51 @@ def test_dynamic_tools_agent_wide():
     assert result.output == snapshot('{"foobar":"1 0 a"}')
 
 
-def test_langchain_tool_conversion():
-    call_args: list[int] = []
+def test_function_tool_consistent_with_schema():
+    def function(*args: Any, **kwargs: Any) -> str:
+        assert len(args) == 0
+        assert set(kwargs) == {'one', 'two'}
+        return 'I like being called like this'
 
+    json_schema = {
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'one': {'description': 'first argument', 'type': 'string'},
+            'two': {'description': 'second argument', 'type': 'object'},
+        },
+        'required': ['one', 'two'],
+    }
+    pydantic_tool = Tool.from_function(function, json_schema=json_schema)
+
+    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot('{"function":"I like being called like this"}')
+    assert agent._function_tools['function'].takes_ctx is False
+    assert agent._function_tools['function'].max_retries == 0
+
+
+def test_function_tool_inconsistent_with_schema():
+    def function(three: str, four: int) -> str:
+        return 'How did you even manage this?'
+
+    json_schema = {
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'one': {'description': 'first argument', 'type': 'string'},
+            'two': {'description': 'second argument', 'type': 'object'},
+        },
+        'required': ['one', 'two'],
+    }
+    pydantic_tool = Tool.from_function(function, json_schema=json_schema)
+
+    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    with pytest.raises(TypeError, match=".* got an unexpected keyword argument 'one'"):
+        agent.run_sync('foobar')
+
+
+def test_langchain_tool_conversion():
     @dataclass
     class SimulatedLangChainTool:
         name: str
@@ -1099,6 +1141,5 @@ def test_langchain_tool_conversion():
     agent = Agent('test', tools=[pydantic_tool], retries=7)
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"file_search":"I was called"}')
-    assert call_args == snapshot([])
     assert agent._function_tools['file_search'].takes_ctx is False
     assert agent._function_tools['file_search'].max_retries == 7
