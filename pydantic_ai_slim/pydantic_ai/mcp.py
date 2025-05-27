@@ -373,7 +373,7 @@ class MCPServerHTTP(MCPServer):
             url=self.url,
             headers=self.headers,
             timeout=timedelta(seconds=self.timeout),
-            sse_read_timeout=timedelta(self.sse_read_timeout),
+            sse_read_timeout=timedelta(seconds=self.sse_read_timeout),
         ) as (read_stream, write_stream, _):
             yield read_stream, write_stream
 
