@@ -572,7 +572,7 @@ def test_tool_return_conflict():
     Agent('test', tools=[ctx_tool], deps_type=int, output_type=int)
     # this raises an error
     with pytest.raises(UserError, match="Tool name conflicts with result schema name: 'ctx_tool'"):
-        Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(type_=int, name='ctx_tool'))
+        Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(int, name='ctx_tool'))
 
 
 def test_init_ctx_tool_invalid():

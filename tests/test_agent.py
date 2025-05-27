@@ -448,7 +448,6 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     [
         pytest.param('OutputType = Union[Foo, Bar]'),
         pytest.param('OutputType = [Foo, Bar]'),
-        pytest.param('OutputType = ToolOutput(Union[Foo, Bar])'),
         pytest.param('OutputType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='3.10+')),
         pytest.param(
             'OutputType: TypeAlias = Foo | Bar',
@@ -557,6 +556,51 @@ def test_output_type_with_two_descriptions():
                     'title': 'MyOutput',
                     'type': 'object',
                 },
+            )
+        ]
+    )
+
+
+def test_output_type_tool_output_union():
+    class Foo(BaseModel):
+        a: int
+        b: str
+
+    class Bar(BaseModel):
+        c: bool
+
+    m = TestModel()
+    marker: ToolOutput[Union[Foo, Bar]] = ToolOutput(Union[Foo, Bar])  # type: ignore
+    agent = Agent(m, output_type=marker)
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(Foo(a=0, b='a'))
+    assert m.last_model_request_parameters is not None
+    assert m.last_model_request_parameters.output_tools == snapshot(
+        [
+            ToolDefinition(
+                name='final_result',
+                description='The final response which ends this conversation',
+                parameters_json_schema={
+                    '$defs': {
+                        'Bar': {
+                            'properties': {'c': {'type': 'boolean'}},
+                            'required': ['c'],
+                            'title': 'Bar',
+                            'type': 'object',
+                        },
+                        'Foo': {
+                            'properties': {'a': {'type': 'integer'}, 'b': {'type': 'string'}},
+                            'required': ['a', 'b'],
+                            'title': 'Foo',
+                            'type': 'object',
+                        },
+                    },
+                    'additionalProperties': False,
+                    'properties': {'response': {'anyOf': [{'$ref': '#/$defs/Foo'}, {'$ref': '#/$defs/Bar'}]}},
+                    'required': ['response'],
+                    'type': 'object',
+                },
+                outer_typed_dict_key='response',
             )
         ]
     )
