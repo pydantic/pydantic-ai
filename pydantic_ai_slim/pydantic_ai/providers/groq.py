@@ -7,6 +7,11 @@ from httpx import AsyncClient as AsyncHTTPClient
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -16,6 +21,15 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `groq` package to use the Groq provider, '
         'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
     ) from _import_error
+
+
+_prefix_to_profile = {
+    'llama': meta_model_profile,
+    'meta-llama/': meta_model_profile,
+    'gemma': google_model_profile,
+    'qwen': qwen_model_profile,
+    'deepseek': deepseek_model_profile,
+}
 
 
 class GroqProvider(Provider[AsyncGroq]):
@@ -32,6 +46,15 @@ class GroqProvider(Provider[AsyncGroq]):
     @property
     def client(self) -> AsyncGroq:
         return self._client
+
+    def model_profile(self, model_name: str) -> ModelProfile | None:
+        for prefix, profile_func in _prefix_to_profile.items():
+            if model_name.startswith(prefix):
+                if prefix.endswith('/'):
+                    model_name = model_name[len(prefix) :]
+                return profile_func(model_name)
+
+        return None
 
     @overload
     def __init__(self, *, groq_client: AsyncGroq | None = None) -> None: ...

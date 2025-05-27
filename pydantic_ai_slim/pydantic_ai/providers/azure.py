@@ -8,6 +8,13 @@ from openai import AsyncOpenAI
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles.cohere import cohere_model_profile
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -17,6 +24,17 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the Azure provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+
+_prefix_to_profile = {
+    'llama': meta_model_profile,
+    'meta-llama': meta_model_profile,
+    'deepseek': deepseek_model_profile,
+    'mistral': mistral_model_profile,
+    'mistralai': mistral_model_profile,
+    'cohere': cohere_model_profile,
+    'grok': grok_model_profile,
+}
 
 
 class AzureProvider(Provider[AsyncOpenAI]):
@@ -37,6 +55,14 @@ class AzureProvider(Provider[AsyncOpenAI]):
     @property
     def client(self) -> AsyncOpenAI:
         return self._client
+
+    def model_profile(self, model_name: str) -> ModelProfile | None:
+        for provider, profile in _prefix_to_profile.items():
+            if model_name.startswith(provider):
+                return profile(model_name)
+
+        # OpenAI models are unprefixed
+        return openai_model_profile(model_name)
 
     @overload
     def __init__(self, *, openai_client: AsyncAzureOpenAI) -> None: ...

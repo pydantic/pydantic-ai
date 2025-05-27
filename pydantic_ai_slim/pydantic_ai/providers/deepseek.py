@@ -8,6 +8,8 @@ from openai import AsyncOpenAI
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -33,6 +35,9 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
     @property
     def client(self) -> AsyncOpenAI:
         return self._client
+
+    def model_profile(self, model_name: str) -> ModelProfile | None:
+        return deepseek_model_profile(model_name)
 
     @overload
     def __init__(self) -> None: ...

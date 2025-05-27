@@ -32,8 +32,15 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client
+from pydantic_ai.models import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    cached_async_http_client,
+)
+from pydantic_ai.profiles import ModelProfileSpec
 from pydantic_ai.providers import Provider, infer_provider
+from pydantic_ai.providers.bedrock import BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -190,6 +197,7 @@ class BedrockConverseModel(Model):
         model_name: BedrockModelName,
         *,
         provider: Literal['bedrock'] | Provider[BaseClient] = 'bedrock',
+        profile: ModelProfileSpec = None,
     ):
         """Initialize a Bedrock model.
 
@@ -200,12 +208,14 @@ class BedrockConverseModel(Model):
             provider: The provider to use for authentication and API access. Can be either the string
                 'bedrock' or an instance of `Provider[BaseClient]`. If not provided, a new provider will be
                 created using the other parameters.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = cast('BedrockRuntimeClient', provider.client)
+        self._profile = profile or provider.model_profile
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
@@ -302,8 +312,9 @@ class BedrockConverseModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ConverseResponseTypeDef | EventStream[ConverseStreamOutputTypeDef]:
         tools = self._get_tools(model_request_parameters)
-        support_tools_choice = self.model_name.startswith(('anthropic', 'us.anthropic'))
-        if not tools or not support_tools_choice:
+
+        support_tool_choice = BedrockModelProfile.from_profile(self.profile).bedrock_supports_tool_choice
+        if not tools or not support_tool_choice:
             tool_choice: ToolChoiceTypeDef = {}
         elif not model_request_parameters.allow_text_output:
             tool_choice = {'any': {}}  # pragma: no cover
@@ -374,6 +385,7 @@ class BedrockConverseModel(Model):
 
         Groups consecutive ToolReturnPart objects into a single user message as required by Bedrock Claude/Nova models.
         """
+        profile = BedrockModelProfile.from_profile(self.profile)
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)
@@ -393,7 +405,11 @@ class BedrockConverseModel(Model):
                                     {
                                         'toolResult': {
                                             'toolUseId': part.tool_call_id,
-                                            'content': [{'text': part.model_response_str()}],
+                                            'content': [
+                                                {'text': part.model_response_str()}
+                                                if profile.bedrock_tool_result_format == 'text'
+                                                else {'json': part.model_response_object()}
+                                            ],
                                             'status': 'success',
                                         }
                                     }

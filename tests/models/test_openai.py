@@ -56,8 +56,8 @@ with try_import() as imports_successful:
         OpenAIModel,
         OpenAIModelSettings,
         OpenAISystemPromptRole,
-        _OpenAIJsonSchema,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.openai import OpenAIProvider
 
     # note: we use Union here so that casting works with Python 3.9
@@ -1390,7 +1390,7 @@ def test_strict_schema():
         my_list: list[float]
         my_discriminated_union: Annotated[Apple | Banana, Discriminator('kind')]
 
-    assert _OpenAIJsonSchema(MyModel.model_json_schema(), strict=True).walk() == snapshot(
+    assert OpenAIJsonSchemaTransformer(MyModel.model_json_schema(), strict=True).walk() == snapshot(
         {
             '$defs': {
                 'Apple': {
