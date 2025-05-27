@@ -1,9 +1,9 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, fields, replace
-from typing import Callable, Self, Union
+from typing import Callable, Union
 
-from typing_extensions import TypeAliasType
+from typing_extensions import Self, TypeAliasType
 
 from pydantic_ai.profiles._json_schema import JsonSchemaTransformer
 
