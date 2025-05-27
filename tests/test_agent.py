@@ -570,7 +570,7 @@ def test_output_type_tool_output_union():
         c: bool
 
     m = TestModel()
-    marker: ToolOutput[Union[Foo, Bar]] = ToolOutput(Union[Foo, Bar])  # type: ignore
+    marker: ToolOutput[Union[Foo, Bar]] = ToolOutput(Union[Foo, Bar], strict=False)  # type: ignore
     agent = Agent(m, output_type=marker)
     result = agent.run_sync('Hello')
     assert result.output == snapshot(Foo(a=0, b='a'))
@@ -601,6 +601,7 @@ def test_output_type_tool_output_union():
                     'type': 'object',
                 },
                 outer_typed_dict_key='response',
+                strict=False,
             )
         ]
     )
