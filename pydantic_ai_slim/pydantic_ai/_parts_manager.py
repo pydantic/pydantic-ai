@@ -14,7 +14,7 @@ event-emitting logic.
 from __future__ import annotations as _annotations
 
 from collections.abc import Hashable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Union
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -28,6 +28,8 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
 )
+
+from ._utils import generate_tool_call_id as _generate_tool_call_id
 
 VendorId = Hashable
 """
@@ -130,7 +132,7 @@ class ModelResponsePartsManager:
     ) -> ModelResponseStreamEvent | None:
         """Handle or update a tool call, creating or updating a `ToolCallPart` or `ToolCallPartDelta`.
 
-        Managed items remain as `ToolCallPartDelta`s until they have both a tool_name and arguments, at which
+        Managed items remain as `ToolCallPartDelta`s until they have at least a tool_name, at which
         point they are upgraded to `ToolCallPart`s.
 
         If `vendor_part_id` is None, updates the latest matching ToolCallPart (or ToolCallPartDelta)
@@ -141,11 +143,11 @@ class ModelResponsePartsManager:
                 If None, the latest matching tool call may be updated.
             tool_name: The name of the tool. If None, the manager does not enforce
                 a name match when `vendor_part_id` is None.
-            args: Arguments for the tool call, either as a string or a dictionary of key-value pairs.
+            args: Arguments for the tool call, either as a string, a dictionary of key-value pairs, or None.
             tool_call_id: An optional string representing an identifier for this tool call.
 
         Returns:
-            - A `PartStartEvent` if a new (fully realized) ToolCallPart is created.
+            - A `PartStartEvent` if a new ToolCallPart is created.
             - A `PartDeltaEvent` if an existing part is updated.
             - `None` if no new event is emitted (e.g., the part is still incomplete).
 
@@ -162,7 +164,7 @@ class ModelResponsePartsManager:
             if tool_name is None and self._parts:
                 part_index = len(self._parts) - 1
                 latest_part = self._parts[part_index]
-                if isinstance(latest_part, (ToolCallPart, ToolCallPartDelta)):
+                if isinstance(latest_part, (ToolCallPart, ToolCallPartDelta)):  # pragma: no branch
                     existing_matching_part_and_index = latest_part, part_index
         else:
             # vendor_part_id is provided, so look up the corresponding part or delta
@@ -196,6 +198,8 @@ class ModelResponsePartsManager:
                     return PartStartEvent(index=part_index, part=updated_part)
                 else:
                     # We updated an existing part, so emit a PartDeltaEvent
+                    if updated_part.tool_call_id and not delta.tool_call_id:
+                        delta = replace(delta, tool_call_id=updated_part.tool_call_id)
                     return PartDeltaEvent(index=part_index, delta=delta)
 
     def handle_tool_call_part(
@@ -203,7 +207,7 @@ class ModelResponsePartsManager:
         *,
         vendor_part_id: Hashable | None,
         tool_name: str,
-        args: str | dict[str, Any],
+        args: str | dict[str, Any] | None,
         tool_call_id: str | None = None,
     ) -> ModelResponseStreamEvent:
         """Immediately create or fully-overwrite a ToolCallPart with the given information.
@@ -214,14 +218,18 @@ class ModelResponsePartsManager:
             vendor_part_id: The vendor's ID for this tool call part. If not
                 None and an existing part is found, that part is overwritten.
             tool_name: The name of the tool being invoked.
-            args: The arguments for the tool call, either as a string or a dictionary.
+            args: The arguments for the tool call, either as a string, a dictionary, or None.
             tool_call_id: An optional string identifier for this tool call.
 
         Returns:
             ModelResponseStreamEvent: A `PartStartEvent` indicating that a new tool call part
             has been added to the manager, or replaced an existing part.
         """
-        new_part = ToolCallPart(tool_name=tool_name, args=args, tool_call_id=tool_call_id)
+        new_part = ToolCallPart(
+            tool_name=tool_name,
+            args=args,
+            tool_call_id=tool_call_id or _generate_tool_call_id(),
+        )
         if vendor_part_id is None:
             # vendor_part_id is None, so we unconditionally append a new ToolCallPart to the end of the list
             new_part_index = len(self._parts)

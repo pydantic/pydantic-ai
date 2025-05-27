@@ -1,12 +1,25 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
 
 [project]
 name = "pydantic-ai"
-version = "0.0.30"
+dynamic = ["version", "dependencies", "optional-dependencies"]
 description = "Agent Framework / shim to use Pydantic with LLMs"
-authors = [{ name = "Samuel Colvin", email = "samuel@pydantic.dev" }]
+authors = [
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+]
 license = "MIT"
 readme = "README.md"
 classifiers = [
@@ -31,9 +44,14 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 
+[tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic,mistral,cohere]==0.0.30",
+    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,cli,mcp,evals,a2a]=={{ version }}",
 ]
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
+examples = ["pydantic-ai-examples=={{ version }}"]
+logfire = ["logfire>=3.11.0"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -41,27 +59,35 @@ Source = "https://github.com/pydantic/pydantic-ai"
 Documentation = "https://ai.pydantic.dev"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
-[project.optional-dependencies]
-examples = ["pydantic-ai-examples==0.0.30"]
-logfire = ["logfire>=2.3"]
+[project.scripts]
+pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for a while
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }
+pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
+fasta2a = { workspace = true }
 
 [tool.uv.workspace]
-members = ["pydantic_ai_slim", "pydantic_graph", "examples"]
+members = [
+    "pydantic_ai_slim",
+    "pydantic_evals",
+    "pydantic_graph",
+    "mcp-run-python",
+    "clai",
+    "examples",
+    "fasta2a",
+]
 
 [dependency-groups]
 # dev dependencies are defined in `pydantic-ai-slim/pyproject.toml` to allow for minimal testing
-lint = ["mypy>=1.11.2", "pyright>=1.1.388,<1.1.390", "ruff>=0.6.9"]
+lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
     "black>=24.10.0",
-    "bs4>=0.0.2",
-    "markdownify>=0.14.1",
     "mkdocs>=1.6.1",
     "mkdocs-glightbox>=0.4.0",
+    "mkdocs-llmstxt>=0.2.0",
     "mkdocs-material[imaging]>=9.5.45",
     "mkdocstrings-python>=1.12.2",
 ]
@@ -78,14 +104,27 @@ line-length = 120
 target-version = "py39"
 include = [
     "pydantic_ai_slim/**/*.py",
+    "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
+    "mcp-run-python/**/*.py",
+    "fasta2a/**/*.py",
     "examples/**/*.py",
+    "clai/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
 ]
 
 [tool.ruff.lint]
-extend-select = ["Q", "RUF100", "C90", "UP", "I", "D"]
+extend-select = [
+    "Q",
+    "RUF100",
+    "RUF018", # https://docs.astral.sh/ruff/rules/assignment-in-assert/
+    "C90",
+    "UP",
+    "I",
+    "D",
+    "TID251",
+]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 isort = { combine-as-imports = true, known-first-party = ["pydantic_ai"] }
 mccabe = { max-complexity = 15 }
@@ -100,27 +139,49 @@ ignore = [
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
+
 [tool.ruff.format]
 # don't format python in docstrings, pytest-examples takes care of it
 docstring-code-format = false
 quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
+"mcp-run-python/**/*.py" = ["D", "TID251"]
+"examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
-"examples/**/*.py" = ["D101", "D103"]
 
 [tool.pyright]
+pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
 reportUnnecessaryTypeIgnoreComment = true
-include = ["pydantic_ai_slim", "pydantic_graph", "tests", "examples"]
-venvPath = ".venv"
+reportMissingModuleSource = false
+include = [
+    "pydantic_ai_slim",
+    "pydantic_evals",
+    "pydantic_graph",
+    "mcp-run-python",
+    "fasta2a",
+    "tests",
+    "examples",
+    "clai",
+]
+venvPath = '.'
+venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
-executionEnvironments = [{ root = "tests", reportUnusedFunction = false }]
-exclude = ["examples/pydantic_ai_examples/weather_agent_gradio.py"]
+executionEnvironments = [
+    { root = "tests", reportUnusedFunction = false, reportPrivateImportUsage = false },
+]
+exclude = [
+    "examples/pydantic_ai_examples/weather_agent_gradio.py",
+    "mcp-run-python/node_modules",
+]
+extraPaths = ["mcp-run-python/stubs"]
 
 [tool.mypy]
 files = "tests/typed_agent.py,tests/typed_graph.py"
@@ -129,14 +190,30 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = "tests"
 xfail_strict = true
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # Issue with python-multipart - we don't want to bump the minimum version of starlette.
+    "ignore::PendingDeprecationWarning:starlette",
+    # boto3
+    "ignore::DeprecationWarning:botocore.*",
+    "ignore::RuntimeWarning:pydantic_ai.mcp",
+    # uvicorn (mcp server)
+    "ignore:websockets.legacy is deprecated.*:DeprecationWarning:websockets.legacy",
+    "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
+    # random resource warnings; I suspect these are coming from vendor SDKs when running examples..
+    "ignore:unclosed <socket:ResourceWarning",
+    "ignore:unclosed event loop:ResourceWarning",
+]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
 # required to avoid warnings about files created by create_module fixture
 include = [
     "pydantic_ai_slim/**/*.py",
+    "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
+    # TODO(Marcelo): Add 100% coverage for A2A.
+    # "fasta2a/**/*.py",
     "tests/**/*.py",
 ]
 omit = ["tests/test_live.py", "tests/example_modules/*.py"]
@@ -149,21 +226,30 @@ show_missing = true
 ignore_errors = true
 precision = 2
 exclude_lines = [
+    # `# pragma: no cover` is standard marker for code that's not covered, this will error if code is covered
     'pragma: no cover',
+    # use `# pragma: lax no cover` if you want to ignore cases where (some of) the code is covered
+    'pragma: lax no cover',
     'raise NotImplementedError',
     'if TYPE_CHECKING:',
     'if typing.TYPE_CHECKING:',
     '@overload',
+    '@deprecated',
     '@typing.overload',
     '@abstractmethod',
     '\(Protocol\):$',
     'typing.assert_never',
     '$\s*assert_never\(',
     'if __name__ == .__main__.:',
+    'except ImportError as _import_error:',
+    '$\s*pass$',
 ]
 
 [tool.logfire]
 ignore_no_config = true
+
+[tool.inline-snapshot]
+format-command = "ruff format --stdin-filename {filename}"
 
 [tool.inline-snapshot.shortcuts]
 snap-fix = ["create", "fix"]
@@ -171,7 +257,7 @@ snap = ["create"]
 
 [tool.codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
-skip = '.git*,*.svg,*.lock,*.css'
+skip = '.git*,*.svg,*.lock,*.css,*.yaml'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'

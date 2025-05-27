@@ -3,7 +3,7 @@ Small but complete example of using PydanticAI to build a support agent for a ba
 Demonstrates:
 
 * [dynamic system prompt](../agents.md#system-prompts)
-* [structured `result_type`](../results.md#structured-result-validation)
+* [structured `output_type`](../output.md#structured-output)
 * [tools](../tools.md)
 
 ## Running the Example

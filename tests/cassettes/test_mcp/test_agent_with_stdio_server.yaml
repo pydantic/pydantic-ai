@@ -1,0 +1,327 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1776'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 0 degrees Celsius in Fahrenheit?
+        role: user
+      model: gpt-4o
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
+            \       Temperature in Fahrenheit\n    "
+          name: celsius_to_fahrenheit
+          parameters:
+            properties:
+              celsius:
+                type: number
+            required:
+            - celsius
+            type: object
+        type: function
+      - function:
+          description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
+            forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+          name: get_weather_forecast
+          parameters:
+            properties:
+              location:
+                type: string
+            required:
+            - location
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_dict
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_error
+          parameters:
+            properties:
+              value:
+                type: boolean
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_none
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_multiple_items
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+          name: get_log_level
+          parameters:
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1086'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '2632'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"celsius":0}'
+              name: celsius_to_fahrenheit
+            id: call_QssdxTGkPblTYHmyVES1tKBj
+            type: function
+      created: 1745958315
+      id: chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_f5bdcc3276
+      usage:
+        completion_tokens: 19
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 195
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 214
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2023'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=UyRzBUJQ1BiB9T_si4uSo1QOHvt3jzINd95Ab5qSPR4-1745958318-1.0.1.1-dXvFJu1Kw9lQqM6cmwZKizLsanBZpJSYtEA2RTLVqeEbvTKEeBaoc_8iwKDx0Ui.HG5NnEcnOBR02OVABBiXTbQZxdcugMe3rAtvqS5hHSM;
+        _cfuvid=htgokfgH9.vmsTQnmS6v9S1Vwm3MHhQrDtRQ8IVdCfE-1745958318072-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 0 degrees Celsius in Fahrenheit?
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"celsius":0}'
+            name: celsius_to_fahrenheit
+          id: call_QssdxTGkPblTYHmyVES1tKBj
+          type: function
+      - content: '32.0'
+        role: tool
+        tool_call_id: call_QssdxTGkPblTYHmyVES1tKBj
+      model: gpt-4o
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
+            \       Temperature in Fahrenheit\n    "
+          name: celsius_to_fahrenheit
+          parameters:
+            properties:
+              celsius:
+                type: number
+            required:
+            - celsius
+            type: object
+        type: function
+      - function:
+          description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
+            forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+          name: get_weather_forecast
+          parameters:
+            properties:
+              location:
+                type: string
+            required:
+            - location
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_dict
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_error
+          parameters:
+            properties:
+              value:
+                type: boolean
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_none
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_multiple_items
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+          name: get_log_level
+          parameters:
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '856'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1002'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: 0 degrees Celsius is equal to 32 degrees Fahrenheit.
+          refusal: null
+          role: assistant
+      created: 1745958318
+      id: chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_f5bdcc3276
+      usage:
+        completion_tokens: 13
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 227
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 240
+    status:
+      code: 200
+      message: OK
+version: 1

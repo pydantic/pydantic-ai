@@ -11,6 +11,7 @@ TEST_CASES = [
     ('OPENAI_API_KEY', 'openai:gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIModel'),
     ('OPENAI_API_KEY', 'gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIModel'),
     ('OPENAI_API_KEY', 'o1', 'o1', 'openai', 'openai', 'OpenAIModel'),
+    ('AZURE_OPENAI_API_KEY', 'azure:gpt-3.5-turbo', 'gpt-3.5-turbo', 'azure', 'azure', 'OpenAIModel'),
     ('GEMINI_API_KEY', 'google-gla:gemini-1.5-flash', 'gemini-1.5-flash', 'google-gla', 'gemini', 'GeminiModel'),
     ('GEMINI_API_KEY', 'gemini-1.5-flash', 'gemini-1.5-flash', 'google-gla', 'gemini', 'GeminiModel'),
     (
@@ -19,7 +20,7 @@ TEST_CASES = [
         'gemini-1.5-flash',
         'google-vertex',
         'vertexai',
-        'VertexAIModel',
+        'GeminiModel',
     ),
     (
         'GEMINI_API_KEY',
@@ -27,7 +28,7 @@ TEST_CASES = [
         'gemini-1.5-flash',
         'google-vertex',
         'vertexai',
-        'VertexAIModel',
+        'GeminiModel',
     ),
     (
         'ANTHROPIC_API_KEY',
@@ -57,7 +58,7 @@ TEST_CASES = [
         'MISTRAL_API_KEY',
         'mistral:mistral-small-latest',
         'mistral-small-latest',
-        'mistral',
+        'mistral_ai',
         'mistral',
         'MistralModel',
     ),
@@ -68,6 +69,14 @@ TEST_CASES = [
         'cohere',
         'cohere',
         'CohereModel',
+    ),
+    (
+        'AWS_DEFAULT_REGION',
+        'bedrock:bedrock-claude-3-5-haiku-latest',
+        'bedrock-claude-3-5-haiku-latest',
+        'bedrock',
+        'bedrock',
+        'BedrockConverseModel',
     ),
 ]
 
@@ -84,15 +93,15 @@ def test_infer_model(
     module_name: str,
     model_class_name: str,
 ):
+    env.set(mock_api_key, 'via-env-var')
+
     try:
         model_module = import_module(f'pydantic_ai.models.{module_name}')
         expected_model = getattr(model_module, model_class_name)
+        m = infer_model(model_name)
     except ImportError:
         pytest.skip(f'{model_name} dependencies not installed')
 
-    env.set(mock_api_key, 'via-env-var')
-
-    m = infer_model(model_name)  # pyright: ignore[reportArgumentType]
     assert isinstance(m, expected_model)
     assert m.model_name == expected_model_name
     assert m.system == expected_system
@@ -103,4 +112,4 @@ def test_infer_model(
 
 def test_infer_str_unknown():
     with pytest.raises(UserError, match='Unknown model: foobar'):
-        infer_model('foobar')  # pyright: ignore[reportArgumentType]
+        infer_model('foobar')

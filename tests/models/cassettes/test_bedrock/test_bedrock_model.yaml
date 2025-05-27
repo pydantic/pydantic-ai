@@ -1,0 +1,44 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Hello!"}]}], "system": [{"text": "You are a chatbot."}], "inferenceConfig":
+      {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZGQxNWI1ODItMTk4Yy00NWZhLTllZjYtODFlY2IzZmUxNWM2
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '132'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '300'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 268
+      output:
+        message:
+          content:
+          - text: Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm
+              here to help.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 7
+        outputTokens: 30
+        totalTokens: 37
+    status:
+      code: 200
+      message: OK
+version: 1

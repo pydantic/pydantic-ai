@@ -28,17 +28,15 @@ async def model_function(
                 UserPromptPart(
                     content='Testing my agent...',
                     timestamp=datetime.datetime(...),
-                    part_kind='user-prompt',
                 )
-            ],
-            kind='request',
+            ]
         )
     ]
     """
     print(info)
     """
     AgentInfo(
-        function_tools=[], allow_text_result=True, result_tools=[], model_settings=None
+        function_tools=[], allow_text_output=True, output_tools=[], model_settings=None
     )
     """
     return ModelResponse(parts=[TextPart('hello world')])
@@ -48,9 +46,9 @@ async def test_my_agent():
     """Unit test for my_agent, to be run by pytest."""
     with my_agent.override(model=FunctionModel(model_function)):
         result = await my_agent.run('Testing my agent...')
-        assert result.data == 'hello world'
+        assert result.output == 'hello world'
 ```
 
-See [Unit testing with `FunctionModel`](../../testing-evals.md#unit-testing-with-functionmodel) for detailed documentation.
+See [Unit testing with `FunctionModel`](../../testing.md#unit-testing-with-functionmodel) for detailed documentation.
 
 ::: pydantic_ai.models.function

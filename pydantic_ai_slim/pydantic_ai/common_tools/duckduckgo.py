@@ -1,10 +1,10 @@
 import functools
 from dataclasses import dataclass
-from typing import TypedDict
 
 import anyio
 import anyio.to_thread
 from pydantic import TypeAdapter
+from typing_extensions import TypedDict
 
 from pydantic_ai.tools import Tool
 
@@ -13,7 +13,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install `duckduckgo-search` to use the DuckDuckGo search tool, '
-        "you can use the `duckduckgo` optional group — `pip install 'pydantic-ai-slim[duckduckgo]'`"
+        'you can use the `duckduckgo` optional group — `pip install "pydantic-ai-slim[duckduckgo]"`'
     ) from _import_error
 
 __all__ = ('duckduckgo_search_tool',)
@@ -54,8 +54,6 @@ class DuckDuckGoSearchTool:
         """
         search = functools.partial(self.client.text, max_results=self.max_results)
         results = await anyio.to_thread.run_sync(search, query)
-        if len(results) == 0:
-            raise RuntimeError('No search results found.')
         return duckduckgo_ta.validate_python(results)
 
 

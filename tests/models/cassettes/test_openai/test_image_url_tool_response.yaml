@@ -1,0 +1,204 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '344'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - text: What food is in the image you can get from the get_image tool?
+          type: text
+        role: user
+      model: gpt-4o
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_image
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1059'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '296'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_image
+            id: call_4hrT4QP9jfojtK69vGiFCFjG
+            type: function
+      created: 1745960879
+      id: chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_a6889ffe71
+      usage:
+        completion_tokens: 11
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 46
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 57
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '783'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Y3biMCTZO5Th3UvQ860GYUMLYxiUXSAsxnMCouTdgeU-1745960879-1.0.1.1-WBVYj595xgEl4EU9MYihK2kKPDzCpSFRaWFoKWmVf4S4BdGfkiDKKFlJK5flK_2WSQEfGfU_PcQ6Xm8XBDmStha3DpcGZRonkltc5FYs4y4;
+        _cfuvid=YlYL5E_xNEFa1AD61lBj94CGwQ3GptpRIuO1JpjWSJY-1745960879715-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - text: What food is in the image you can get from the get_image tool?
+          type: text
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_image
+          id: call_4hrT4QP9jfojtK69vGiFCFjG
+          type: function
+      - content: See file bd38f5
+        role: tool
+        tool_call_id: call_4hrT4QP9jfojtK69vGiFCFjG
+      - content:
+        - text: 'This is file bd38f5:'
+          type: text
+        - image_url:
+            url: https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg
+          type: image_url
+        role: user
+      model: gpt-4o
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_image
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '828'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1565'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The image shows a potato.
+          refusal: null
+          role: assistant
+      created: 1745960880
+      id: chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_90122d973c
+      usage:
+        completion_tokens: 8
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 503
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 511
+    status:
+      code: 200
+      message: OK
+version: 1

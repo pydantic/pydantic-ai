@@ -1,97 +1,89 @@
+ import { marked } from 'marked'
+
 export default {
   async fetch(request, env): Promise<Response> {
+    const url = new URL(request.url)
+    if (url.pathname === '/changelog.html') {
+      const changelog = await getChangelog(env.KV, env.GIT_COMMIT_SHA)
+      return new Response(changelog, { headers: {'content-type': 'text/html'} })
+    }
     const r = await env.ASSETS.fetch(request)
     if (r.status == 404) {
-      const url = new URL(request.url)
+      const redirectPath = redirect(url.pathname)
+      if (redirectPath) {
+        url.pathname = redirectPath
+        return Response.redirect(url.toString(), 301)
+      }
       url.pathname = '/404.html'
       const r = await env.ASSETS.fetch(url)
-      return new Response(r.body, { status: 404 })
-    } else if (r.status == 200) {
-      const contentType = r.headers.get('content-type')
-      if (contentType && contentType.includes('text/html')) {
-        const handler = new InsertVersionNoticeHandler(request, env)
-        return new HTMLRewriter().on('div#version-notice', handler).transform(r);
-      }
+      return new Response(r.body, { status: 404, headers: {'content-type': 'text/html'} })
     }
     return r
   },
 } satisfies ExportedHandler<Env>
 
-class InsertVersionNoticeHandler {
-  readonly request: Request
-  readonly env: Env
-
-  constructor(request: Request, env: Env) {
-    this.request = request
-    this.env = env
-  }
-
-  async element(element: Element): Promise<void> {
-    try {
-      const warning = await this.getVersionNotice()
-      element.setInnerContent(warning, {html: true})
-    } catch (e) {
-      // catch the error and log it, but do not raise it so the site can still be served
-      console.error(e)
-    }
-  }
-  async getVersionNotice(): Promise<string> {
-    const cacheKey = `version-notice-${this.env.GIT_BRANCH}-${this.env.GIT_COMMIT_SHA}`
-    let versionNotice = await this.env.VERSION_NOTICE_CACHE.get(cacheKey, {cacheTtl: 60})
-    if (versionNotice === null) {
-      versionNotice = await this.fetchVersionNotice()
-      await this.env.VERSION_NOTICE_CACHE.put(cacheKey, versionNotice, {expirationTtl: 300})
-    }
-    return versionNotice
-  }
-
-  async fetchVersionNotice(): Promise<string> {
-    const headers = {
-      'User-Agent': this.request.headers.get('User-Agent') || 'pydantic-ai-docs',
-      'Accept': 'application/vnd.github.v3+json',
-    }
-    const r1 = await fetch('https://api.github.com/repos/pydantic/pydantic-ai/releases/latest', {headers})
-    if (!r1.ok) {
-      const text = await r1.text()
-      throw new Error(`Failed to fetch latest release, response status ${r1.status}:\n${text}`)
-    }
-    const {html_url, name, tag_name}: ReleaseInfo = await r1.json()
-    const r2 = await fetch(
-      `https://api.github.com/repos/pydantic/pydantic-ai/compare/${tag_name}...${this.env.GIT_COMMIT_SHA}`,
-      {headers}
-    )
-    if (!r2.ok) {
-      const text = await r2.text()
-      throw new Error(`Failed to fetch compare, response status ${r2.status}:\n${text}`)
-    }
-    const {ahead_by}: TagInfo = await r2.json()
-
-    if (ahead_by === 0) {
-      return `<div class="admonition success" style="margin: 0">
-    <p class="admonition-title">Version</p>
-    <p>Showing documentation for the latest release <a href="${html_url}">${name}</a>.</p>
-  </div>`
-    }
-
-    const branch = this.env.GIT_BRANCH
-    const diff_html_url = `https://github.com/pydantic/pydantic-ai/compare/${tag_name}...${branch}`
-    return `<div class="admonition info" style="margin: 0">
-    <p class="admonition-title">Version Notice</p>
-    <p>
-      ${branch === 'main' ? '' : `(<b>${branch}</b> preview)`}
-      This documentation is ahead of the last release by
-      <a href="${diff_html_url}">${ahead_by} commit${ahead_by === 1 ? '' : 's'}</a>.
-      You may see documentation for features not yet supported in the latest release <a href="${html_url}">${name}</a>.
-    </p>
-  </div>`
-  }
+const redirect_lookup: Record<string, string> = {
+  '/common_tools': '/common-tools/',
+  '/testing-evals': '/testing/',
+  '/result': '/output/',
 }
 
-interface ReleaseInfo {
-  html_url: string
+function redirect(pathname: string): string | null {
+  return redirect_lookup[pathname.replace(/\/+$/, '')] ?? null
+}
+
+async function getChangelog(kv: KVNamespace, commitSha: string): Promise<string> {
+  const cache_key = `changelog:${commitSha}`
+  const cached = await kv.get(cache_key, {cacheTtl: 60})
+  if (cached) {
+    return cached
+  }
+  const headers = {
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'pydantic-ai-docs'
+  }
+  let url: string | undefined = 'https://api.github.com/repos/pydantic/pydantic-ai/releases'
+  const releases: Release[] = []
+  while (typeof url == 'string') {
+    const response = await fetch(url, { headers })
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(`Failed to fetch changelog: ${response.status} ${response.statusText} ${text}`)
+    }
+    const newReleases = await response.json() as Release[]
+    releases.push(...newReleases)
+    const linkHeader = response.headers.get('link')
+    if (!linkHeader) {
+      break
+    }
+    url = linkHeader.match(/<([^>]+)>; rel="next"/)?.[1]
+  }
+  marked.use({pedantic: false, gfm: true})
+  const html = marked(releases.map(prepRelease).join('\n\n')) as string
+  await kv.put(cache_key, html, {expirationTtl: 300})
+  return html
+}
+
+interface Release {
   name: string
   tag_name: string
+  body: string
+  html_url: string
 }
-interface TagInfo {
-  ahead_by: number
+
+const githubIcon = `<span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"></path></svg></span>`
+
+function prepRelease(release: Release): string {
+  const body = release.body
+    .replace(/(#+)/g, (m) => `##${m}`)
+    .replace(/https:\/\/github.com\/pydantic\/pydantic-ai\/pull\/(\d+)/g, (url, id) => `[#${id}](${url})`)
+    .replace(/(\s)@([\w\-]+)/g, (_, s, u) => `${s}[@${u}](https://github.com/${u})`)
+    .replace(/\*\*Full Changelog\*\*: (\S+)/, (_, url) => `[${githubIcon} Compare diff](${url}).`)
+  return `
+### ${release.name}
+
+${body}
+
+[${githubIcon} View ${release.tag_name} release](${release.html_url}).
+`
 }

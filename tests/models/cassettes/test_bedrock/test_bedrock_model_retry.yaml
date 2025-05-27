@@ -1,0 +1,102 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}], "system": [{"text": "You
+      are a helpful chatbot."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_capital", "description":
+      "Get the capital of a country.", "inputSchema": {"json": {"properties": {"country": {"description": "The country name.",
+      "title": "Country", "type": "string"}}, "required": ["country"], "type": "object", "additionalProperties": false}}}}]}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NjgwMDdkOTEtN2U2Mi00OTg5LTk1OWEtZWJkZjFmYzg5Yzdi
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '482'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '450'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 387
+      output:
+        message:
+          content:
+          - text: |
+              <thinking> To find the capital of France, I will use the available tool "get_capital". I will input the country name "France" into the tool. </thinking>
+          - toolUse:
+              input:
+                country: France
+              name: get_capital
+              toolUseId: tooluse_F8LnaCMtQ0-chKTnPhNH2g
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 417
+        outputTokens: 69
+        totalTokens: 486
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}, {"role": "assistant",
+      "content": [{"text": "<thinking> To find the capital of France, I will use the available tool \"get_capital\". I will
+      input the country name \"France\" into the tool. </thinking>\n"}, {"toolUse": {"toolUseId": "tooluse_F8LnaCMtQ0-chKTnPhNH2g",
+      "name": "get_capital", "input": {"country": "France"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId":
+      "tooluse_F8LnaCMtQ0-chKTnPhNH2g", "content": [{"text": "The country is not supported.\n\nFix the errors and try again."}],
+      "status": "error"}}]}], "system": [{"text": "You are a helpful chatbot."}], "inferenceConfig": {}, "toolConfig": {"tools":
+      [{"toolSpec": {"name": "get_capital", "description": "Get the capital of a country.", "inputSchema": {"json": {"properties":
+      {"country": {"description": "The country name.", "title": "Country", "type": "string"}}, "required": ["country"], "type":
+      "object", "additionalProperties": false}}}}]}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        M2NkZjc3YjgtYzAyYi00NTI0LWI3Y2UtMjc3YzQyYjg2ZGE2
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1011'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '719'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 663
+      output:
+        message:
+          content:
+          - text: |-
+              <thinking> It seems there was an error in retrieving the capital of France. The tool returned a message saying "The country is not supported." This indicates that the tool does not support the country France. I will inform the user about this limitation and suggest alternative ways to find the information. </thinking>
+
+              I'm sorry, but the tool I have does not support retrieving the capital of France. However, I can tell you that the capital of France is Paris. If you need information on a different country, please let me know!
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 509
+        outputTokens: 108
+        totalTokens: 617
+    status:
+      code: 200
+      message: OK
+version: 1

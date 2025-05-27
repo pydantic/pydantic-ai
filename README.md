@@ -15,6 +15,7 @@
   <a href="https://pypi.python.org/pypi/pydantic-ai"><img src="https://img.shields.io/pypi/v/pydantic-ai.svg" alt="PyPI"></a>
   <a href="https://github.com/pydantic/pydantic-ai"><img src="https://img.shields.io/pypi/pyversions/pydantic-ai.svg" alt="versions"></a>
   <a href="https://github.com/pydantic/pydantic-ai/blob/main/LICENSE"><img src="https://img.shields.io/github/license/pydantic/pydantic-ai.svg?v" alt="license"></a>
+  <a href="https://logfire.pydantic.dev/docs/join-slack/"><img src="https://img.shields.io/badge/Slack-Join%20Slack-4A154B?logo=slack" alt="Join Slack" /></a>
 </div>
 
 ---
@@ -49,22 +50,17 @@ Designed to make [type checking](https://ai.pydantic.dev/agents/#static-type-che
 Leverages Python's familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project.
 
 * __Structured Responses__
-Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](https://ai.pydantic.dev/results/#structured-result-validation) model outputs, ensuring responses are consistent across runs.
+Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](https://ai.pydantic.dev/output/#structured-output) model outputs, ensuring responses are consistent across runs.
 
 * __Dependency Injection System__
-Offers an optional [dependency injection](https://ai.pydantic.dev/dependencies/) system to provide data and services to your agent's [system prompts](https://ai.pydantic.dev/agents/#system-prompts), [tools](https://ai.pydantic.dev/tools/) and [result validators](https://ai.pydantic.dev/results/#result-validators-functions).
+Offers an optional [dependency injection](https://ai.pydantic.dev/dependencies/) system to provide data and services to your agent's [system prompts](https://ai.pydantic.dev/agents/#system-prompts), [tools](https://ai.pydantic.dev/tools/) and [output validators](https://ai.pydantic.dev/output/#output-validator-functions).
 This is useful for testing and eval-driven iterative development.
 
 * __Streamed Responses__
-Provides the ability to [stream](https://ai.pydantic.dev/results/#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate results.
+Provides the ability to [stream](https://ai.pydantic.dev/output/#streamed-results) LLM outputs continuously, with immediate validation, ensuring rapid and accurate outputs.
 
 * __Graph Support__
 [Pydantic Graph](https://ai.pydantic.dev/graph) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.
-
-## In Beta!
-
-PydanticAI is in early beta, the API is still subject to change and there's a lot more to do.
-[Feedback](https://github.com/pydantic/pydantic-ai/issues) is very welcome!
 
 ## Hello World Example
 
@@ -85,7 +81,7 @@ agent = Agent(
 # Here the exchange should be very short: PydanticAI will send the system prompt and the user query to the LLM,
 # the model will return a text response. See below for a more complex run.
 result = agent.run_sync('Where does "hello world" come from?')
-print(result.data)
+print(result.output)
 """
 The first known use of "hello, world" was in a 1974 textbook about the C programming language.
 """
@@ -118,22 +114,22 @@ class SupportDependencies:
     db: DatabaseConn
 
 
-# This pydantic model defines the structure of the result returned by the agent.
-class SupportResult(BaseModel):
+# This pydantic model defines the structure of the output returned by the agent.
+class SupportOutput(BaseModel):
     support_advice: str = Field(description='Advice returned to the customer')
     block_card: bool = Field(description="Whether to block the customer's card")
     risk: int = Field(description='Risk level of query', ge=0, le=10)
 
 
 # This agent will act as first-tier support in a bank.
-# Agents are generic in the type of dependencies they accept and the type of result they return.
-# In this case, the support agent has type `Agent[SupportDependencies, SupportResult]`.
+# Agents are generic in the type of dependencies they accept and the type of output they return.
+# In this case, the support agent has type `Agent[SupportDependencies, SupportOutput]`.
 support_agent = Agent(
     'openai:gpt-4o',
     deps_type=SupportDependencies,
-    # The response from the agent will, be guaranteed to be a SupportResult,
+    # The response from the agent will, be guaranteed to be a SupportOutput,
     # if validation fails the agent is prompted to try again.
-    result_type=SupportResult,
+    output_type=SupportOutput,
     system_prompt=(
         'You are a support agent in our bank, give the '
         'customer support and judge the risk level of their query.'
@@ -155,7 +151,7 @@ async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
 # Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
 @support_agent.tool
 async def customer_balance(
-    ctx: RunContext[SupportDependencies], include_pending: bool
+        ctx: RunContext[SupportDependencies], include_pending: bool
 ) -> float:
     """Returns the customer's current account balance."""
     # The docstring of a tool is also passed to the LLM as the description of the tool.
@@ -173,17 +169,17 @@ async def customer_balance(
 async def main():
     deps = SupportDependencies(customer_id=123, db=DatabaseConn())
     # Run the agent asynchronously, conducting a conversation with the LLM until a final response is reached.
-    # Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve a result.
+    # Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.
     result = await support_agent.run('What is my balance?', deps=deps)
-    # The result will be validated with Pydantic to guarantee it is a `SupportResult`, since the agent is generic,
-    # it'll also be typed as a `SupportResult` to aid with static type checking.
-    print(result.data)
+    # The `result.output` will be validated with Pydantic to guarantee it is a `SupportOutput`. Since the agent is generic,
+    # it'll also be typed as a `SupportOutput` to aid with static type checking.
+    print(result.output)
     """
     support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
     """
 
     result = await support_agent.run('I just lost my card!', deps=deps)
-    print(result.data)
+    print(result.output)
     """
     support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
     """

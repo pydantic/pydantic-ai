@@ -18,7 +18,7 @@ PydanticAI has an excellent (but completely optional) integration with [Pydantic
 To use Logfire with PydanticAI, install `pydantic-ai` or `pydantic-ai-slim` with the `logfire` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai[logfire]'
+pip/uv-add "pydantic-ai[logfire]"
 ```
 
 From there, follow the [Logfire setup docs](logfire.md#using-logfire) to configure Logfire.
@@ -30,7 +30,7 @@ We distribute the [`pydantic_ai_examples`](https://github.com/pydantic/pydantic-
 To install examples, use the `examples` optional group:
 
 ```bash
-pip/uv-add 'pydantic-ai[examples]'
+pip/uv-add "pydantic-ai[examples]"
 ```
 
 To run the examples, follow instructions in the [examples docs](examples/index.md).
@@ -41,12 +41,13 @@ If you know which model you're going to use and want to avoid installing superfl
 For example, if you're using just [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel], you would run:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[openai]'
+pip/uv-add "pydantic-ai-slim[openai]"
 ```
 
 `pydantic-ai-slim` has the following optional groups:
 
 * `logfire` — installs [`logfire`](logfire.md) [PyPI ↗](https://pypi.org/project/logfire){:target="_blank"}
+* `evals` — installs [`pydantic-evals`](evals.md) [PyPI ↗](https://pypi.org/project/pydantic-evals){:target="_blank"}
 * `openai` — installs `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
 * `vertexai` — installs `google-auth` [PyPI ↗](https://pypi.org/project/google-auth){:target="_blank"} and `requests` [PyPI ↗](https://pypi.org/project/requests){:target="_blank"}
 * `anthropic` — installs `anthropic` [PyPI ↗](https://pypi.org/project/anthropic){:target="_blank"}
@@ -56,10 +57,10 @@ pip/uv-add 'pydantic-ai-slim[openai]'
 * `duckduckgo` - installs `duckduckgo-search` [PyPI ↗](https://pypi.org/project/duckduckgo-search){:target="_blank"}
 * `tavily` - installs `tavily-python` [PyPI ↗](https://pypi.org/project/tavily-python){:target="_blank"}
 
-See the [models](models.md) documentation for information on which optional dependencies are required for each model.
+See the [models](models/index.md) documentation for information on which optional dependencies are required for each model.
 
 You can also install dependencies for multiple models and use cases, for example:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[openai,vertexai,logfire]'
+pip/uv-add "pydantic-ai-slim[openai,vertexai,logfire]"
 ```

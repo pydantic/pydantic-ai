@@ -1,0 +1,69 @@
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
+
+[project]
+name = "pydantic-evals"
+dynamic = ["version", "dependencies"]
+description = "Framework for evaluating stochastic code execution, especially code making use of LLMs"
+authors = [
+    { name = "David Montague", email = "david@pydantic.dev" },
+]
+license = "MIT"
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Unix",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: Console",
+    "Environment :: MacOS X",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet",
+]
+requires-python = ">=3.9"
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning]
+dependencies = [
+    "rich>=13.9.4",
+    "logfire-api>=1.2.0",
+    "pydantic>=2.10",
+    "pydantic-ai-slim=={{ version }}",
+    "anyio>=0",
+    "eval-type-backport>=0; python_version < '3.11'",
+    "pyyaml>=6.0.2",
+]
+
+[project.optional-dependencies]
+logfire = ["logfire>=2.3"]
+
+[project.urls]
+Homepage = "https://ai.pydantic.dev/evals"
+Source = "https://github.com/pydantic/pydantic-ai"
+Documentation = "https://ai.pydantic.dev/evals"
+Changelog = "https://github.com/pydantic/pydantic-ai/releases"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pydantic_evals"]
+
+[tool.uv.sources]
+pydantic-ai-slim = { workspace = true }

@@ -8,7 +8,6 @@ from functools import cached_property
 from typing import Any, Union, cast
 
 import pytest
-from dirty_equals import IsDatetime
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -26,9 +25,11 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
+from pydantic_ai.usage import Usage
 
-from ..conftest import IsNow, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsNow, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -52,10 +53,8 @@ with try_import() as imports_successful:
     )
     from mistralai.types.basemodel import Unset as MistralUnset
 
-    from pydantic_ai.models.mistral import (
-        MistralModel,
-        MistralStreamedResponse,
-    )
+    from pydantic_ai.models.mistral import MistralModel, MistralStreamedResponse
+    from pydantic_ai.providers.mistral import MistralProvider
 
     # note: we use Union here so that casting works with Python 3.9
     MockChatCompletion = Union[MistralChatCompletionResponse, Exception]
@@ -94,17 +93,17 @@ class MockMistralAI:
     ) -> Mistral:
         return cast(Mistral, cls(stream=completions_streams))
 
-    async def chat_completions_create(  # pragma: no cover
+    async def chat_completions_create(  # pragma: lax no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
     ) -> MistralChatCompletionResponse | MockAsyncStream[MockCompletionEvent]:
         if stream or self.stream:
-            assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
+            assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], list):
                 response = MockAsyncStream(iter(cast(list[MockCompletionEvent], self.stream[self.index])))
             else:
                 response = MockAsyncStream(iter(cast(list[MockCompletionEvent], self.stream)))
         else:
-            assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
+            assert self.completions is not None, 'you can only use `stream=False` if `completions` are provided'
             if isinstance(self.completions, Sequence):
                 raise_if_exception(self.completions[self.index])
                 response = cast(MistralChatCompletionResponse, self.completions[self.index])
@@ -174,8 +173,9 @@ def func_chunk(
 
 
 def test_init():
-    m = MistralModel('mistral-large-latest', api_key='foobar')
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(api_key='foobar'))
     assert m.model_name == 'mistral-large-latest'
+    assert m.base_url == 'https://api.mistral.ai'
 
 
 #####################
@@ -193,18 +193,18 @@ async def test_multiple_completions(allow_model_requests: None):
         completion_message(MistralAssistantMessage(content='hello again')),
     ]
     mock_client = MockMistralAI.create_mock(completions)
-    model = MistralModel('mistral-large-latest', client=mock_client)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(model=model)
 
     result = await agent.run('hello')
 
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
     assert result.usage().total_tokens == 1
 
     result = await agent.run('hello again', message_history=result.new_messages())
-    assert result.data == 'hello again'
+    assert result.output == 'hello again'
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
     assert result.usage().total_tokens == 1
@@ -213,14 +213,18 @@ async def test_multiple_completions(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='hello again')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -236,24 +240,24 @@ async def test_three_completions(allow_model_requests: None):
         completion_message(MistralAssistantMessage(content='final message')),
     ]
     mock_client = MockMistralAI.create_mock(completions)
-    model = MistralModel('mistral-large-latest', client=mock_client)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(model=model)
 
     result = await agent.run('hello')
 
-    assert result.data == 'world'
+    assert result.output == 'world'
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
     assert result.usage().total_tokens == 1
 
     result = await agent.run('hello again', message_history=result.all_messages())
-    assert result.data == 'hello again'
+    assert result.output == 'hello again'
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
     assert result.usage().total_tokens == 1
 
     result = await agent.run('final message', message_history=result.all_messages())
-    assert result.data == 'final message'
+    assert result.output == 'final message'
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
     assert result.usage().total_tokens == 1
@@ -262,20 +266,26 @@ async def test_three_completions(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='hello again')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='final message', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='final message')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -295,7 +305,7 @@ async def test_stream_text(allow_model_requests: None):
         chunk([]),
     ]
     mock_client = MockMistralAI.create_stream_mock(stream)
-    model = MistralModel('mistral-large-latest', client=mock_client)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(model=model)
 
     async with agent.run_stream('') as result:
@@ -316,7 +326,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
         text_chunk('.', finish_reason='stop'),
     ]
     mock_client = MockMistralAI.create_stream_mock(stream)
-    model = MistralModel('mistral-large-latest', client=mock_client)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(model=model)
 
     async with agent.run_stream('') as result:
@@ -334,7 +344,7 @@ async def test_no_delta(allow_model_requests: None):
         text_chunk('world'),
     ]
     mock_client = MockMistralAI.create_stream_mock(stream)
-    model = MistralModel('mistral-large-latest', client=mock_client)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(model=model)
 
     async with agent.run_stream('') as result:
@@ -371,12 +381,12 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
         usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=2, total_tokens=3),
     )
     mock_client = MockMistralAI.create_mock(completion)
-    model = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model=model, result_type=CityLocation)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=CityLocation)
 
     result = await agent.run('User prompt value')
 
-    assert result.data == CityLocation(city='paris', country='france')
+    assert result.output == CityLocation(city='paris', country='france')
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 2
     assert result.usage().total_tokens == 3
@@ -391,8 +401,10 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
                         tool_call_id='123',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -429,12 +441,12 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
         )
     )
     mock_client = MockMistralAI.create_mock(completion)
-    model = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model=model, result_type=CityLocation)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=CityLocation)
 
     result = await agent.run('User prompt value')
 
-    assert result.data == CityLocation(city='paris', country='france')
+    assert result.output == CityLocation(city='paris', country='france')
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
     assert result.usage().total_tokens == 1
@@ -450,8 +462,10 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
                         tool_call_id='123',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -467,7 +481,7 @@ async def test_request_model_structured_with_arguments_str_response(allow_model_
     )
 
 
-async def test_request_result_type_with_arguments_str_response(allow_model_requests: None):
+async def test_request_output_type_with_arguments_str_response(allow_model_requests: None):
     completion = completion_message(
         MistralAssistantMessage(
             content=None,
@@ -482,12 +496,12 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
         )
     )
     mock_client = MockMistralAI.create_mock(completion)
-    model = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model=model, result_type=int, system_prompt='System prompt value')
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=int, system_prompt='System prompt value')
 
     result = await agent.run('User prompt value')
 
-    assert result.data == 42
+    assert result.output == 42
     assert result.usage().request_tokens == 1
     assert result.usage().response_tokens == 1
     assert result.usage().total_tokens == 1
@@ -496,7 +510,7 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='System prompt value'),
+                    SystemPromptPart(content='System prompt value', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -508,8 +522,10 @@ async def test_request_result_type_with_arguments_str_response(allow_model_reque
                         tool_call_id='123',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -567,8 +583,8 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
     ]
 
     mock_client = MockMistralAI.create_stream_mock(stream)
-    model = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model, result_type=MyTypedDict)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model, output_type=MyTypedDict)
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
@@ -677,8 +693,8 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
     ]
 
     mock_client = MockMistralAI.create_stream_mock(stream)
-    model = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model=model, result_type=MyTypedDict)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=MyTypedDict)
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
@@ -733,8 +749,8 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
     ]
 
     mock_client = MockMistralAI.create_stream_mock(stream)
-    model = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model=model, result_type=int)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=int)
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
@@ -792,8 +808,8 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
     ]
 
     mock_client = MockMistralAI.create_stream_mock(stream)
-    model = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model, result_type=list[str])
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model, output_type=list[str])
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
@@ -885,8 +901,8 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
     ]
 
     mock_client = MockMistralAI.create_stream_mock(stream)
-    model = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model=model, result_type=MyTypedBaseModel)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=MyTypedBaseModel)
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
@@ -970,8 +986,8 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
     ]
 
     mock_client = MockMistralAI.create_stream_mock(stream)
-    model = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model=model, result_type=MyTypedBaseModel)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=MyTypedBaseModel)
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
@@ -1042,7 +1058,7 @@ async def test_request_tool_call(allow_model_requests: None):
         completion_message(MistralAssistantMessage(content='final response', role='assistant')),
     ]
     mock_client = MockMistralAI.create_mock(completion)
-    model = MistralModel('mistral-large-latest', client=mock_client)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(model, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -1054,7 +1070,7 @@ async def test_request_tool_call(allow_model_requests: None):
 
     result = await agent.run('Hello')
 
-    assert result.data == 'final response'
+    assert result.output == 'final response'
     assert result.usage().request_tokens == 6
     assert result.usage().response_tokens == 4
     assert result.usage().total_tokens == 10
@@ -1062,7 +1078,7 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt'),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -1074,8 +1090,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1095,8 +1113,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=3, response_tokens=2, total_tokens=6),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1110,8 +1130,10 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
         ]
     )
@@ -1179,8 +1201,8 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
         ),
     ]
     mock_client = MockMistralAI.create_mock(completion)
-    model = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model, system_prompt='this is the system prompt', result_type=MyTypedDict)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model, system_prompt='this is the system prompt', output_type=MyTypedDict)
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -1191,7 +1213,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
 
     result = await agent.run('Hello')
 
-    assert result.data == {'lat': 51, 'lng': 0}
+    assert result.output == {'lat': 51, 'lng': 0}
     assert result.usage().request_tokens == 7
     assert result.usage().response_tokens == 4
     assert result.usage().total_tokens == 12
@@ -1199,7 +1221,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt'),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -1211,8 +1233,10 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1232,8 +1256,10 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=3, response_tokens=2, total_tokens=6),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1253,8 +1279,10 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1315,8 +1343,8 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
     ]
 
     mock_client = MockMistralAI.create_stream_mock(completion)
-    model = MistralModel('mistral-large-latest', client=mock_client)
-    agent = Agent(model, system_prompt='this is the system prompt', result_type=MyTypedDict)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model, system_prompt='this is the system prompt', output_type=MyTypedDict)
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -1339,7 +1367,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt'),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -1351,6 +1379,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(request_tokens=2, response_tokens=2, total_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1366,6 +1395,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"won": true}', tool_call_id='1')],
+                usage=Usage(request_tokens=2, response_tokens=2, total_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1382,7 +1412,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         ]
     )
 
-    assert await result.get_data() == {'won': True}
+    assert await result.get_output() == {'won': True}
 
 
 async def test_stream_tool_call(allow_model_requests: None):
@@ -1415,7 +1445,7 @@ async def test_stream_tool_call(allow_model_requests: None):
     ]
 
     mock_client = MockMistralAI.create_stream_mock(completion)
-    model = MistralModel('mistral-large-latest', client=mock_client)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(model, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -1439,7 +1469,7 @@ async def test_stream_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt'),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -1451,6 +1481,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(request_tokens=2, response_tokens=2, total_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1466,6 +1497,7 @@ async def test_stream_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(request_tokens=4, response_tokens=4, total_tokens=4),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1515,7 +1547,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
     ]
 
     mock_client = MockMistralAI.create_stream_mock(completion)
-    model = MistralModel('mistral-large-latest', client=mock_client)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(model, system_prompt='this is the system prompt')
 
     @agent.tool_plain
@@ -1542,7 +1574,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt'),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ]
             ),
@@ -1554,6 +1586,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
+                usage=Usage(request_tokens=2, response_tokens=2, total_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1575,6 +1608,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
+                usage=Usage(request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1590,6 +1624,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=Usage(request_tokens=4, response_tokens=4, total_tokens=4),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1602,7 +1637,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
 #####################
 
 
-def test_generate_user_output_format_complex():
+def test_generate_user_output_format_complex(mistral_api_key: str):
     """
     Single test that includes properties exercising every branch
     in _get_python_type (anyOf, arrays, objects with additionalProperties, etc.).
@@ -1625,7 +1660,7 @@ def test_generate_user_output_format_complex():
             'prop_unrecognized_type': {'type': 'customSomething'},
         }
     }
-    m = MistralModel('', json_mode_schema_prompt='{schema}')
+    m = MistralModel('', json_mode_schema_prompt='{schema}', provider=MistralProvider(api_key=mistral_api_key))
     result = m._generate_user_output_format([schema])  # pyright: ignore[reportPrivateUsage]
     assert result.content == (
         "{'prop_anyOf': 'Optional[str]', "
@@ -1640,9 +1675,9 @@ def test_generate_user_output_format_complex():
     )
 
 
-def test_generate_user_output_format_multiple():
+def test_generate_user_output_format_multiple(mistral_api_key: str):
     schema = {'properties': {'prop_anyOf': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]}}}
-    m = MistralModel('', json_mode_schema_prompt='{schema}')
+    m = MistralModel('', json_mode_schema_prompt='{schema}', provider=MistralProvider(api_key=mistral_api_key))
     result = m._generate_user_output_format([schema, schema])  # pyright: ignore[reportPrivateUsage]
     assert result.content == "[{'prop_anyOf': 'Optional[str]'}, {'prop_anyOf': 'Optional[str]'}]"
 
@@ -1739,10 +1774,71 @@ def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: 
     assert result == expected, f'{desc} — expected {expected}, got {result}'
 
 
+@pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, mistral_api_key: str, image_content: BinaryContent
+):
+    m = MistralModel('pixtral-12b-latest', provider=MistralProvider(api_key=mistral_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool? Call the tool.'])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool? Call the tool.'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='utZJMAZN4')],
+                usage=Usage(requests=1, request_tokens=65, response_tokens=16, total_tokens=81),
+                model_name='pixtral-12b-latest',
+                timestamp=IsDatetime(),
+                vendor_id='fce6d16a4e5940edb24ae16dd0369947',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1c8566',
+                        tool_call_id='utZJMAZN4',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1c8566:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The image you\'re referring to, labeled as "file 1c8566," shows a kiwi. Kiwis are small, brown, oval-shaped fruits with a bright green flesh inside that is dotted with tiny black seeds. They have a sweet and tangy flavor and are known for being rich in vitamin C and fiber.'
+                    )
+                ],
+                usage=Usage(requests=1, request_tokens=2931, response_tokens=70, total_tokens=3001),
+                model_name='pixtral-12b-latest',
+                timestamp=IsDatetime(),
+                vendor_id='26e7de193646460e8904f8e604a60dc1',
+            ),
+        ]
+    )
+
+
 async def test_image_url_input(allow_model_requests: None):
     c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
     mock_client = MockMistralAI.create_mock(c)
-    m = MistralModel('mistral-large-latest', client=mock_client)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
     result = await agent.run(
@@ -1762,14 +1858,16 @@ async def test_image_url_input(allow_model_requests: None):
                                 url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
                             ),
                         ],
-                        timestamp=IsDatetime(),  # type: ignore
+                        timestamp=IsDatetime(),
                     )
                 ]
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
-                timestamp=IsDatetime(),  # type: ignore
+                timestamp=IsDatetime(),
+                vendor_id='123',
             ),
         ]
     )
@@ -1778,7 +1876,7 @@ async def test_image_url_input(allow_model_requests: None):
 async def test_image_as_binary_content_input(allow_model_requests: None):
     c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
     mock_client = MockMistralAI.create_mock(c)
-    m = MistralModel('mistral-large-latest', client=mock_client)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
     base64_content = (
@@ -1793,14 +1891,16 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
                 parts=[
                     UserPromptPart(
                         content=['hello', BinaryContent(data=base64_content, media_type='image/jpeg')],
-                        timestamp=IsDatetime(),  # type: ignore
+                        timestamp=IsDatetime(),
                     )
                 ]
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
                 model_name='mistral-large-123',
-                timestamp=IsDatetime(),  # type: ignore
+                timestamp=IsDatetime(),
+                vendor_id='123',
             ),
         ]
     )
@@ -1809,13 +1909,23 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
 async def test_audio_as_binary_content_input(allow_model_requests: None):
     c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
     mock_client = MockMistralAI.create_mock(c)
-    m = MistralModel('mistral-large-latest', client=mock_client)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
     base64_content = b'//uQZ'
 
     with pytest.raises(RuntimeError, match='Only image binary content is supported for Mistral.'):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type='audio/wav')])
+
+
+async def test_video_url_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(RuntimeError, match='VideoUrl is not supported in Mistral.'):
+        await agent.run(['hello', VideoUrl(url='https://www.google.com')])
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
@@ -1826,8 +1936,32 @@ def test_model_status_error(allow_model_requests: None) -> None:
             body='test error',
         )
     )
-    m = MistralModel('mistral-large-latest', client=mock_client)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     assert str(exc_info.value) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')
+
+
+async def test_mistral_model_instructions(allow_model_requests: None, mistral_api_key: str):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m, instructions='You are a helpful assistant.')
+
+    result = await agent.run('hello')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
+                model_name='mistral-large-123',
+                timestamp=IsDatetime(),
+                vendor_id='123',
+            ),
+        ]
+    )

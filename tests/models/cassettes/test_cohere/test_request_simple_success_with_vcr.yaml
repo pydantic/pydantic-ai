@@ -1,0 +1,64 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '93'
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: hello
+        role: user
+      model: command-r7b-12-2024
+      stream: false
+    uri: https://api.cohere.com/v2/chat
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-length:
+      - '286'
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 UTC
+      num_chars:
+      - '2583'
+      num_tokens:
+      - '10'
+      pragma:
+      - no-cache
+      vary:
+      - Origin
+    parsed_body:
+      finish_reason: COMPLETE
+      id: f17a5f6c-1734-4098-bd0d-733ef000ac7b
+      message:
+        content:
+        - text: Hello! How can I assist you today?
+          type: text
+        role: assistant
+      usage:
+        billed_units:
+          input_tokens: 1
+          output_tokens: 9
+        tokens:
+          input_tokens: 496
+          output_tokens: 11
+    status:
+      code: 200
+      message: OK
+version: 1

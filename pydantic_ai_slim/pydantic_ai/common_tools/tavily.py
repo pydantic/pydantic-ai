@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from typing import Literal, TypedDict
+from typing import Literal
 
 from pydantic import TypeAdapter
+from typing_extensions import TypedDict
 
 from pydantic_ai.tools import Tool
 
@@ -10,7 +11,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install `tavily-python` to use the Tavily search tool, '
-        "you can use the `tavily` optional group — `pip install 'pydantic-ai-slim[tavily]'`"
+        'you can use the `tavily` optional group — `pip install "pydantic-ai-slim[tavily]"`'
     ) from _import_error
 
 __all__ = ('tavily_search_tool',)
@@ -62,8 +63,6 @@ class TavilySearchTool:
             The search results.
         """
         results = await self.client.search(query, search_depth=search_deep, topic=topic, time_range=time_range)  # type: ignore[reportUnknownMemberType]
-        if not results['results']:
-            raise RuntimeError('No search results found.')
         return tavily_search_ta.validate_python(results['results'])
 
 

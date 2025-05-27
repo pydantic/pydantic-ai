@@ -38,6 +38,7 @@ from pydantic_ai.messages import (
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
+logfire.instrument_pydantic_ai()
 
 agent = Agent('openai:gpt-4o')
 THIS_DIR = Path(__file__).parent

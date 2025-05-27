@@ -1,0 +1,43 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}], "system": [{"text": "You
+      are a helpful chatbot."}], "inferenceConfig": {"maxTokens": 5}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZmZhYjMyZmItODRjOS00YWZjLWE4NTAtNTQ4OTUxMjI5NmU4
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '178'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '206'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 159
+      output:
+        message:
+          content:
+          - text: The capital of France is
+          role: assistant
+      stopReason: max_tokens
+      usage:
+        inputTokens: 13
+        outputTokens: 5
+        totalTokens: 18
+    status:
+      code: 200
+      message: OK
+version: 1

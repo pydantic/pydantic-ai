@@ -37,13 +37,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '882'
+      - '909'
       content-type:
       - application/json
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '1394'
+      - '1898'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -55,15 +55,16 @@ interactions:
       - finish_reason: stop
         index: 0
         message:
+          annotations: []
           content: The name mentioned in the audio is Marcelo.
           refusal: null
           role: assistant
-      created: 1740408639
-      id: chatcmpl-B4U51malankDFzpReXZCXRgKQsAx1
+      created: 1742905314
+      id: chatcmpl-BExZy74Y67dd65ec2z4iuzM0Exnks
       model: gpt-4o-audio-preview-2024-12-17
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_31e26c9138
+      system_fingerprint: fp_bf4a46b2e5
       usage:
         completion_tokens: 9
         completion_tokens_details:
