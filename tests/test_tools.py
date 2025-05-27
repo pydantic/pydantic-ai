@@ -1173,6 +1173,60 @@ def test_langchain_tool_conversion():
     assert agent._function_tools['file_search'].max_retries == 7
 
 
+def test_langchain_tool_conversion_no_defaults():
+    langchain_tool = SimulatedLangChainTool(
+        name='file_search',
+        description='Recursively search for files in a subdirectory that match the regex pattern',
+        args={
+            'dir_path': {
+                'description': 'Subdirectory to search in.',
+                'title': 'Dir Path',
+                'type': 'string',
+            },
+            'pattern': {
+                'description': 'Unix shell regex, where * matches everything.',
+                'title': 'Pattern',
+                'type': 'string',
+            },
+        },
+    )
+    pydantic_tool = Tool.from_langchain(langchain_tool)
+
+    agent = Agent('test', tools=[pydantic_tool], retries=7)
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': 'a', 'pattern': 'a'}\"}")
+    assert agent._function_tools['file_search'].takes_ctx is False
+    assert agent._function_tools['file_search'].max_retries == 7
+
+
+def test_langchain_tool_conversion_no_required():
+    langchain_tool = SimulatedLangChainTool(
+        name='file_search',
+        description='Recursively search for files in a subdirectory that match the regex pattern',
+        args={
+            'dir_path': {
+                'default': '.',
+                'description': 'Subdirectory to search in.',
+                'title': 'Dir Path',
+                'type': 'string',
+            },
+            'pattern': {
+                'default': '*',
+                'description': 'Unix shell regex, where * matches everything.',
+                'title': 'Pattern',
+                'type': 'string',
+            },
+        },
+    )
+    pydantic_tool = Tool.from_langchain(langchain_tool)
+
+    agent = Agent('test', tools=[pydantic_tool], retries=7)
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': '*'}\"}")
+    assert agent._function_tools['file_search'].takes_ctx is False
+    assert agent._function_tools['file_search'].max_retries == 7
+
+
 def test_langchain_tool_defaults():
     langchain_tool = SimulatedLangChainTool(
         name='file_search',
