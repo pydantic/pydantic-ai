@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import json
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -324,15 +323,15 @@ class MCPServerHTTP(MCPServer):
     Useful for authentication, custom headers, or other HTTP-specific configurations.
     """
 
-    timeout: timedelta | float = timedelta(seconds=5)
-    """Initial connection timeout as a timedelta for establishing the connection.
+    timeout: float = 5
+    """Initial connection timeout in seconds for establishing the connection.
 
     This timeout applies to the initial connection setup and handshake.
     If the connection cannot be established within this time, the operation will fail.
     """
 
-    sse_read_timeout: timedelta | float = timedelta(minutes=5)
-    """Maximum time as a timedelta to wait for new SSE messages before timing out.
+    sse_read_timeout: float = 300
+    """Maximum time as in seconds to wait for new SSE messages before timing out.
 
     This timeout applies to the long-lived SSE connection after it's established.
     If no new messages are received within this time, the connection will be considered stale
@@ -355,21 +354,14 @@ class MCPServerHTTP(MCPServer):
     """
 
     def __post_init__(self):
-        if not isinstance(self.timeout, timedelta):
-            warnings.warn(
-                'Passing timeout as a float has been deprecated, please use a timedelta instead.',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.timeout = timedelta(seconds=self.timeout)
+        # streamablehttp_client expects timedeltas, so we accept them too to match,
+        # but primarily work with floats for a simpler user API.
 
-        if not isinstance(self.sse_read_timeout, timedelta):
-            warnings.warn(
-                'Passing sse_read_timeout as a float has been deprecated, please use a timedelta instead.',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.sse_read_timeout = timedelta(seconds=self.sse_read_timeout)
+        if isinstance(self.timeout, timedelta):
+            self.timeout = self.timeout.total_seconds()
+
+        if isinstance(self.sse_read_timeout, timedelta):
+            self.sse_read_timeout = self.sse_read_timeout.total_seconds()
 
     @asynccontextmanager
     async def client_streams(
@@ -377,24 +369,11 @@ class MCPServerHTTP(MCPServer):
     ) -> AsyncIterator[
         tuple[MemoryObjectReceiveStream[SessionMessage | Exception], MemoryObjectSendStream[SessionMessage]]
     ]:  # pragma: no cover
-        if not isinstance(self.timeout, timedelta):
-            warnings.warn(
-                'Passing timeout as a float has been deprecated, please use a timedelta instead.',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.timeout = timedelta(seconds=self.timeout)
-
-        if not isinstance(self.sse_read_timeout, timedelta):
-            warnings.warn(
-                'Passing sse_read_timeout as a float has been deprecated, please use a timedelta instead.',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.sse_read_timeout = timedelta(seconds=self.sse_read_timeout)
-
         async with streamablehttp_client(
-            url=self.url, headers=self.headers, timeout=self.timeout, sse_read_timeout=self.sse_read_timeout
+            url=self.url,
+            headers=self.headers,
+            timeout=timedelta(seconds=self.timeout),
+            sse_read_timeout=timedelta(self.sse_read_timeout),
         ) as (read_stream, write_stream, _):
             yield read_stream, write_stream
 
