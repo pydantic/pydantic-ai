@@ -1273,3 +1273,27 @@ def test_langchain_tool_positional():
 
     result = pydantic_tool.function('something')  # type: ignore
     assert result == snapshot("I was called with {'pattern': 'something', 'dir_path': '.'}")
+
+
+def test_langchain_tool_default_override():
+    langchain_tool = SimulatedLangChainTool(
+        name='file_search',
+        description='Recursively search for files in a subdirectory that match the regex pattern',
+        args={
+            'dir_path': {
+                'default': '.',
+                'description': 'Subdirectory to search in.',
+                'title': 'Dir Path',
+                'type': 'string',
+            },
+            'pattern': {
+                'description': 'Unix shell regex, where * matches everything.',
+                'title': 'Pattern',
+                'type': 'string',
+            },
+        },
+    )
+    pydantic_tool = Tool.from_langchain(langchain_tool)
+
+    result = pydantic_tool.function(pattern='something', dir_path='somewhere')  # type: ignore
+    assert result == snapshot("I was called with {'pattern': 'something', 'dir_path': 'somewhere'}")
