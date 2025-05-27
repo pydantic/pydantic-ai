@@ -373,7 +373,7 @@ class Tool(Generic[AgentDepsT]):
         function_description = langchain_tool.description
         inputs = langchain_tool.args.copy()
         required = sorted({name for name, detail in inputs.items() if 'default' not in detail})
-        schema = {
+        schema: JsonSchemaValue = {
             'type': 'object',
             'properties': inputs,
             'additionalProperties': False,
