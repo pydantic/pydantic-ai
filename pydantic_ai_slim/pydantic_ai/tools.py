@@ -1,22 +1,22 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-import inspect
 import json
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union
 
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
-from pydantic_core import SchemaValidator, core_schema
+from pydantic_core import core_schema
 from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
-from . import _pydantic, _utils, messages as _messages, models
+from . import _function_schema, _utils, messages as _messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
 
 if TYPE_CHECKING:
+    from .models import Model
     from .result import Usage
 
 __all__ = (
@@ -45,7 +45,7 @@ class RunContext(Generic[AgentDepsT]):
 
     deps: AgentDepsT
     """Dependencies for the agent."""
-    model: models.Model
+    model: Model
     """The model used in this run."""
     usage: Usage
     """LLM usage associated with the run."""
@@ -208,12 +208,7 @@ class Tool(Generic[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
-    _is_async: bool = field(init=False)
-    _single_arg_name: str | None = field(init=False)
-    _positional_fields: list[str] = field(init=False)
-    _var_positional_field: str | None = field(init=False)
-    _validator: SchemaValidator = field(init=False, repr=False)
-    _base_parameters_json_schema: ObjectJsonSchema = field(init=False)
+    function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
 
@@ -237,6 +232,7 @@ class Tool(Generic[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
 
@@ -289,28 +285,24 @@ class Tool(Generic[AgentDepsT]):
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
-        if takes_ctx is None:
-            takes_ctx = _pydantic.takes_ctx(function)
-
-        f = _pydantic.function_schema(
-            function, takes_ctx, docstring_format, require_parameter_descriptions, schema_generator
-        )
         self.function = function
-        self.takes_ctx = takes_ctx
+        self.function_schema = function_schema or _function_schema.function_schema(
+            function,
+            schema_generator,
+            takes_ctx=takes_ctx,
+            docstring_format=docstring_format,
+            require_parameter_descriptions=require_parameter_descriptions,
+        )
+        self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
         self.name = name or function.__name__
-        self.description = description or f['description']
+        self.description = description or self.function_schema.description
         self.prepare = prepare
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
-        self._is_async = inspect.iscoroutinefunction(self.function)
-        self._single_arg_name = f['single_arg_name']
-        self._positional_fields = f['positional_fields']
-        self._var_positional_field = f['var_positional_field']
-        self._validator = f['validator']
-        self._base_parameters_json_schema = f['json_schema']
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
@@ -324,7 +316,7 @@ class Tool(Generic[AgentDepsT]):
         tool_def = ToolDefinition(
             name=self.name,
             description=self.description,
-            parameters_json_schema=self._base_parameters_json_schema,
+            parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
         )
         if self.prepare is not None:
@@ -366,21 +358,22 @@ class Tool(Generic[AgentDepsT]):
         self, message: _messages.ToolCallPart, run_context: RunContext[AgentDepsT]
     ) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
         try:
+            validator = self.function_schema.validator
             if isinstance(message.args, str):
-                args_dict = self._validator.validate_json(message.args or '{}')
+                args_dict = validator.validate_json(message.args or '{}')
             else:
-                args_dict = self._validator.validate_python(message.args or {})
+                args_dict = validator.validate_python(message.args or {})
         except ValidationError as e:
             return self._on_error(e, message)
 
-        args, kwargs = self._call_args(args_dict, message, run_context)
+        ctx = dataclasses.replace(
+            run_context,
+            retry=self.current_retry,
+            tool_name=message.tool_name,
+            tool_call_id=message.tool_call_id,
+        )
         try:
-            if self._is_async:
-                function = cast(Callable[[Any], Awaitable[str]], self.function)
-                response_content = await function(*args, **kwargs)
-            else:
-                function = cast(Callable[[Any], str], self.function)
-                response_content = await _utils.run_in_executor(function, *args, **kwargs)
+            response_content = await self.function_schema.call(args_dict, ctx)
         except ModelRetry as e:
             return self._on_error(e, message)
 
@@ -390,29 +383,6 @@ class Tool(Generic[AgentDepsT]):
             content=response_content,
             tool_call_id=message.tool_call_id,
         )
-
-    def _call_args(
-        self,
-        args_dict: dict[str, Any],
-        message: _messages.ToolCallPart,
-        run_context: RunContext[AgentDepsT],
-    ) -> tuple[list[Any], dict[str, Any]]:
-        if self._single_arg_name:
-            args_dict = {self._single_arg_name: args_dict}
-
-        ctx = dataclasses.replace(
-            run_context,
-            retry=self.current_retry,
-            tool_name=message.tool_name,
-            tool_call_id=message.tool_call_id,
-        )
-        args = [ctx] if self.takes_ctx else []
-        for positional_field in self._positional_fields:
-            args.append(args_dict.pop(positional_field))  # pragma: no cover
-        if self._var_positional_field:
-            args.extend(args_dict.pop(self._var_positional_field))
-
-        return args, args_dict
 
     def _on_error(
         self, exc: ValidationError | ModelRetry, call_message: _messages.ToolCallPart
