@@ -81,30 +81,29 @@ def test_http_server_with_header_and_timeout():
     http_server = MCPServerHTTP(
         url='http://localhost:8000/sse',
         headers={'my-custom-header': 'my-header-value'},
-        timeout=timedelta(seconds=10),
-        sse_read_timeout=timedelta(seconds=100),
+        timeout=10,
+        sse_read_timeout=100,
         log_level='info',
     )
     assert http_server.url == 'http://localhost:8000/sse'
     assert http_server.headers is not None and http_server.headers['my-custom-header'] == 'my-header-value'
-    assert http_server.timeout == timedelta(seconds=10)
-    assert http_server.sse_read_timeout == timedelta(seconds=100)
+    assert http_server.timeout == 10
+    assert http_server.sse_read_timeout == 100
     assert http_server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
 
 
-def test_http_server_with_deprecated_arguments():
-    with pytest.warns(DeprecationWarning):
-        http_server = MCPServerHTTP(
-            url='http://localhost:8000/sse',
-            headers={'my-custom-header': 'my-header-value'},
-            timeout=10,
-            sse_read_timeout=100,
-            log_level='info',
-        )
+def test_http_server_with_timedelta_arguments():
+    http_server = MCPServerHTTP(
+        url='http://localhost:8000/sse',
+        headers={'my-custom-header': 'my-header-value'},
+        timeout=timedelta(seconds=10),  # type: ignore[arg-type]
+        sse_read_timeout=timedelta(seconds=100),  # type: ignore[arg-type]
+        log_level='info',
+    )
     assert http_server.url == 'http://localhost:8000/sse'
     assert http_server.headers is not None and http_server.headers['my-custom-header'] == 'my-header-value'
-    assert http_server.timeout == timedelta(seconds=10)
-    assert http_server.sse_read_timeout == timedelta(seconds=100)
+    assert http_server.timeout == 10
+    assert http_server.sse_read_timeout == 100
     assert http_server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
 
 
