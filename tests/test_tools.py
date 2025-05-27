@@ -1189,7 +1189,7 @@ def test_langchain_tool_defaults():
     )
     pydantic_tool = Tool.from_langchain(langchain_tool)
 
-    result = pydantic_tool.function(pattern='something')
+    result = pydantic_tool.function(pattern='something')  # type: ignore
     assert result == snapshot("I was called with {'pattern': 'something', 'dir_path': '.'}")
 
 
@@ -1213,5 +1213,5 @@ def test_langchain_tool_positional():
     )
     pydantic_tool = Tool.from_langchain(langchain_tool)
 
-    result = pydantic_tool.function('something')
+    result = pydantic_tool.function('something')  # type: ignore
     assert result == snapshot("I was called with {'pattern': 'something', 'dir_path': '.'}")
