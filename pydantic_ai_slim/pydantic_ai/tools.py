@@ -326,7 +326,7 @@ class Tool(Generic[AgentDepsT]):
         self.strict = strict
 
     @staticmethod
-    def from_function(function: Callable[..., Any], json_schema: JsonSchemaValue) -> Tool[None]:
+    def from_schema(function: Callable[..., Any], json_schema: JsonSchemaValue) -> Tool[None]:
         """Creates a Pydantic tool from a function and a JSON schema.
 
         Args:
@@ -396,7 +396,7 @@ class Tool(Generic[AgentDepsT]):
         proxy.__name__ = function_name
         proxy.__doc__ = function_description
 
-        return cls.from_function(function=proxy, json_schema=schema)
+        return cls.from_schema(function=proxy, json_schema=schema)
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
