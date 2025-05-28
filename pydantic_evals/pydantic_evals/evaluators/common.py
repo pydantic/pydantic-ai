@@ -203,32 +203,30 @@ class LLMJudge(Evaluator[object, object, object]):
         self,
         ctx: EvaluatorContext[object, object, object],
     ) -> EvaluatorOutput:
-        match (self.include_input, self.include_expected_output):
-            case (False, False):
-                from .llm_as_a_judge import judge_output
+        if (self.include_input is False) and (self.include_expected_output is False):
+            from .llm_as_a_judge import judge_output
 
-                grading_output = await judge_output(ctx.output, self.rubric, self.model, self.model_settings)
+            grading_output = await judge_output(ctx.output, self.rubric, self.model, self.model_settings)
 
-            case (True, False):
-                from .llm_as_a_judge import judge_input_output
+        elif (self.include_input is True) and (self.include_expected_output is False):
+            from .llm_as_a_judge import judge_input_output
 
-                grading_output = await judge_input_output(
-                    ctx.inputs, ctx.output, self.rubric, self.model, self.model_settings
-                )
+            grading_output = await judge_input_output(
+                ctx.inputs, ctx.output, self.rubric, self.model, self.model_settings
+            )
 
-            case (True, True):
-                from .llm_as_a_judge import judge_input_output_expected
+        elif (self.include_input is True) and (self.include_expected_output is True):
+            from .llm_as_a_judge import judge_input_output_expected
 
-                grading_output = await judge_input_output_expected(
-                    ctx.inputs, ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
-                )
+            grading_output = await judge_input_output_expected(
+                ctx.inputs, ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
+            )
 
-            case (False, True):
-                raise NotImplementedError('include_expected_output is not supported without include_input')
+        elif (self.include_input is False) and (self.include_expected_output is True):
+            raise NotImplementedError('include_expected_output is not supported without include_input')
 
-            # Include a default case to satisfy the linter
-            case _:
-                raise ValueError(f'Unexpected values for {self.include_input=} and {self.include_expected_output=}')
+        else:
+            raise ValueError(f'Unexpected values for {self.include_input=} and {self.include_expected_output=}')
 
         output: dict[str, EvaluationScalar | EvaluationReason] = {}
         include_both = self.score is not False and self.assertion is not False
