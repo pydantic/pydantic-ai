@@ -375,7 +375,7 @@ class BedrockConverseModel(Model):
 
         tool_choice: ToolChoiceTypeDef
         if not model_request_parameters.allow_text_output:
-            tool_choice = {'any': {}}  # pragma: no cover
+            tool_choice = {'any': {}}
         else:
             tool_choice = {'auto': {}}
 
