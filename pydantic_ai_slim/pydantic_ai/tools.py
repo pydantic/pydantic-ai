@@ -5,12 +5,12 @@ import dataclasses
 import json
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, Self
 
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
-from pydantic_core import core_schema
+from pydantic_core import core_schema, SchemaValidator
 from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
 from . import _function_schema, _utils, messages as _messages
@@ -325,8 +325,8 @@ class Tool(Generic[AgentDepsT]):
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
 
-    @staticmethod
-    def from_schema(function: Callable[..., Any], json_schema: JsonSchemaValue) -> Tool[None]:
+    @classmethod
+    def from_schema(cls, function: Callable[..., Any], json_schema: JsonSchemaValue) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
         Args:
@@ -351,7 +351,7 @@ class Tool(Generic[AgentDepsT]):
             var_positional_field=None,
         )
 
-        return Tool(
+        return cls(
             function,
             takes_ctx=False,
             name=function_name,
@@ -360,7 +360,7 @@ class Tool(Generic[AgentDepsT]):
         )
 
     @classmethod
-    def from_langchain(cls, langchain_tool: LangChainTool) -> Tool[None]:
+    def from_langchain(cls, langchain_tool: LangChainTool) -> Self:
         """Creates a Pydantic tool proxy from a LangChain tool.
 
         Args:
