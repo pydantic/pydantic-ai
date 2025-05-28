@@ -10,7 +10,7 @@ from pydantic_ai.profiles._json_schema import JsonSchemaTransformer
 
 @dataclass
 class ModelProfile:
-    """Describes how requests to a specific model or family of models need to be formatted to get the best results, independent of the model and provider classes used."""
+    """Describes how requests to a specific model or family of models need to be constructed to get the best results, independent of the model and provider classes used."""
 
     json_schema_transformer: type[JsonSchemaTransformer] | None = None
 
