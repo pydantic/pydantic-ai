@@ -156,18 +156,22 @@ When a provider has its own provider class, you can use the `Agent("<provider>:<
 #### Model Profile
 
 Sometimes, the provider or model you're using will have slightly different requirements than OpenAI's API or models, like having different restrictions on JSON schemas for tool definitions, or not supporting tool definitions to be marked as strict.
-You can tweak various aspects of how model requests are constructed by providing your own [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (for behaviors shared among all model classes) or [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (for behaviors specific to `OpenAIModel`).
+
 When using an alternative provider class provided by PydanticAI, an appropriate model profile is typically selected automatically based on the model name.
+If the model you're using is not working correctly out of the box, you can tweak various aspects of how model requests are constructed by providing your own [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (for behaviors shared among all model classes) or [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (for behaviors specific to `OpenAIModel`):
 
 ```py
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIModelProfile
+from pydantic_ai.providers.openai import OpenAIProvider
 
 model = OpenAIModel(
     'model_name',
-    provider='openrouter',
+    provider=OpenAIProvider(
+        base_url='https://<openai-compatible-api-endpoint>.com', api_key='your-api-key'
+    ),
     profile=OpenAIModelProfile(
         json_schema_transformer=InlineDefsJsonSchemaTransformer,  # Supported by any model class on a plain ModelProfile
         openai_supports_strict_tool_definition=False  # Supported by OpenAIModel only, requires OpenAIModelProfile
@@ -178,7 +182,8 @@ agent = Agent(model)
 
 ### DeepSeek
 
-You can also use the `provider` argument with a custom provider class like the `DeepSeekProvider`:
+To use the [DeepSeek](https://deepseek.com) provider, first create an API key by following the [Quick Start guide](https://api-docs.deepseek.com/).
+Once you have the API key, you can use it with the `DeepSeekProvider`:
 
 ```python
 from pydantic_ai import Agent
