@@ -11,7 +11,7 @@ from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
+from typing_extensions import Concatenate, ParamSpec, Self, TypeAlias, TypeVar
 
 from . import _function_schema, _utils, messages as _messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
@@ -326,7 +326,7 @@ class Tool(Generic[AgentDepsT]):
         self.strict = strict
 
     @classmethod
-    def from_schema(cls, function: Callable[..., Any], json_schema: JsonSchemaValue) -> Tool[AgentDepsT]:
+    def from_schema(cls, function: Callable[..., Any], json_schema: JsonSchemaValue) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
         Args:
@@ -360,7 +360,7 @@ class Tool(Generic[AgentDepsT]):
         )
 
     @classmethod
-    def from_langchain(cls, langchain_tool: LangChainTool) -> Tool[AgentDepsT]:
+    def from_langchain(cls, langchain_tool: LangChainTool) -> Self:
         """Creates a Pydantic tool proxy from a LangChain tool.
 
         Args:
