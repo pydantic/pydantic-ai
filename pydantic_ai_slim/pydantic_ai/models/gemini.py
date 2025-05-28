@@ -251,6 +251,8 @@ class GeminiModel(Model):
             yield r
 
     def _process_response(self, response: _GeminiResponse) -> ModelResponse:
+        vendor_details: dict[str, Any] | None = None
+
         if len(response['candidates']) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
         if 'content' not in response['candidates'][0]:
@@ -261,9 +263,19 @@ class GeminiModel(Model):
                     'Content field missing from Gemini response', str(response)
                 )
         parts = response['candidates'][0]['content']['parts']
+        vendor_id = response.get('vendor_id', None)
+        finish_reason = response['candidates'][0].get('finish_reason')
+        if finish_reason:
+            vendor_details = {'finish_reason': finish_reason}
         usage = _metadata_as_usage(response)
         usage.requests = 1
-        return _process_response_from_parts(parts, response.get('model_version', self._model_name), usage)
+        return _process_response_from_parts(
+            parts,
+            response.get('model_version', self._model_name),
+            usage,
+            vendor_id=vendor_id,
+            vendor_details=vendor_details,
+        )
 
     async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -443,13 +455,12 @@ class GeminiStreamedResponse(StreamedResponse):
             responses_to_yield = gemini_responses[:-1]
             for r in responses_to_yield[current_gemini_response_index:]:
                 current_gemini_response_index += 1
-                self._usage += _metadata_as_usage(r)
                 yield r
 
         # Now yield the final response, which should be complete
         if gemini_responses:  # pragma: no branch
             r = gemini_responses[-1]
-            self._usage += _metadata_as_usage(r)
+            self._usage = _metadata_as_usage(r)
             yield r
 
     @property
@@ -603,7 +614,11 @@ def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart
 
 
 def _process_response_from_parts(
-    parts: Sequence[_GeminiPartUnion], model_name: GeminiModelName, usage: usage.Usage
+    parts: Sequence[_GeminiPartUnion],
+    model_name: GeminiModelName,
+    usage: usage.Usage,
+    vendor_id: str | None,
+    vendor_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
@@ -615,7 +630,9 @@ def _process_response_from_parts(
             raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
-    return ModelResponse(parts=items, usage=usage, model_name=model_name)
+    return ModelResponse(
+        parts=items, usage=usage, model_name=model_name, vendor_id=vendor_id, vendor_details=vendor_details
+    )
 
 
 class _GeminiFunctionCall(TypedDict):
@@ -727,6 +744,7 @@ class _GeminiResponse(TypedDict):
     usage_metadata: NotRequired[Annotated[_GeminiUsageMetaData, pydantic.Field(alias='usageMetadata')]]
     prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, pydantic.Field(alias='promptFeedback')]]
     model_version: NotRequired[Annotated[str, pydantic.Field(alias='modelVersion')]]
+    vendor_id: NotRequired[Annotated[str, pydantic.Field(alias='responseId')]]
 
 
 class _GeminiCandidates(TypedDict):
@@ -743,8 +761,17 @@ class _GeminiCandidates(TypedDict):
     safety_ratings: NotRequired[Annotated[list[_GeminiSafetyRating], pydantic.Field(alias='safetyRatings')]]
 
 
+class _GeminiModalityTokenCount(TypedDict):
+    """See <https://ai.google.dev/api/generate-content#modalitytokencount>."""
+
+    modality: Annotated[
+        Literal['MODALITY_UNSPECIFIED', 'TEXT', 'IMAGE', 'VIDEO', 'AUDIO', 'DOCUMENT'], pydantic.Field(alias='modality')
+    ]
+    token_count: Annotated[int, pydantic.Field(alias='tokenCount', default=0)]
+
+
 class _GeminiUsageMetaData(TypedDict, total=False):
-    """See <https://ai.google.dev/api/generate-content#FinishReason>.
+    """See <https://ai.google.dev/api/generate-content#UsageMetadata>.
 
     The docs suggest all fields are required, but some are actually not required, so we assume they are all optional.
     """
@@ -753,6 +780,20 @@ class _GeminiUsageMetaData(TypedDict, total=False):
     candidates_token_count: NotRequired[Annotated[int, pydantic.Field(alias='candidatesTokenCount')]]
     total_token_count: Annotated[int, pydantic.Field(alias='totalTokenCount')]
     cached_content_token_count: NotRequired[Annotated[int, pydantic.Field(alias='cachedContentTokenCount')]]
+    thoughts_token_count: NotRequired[Annotated[int, pydantic.Field(alias='thoughtsTokenCount')]]
+    tool_use_prompt_token_count: NotRequired[Annotated[int, pydantic.Field(alias='toolUsePromptTokenCount')]]
+    prompt_tokens_details: NotRequired[
+        Annotated[list[_GeminiModalityTokenCount], pydantic.Field(alias='promptTokensDetails')]
+    ]
+    cache_tokens_details: NotRequired[
+        Annotated[list[_GeminiModalityTokenCount], pydantic.Field(alias='cacheTokensDetails')]
+    ]
+    candidates_tokens_details: NotRequired[
+        Annotated[list[_GeminiModalityTokenCount], pydantic.Field(alias='candidatesTokensDetails')]
+    ]
+    tool_use_prompt_tokens_details: NotRequired[
+        Annotated[list[_GeminiModalityTokenCount], pydantic.Field(alias='toolUsePromptTokensDetails')]
+    ]
 
 
 def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
@@ -761,7 +802,21 @@ def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
         return usage.Usage()  # pragma: no cover
     details: dict[str, int] = {}
     if cached_content_token_count := metadata.get('cached_content_token_count'):
-        details['cached_content_token_count'] = cached_content_token_count  # pragma: no cover
+        details['cached_content_tokens'] = cached_content_token_count  # pragma: no cover
+
+    if thoughts_token_count := metadata.get('thoughts_token_count'):
+        details['thoughts_tokens'] = thoughts_token_count
+
+    if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count'):
+        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count  # pragma: no cover
+
+    for key, metadata_details in metadata.items():
+        if key.endswith('_details') and metadata_details:
+            metadata_details = cast(list[_GeminiModalityTokenCount], metadata_details)
+            suffix = key.removesuffix('_details')
+            for detail in metadata_details:
+                details[f'{detail["modality"].lower()}_{suffix}'] = detail['token_count']
+
     return usage.Usage(
         request_tokens=metadata.get('prompt_token_count', 0),
         response_tokens=metadata.get('candidates_token_count', 0),
