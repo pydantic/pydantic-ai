@@ -36,7 +36,7 @@ async def stream_from_agent(prompt: str, chatbot: list[dict], past_messages: lis
                     call_args = (
                         call.args.args_json
                         if hasattr(call.args, 'args_json')
-                        else json.dumps(call.args)
+                        else call.args_as_json_str()
                     )
                     metadata = {
                         'title': f'🛠️ Using {TOOL_TO_DISPLAY_NAME[call.tool_name]}',
