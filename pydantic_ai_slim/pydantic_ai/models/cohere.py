@@ -20,6 +20,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -107,6 +108,7 @@ class CohereModel(Model):
         model_name: CohereModelName,
         *,
         provider: Literal['cohere'] | Provider[AsyncClientV2] = 'cohere',
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize an Cohere model.
 
@@ -116,12 +118,14 @@ class CohereModel(Model):
             provider: The provider to use for authentication and API access. Can be either the string
                 'cohere' or an instance of `Provider[AsyncClientV2]`. If not provided, a new provider will be
                 created using the other parameters.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
+        self._profile = profile or provider.model_profile
 
     @property
     def base_url(self) -> str:

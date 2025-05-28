@@ -30,9 +30,13 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
@@ -56,8 +60,8 @@ with try_import() as imports_successful:
         OpenAIModel,
         OpenAIModelSettings,
         OpenAISystemPromptRole,
-        _OpenAIJsonSchema,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.openai import OpenAIProvider
 
     # note: we use Union here so that casting works with Python 3.9
@@ -1356,23 +1360,33 @@ async def test_strict_mode_cannot_infer_strict(
     # Create a mock completion for testing
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
 
-    # Test 1: Default behavior (strict setting not explicitly specified; function is strict-mode-compatible)
-    mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m)
+    async def assert_strict(expected_strict: bool | None, profile: ModelProfile | None = None):
+        mock_client = MockOpenAI.create_mock(c)
+        m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+        agent = Agent(m)
 
-    agent.tool_plain(strict=tool_strict)(tool)
+        agent.tool_plain(strict=tool_strict)(tool)
 
-    await agent.run('hello')
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert 'tools' in kwargs, kwargs
+        await agent.run('hello')
+        kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+        assert 'tools' in kwargs, kwargs
 
-    assert kwargs['tools'][0]['function']['parameters'] == expected_params
-    actual_strict = kwargs['tools'][0]['function'].get('strict')
-    assert actual_strict == expected_strict
-    if actual_strict is None:
-        # If strict is included, it should be non-None
-        assert 'strict' not in kwargs['tools'][0]['function']
+        assert kwargs['tools'][0]['function']['parameters'] == expected_params
+        actual_strict = kwargs['tools'][0]['function'].get('strict')
+        assert actual_strict == expected_strict
+        if actual_strict is None:
+            # If strict is included, it should be non-None
+            assert 'strict' not in kwargs['tools'][0]['function']
+
+    await assert_strict(expected_strict)
+
+    # If the model profile says strict is not supported, we never pass strict
+    await assert_strict(
+        None,
+        profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False).update(
+            openai_model_profile('test-model')
+        ),
+    )
 
 
 def test_strict_schema():
@@ -1390,7 +1404,7 @@ def test_strict_schema():
         my_list: list[float]
         my_discriminated_union: Annotated[Apple | Banana, Discriminator('kind')]
 
-    assert _OpenAIJsonSchema(MyModel.model_json_schema(), strict=True).walk() == snapshot(
+    assert OpenAIJsonSchemaTransformer(MyModel.model_json_schema(), strict=True).walk() == snapshot(
         {
             '$defs': {
                 'Apple': {
@@ -1601,3 +1615,98 @@ async def test_openai_instructions_with_logprobs(allow_model_requests: None):
             'top_logprobs': [],
         }
     ]
+
+
+def test_openai_model_profile():
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
+    assert isinstance(m.profile, OpenAIModelProfile)
+
+
+def test_openai_model_profile_custom():
+    m = OpenAIModel(
+        'gpt-4o',
+        provider=OpenAIProvider(api_key='foobar'),
+        profile=ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer),
+    )
+    assert isinstance(m.profile, ModelProfile)
+    assert m.profile.json_schema_transformer is InlineDefsJsonSchemaTransformer
+
+    m = OpenAIModel(
+        'gpt-4o',
+        provider=OpenAIProvider(api_key='foobar'),
+        profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False),
+    )
+    assert isinstance(m.profile, OpenAIModelProfile)
+    assert m.profile.openai_supports_strict_tool_definition is False
+
+
+def test_openai_model_profile_function():
+    def model_profile(model_name: str) -> ModelProfile:
+        return ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer if model_name == 'gpt-4o' else None)
+
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'), profile=model_profile)
+    assert isinstance(m.profile, ModelProfile)
+    assert m.profile.json_schema_transformer is InlineDefsJsonSchemaTransformer
+
+    m = OpenAIModel('gpt-4o-mini', provider=OpenAIProvider(api_key='foobar'), profile=model_profile)
+    assert isinstance(m.profile, ModelProfile)
+    assert m.profile.json_schema_transformer is None
+
+
+def test_openai_model_profile_from_provider():
+    class CustomProvider(OpenAIProvider):
+        def model_profile(self, model_name: str) -> ModelProfile:
+            return ModelProfile(
+                json_schema_transformer=InlineDefsJsonSchemaTransformer if model_name == 'gpt-4o' else None
+            )
+
+    m = OpenAIModel('gpt-4o', provider=CustomProvider(api_key='foobar'))
+    assert isinstance(m.profile, ModelProfile)
+    assert m.profile.json_schema_transformer is InlineDefsJsonSchemaTransformer
+
+    m = OpenAIModel('gpt-4o-mini', provider=CustomProvider(api_key='foobar'))
+    assert isinstance(m.profile, ModelProfile)
+    assert m.profile.json_schema_transformer is None
+
+
+def test_model_profile_strict_not_supported():
+    my_tool = ToolDefinition(
+        'my_tool',
+        'This is my tool',
+        {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+        strict=True,
+    )
+
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
+    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+
+    assert tool_param == snapshot(
+        {
+            'type': 'function',
+            'function': {
+                'name': 'my_tool',
+                'description': 'This is my tool',
+                'parameters': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+                'strict': True,
+            },
+        }
+    )
+
+    # Some models don't support strict tool definitions
+    m = OpenAIModel(
+        'gpt-4o',
+        provider=OpenAIProvider(api_key='foobar'),
+        profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False).update(openai_model_profile('gpt-4o')),
+    )
+    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+
+    assert tool_param == snapshot(
+        {
+            'type': 'function',
+            'function': {
+                'name': 'my_tool',
+                'description': 'This is my tool',
+                'parameters': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+            },
+        }
+    )

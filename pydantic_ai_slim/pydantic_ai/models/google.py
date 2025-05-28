@@ -1,10 +1,9 @@
 from __future__ import annotations as _annotations
 
 import base64
-import warnings
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 from uuid import uuid4
@@ -13,7 +12,7 @@ from typing_extensions import assert_never
 
 from pydantic_ai.providers import Provider
 
-from .. import UnexpectedModelBehavior, UserError, _utils, usage
+from .. import UnexpectedModelBehavior, _utils, usage
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -32,6 +31,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
+from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -42,7 +42,6 @@ from . import (
     check_allow_model_requests,
     get_user_agent,
 )
-from ._json_schema import JsonSchema, WalkJsonSchema
 
 try:
     from google import genai
@@ -141,6 +140,7 @@ class GoogleModel(Model):
         model_name: GoogleModelName,
         *,
         provider: Literal['google-gla', 'google-vertex'] | Provider[genai.Client] = 'google-gla',
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize a Gemini model.
 
@@ -149,6 +149,7 @@ class GoogleModel(Model):
             provider: The provider to use for authentication and API access. Can be either the string
                 'google-gla' or 'google-vertex' or an instance of `Provider[httpx.AsyncClient]`.
                 If not provided, a new provider will be created using the other parameters.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
         """
         self._model_name = model_name
 
@@ -158,6 +159,7 @@ class GoogleModel(Model):
         self._provider = provider
         self._system = provider.name
         self.client = provider.client
+        self._profile = profile or provider.model_profile
 
     @property
     def base_url(self) -> str:
@@ -185,16 +187,6 @@ class GoogleModel(Model):
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         yield await self._process_streamed_response(response)  # type: ignore
-
-    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
-        def _customize_tool_def(t: ToolDefinition):
-            return replace(t, parameters_json_schema=_GeminiJsonSchema(t.parameters_json_schema).walk())
-
-        return ModelRequestParameters(
-            function_tools=[_customize_tool_def(tool) for tool in model_request_parameters.function_tools],
-            allow_text_output=model_request_parameters.allow_text_output,
-            output_tools=[_customize_tool_def(tool) for tool in model_request_parameters.output_tools],
-        )
 
     @property
     def model_name(self) -> GoogleModelName:
@@ -514,86 +506,3 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.Usage:
         total_tokens=metadata.get('total_token_count', 0),
         details=details,
     )
-
-
-class _GeminiJsonSchema(WalkJsonSchema):
-    """Transforms the JSON Schema from Pydantic to be suitable for Gemini.
-
-    Gemini which [supports](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations)
-    a subset of OpenAPI v3.0.3.
-
-    Specifically:
-    * gemini doesn't allow the `title` keyword to be set
-    * gemini doesn't allow `$defs` — we need to inline the definitions where possible
-    """
-
-    def __init__(self, schema: JsonSchema):
-        super().__init__(schema, prefer_inlined_defs=True, simplify_nullable_unions=True)
-
-    def transform(self, schema: JsonSchema) -> JsonSchema:
-        # Note: we need to remove `additionalProperties: False` since it is currently mishandled by Gemini
-        additional_properties = schema.pop(
-            'additionalProperties', None
-        )  # don't pop yet so it's included in the warning
-        if additional_properties:  # pragma: no cover
-            original_schema = {**schema, 'additionalProperties': additional_properties}
-            warnings.warn(
-                '`additionalProperties` is not supported by Gemini; it will be removed from the tool JSON schema.'
-                f' Full schema: {self.schema}\n\n'
-                f'Source of additionalProperties within the full schema: {original_schema}\n\n'
-                'If this came from a field with a type like `dict[str, MyType]`, that field will always be empty.\n\n'
-                "If Google's APIs are updated to support this properly, please create an issue on the PydanticAI GitHub"
-                ' and we will fix this behavior.',
-                UserWarning,
-            )
-
-        schema.pop('title', None)
-        schema.pop('default', None)
-        schema.pop('$schema', None)
-        if (const := schema.pop('const', None)) is not None:  # pragma: no cover
-            # Gemini doesn't support const, but it does support enum with a single value
-            schema['enum'] = [const]
-        schema.pop('discriminator', None)
-        schema.pop('examples', None)
-
-        # TODO: Should we use the trick from pydantic_ai.models.openai._OpenAIJsonSchema
-        #   where we add notes about these properties to the field description?
-        schema.pop('exclusiveMaximum', None)
-        schema.pop('exclusiveMinimum', None)
-
-        type_ = schema.get('type')
-        if 'oneOf' in schema and 'type' not in schema:  # pragma: no cover
-            # This gets hit when we have a discriminated union
-            # Gemini returns an API error in this case even though it says in its error message it shouldn't...
-            # Changing the oneOf to an anyOf prevents the API error and I think is functionally equivalent
-            schema['anyOf'] = schema.pop('oneOf')
-
-        if type_ == 'string' and (fmt := schema.pop('format', None)):
-            description = schema.get('description')
-            if description:
-                schema['description'] = f'{description} (format: {fmt})'
-            else:
-                schema['description'] = f'Format: {fmt}'
-
-        if '$ref' in schema:
-            raise UserError(  # pragma: no cover
-                f'Recursive `$ref`s in JSON Schema are not supported by Gemini: {schema["$ref"]}'
-            )
-
-        if 'prefixItems' in schema:  # pragma: lax no cover
-            # prefixItems is not currently supported in Gemini, so we convert it to items for best compatibility
-            prefix_items = schema.pop('prefixItems')
-            items = schema.get('items')
-            unique_items = [items] if items is not None else []
-            for item in prefix_items:
-                if item not in unique_items:
-                    unique_items.append(item)
-            if len(unique_items) > 1:  # pragma: no cover
-                schema['items'] = {'anyOf': unique_items}
-            elif len(unique_items) == 1:
-                schema['items'] = unique_items[0]
-            schema.setdefault('minItems', len(prefix_items))
-            if items is None:
-                schema.setdefault('maxItems', len(prefix_items))
-
-        return schema
