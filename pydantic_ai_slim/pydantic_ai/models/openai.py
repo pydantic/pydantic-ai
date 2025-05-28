@@ -171,7 +171,7 @@ class OpenAIModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal['openai', 'deepseek', 'azure', 'openrouter'] | Provider[AsyncOpenAI] = 'openai',
-        profile: ModelProfileSpec = None,
+        profile: ModelProfileSpec | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
     ):
         """Initialize an OpenAI model.
@@ -534,8 +534,8 @@ class OpenAIResponsesModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure'] | Provider[AsyncOpenAI] = 'openai',
-        profile: ModelProfileSpec = None,
+        provider: Literal['openai', 'deepseek', 'azure', 'openrouter'] | Provider[AsyncOpenAI] = 'openai',
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize an OpenAI Responses model.
 

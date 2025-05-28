@@ -3,8 +3,9 @@ from __future__ import annotations as _annotations
 import warnings
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.profiles._json_schema import JsonSchema, JsonSchemaTransformer
+
+from . import ModelProfile
+from ._json_schema import JsonSchema, JsonSchemaTransformer
 
 
 def google_model_profile(model_name: str) -> ModelProfile | None:

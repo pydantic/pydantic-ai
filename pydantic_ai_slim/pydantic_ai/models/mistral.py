@@ -121,7 +121,7 @@ class MistralModel(Model):
         model_name: MistralModelName,
         *,
         provider: Literal['mistral'] | Provider[Mistral] = 'mistral',
-        profile: ModelProfileSpec = None,
+        profile: ModelProfileSpec | None = None,
         json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n""",
     ):
         """Initialize a Mistral model.

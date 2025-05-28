@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import os
-from dataclasses import replace
 from typing import overload
 
 from httpx import AsyncClient as AsyncHTTPClient
@@ -11,7 +10,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.providers import Provider
 
 try:
@@ -42,15 +41,10 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         profile = deepseek_model_profile(model_name)
 
         # As DeepSeekProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior if json_schema_transformer is not set explicitly.
+        # we need to maintain that behavior unless json_schema_transformer is set explicitly.
         # This was not the case when using a DeepSeek model with another model class (e.g. BedrockConverseModel or GroqModel),
         # so we won't do this in `deepseek_model_profile` unless we learn it's always needed.
-        if profile:
-            if profile.json_schema_transformer is None:  # pragma: no cover
-                profile = replace(profile, json_schema_transformer=OpenAIJsonSchemaTransformer)
-        else:
-            profile = ModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
-        return profile
+        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
 
     @overload
     def __init__(self) -> None: ...

@@ -119,7 +119,7 @@ class AnthropicModel(Model):
         model_name: AnthropicModelName,
         *,
         provider: Literal['anthropic'] | Provider[AsyncAnthropic] = 'anthropic',
-        profile: ModelProfileSpec = None,
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize an Anthropic model.
 

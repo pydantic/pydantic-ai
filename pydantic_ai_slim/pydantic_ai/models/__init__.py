@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from functools import cache
+from functools import cache, cached_property
 
 import httpx
 from typing_extensions import Literal, TypeAliasType
@@ -295,7 +295,7 @@ class ModelRequestParameters:
 class Model(ABC):
     """Abstract class for a model."""
 
-    _profile: ModelProfileSpec = None
+    _profile: ModelProfileSpec | None = None
 
     @abstractmethod
     async def request(
@@ -343,7 +343,7 @@ class Model(ABC):
         """The model name."""
         raise NotImplementedError()
 
-    @property
+    @cached_property
     def profile(self) -> ModelProfile:
         """The model profile."""
         _profile = self._profile

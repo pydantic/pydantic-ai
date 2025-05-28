@@ -198,7 +198,7 @@ class BedrockConverseModel(Model):
         model_name: BedrockModelName,
         *,
         provider: Literal['bedrock'] | Provider[BaseClient] = 'bedrock',
-        profile: ModelProfileSpec = None,
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize a Bedrock model.
 

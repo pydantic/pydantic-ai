@@ -140,7 +140,7 @@ class GoogleModel(Model):
         model_name: GoogleModelName,
         *,
         provider: Literal['google-gla', 'google-vertex'] | Provider[genai.Client] = 'google-gla',
-        profile: ModelProfileSpec = None,
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize a Gemini model.
 

@@ -117,7 +117,7 @@ class GroqModel(Model):
         model_name: GroqModelName,
         *,
         provider: Literal['groq'] | Provider[AsyncGroq] = 'groq',
-        profile: ModelProfileSpec = None,
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize a Groq model.
 

@@ -3,9 +3,9 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass, fields, replace
 from typing import Callable, Union
 
-from typing_extensions import Self, TypeAliasType
+from typing_extensions import Self
 
-from pydantic_ai.profiles._json_schema import JsonSchemaTransformer
+from ._json_schema import JsonSchemaTransformer
 
 
 @dataclass
@@ -22,18 +22,18 @@ class ModelProfile:
         return cls().update(profile)
 
     def update(self, profile: ModelProfile | None) -> Self:
-        """Update this ModelProfile (subclass) instance with the values from another ModelProfile instance."""
+        """Update this ModelProfile (subclass) instance with the non-default values from another ModelProfile instance."""
         if not profile:
             return self
         field_names = set(f.name for f in fields(self))
-        shallow_copied_dict = {
-            field.name: getattr(profile, field.name) for field in fields(profile) if field.name in field_names
+        non_default_attrs = {
+            f.name: getattr(profile, f.name)
+            for f in fields(profile)
+            if f.name in field_names and getattr(profile, f.name) != f.default
         }
-        return replace(self, **shallow_copied_dict)
+        return replace(self, **non_default_attrs)
 
 
-ModelProfileSpec = TypeAliasType(
-    'ModelProfileSpec', Union[ModelProfile, Callable[[str], Union[ModelProfile, None]], None]
-)
+ModelProfileSpec = Union[ModelProfile, Callable[[str], Union[ModelProfile, None]]]
 
 DEFAULT_PROFILE = ModelProfile()

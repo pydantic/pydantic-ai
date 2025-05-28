@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from functools import cached_property
@@ -1382,7 +1382,10 @@ async def test_strict_mode_cannot_infer_strict(
 
     # If the model profile says strict is not supported, we never pass strict
     await assert_strict(
-        None, profile=replace(openai_model_profile('test-model'), openai_supports_strict_tool_definition=False)
+        None,
+        profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False).update(
+            openai_model_profile('test-model')
+        ),
     )
 
 
@@ -1693,7 +1696,7 @@ def test_model_profile_strict_not_supported():
     m = OpenAIModel(
         'gpt-4o',
         provider=OpenAIProvider(api_key='foobar'),
-        profile=replace(openai_model_profile('gpt-4o'), openai_supports_strict_tool_definition=False),
+        profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False).update(openai_model_profile('gpt-4o')),
     )
     tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
 

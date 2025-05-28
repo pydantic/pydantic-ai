@@ -108,7 +108,7 @@ class CohereModel(Model):
         model_name: CohereModelName,
         *,
         provider: Literal['cohere'] | Provider[AsyncClientV2] = 'cohere',
-        profile: ModelProfileSpec = None,
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize an Cohere model.
 

@@ -4,8 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.profiles._json_schema import JsonSchema, JsonSchemaTransformer
+from . import ModelProfile
+from ._json_schema import JsonSchema, JsonSchemaTransformer
 
 
 @dataclass
