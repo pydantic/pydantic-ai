@@ -357,6 +357,14 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
         custom_model_settings,
     )
 
+    # Test with expected output without input
+    with pytest.raises(NotImplementedError):
+        LLMJudge(
+            rubric='Output contains input with custom settings',
+            include_input=False,
+            include_expected_output=True,
+        )
+
 
 async def test_python():
     """Test Python evaluator."""

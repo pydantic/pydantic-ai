@@ -225,7 +225,7 @@ class LLMJudge(Evaluator[object, object, object]):
         elif (self.include_input is False) and (self.include_expected_output is True):
             raise NotImplementedError('include_expected_output is not supported without include_input')
 
-        else:
+        else:  # pragma: no cover - unreachable due to type constraints
             raise ValueError(f'Unexpected values for {self.include_input=} and {self.include_expected_output=}')
 
         output: dict[str, EvaluationScalar | EvaluationReason] = {}
