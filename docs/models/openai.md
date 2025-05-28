@@ -336,16 +336,16 @@ agent = Agent(model)
 ### Grok (xAI)
 
 Go to [xAI API Console](https://console.x.ai/) and create an API key.
-Once you have the API key, you can use it with the `OpenAIProvider`:
+Once you have the API key, you can use it with the `GrokProvider`:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.grok import GrokProvider
 
 model = OpenAIModel(
     'grok-2-1212',
-    provider=OpenAIProvider(base_url='https://api.x.ai/v1', api_key='your-xai-api-key'),
+    provider=GrokProvider(api_key='your-xai-api-key'),
 )
 agent = Agent(model)
 ...
@@ -375,19 +375,16 @@ agent = Agent(model)
 ### Fireworks AI
 
 Go to [Fireworks.AI](https://fireworks.ai/) and create an API key in your account settings.
-Once you have the API key, you can use it with the `OpenAIProvider`:
+Once you have the API key, you can use it with the `FireworksProvider`:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.fireworks import FireworksProvider
 
 model = OpenAIModel(
     'accounts/fireworks/models/qwq-32b',  # model library available at https://fireworks.ai/models
-    provider=OpenAIProvider(
-        base_url='https://api.fireworks.ai/inference/v1',
-        api_key='your-fireworks-api-key',
-    ),
+    provider=FireworksProvider(api_key='your-fireworks-api-key'),
 )
 agent = Agent(model)
 ...
@@ -396,19 +393,16 @@ agent = Agent(model)
 ### Together AI
 
 Go to [Together.ai](https://www.together.ai/) and create an API key in your account settings.
-Once you have the API key, you can use it with the `OpenAIProvider`:
+Once you have the API key, you can use it with the `TogetherProvider`:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.together import TogetherProvider
 
 model = OpenAIModel(
     'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free',  # model library available at https://www.together.ai/models
-    provider=OpenAIProvider(
-        base_url='https://api.together.xyz/v1',
-        api_key='your-together-api-key',
-    ),
+    provider=TogetherProvider(api_key='your-together-api-key'),
 )
 agent = Agent(model)
 ...

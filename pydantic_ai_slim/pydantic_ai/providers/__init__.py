@@ -95,5 +95,17 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .cohere import CohereProvider
 
         return CohereProvider()
+    elif provider == 'grok':
+        from .grok import GrokProvider
+
+        return GrokProvider()
+    elif provider == 'fireworks':
+        from .fireworks import FireworksProvider
+
+        return FireworksProvider()
+    elif provider == 'together':
+        from .together import TogetherProvider
+
+        return TogetherProvider()
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
