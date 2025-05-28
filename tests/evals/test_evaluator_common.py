@@ -253,7 +253,7 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     )
 
     mock_judge_input_output_expected.assert_called_once_with(
-        {'prompt': 'Hello'}, 'Hello', 'Hello world', 'Output contains input', 'openai:gpt-4o', None
+        {'prompt': 'Hello'}, 'Hello world', 'Hello', 'Output contains input', 'openai:gpt-4o', None
     )
 
     # Test with failing result
@@ -350,8 +350,8 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
     )
     mock_judge_input_output_expected.assert_called_once_with(
         {'prompt': 'Hello Custom'},
-        'Hello',
         'Hello world custom settings',
+        'Hello',
         'Output contains input with custom settings',
         'openai:gpt-3.5-turbo',
         custom_model_settings,

@@ -179,7 +179,7 @@ async def test_judge_input_output_expected_mock(mocker: MockerFixture):
     mock_run = mocker.patch('pydantic_ai.Agent.run', return_value=mock_result)
 
     # Test with string input and output
-    result = await judge_input_output_expected('Hello', 'Hello', 'Hello world', 'Output contains input')
+    result = await judge_input_output_expected('Hello', 'Hello world', 'Hello', 'Output contains input')
     assert isinstance(result, GradingOutput)
     assert result.reason == 'Test passed'
     assert result.pass_ is True
@@ -205,8 +205,8 @@ async def test_judge_input_output_expected_with_model_settings_mock(mocker: Mock
 
     result = await judge_input_output_expected(
         'Hello settings',
-        'Hello',
         'Hello world with settings',
+        'Hello',
         'Output contains input with settings',
         model_settings=test_model_settings,
     )
