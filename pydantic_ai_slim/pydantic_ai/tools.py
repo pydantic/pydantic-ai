@@ -326,7 +326,7 @@ class Tool(Generic[AgentDepsT]):
         self.strict = strict
 
     @classmethod
-    def from_schema(cls, function: Callable[..., Any], json_schema: JsonSchemaValue) -> Tool[None]:
+    def from_schema(cls, function: Callable[..., Any], json_schema: JsonSchemaValue) -> Tool[AgentDepsT]:
         """Creates a Pydantic tool from a function and a JSON schema.
 
         Args:
@@ -360,7 +360,7 @@ class Tool(Generic[AgentDepsT]):
         )
 
     @classmethod
-    def from_langchain(cls, langchain_tool: LangChainTool) -> Tool[None]:
+    def from_langchain(cls, langchain_tool: LangChainTool) -> Tool[AgentDepsT]:
         """Creates a Pydantic tool proxy from a LangChain tool.
 
         Args:
