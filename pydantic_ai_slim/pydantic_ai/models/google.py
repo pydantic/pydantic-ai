@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Literal, Union, cast, overload
+from typing import Any, Literal, Union, cast, overload
 from uuid import uuid4
 
 from typing_extensions import assert_never
@@ -291,9 +291,16 @@ class GoogleModel(Model):
                     'Content field missing from Gemini response', str(response)
                 )  # pragma: no cover
         parts = response.candidates[0].content.parts or []
+        vendor_id = response.response_id or None
+        vendor_details: dict[str, Any] | None = None
+        finish_reason = response.candidates[0].finish_reason
+        if finish_reason:  # pragma: no branch
+            vendor_details = {'finish_reason': finish_reason.value}
         usage = _metadata_as_usage(response)
         usage.requests = 1
-        return _process_response_from_parts(parts, response.model_version or self._model_name, usage)
+        return _process_response_from_parts(
+            parts, response.model_version or self._model_name, usage, vendor_id=vendor_id, vendor_details=vendor_details
+        )
 
     async def _process_streamed_response(self, response: AsyncIterator[GenerateContentResponse]) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -439,7 +446,13 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
     return ContentDict(role='model', parts=parts)
 
 
-def _process_response_from_parts(parts: list[Part], model_name: GoogleModelName, usage: usage.Usage) -> ModelResponse:
+def _process_response_from_parts(
+    parts: list[Part],
+    model_name: GoogleModelName,
+    usage: usage.Usage,
+    vendor_id: str | None,
+    vendor_details: dict[str, Any] | None = None,
+) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
         if part.text:
@@ -454,7 +467,9 @@ def _process_response_from_parts(parts: list[Part], model_name: GoogleModelName,
             raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
-    return ModelResponse(parts=items, model_name=model_name, usage=usage)
+    return ModelResponse(
+        parts=items, model_name=model_name, usage=usage, vendor_id=vendor_id, vendor_details=vendor_details
+    )
 
 
 def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclarationDict:

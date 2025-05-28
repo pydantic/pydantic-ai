@@ -1035,3 +1035,31 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
 )
 def test_usage(message_callback: Callable[[], BetaMessage | BetaRawMessageStreamEvent], usage: Usage):
     assert _map_usage(message_callback()) == usage
+
+
+@pytest.mark.vcr()
+async def test_anthropic_model_empty_message_on_history(allow_model_requests: None, anthropic_api_key: str):
+    """The Anthropic API will error if you send an empty message on the history.
+
+    Check <https://github.com/pydantic/pydantic-ai/pull/1027> for more details.
+    """
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.')
+
+    result = await agent.run(
+        'I need a potato!',
+        message_history=[
+            ModelRequest(parts=[], instructions='You are a helpful assistant.', kind='request'),
+            ModelResponse(parts=[TextPart(content='Hello, how can I help you?')], kind='response'),
+        ],
+    )
+    assert result.output == snapshot("""\
+I can't physically give you a potato since I'm a computer program. However, I can:
+
+1. Help you find recipes that use potatoes
+2. Give you tips on how to select, store, or cook potatoes
+3. Share information about different potato varieties
+4. Provide guidance on growing potatoes
+
+What specifically would you like to know about potatoes?\
+""")
