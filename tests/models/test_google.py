@@ -245,7 +245,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     request_tokens=57,
                     response_tokens=15,
                     total_tokens=173,
-                    details={'thoughts_token_count': 101, 'thoughts_tokens': 101, 'text_prompt_tokens': 57},
+                    details={'thoughts_tokens': 101, 'text_prompt_tokens': 57},
                 ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),

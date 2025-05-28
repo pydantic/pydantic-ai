@@ -791,8 +791,6 @@ def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
         return usage.Usage()  # pragma: no cover
     details: dict[str, int] = {}
     if cached_content_token_count := metadata.get('cached_content_token_count'):
-        # 'cached_content_token_count' left for backwards compatibility
-        details['cached_content_token_count'] = cached_content_token_count  # pragma: no cover
         details['cached_content_tokens'] = cached_content_token_count  # pragma: no cover
 
     if thoughts_token_count := metadata.get('thoughts_token_count'):
@@ -801,21 +799,12 @@ def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
     if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count'):
         details['tool_use_prompt_tokens'] = tool_use_prompt_token_count  # pragma: no cover
 
-    detailed_keys_map: dict[str, str] = {
-        'prompt_tokens_details': 'prompt_tokens',
-        'cache_tokens_details': 'cache_tokens',
-        'candidates_tokens_details': 'candidates_tokens',
-        'tool_use_prompt_tokens_details': 'tool_use_prompt_tokens',
-    }
-
-    details.update(
-        {
-            f'{detail["modality"].lower()}_{suffix}': detail['token_count']
-            for key, suffix in detailed_keys_map.items()
-            if (metadata_details := metadata.get(key))
-            for detail in metadata_details
-        }
-    )
+    for key, metadata_details in metadata.items():
+        if key.endswith('_details') and metadata_details:
+            metadata_details = cast(list[_GeminiModalityTokenCount], metadata_details)
+            suffix = key.removesuffix('_details')
+            for detail in metadata_details:
+                details[f'{detail["modality"].lower()}_{suffix}'] = detail['token_count']
 
     return usage.Usage(
         request_tokens=metadata.get('prompt_token_count', 0),
