@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
-from pydantic_core import SchemaValidator, core_schema
+from pydantic_core import core_schema
 from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
 from . import _function_schema, _utils, messages as _messages

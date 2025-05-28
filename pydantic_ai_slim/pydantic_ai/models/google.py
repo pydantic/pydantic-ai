@@ -399,7 +399,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
-            self._usage += _metadata_as_usage(chunk)
+            self._usage = _metadata_as_usage(chunk)
 
             assert chunk.candidates is not None
             candidate = chunk.candidates[0]
@@ -490,17 +490,28 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.Usage:
     metadata = response.usage_metadata
     if metadata is None:
         return usage.Usage()  # pragma: no cover
-    # TODO(Marcelo): We exclude the `prompt_tokens_details` and `candidate_token_details` fields because on
-    # `usage.Usage.incr``, it will try to sum non-integer values with integers, which will fail. We should probably
-    # handle this in the `Usage` class.
-    details = metadata.model_dump(
-        exclude={'prompt_tokens_details', 'candidates_tokens_details', 'traffic_type'},
-        exclude_defaults=True,
-    )
+    metadata = metadata.model_dump(exclude_defaults=True)
+
+    details: dict[str, int] = {}
+    if cached_content_token_count := metadata.get('cached_content_token_count'):
+        details['cached_content_tokens'] = cached_content_token_count  # pragma: no cover
+
+    if thoughts_token_count := metadata.get('thoughts_token_count'):
+        details['thoughts_tokens'] = thoughts_token_count
+
+    if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count'):
+        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count  # pragma: no cover
+
+    for key, metadata_details in metadata.items():
+        if key.endswith('_details') and metadata_details:
+            suffix = key.removesuffix('_details')
+            for detail in metadata_details:
+                details[f'{detail["modality"].lower()}_{suffix}'] = detail['token_count']
+
     return usage.Usage(
-        request_tokens=details.pop('prompt_token_count', 0),
-        response_tokens=details.pop('candidates_token_count', 0),
-        total_tokens=details.pop('total_token_count', 0),
+        request_tokens=metadata.get('prompt_token_count', 0),
+        response_tokens=metadata.get('candidates_token_count', 0),
+        total_tokens=metadata.get('total_token_count', 0),
         details=details,
     )
 

@@ -172,66 +172,63 @@ class OutputSchema(Generic[OutputDataT]):
         if output_type is str:
             return None
 
-        multiple = False
-        allow_text_output = False
-
-        output_types_or_markers: Sequence[SimpleOutputTypeOrMarker[OutputDataT]]
+        output_types: Sequence[SimpleOutputTypeOrMarker[OutputDataT]]
         if isinstance(output_type, Sequence):
-            output_types_or_markers = output_type
-            if str in output_types_or_markers:
-                allow_text_output = True
-                output_types_or_markers = [t for t in output_types_or_markers if t is not str]
-            if len(output_types_or_markers) > 1:
-                multiple = True
+            output_types = output_type
         else:
-            output_types_or_markers = [output_type]
+            output_types = (output_type,)
+
+        output_types_flat: list[SimpleOutputTypeOrMarker[OutputDataT]] = []
+        for output_type in output_types:
+            if union_types := get_union_args(output_type):
+                output_types_flat.extend(union_types)
+            else:
+                output_types_flat.append(output_type)
+
+        allow_text_output = False
+        if str in output_types_flat:
+            allow_text_output = True
+            output_types_flat = [t for t in output_types_flat if t is not str]
+
+        multiple = len(output_types_flat) > 1
+
+        default_tool_name = name or DEFAULT_OUTPUT_TOOL_NAME
+        default_tool_description = description
+        default_tool_strict = strict
 
         tools: dict[str, OutputTool[OutputDataT]] = {}
-        for output_type_or_marker in output_types_or_markers:
-            tool_name = name
-            tool_description = description
-            tool_strict = strict
-            custom_tool_name = False
-            if isinstance(output_type_or_marker, ToolOutput):
-                output_type_ = output_type_or_marker.output_type
+        for output_type in output_types_flat:
+            tool_name = None
+            tool_description = None
+            tool_strict = None
+            if isinstance(output_type, ToolOutput):
+                tool_output_type = output_type.output_type
                 # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
-                tool_name = output_type_or_marker.name
-                tool_description = output_type_or_marker.description
-                tool_strict = output_type_or_marker.strict
-                custom_tool_name = True
-            elif output_type_other_than_str := extract_str_from_union(output_type_or_marker):
-                output_type_ = output_type_other_than_str.value
-                allow_text_output = True
+                tool_name = output_type.name
+                tool_description = output_type.description
+                tool_strict = output_type.strict
             else:
-                output_type_ = output_type_or_marker
+                tool_output_type = output_type
 
-            disambiguate_tool_name = multiple and not custom_tool_name
-            if args := get_union_args(output_type_):
-                multiple = True
-                disambiguate_tool_name = True
-            else:
-                args = (output_type_,)
+            if tool_name is None:
+                tool_name = default_tool_name
+                if multiple:
+                    tool_name += f'_{tool_output_type.__name__}'
 
-            base_tool_name = tool_name
-            for arg in args:
-                tool_name = base_tool_name or DEFAULT_OUTPUT_TOOL_NAME
+            i = 1
+            original_tool_name = tool_name
+            while tool_name in tools:
+                i += 1
+                tool_name = f'{original_tool_name}_{i}'
 
-                if disambiguate_tool_name:
-                    tool_name += f'_{arg.__name__}'
+            tool_description = tool_description or default_tool_description
+            if tool_strict is None:
+                tool_strict = default_tool_strict
 
-                i = 1
-                original_tool_name = tool_name
-                while tool_name in tools:
-                    i += 1
-                    tool_name = f'{original_tool_name}_{i}'
-
-                parameters_schema = OutputObjectSchema(
-                    output_type=arg, description=tool_description, strict=tool_strict
-                )
-                tools[tool_name] = cast(
-                    OutputTool[OutputDataT],
-                    OutputTool(name=tool_name, parameters_schema=parameters_schema, multiple=multiple),
-                )
+            parameters_schema = OutputObjectSchema(
+                output_type=tool_output_type, description=tool_description, strict=tool_strict
+            )
+            tools[tool_name] = OutputTool(name=tool_name, parameters_schema=parameters_schema, multiple=multiple)
 
         return cls(
             tools=tools,
@@ -428,24 +425,6 @@ class OutputTool(Generic[OutputDataT]):
                 raise  # pragma: lax no cover
         else:
             return output
-
-
-def extract_str_from_union(output_type: Any) -> _utils.Option[Any]:
-    """Extract the string type from a Union, return the remaining union or remaining type."""
-    union_args = get_union_args(output_type)
-    if any(t is str for t in union_args):
-        remain_args: list[Any] = []
-        includes_str = False
-        for arg in union_args:
-            if arg is str:
-                includes_str = True
-            else:
-                remain_args.append(arg)
-        if includes_str:  # pragma: no branch
-            if len(remain_args) == 1:
-                return _utils.Some(remain_args[0])
-            else:
-                return _utils.Some(Union[tuple(remain_args)])  # pragma: no cover
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
