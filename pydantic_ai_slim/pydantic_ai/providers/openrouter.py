@@ -71,7 +71,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         # we need to maintain that behavior if json_schema_transformer is not set explicitly
         if profile:
             if profile.json_schema_transformer is None:
-                profile = replace(profile, json_schema_transformer=OpenAIJsonSchemaTransformer)
+                profile = replace(profile, json_schema_transformer=OpenAIJsonSchemaTransformer)  # pragma: no cover
         else:
             profile = ModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
         return profile

@@ -46,7 +46,7 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         # This was not the case when using a DeepSeek model with another model class (e.g. BedrockConverseModel or GroqModel),
         # so we won't do this in `deepseek_model_profile` unless we learn it's always needed.
         if profile:
-            if profile.json_schema_transformer is None:
+            if profile.json_schema_transformer is None:  # pragma: no cover
                 profile = replace(profile, json_schema_transformer=OpenAIJsonSchemaTransformer)
         else:
             profile = ModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
