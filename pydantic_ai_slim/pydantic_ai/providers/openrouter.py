@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from dataclasses import replace
 from typing import overload
 
 from httpx import AsyncClient as AsyncHTTPClient
@@ -17,7 +18,7 @@ from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
@@ -59,11 +60,21 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             'meta-llama': meta_model_profile,
         }
 
+        profile = None
+
         provider, model_name = model_name.split('/', 1)
         if provider in provider_to_profile:
             model_name, *_ = model_name.split(':', 1)  # drop tags
-            return provider_to_profile[provider](model_name)
-        return None
+            profile = provider_to_profile[provider](model_name)
+
+        # As OpenRouterProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # we need to maintain that behavior if json_schema_transformer is not set explicitly
+        if profile:
+            if profile.json_schema_transformer is None:
+                profile = replace(profile, json_schema_transformer=OpenAIJsonSchemaTransformer)
+        else:
+            profile = ModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
+        return profile
 
     @overload
     def __init__(self) -> None: ...

@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles import DEFAULT_PROFILE
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from ..conftest import TestEnv, try_import
 
@@ -52,4 +52,4 @@ def test_deep_seek_pass_openai_client() -> None:
 def test_deep_seek_model_profile():
     provider = DeepSeekProvider(api_key='api-key')
     model = OpenAIModel('deepseek-r1', provider=provider)
-    assert model.profile == DEFAULT_PROFILE
+    assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer

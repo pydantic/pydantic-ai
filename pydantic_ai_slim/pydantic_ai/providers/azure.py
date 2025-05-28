@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from dataclasses import replace
 from typing import overload
 
 import httpx
@@ -14,7 +15,7 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -63,7 +64,16 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 if prefix.endswith('-'):
                     model_name = model_name[len(prefix) :]
 
-                return profile_func(model_name)
+                profile = profile_func(model_name)
+
+                # As AzureProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+                # we need to maintain that behavior if json_schema_transformer is not set explicitly
+                if profile:
+                    if profile.json_schema_transformer is None:
+                        profile = replace(profile, json_schema_transformer=OpenAIJsonSchemaTransformer)
+                else:
+                    profile = ModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
+                return profile
 
         # OpenAI models are unprefixed
         return openai_model_profile(model_name)

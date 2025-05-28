@@ -7,7 +7,12 @@ import pytest
 from pytest_mock import MockerFixture
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles import DEFAULT_PROFILE
+from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
+from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
 
@@ -64,35 +69,39 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     provider = GroqProvider(groq_client=groq_client)
 
     ns = 'pydantic_ai.providers.groq'
-    meta_model_profile = mocker.patch(f'{ns}.meta_model_profile', return_value=DEFAULT_PROFILE)
-    deepseek_model_profile = mocker.patch(f'{ns}.deepseek_model_profile', return_value=DEFAULT_PROFILE)
-    google_model_profile = mocker.patch(f'{ns}.google_model_profile', return_value=DEFAULT_PROFILE)
-    mistral_model_profile = mocker.patch(f'{ns}.mistral_model_profile', return_value=DEFAULT_PROFILE)
-    qwen_model_profile = mocker.patch(f'{ns}.qwen_model_profile', return_value=DEFAULT_PROFILE)
+    meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
+    deepseek_model_profile_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
+    google_model_profile_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
+    mistral_model_profile_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
+    qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
 
     meta_profile = provider.model_profile('meta-llama/Llama-Guard-4-12B')
-    meta_model_profile.assert_called_with('llama-guard-4-12b')
-    assert meta_profile == meta_model_profile.return_value
+    meta_model_profile_mock.assert_called_with('llama-guard-4-12b')
+    assert meta_profile is not None
+    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     meta_profile = provider.model_profile('llama-3.3-70b-versatile')
-    meta_model_profile.assert_called_with('llama-3.3-70b-versatile')
-    assert meta_profile == meta_model_profile.return_value
+    meta_model_profile_mock.assert_called_with('llama-3.3-70b-versatile')
+    assert meta_profile is not None
+    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     google_profile = provider.model_profile('gemma2-9b-it')
-    google_model_profile.assert_called_with('gemma2-9b-it')
-    assert google_profile == google_model_profile.return_value
+    google_model_profile_mock.assert_called_with('gemma2-9b-it')
+    assert google_profile is not None
+    assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
 
     deepseek_profile = provider.model_profile('deepseek-r1-distill-llama-70b')
-    deepseek_model_profile.assert_called_with('deepseek-r1-distill-llama-70b')
-    assert deepseek_profile == deepseek_model_profile.return_value
+    deepseek_model_profile_mock.assert_called_with('deepseek-r1-distill-llama-70b')
+    assert deepseek_profile is None
 
     mistral_profile = provider.model_profile('mistral-saba-24b')
-    mistral_model_profile.assert_called_with('mistral-saba-24b')
-    assert mistral_profile == mistral_model_profile.return_value
+    mistral_model_profile_mock.assert_called_with('mistral-saba-24b')
+    assert mistral_profile is None
 
     qwen_profile = provider.model_profile('qwen-qwq-32b')
-    qwen_model_profile.assert_called_with('qwen-qwq-32b')
-    assert qwen_profile == qwen_model_profile.return_value
+    qwen_model_profile_mock.assert_called_with('qwen-qwq-32b')
+    assert qwen_profile is not None
+    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is None
