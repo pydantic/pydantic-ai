@@ -346,14 +346,14 @@ class Model(ABC):
     @property
     def profile(self) -> ModelProfile:
         """The model profile."""
-        profile = self._profile
-        if callable(profile):
-            profile = profile(self.model_name)
+        _profile = self._profile
+        if callable(_profile):
+            _profile = _profile(self.model_name)
 
-        if profile is None:
+        if _profile is None:
             return DEFAULT_PROFILE
 
-        return profile
+        return _profile
 
     @property
     @abstractmethod

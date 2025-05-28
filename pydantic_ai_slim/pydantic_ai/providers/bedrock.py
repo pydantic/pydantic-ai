@@ -38,20 +38,6 @@ class BedrockModelProfile(ModelProfile):
     bedrock_tool_result_format: Literal['text', 'json'] = 'text'
 
 
-_provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-    'anthropic': lambda model_name: BedrockModelProfile(bedrock_supports_tool_choice=False).update(
-        anthropic_model_profile(model_name)
-    ),
-    'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
-        mistral_model_profile(model_name)
-    ),
-    'cohere': cohere_model_profile,
-    'amazon': amazon_model_profile,
-    'meta': meta_model_profile,
-    'deepseek': deepseek_model_profile,
-}
-
-
 class BedrockProvider(Provider[BaseClient]):
     """Provider for AWS Bedrock."""
 
@@ -68,16 +54,19 @@ class BedrockProvider(Provider[BaseClient]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        """Get the model profile for a Bedrock model.
+        provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
+            'anthropic': lambda model_name: BedrockModelProfile(bedrock_supports_tool_choice=False).update(
+                anthropic_model_profile(model_name)
+            ),
+            'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
+                mistral_model_profile(model_name)
+            ),
+            'cohere': cohere_model_profile,
+            'amazon': amazon_model_profile,
+            'meta': meta_model_profile,
+            'deepseek': deepseek_model_profile,
+        }
 
-        This function parses the provider and model name from Bedrock model names and delegates to the appropriate
-        provider's model profile function. For example:
-        - "us.anthropic.claude-3-sonnet-20240229-v1:0" -> provider="anthropic", model_name="claude-3-sonnet-20240229"
-        - "mistral.mistral-7b-instruct-v0:2" -> provider="mistral", model_name="mistral-7b-instruct"
-        - "cohere.command-text-v14" -> provider="cohere", model_name="command-text"
-        - "amazon.titan-text-express-v1" -> provider="amazon", model_name="titan-text-express"
-        - "meta.llama3-8b-instruct-v1:0" -> provider="meta", model_name="llama3-8b-instruct"
-        """
         # Split the model name into parts
         parts = model_name.split('.', 2)
 
@@ -98,8 +87,8 @@ class BedrockProvider(Provider[BaseClient]):
         else:
             model_name = model_name_with_version
 
-        if provider in _provider_to_profile:
-            return _provider_to_profile[provider](model_name)
+        if provider in provider_to_profile:
+            return provider_to_profile[provider](model_name)
 
         return None
 

@@ -63,6 +63,7 @@ if TYPE_CHECKING:
         PromptVariableValuesTypeDef,
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
+        ToolConfigurationTypeDef,
         ToolTypeDef,
         VideoBlockTypeDef,
     )
@@ -311,16 +312,6 @@ class BedrockConverseModel(Model):
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ConverseResponseTypeDef | EventStream[ConverseStreamOutputTypeDef]:
-        tools = self._get_tools(model_request_parameters)
-
-        support_tool_choice = BedrockModelProfile.from_profile(self.profile).bedrock_supports_tool_choice
-        if not tools or not support_tool_choice:
-            tool_choice: ToolChoiceTypeDef = {}
-        elif not model_request_parameters.allow_text_output:
-            tool_choice = {'any': {}}  # pragma: no cover
-        else:
-            tool_choice = {'auto': {}}
-
         system_prompt, bedrock_messages = await self._map_messages(messages)
         inference_config = self._map_inference_config(model_settings)
 
@@ -330,6 +321,10 @@ class BedrockConverseModel(Model):
             'system': system_prompt,
             'inferenceConfig': inference_config,
         }
+
+        tool_config = self._map_tool_config(model_request_parameters)
+        if tool_config:
+            params['toolConfig'] = tool_config
 
         # Bedrock supports a set of specific extra parameters
         if model_settings:
@@ -347,11 +342,6 @@ class BedrockConverseModel(Model):
                 params['additionalModelRequestFields'] = additional_model_requests_fields
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
-
-        if tools:
-            params['toolConfig'] = {'tools': tools}
-            if tool_choice:
-                params['toolConfig']['toolChoice'] = tool_choice
 
         if stream:
             model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
@@ -377,6 +367,23 @@ class BedrockConverseModel(Model):
             inference_config['stopSequences'] = stop_sequences
 
         return inference_config
+
+    def _map_tool_config(self, model_request_parameters: ModelRequestParameters) -> ToolConfigurationTypeDef | None:
+        tools = self._get_tools(model_request_parameters)
+        if not tools:
+            return None
+
+        tool_choice: ToolChoiceTypeDef
+        if not model_request_parameters.allow_text_output:
+            tool_choice = {'any': {}}  # pragma: no cover
+        else:
+            tool_choice = {'auto': {}}
+
+        tool_config: ToolConfigurationTypeDef = {'tools': tools}
+        if tool_choice and BedrockModelProfile.from_profile(self.profile).bedrock_supports_tool_choice:
+            tool_config['toolChoice'] = tool_choice
+
+        return tool_config
 
     async def _map_messages(
         self, messages: list[ModelMessage]

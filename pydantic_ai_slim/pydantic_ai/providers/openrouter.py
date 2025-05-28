@@ -30,20 +30,6 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
-_provider_to_profile = {
-    'google': google_model_profile,
-    'openai': openai_model_profile,
-    'anthropic': anthropic_model_profile,
-    'mistralai': mistral_model_profile,
-    'qwen': qwen_model_profile,
-    'x-ai': grok_model_profile,
-    'cohere': cohere_model_profile,
-    'amazon': amazon_model_profile,
-    'deepseek': deepseek_model_profile,
-    'meta-llama': meta_model_profile,
-}
-
-
 class OpenRouterProvider(Provider[AsyncOpenAI]):
     """Provider for OpenRouter API."""
 
@@ -60,10 +46,23 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
+        provider_to_profile = {
+            'google': google_model_profile,
+            'openai': openai_model_profile,
+            'anthropic': anthropic_model_profile,
+            'mistralai': mistral_model_profile,
+            'qwen': qwen_model_profile,
+            'x-ai': grok_model_profile,
+            'cohere': cohere_model_profile,
+            'amazon': amazon_model_profile,
+            'deepseek': deepseek_model_profile,
+            'meta-llama': meta_model_profile,
+        }
+
         provider, model_name = model_name.split('/', 1)
-        if provider in _provider_to_profile:
-            model_name, *_ = model_name.split(':', 1)
-            return _provider_to_profile[provider](model_name)
+        if provider in provider_to_profile:
+            model_name, *_ = model_name.split(':', 1)  # drop tags
+            return provider_to_profile[provider](model_name)
         return None
 
     @overload

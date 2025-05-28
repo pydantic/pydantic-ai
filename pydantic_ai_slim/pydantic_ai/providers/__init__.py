@@ -45,7 +45,7 @@ class Provider(ABC, Generic[InterfaceClient]):
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
-        return None
+        return None  # pragma: no cover
 
 
 def infer_provider(provider: str) -> Provider[Any]:

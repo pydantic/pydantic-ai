@@ -692,15 +692,15 @@ class OpenAIResponsesModel(Model):
             tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> responses.FunctionToolParam:
+    def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
         return {
             'name': f.name,
             'parameters': f.parameters_json_schema,
             'type': 'function',
             'description': f.description,
-            # NOTE: f.strict should already be a boolean thanks to customize_request_parameters
-            'strict': f.strict or False,
+            'strict': bool(
+                f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
+            ),
         }
 
     async def _map_messages(

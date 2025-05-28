@@ -26,17 +26,6 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
-_prefix_to_profile = {
-    'llama': meta_model_profile,
-    'meta-llama': meta_model_profile,
-    'deepseek': deepseek_model_profile,
-    'mistral': mistral_model_profile,
-    'mistralai': mistral_model_profile,
-    'cohere': cohere_model_profile,
-    'grok': grok_model_profile,
-}
-
-
 class AzureProvider(Provider[AsyncOpenAI]):
     """Provider for Azure OpenAI API.
 
@@ -57,9 +46,24 @@ class AzureProvider(Provider[AsyncOpenAI]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        for provider, profile in _prefix_to_profile.items():
-            if model_name.startswith(provider):
-                return profile(model_name)
+        model_name = model_name.lower()
+
+        prefix_to_profile = {
+            'llama': meta_model_profile,
+            'meta-': meta_model_profile,
+            'deepseek': deepseek_model_profile,
+            'mistralai-': mistral_model_profile,
+            'mistral': mistral_model_profile,
+            'cohere-': cohere_model_profile,
+            'grok': grok_model_profile,
+        }
+
+        for prefix, profile_func in prefix_to_profile.items():
+            if model_name.startswith(prefix):
+                if prefix.endswith('-'):
+                    model_name = model_name[len(prefix) :]
+
+                return profile_func(model_name)
 
         # OpenAI models are unprefixed
         return openai_model_profile(model_name)

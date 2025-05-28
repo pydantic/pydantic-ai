@@ -8,6 +8,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles._json_schema import JsonSchema, JsonSchemaTransformer
 
 
+@dataclass
 class OpenAIModelProfile(ModelProfile):
     """Profile for models used with OpenAIModel.
 

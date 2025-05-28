@@ -11,6 +11,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
@@ -21,15 +22,6 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `groq` package to use the Groq provider, '
         'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
     ) from _import_error
-
-
-_prefix_to_profile = {
-    'llama': meta_model_profile,
-    'meta-llama/': meta_model_profile,
-    'gemma': google_model_profile,
-    'qwen': qwen_model_profile,
-    'deepseek': deepseek_model_profile,
-}
 
 
 class GroqProvider(Provider[AsyncGroq]):
@@ -48,7 +40,17 @@ class GroqProvider(Provider[AsyncGroq]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        for prefix, profile_func in _prefix_to_profile.items():
+        prefix_to_profile = {
+            'llama': meta_model_profile,
+            'meta-llama/': meta_model_profile,
+            'gemma': google_model_profile,
+            'qwen': qwen_model_profile,
+            'deepseek': deepseek_model_profile,
+            'mistral': mistral_model_profile,
+        }
+
+        for prefix, profile_func in prefix_to_profile.items():
+            model_name = model_name.lower()
             if model_name.startswith(prefix):
                 if prefix.endswith('/'):
                     model_name = model_name[len(prefix) :]
