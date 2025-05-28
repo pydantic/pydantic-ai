@@ -5,12 +5,12 @@ import dataclasses
 import json
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, Self
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union
 
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
-from pydantic_core import core_schema, SchemaValidator
+from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
 
 from . import _function_schema, _utils, messages as _messages
@@ -326,7 +326,7 @@ class Tool(Generic[AgentDepsT]):
         self.strict = strict
 
     @classmethod
-    def from_schema(cls, function: Callable[..., Any], json_schema: JsonSchemaValue) -> Self:
+    def from_schema(cls, function: Callable[..., Any], json_schema: JsonSchemaValue) -> Tool[None]:
         """Creates a Pydantic tool from a function and a JSON schema.
 
         Args:
@@ -360,7 +360,7 @@ class Tool(Generic[AgentDepsT]):
         )
 
     @classmethod
-    def from_langchain(cls, langchain_tool: LangChainTool) -> Self:
+    def from_langchain(cls, langchain_tool: LangChainTool) -> Tool[None]:
         """Creates a Pydantic tool proxy from a LangChain tool.
 
         Args:
