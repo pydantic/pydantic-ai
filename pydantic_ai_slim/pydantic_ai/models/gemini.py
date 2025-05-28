@@ -780,6 +780,7 @@ class _GeminiUsageMetaData(TypedDict, total=False):
     candidates_token_count: NotRequired[Annotated[int, pydantic.Field(alias='candidatesTokenCount')]]
     total_token_count: Annotated[int, pydantic.Field(alias='totalTokenCount')]
     cached_content_token_count: NotRequired[Annotated[int, pydantic.Field(alias='cachedContentTokenCount')]]
+    thoughts_token_count: NotRequired[Annotated[int, pydantic.Field(alias='thoughtsTokenCount')]]
 
 
 def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
@@ -789,6 +790,9 @@ def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
     details: dict[str, int] = {}
     if cached_content_token_count := metadata.get('cached_content_token_count'):
         details['cached_content_token_count'] = cached_content_token_count  # pragma: no cover
+
+    if thoughts_token_count := metadata.get('thoughts_token_count'):
+        details['thoughts_token_count'] = thoughts_token_count
     return usage.Usage(
         request_tokens=metadata.get('prompt_token_count', 0),
         response_tokens=metadata.get('candidates_token_count', 0),
