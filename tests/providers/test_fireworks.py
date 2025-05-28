@@ -95,6 +95,10 @@ def test_fireworks_provider_model_profile(mocker: MockerFixture):
     assert google_profile is not None
     assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
 
-    unknown_profile = provider.model_profile('unknown/model')
+    unknown_profile = provider.model_profile('accounts/fireworks/models/unknown-model')
+    assert unknown_profile is not None
+    assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+    unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is not None
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
