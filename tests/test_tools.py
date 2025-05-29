@@ -1174,6 +1174,8 @@ class SimulatedLangChainTool:
         tool_call_id: Union[str, None] = None,
         **kwargs: Any,
     ) -> Any:
+        if isinstance(tool_input, dict):
+            tool_input = dict(sorted(tool_input.items()))
         return f'I was called with {tool_input}'
 
 
@@ -1199,7 +1201,7 @@ def test_langchain_tool_conversion():
 
     agent = Agent('test', tools=[pydantic_tool], retries=7)
     result = agent.run_sync('foobar')
-    assert result.output == snapshot("{\"file_search\":\"I was called with {'pattern': 'a', 'dir_path': '.'}\"}")
+    assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': 'a'}\"}")
     assert agent._function_tools['file_search'].takes_ctx is False
     assert agent._function_tools['file_search'].max_retries == 7
 
@@ -1279,7 +1281,7 @@ def test_langchain_tool_defaults():
     pydantic_tool = Tool.from_langchain(langchain_tool)
 
     result = pydantic_tool.function(pattern='something')  # type: ignore
-    assert result == snapshot("I was called with {'pattern': 'something', 'dir_path': '.'}")
+    assert result == snapshot("I was called with {'dir_path': '.', 'pattern': 'something'}")
 
 
 def test_langchain_tool_positional():
@@ -1303,7 +1305,7 @@ def test_langchain_tool_positional():
     pydantic_tool = Tool.from_langchain(langchain_tool)
 
     result = pydantic_tool.function('something')  # type: ignore
-    assert result == snapshot("I was called with {'pattern': 'something', 'dir_path': '.'}")
+    assert result == snapshot("I was called with {'dir_path': '.', 'pattern': 'something'}")
 
 
 def test_langchain_tool_default_override():
@@ -1327,4 +1329,4 @@ def test_langchain_tool_default_override():
     pydantic_tool = Tool.from_langchain(langchain_tool)
 
     result = pydantic_tool.function(pattern='something', dir_path='somewhere')  # type: ignore
-    assert result == snapshot("I was called with {'pattern': 'something', 'dir_path': 'somewhere'}")
+    assert result == snapshot("I was called with {'dir_path': 'somewhere', 'pattern': 'something'}")
