@@ -194,6 +194,7 @@ class LLMJudge(Evaluator[object, object, object]):
     rubric: str
     model: models.Model | models.KnownModelName | None = None
     include_input: bool = False
+    include_expected_output: bool = False
     model_settings: ModelSettings | None = None
     score: OutputConfig | Literal[False] = False
     assertion: OutputConfig | Literal[False] = field(default_factory=lambda: OutputConfig(include_reason=True))
@@ -203,15 +204,29 @@ class LLMJudge(Evaluator[object, object, object]):
         ctx: EvaluatorContext[object, object, object],
     ) -> EvaluatorOutput:
         if self.include_input:
-            from .llm_as_a_judge import judge_input_output
+            if self.include_expected_output:
+                from .llm_as_a_judge import judge_input_output_expected
 
-            grading_output = await judge_input_output(
-                ctx.inputs, ctx.output, self.rubric, self.model, self.model_settings
-            )
+                grading_output = await judge_input_output_expected(
+                    ctx.inputs, ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
+                )
+            else:
+                from .llm_as_a_judge import judge_input_output
+
+                grading_output = await judge_input_output(
+                    ctx.inputs, ctx.output, self.rubric, self.model, self.model_settings
+                )
         else:
-            from .llm_as_a_judge import judge_output
+            if self.include_expected_output:
+                from .llm_as_a_judge import judge_output_expected
 
-            grading_output = await judge_output(ctx.output, self.rubric, self.model, self.model_settings)
+                grading_output = await judge_output_expected(
+                    ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
+                )
+            else:
+                from .llm_as_a_judge import judge_output
+
+                grading_output = await judge_output(ctx.output, self.rubric, self.model, self.model_settings)
 
         output: dict[str, EvaluationScalar | EvaluationReason] = {}
         include_both = self.score is not False and self.assertion is not False
