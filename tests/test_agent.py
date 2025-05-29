@@ -2573,3 +2573,89 @@ def test_agent_repr() -> None:
     assert repr(agent) == snapshot(
         "Agent(model=None, name=None, end_strategy='early', model_settings=None, output_type=<class 'str'>, instrument=None)"
     )
+
+
+def test_tool_call_with_validation_value_error_serializable():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('foo_tool', {'bar': 0})])
+        else:
+            return ModelResponse(parts=[TextPart('Tool raised an error')])
+
+    agent = Agent(FunctionModel(llm))
+
+    class Foo(BaseModel):
+        bar: int
+
+        @field_validator('bar')
+        def validate_bar(cls, v: int) -> int:
+            if v == 0:
+                raise ValueError('bar cannot be 0')
+            return v
+
+    @agent.tool_plain
+    def foo_tool(foo: Foo) -> int:
+        return foo.bar
+
+    result = agent.run_sync('Hello')
+    assert json.loads(result.all_messages_json()) == snapshot(
+        [
+            {
+                'parts': [{'content': 'Hello', 'timestamp': IsStr(), 'part_kind': 'user-prompt'}],
+                'instructions': None,
+                'kind': 'request',
+            },
+            {
+                'parts': [
+                    {
+                        'tool_name': 'foo_tool',
+                        'args': {'bar': 0},
+                        'tool_call_id': IsStr(),
+                        'part_kind': 'tool-call',
+                    }
+                ],
+                'usage': {
+                    'requests': 1,
+                    'request_tokens': 51,
+                    'response_tokens': 4,
+                    'total_tokens': 55,
+                    'details': None,
+                },
+                'model_name': 'function:llm:',
+                'timestamp': IsStr(),
+                'kind': 'response',
+                'vendor_details': None,
+                'vendor_id': None,
+            },
+            {
+                'parts': [
+                    {
+                        'content': [
+                            {'type': 'value_error', 'loc': ['bar'], 'msg': 'Value error, bar cannot be 0', 'input': 0}
+                        ],
+                        'tool_name': 'foo_tool',
+                        'tool_call_id': IsStr(),
+                        'timestamp': IsStr(),
+                        'part_kind': 'retry-prompt',
+                    }
+                ],
+                'instructions': None,
+                'kind': 'request',
+            },
+            {
+                'parts': [{'content': 'Tool raised an error', 'part_kind': 'text'}],
+                'usage': {
+                    'requests': 1,
+                    'request_tokens': 80,
+                    'response_tokens': 8,
+                    'total_tokens': 88,
+                    'details': None,
+                },
+                'model_name': 'function:llm:',
+                'timestamp': IsStr(),
+                'kind': 'response',
+                'vendor_details': None,
+                'vendor_id': None,
+            },
+        ]
+    )
