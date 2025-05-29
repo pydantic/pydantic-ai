@@ -571,13 +571,8 @@ async def test_no_sync_content(allow_model_requests: None):
     messages = result.all_messages()
     assert messages
 
-    last_response = None
-    for message in reversed(messages):
-        if isinstance(message, ModelResponse):
-            last_response = message
-            break
-
-    assert last_response is not None, 'No ModelResponse found in messages'
+    last_response = messages[-1]
+    assert isinstance(last_response, ModelResponse), 'Last message should be ModelResponse'
 
     now = datetime.now(timezone.utc)
     time_diff = (now - last_response.timestamp).total_seconds()
@@ -618,13 +613,9 @@ async def test_stream_created_zero(allow_model_requests: None):
         assert result.usage() == snapshot(Usage(requests=4, request_tokens=6, response_tokens=3, total_tokens=9))
 
         messages = result.all_messages()
-        last_response = None
-        for message in reversed(messages):
-            if isinstance(message, ModelResponse):
-                last_response = message
-                break
+        last_response = messages[-1]
 
-        assert last_response is not None, 'No ModelResponse found in messages'
+        assert isinstance(last_response, ModelResponse), 'Last message should be ModelResponse'
         now = datetime.now(timezone.utc)
         time_diff = (now - last_response.timestamp).total_seconds()
         assert time_diff < 5
