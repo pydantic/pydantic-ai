@@ -1280,8 +1280,8 @@ def test_langchain_tool_positional():
     )
     pydantic_tool = Tool.from_langchain(langchain_tool)
 
-    result = pydantic_tool.function('something')  # type: ignore
-    assert result == snapshot("I was called with {'dir_path': '.', 'pattern': 'something'}")
+    with pytest.raises(AssertionError, match='This should always be called with kwargs'):
+        pydantic_tool.function('something')  # type: ignore
 
 
 def test_langchain_tool_default_override():

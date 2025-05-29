@@ -388,8 +388,7 @@ class Tool(Generic[AgentDepsT]):
 
         # restructures the arguments to match langchain tool run
         def proxy(*args: Any, **kwargs: Any) -> str:
-            for argument, key in zip(args, inputs.keys()):
-                kwargs[key] = argument
+            assert not args, 'This should always be called with kwargs'
             kwargs = defaults | kwargs
             return langchain_tool.run(kwargs)
 
