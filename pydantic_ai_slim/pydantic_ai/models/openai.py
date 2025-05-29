@@ -308,7 +308,11 @@ class OpenAIModel(Model):
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
+        if response.created:
+            timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
+        else:
+            timestamp = _utils.now_utc()
+
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         vendor_details: dict[str, Any] | None = None
@@ -353,10 +357,15 @@ class OpenAIModel(Model):
                 'Streamed response ended without content or tool calls'
             )
 
+        if first_chunk.created:
+            timestamp = datetime.fromtimestamp(first_chunk.created, tz=timezone.utc)
+        else:
+            timestamp = _utils.now_utc()
+
         return OpenAIStreamedResponse(
             _model_name=self._model_name,
             _response=peekable_response,
-            _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+            _timestamp=timestamp,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -591,7 +600,11 @@ class OpenAIResponsesModel(Model):
 
     def _process_response(self, response: responses.Response) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = datetime.fromtimestamp(response.created_at, tz=timezone.utc)
+        if response.created_at:
+            timestamp = datetime.fromtimestamp(response.created_at, tz=timezone.utc)
+        else:
+            timestamp = _utils.now_utc()
+
         items: list[ModelResponsePart] = []
         items.append(TextPart(response.output_text))
         for item in response.output:
@@ -609,10 +622,16 @@ class OpenAIResponsesModel(Model):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         assert isinstance(first_chunk, responses.ResponseCreatedEvent)
+
+        if first_chunk.response.created_at:
+            timestamp = datetime.fromtimestamp(first_chunk.response.created_at, tz=timezone.utc)
+        else:
+            timestamp = _utils.now_utc()
+
         return OpenAIResponsesStreamedResponse(
             _model_name=self._model_name,
             _response=peekable_response,
-            _timestamp=datetime.fromtimestamp(first_chunk.response.created_at, tz=timezone.utc),
+            _timestamp=timestamp,
         )
 
     @overload

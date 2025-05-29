@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from datetime import datetime, timezone
 
 import pytest
 from inline_snapshot import snapshot
@@ -505,3 +506,42 @@ def test_model_profile_strict_not_supported():
             'strict': False,
         }
     )
+
+
+async def test_no_sync_content_responses(allow_model_requests: None):
+    from unittest.mock import AsyncMock, Mock
+    from openai.types import responses
+    
+    mock_response = Mock(spec=responses.Response)
+    mock_response.created_at = 0
+    mock_response.output_text = 'test response'
+    mock_response.output = []
+    mock_response.model = 'gpt-4o'
+    mock_response.usage = Mock(spec=responses.ResponseUsage)
+    mock_response.usage.input_tokens = 1
+    mock_response.usage.output_tokens = 1
+    mock_response.usage.total_tokens = 2
+    mock_response.usage.input_tokens_details = Mock(cached_tokens=0)
+    mock_response.usage.output_tokens_details = Mock(reasoning_tokens=0)
+    
+    mock_client = AsyncMock()
+    mock_client.responses.create = AsyncMock(return_value=mock_response)
+    
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('')
+    messages = result.all_messages()
+    assert messages
+    
+    last_response = None
+    for message in reversed(messages):
+        if isinstance(message, ModelResponse):
+            last_response = message
+            break
+    
+    assert last_response is not None, "No ModelResponse found in messages"
+    
+    now = datetime.now(timezone.utc)
+    time_diff = (now - last_response.timestamp).total_seconds()
+    assert time_diff < 5

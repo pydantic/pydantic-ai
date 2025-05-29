@@ -549,6 +549,41 @@ async def test_no_content(allow_model_requests: None):
             pass
 
 
+async def test_no_sync_content(allow_model_requests: None):
+    mock_response = chat.ChatCompletion(
+        id='test-id',
+        choices=[
+            Choice(
+                finish_reason='stop',
+                index=0,
+                message=ChatCompletionMessage(role='assistant', content='test response'),
+            )
+        ],
+        created=0,
+        model='gpt-4o',
+        object='chat.completion'
+    )
+    mock_client = MockOpenAI.create_mock(mock_response)
+    m = OpenAIModel('gpt-4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run('')
+    messages = result.all_messages()
+    assert messages
+    
+    last_response = None
+    for message in reversed(messages):
+        if isinstance(message, ModelResponse):
+            last_response = message
+            break
+    
+    assert last_response is not None, "No ModelResponse found in messages"
+    
+    now = datetime.now(timezone.utc)
+    time_diff = (now - last_response.timestamp).total_seconds()
+    assert time_diff < 5
+
+
 async def test_no_delta(allow_model_requests: None):
     stream = [
         chunk([]),
