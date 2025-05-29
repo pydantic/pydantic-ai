@@ -82,9 +82,7 @@ class RunContext(Generic[AgentDepsT]):
     """The current step in the run."""
 
     def replace_with(
-        self,
-        retry: int | None = None,
-        tool_name: str | None | _utils.Unset = _utils.UNSET,
+        self, retry: int | None = None, tool_name: str | None | _utils.Unset = _utils.UNSET,
     ) -> RunContext[AgentDepsT]:
         # Create a new `RunContext` a new `retry` value and `tool_name`.
         kwargs = {}
@@ -412,10 +410,7 @@ class Tool(Generic[AgentDepsT]):
             return tool_def
 
     async def run(
-        self,
-        message: _messages.ToolCallPart,
-        run_context: RunContext[AgentDepsT],
-        tracer: Tracer,
+        self, message: _messages.ToolCallPart, run_context: RunContext[AgentDepsT], tracer: Tracer,
     ) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
         """Run the tool function asynchronously.
 

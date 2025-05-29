@@ -12,14 +12,7 @@ from pydantic_core import PydanticSerializationError, core_schema
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool, ToolOutput, UserError
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-)
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -333,11 +326,7 @@ def test_only_returns_type():
 <description>The result as a string.</description>
 </returns>\
 """,
-            'parameters_json_schema': {
-                'additionalProperties': False,
-                'properties': {},
-                'type': 'object',
-            },
+            'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,
         }
@@ -513,12 +502,7 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
 
 # pyright: reportPrivateUsage=false
 def test_init_tool_ctx():
-    agent = Agent(
-        'test',
-        tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)],
-        deps_type=int,
-        retries=7,
-    )
+    agent = Agent('test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries=7)
     result = agent.run_sync('foobar', deps=5)
     assert result.output == snapshot('{"ctx_tool":5}')
     assert agent._function_tools['ctx_tool'].takes_ctx is True
@@ -601,10 +585,7 @@ def test_init_ctx_tool_invalid():
 
 
 def test_init_plain_tool_invalid():
-    with pytest.raises(
-        UserError,
-        match='RunContext annotations can only be used with tools that take context',
-    ):
+    with pytest.raises(UserError, match='RunContext annotations can only be used with tools that take context'):
         Tool(ctx_tool, takes_ctx=False)
 
 
@@ -651,10 +632,7 @@ def test_return_bytes_invalid():
     def return_pydantic_model() -> bytes:
         return b'\00 \x81'
 
-    with pytest.raises(
-        PydanticSerializationError,
-        match='invalid utf-8 sequence of 1 bytes from index 2',
-    ):
+    with pytest.raises(PydanticSerializationError, match='invalid utf-8 sequence of 1 bytes from index 2'):
         agent.run_sync('')
 
 
@@ -789,8 +767,7 @@ def test_dynamic_tool_use_messages():
 
 
 def test_future_run_context(create_module: Callable[[str], Any]):
-    mod = create_module(
-        """
+    mod = create_module("""
 from __future__ import annotations
 
 from pydantic_ai import Agent, RunContext
@@ -799,8 +776,7 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
     return x + ctx.deps
 
 agent = Agent('test', tools=[ctx_tool], deps_type=int)
-    """
-    )
+    """)
     result = mod.agent.run_sync('foobar', deps=5)
     assert result.output == snapshot('{"ctx_tool":5}')
 
@@ -824,11 +800,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'description': "A tool that documents what it returns but doesn't have a return annotation in the docstring.",
             'name': 'tool_without_return_annotation_in_docstring',
             'outer_typed_dict_key': None,
-            'parameters_json_schema': {
-                'additionalProperties': False,
-                'properties': {},
-                'type': 'object',
-            },
+            'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
             'strict': None,
         }
     )
@@ -976,10 +948,7 @@ def test_schema_generator():
 
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(
-        x: Annotated[Union[str, None], WithJsonSchema({'type': 'string'})] = None,
-        **kwargs: Any,
-    ):
+    def my_tool(x: Annotated[Union[str, None], WithJsonSchema({'type': 'string'})] = None, **kwargs: Any):
         return x  # pragma: no cover
 
     agent.tool_plain(name='my_tool_1')(my_tool)
