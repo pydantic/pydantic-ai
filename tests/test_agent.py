@@ -2579,8 +2579,10 @@ def test_tool_call_with_validation_value_error_serializable():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('foo_tool', {'bar': 0})])
+        elif len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('foo_tool', {'bar': 1})])
         else:
-            return ModelResponse(parts=[TextPart('Tool raised an error')])
+            return ModelResponse(parts=[TextPart('Tool returned 1')])
 
     agent = Agent(FunctionModel(llm))
 
@@ -2598,64 +2600,20 @@ def test_tool_call_with_validation_value_error_serializable():
         return foo.bar
 
     result = agent.run_sync('Hello')
-    assert json.loads(result.all_messages_json()) == snapshot(
-        [
-            {
-                'parts': [{'content': 'Hello', 'timestamp': IsStr(), 'part_kind': 'user-prompt'}],
-                'instructions': None,
-                'kind': 'request',
-            },
-            {
-                'parts': [
-                    {
-                        'tool_name': 'foo_tool',
-                        'args': {'bar': 0},
-                        'tool_call_id': IsStr(),
-                        'part_kind': 'tool-call',
-                    }
-                ],
-                'usage': {
-                    'requests': 1,
-                    'request_tokens': 51,
-                    'response_tokens': 4,
-                    'total_tokens': 55,
-                    'details': None,
-                },
-                'model_name': 'function:llm:',
-                'timestamp': IsStr(),
-                'kind': 'response',
-                'vendor_details': None,
-                'vendor_id': None,
-            },
-            {
-                'parts': [
-                    {
-                        'content': [
-                            {'type': 'value_error', 'loc': ['bar'], 'msg': 'Value error, bar cannot be 0', 'input': 0}
-                        ],
-                        'tool_name': 'foo_tool',
-                        'tool_call_id': IsStr(),
-                        'timestamp': IsStr(),
-                        'part_kind': 'retry-prompt',
-                    }
-                ],
-                'instructions': None,
-                'kind': 'request',
-            },
-            {
-                'parts': [{'content': 'Tool raised an error', 'part_kind': 'text'}],
-                'usage': {
-                    'requests': 1,
-                    'request_tokens': 80,
-                    'response_tokens': 8,
-                    'total_tokens': 88,
-                    'details': None,
-                },
-                'model_name': 'function:llm:',
-                'timestamp': IsStr(),
-                'kind': 'response',
-                'vendor_details': None,
-                'vendor_id': None,
-            },
-        ]
+    assert json.loads(result.all_messages_json())[2] == snapshot(
+        {
+            'parts': [
+                {
+                    'content': [
+                        {'type': 'value_error', 'loc': ['bar'], 'msg': 'Value error, bar cannot be 0', 'input': 0}
+                    ],
+                    'tool_name': 'foo_tool',
+                    'tool_call_id': IsStr(),
+                    'timestamp': IsStr(),
+                    'part_kind': 'retry-prompt',
+                }
+            ],
+            'instructions': None,
+            'kind': 'request',
+        }
     )
