@@ -91,7 +91,7 @@ may want to skip sending the initialization request and only send requests as ne
 
 This allows you to de-couple instantiating your agents with connecting to MCP servers for situations like multi-agent systems or health checks.
 
-```python {title="mcp_http_client_skip_initialization.py" py="3.10"}
+```python {title="mcp_http_client_skip_initialization.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerHTTP
 
