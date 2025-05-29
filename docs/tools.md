@@ -624,3 +624,30 @@ def my_flaky_tool(query: str) -> str:
     return 'Success!'
 ```
 Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the `retries` setting configured on the `Tool` or `Agent`.
+
+## Use LangChain Tools {#langchain-tools}
+
+We love LangChain and think it has a very compelling suite of tools. To import a tool from LangChain, use the `from_langchain()` method.
+
+Here is how you can use it to augment model responses using a LangChain web search tool. This tool will need you to install the `langchain-community` and `duckduckgo-search` dependencies to work properly.
+
+```python
+from pydantic_ai import Tool
+from langchain_community.tools import DuckDuckGoSearchRun
+
+search = DuckDuckGoSearchRun()
+search_tool = Tool.from_langchain(search)
+
+agent = Agent(
+    'google-gla:gemini-2.0-flash',  # (1)!
+    tools=[search_tool],
+)
+
+agent.run("What is the release date of Elden Ring Nightreign?") # (2)!
+#> Elden Ring Nightreign is planned to be released on May 30, 2025. ... # (3)!
+```
+
+
+1. While this task is simple Gemini 1.5 didn't want to use the provided tool. Gemini 2.0 is still fast and cheap.
+2. The release date of this game is the 30th of May 2025, which was confirmed after the knowledge cutoff for Gemini 2.0 (August 2024).
+3. Without the tool you get the answer: _There is no Elden Ring expansion called "Nightreign."..._
