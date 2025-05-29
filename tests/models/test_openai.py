@@ -572,7 +572,7 @@ async def test_no_sync_content(allow_model_requests: None):
     assert messages
 
     last_response = None
-    for message in reversed(messages):  # pragma: no cover
+    for message in reversed(messages):
         if isinstance(message, ModelResponse):
             last_response = message
             break
@@ -619,7 +619,7 @@ async def test_stream_created_zero(allow_model_requests: None):
 
         messages = result.all_messages()
         last_response = None
-        for message in reversed(messages):  # pragma: no cover
+        for message in reversed(messages):
             if isinstance(message, ModelResponse):
                 last_response = message
                 break
