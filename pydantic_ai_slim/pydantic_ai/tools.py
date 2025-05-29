@@ -326,22 +326,24 @@ class Tool(Generic[AgentDepsT]):
         self.strict = strict
 
     @classmethod
-    def from_schema(cls, function: Callable[..., Any], json_schema: JsonSchemaValue) -> Self:
+    def from_schema(
+        cls, function: Callable[..., Any], name: str, description: str, json_schema: JsonSchemaValue
+    ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
         Args:
             function: The function to call
+            name: The unique name of the tool that clearly communicates its purpose
+            description: Used to tell the model how/when/why to use the tool.
+                You can provide few-shot examples as a part of the description.
             json_schema: The schema for the function arguments
 
         Returns:
             A Pydantic tool that calls the function
         """
-        function_name = function.__name__
-        function_description = function.__doc__ or ''
-
         function_schema = _function_schema.FunctionSchema(
             function=function,
-            description=function_description,
+            description=description,
             validator=SchemaValidator(schema=core_schema.any_schema()),
             json_schema=json_schema,
             takes_ctx=False,
@@ -351,8 +353,8 @@ class Tool(Generic[AgentDepsT]):
         return cls(
             function,
             takes_ctx=False,
-            name=function_name,
-            description=function_description,
+            name=name,
+            description=description,
             function_schema=function_schema,
         )
 
@@ -387,10 +389,7 @@ class Tool(Generic[AgentDepsT]):
             kwargs = defaults | kwargs
             return langchain_tool.run(kwargs)
 
-        proxy.__name__ = function_name
-        proxy.__doc__ = function_description
-
-        return cls.from_schema(function=proxy, json_schema=schema)
+        return cls.from_schema(function=proxy, name=function_name, description=function_description, json_schema=schema)
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
