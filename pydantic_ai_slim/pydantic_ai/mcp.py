@@ -376,7 +376,7 @@ class MCPServerHTTP(MCPServer):
         self,
     ) -> AsyncIterator[
         tuple[MemoryObjectReceiveStream[SessionMessage | Exception], MemoryObjectSendStream[SessionMessage]]
-    ]:  # pragma: no cover
+    ]:
         async with streamablehttp_client(
             url=self.url,
             headers=self.headers,
