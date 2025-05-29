@@ -29,6 +29,8 @@ if TYPE_CHECKING:
         @property
         def args(self) -> dict[str, JsonSchemaValue]: ...
 
+        def get_input_jsonschema(self) -> JsonSchemaValue: ...
+
         @property
         def name(self) -> str: ...
 
@@ -327,7 +329,11 @@ class Tool(Generic[AgentDepsT]):
 
     @classmethod
     def from_schema(
-        cls, function: Callable[..., Any], name: str, description: str, json_schema: JsonSchemaValue
+        cls,
+        function: Callable[..., Any],
+        name: str,
+        description: str,
+        json_schema: JsonSchemaValue,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
@@ -372,11 +378,9 @@ class Tool(Generic[AgentDepsT]):
         function_description = langchain_tool.description
         inputs = langchain_tool.args.copy()
         required = sorted({name for name, detail in inputs.items() if 'default' not in detail})
-        schema: JsonSchemaValue = {
-            'type': 'object',
-            'properties': inputs,
-            'additionalProperties': False,
-        }
+        schema: JsonSchemaValue = langchain_tool.get_input_jsonschema()
+        if 'additionalProperties' not in schema:
+            schema['additionalProperties'] = False
         if required:
             schema['required'] = required
 
@@ -389,7 +393,12 @@ class Tool(Generic[AgentDepsT]):
             kwargs = defaults | kwargs
             return langchain_tool.run(kwargs)
 
-        return cls.from_schema(function=proxy, name=function_name, description=function_description, json_schema=schema)
+        return cls.from_schema(
+            function=proxy,
+            name=function_name,
+            description=function_description,
+            json_schema=schema,
+        )
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.

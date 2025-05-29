@@ -1147,6 +1147,13 @@ class SimulatedLangChainTool:
             tool_input = dict(sorted(tool_input.items()))
         return f'I was called with {tool_input}'
 
+    def get_input_jsonschema(self) -> JsonSchemaValue:
+        return {
+            'type': 'object',
+            'properties': self.args,
+            'additionalProperties': False,
+        }
+
 
 def test_langchain_tool_conversion():
     langchain_tool = SimulatedLangChainTool(
