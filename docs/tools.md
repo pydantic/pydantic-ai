@@ -632,8 +632,8 @@ We love LangChain and think it has a very compelling suite of tools. To import a
 Here is how you can use it to augment model responses using a LangChain web search tool. This tool will need you to install the `langchain-community` and `duckduckgo-search` dependencies to work properly.
 
 ```python
-from langchain_community.tools import DuckDuckGoSearchRun
 from pydantic_ai import Agent, Tool
+from langchain_community.tools import DuckDuckGoSearchRun
 
 search = DuckDuckGoSearchRun()
 search_tool = Tool.from_langchain(search)
