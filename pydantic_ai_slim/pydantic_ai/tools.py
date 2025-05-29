@@ -346,9 +346,6 @@ class Tool(Generic[AgentDepsT]):
             json_schema=json_schema,
             takes_ctx=False,
             is_async=asyncio.iscoroutinefunction(function),
-            single_arg_name=None,
-            positional_fields=[],
-            var_positional_field=None,
         )
 
         return cls(
