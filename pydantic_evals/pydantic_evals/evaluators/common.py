@@ -223,7 +223,11 @@ class LLMJudge(Evaluator[object, object, object]):
             )
 
         elif (self.include_input is False) and (self.include_expected_output is True):
-            raise NotImplementedError('include_expected_output is not supported without include_input')
+            from .llm_as_a_judge import judge_output_expected
+
+            grading_output = await judge_output_expected(
+                ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
+            )
 
         else:  # pragma: no cover - unreachable due to type constraints
             raise ValueError(f'Unexpected values for {self.include_input=} and {self.include_expected_output=}')
