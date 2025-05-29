@@ -633,7 +633,7 @@ Here is how you can use it to augment model responses using a LangChain web sear
 
 ```python
 from langchain_community.tools import DuckDuckGoSearchRun
-from pydantic_ai import Tool
+from pydantic_ai import Agent, Tool
 
 search = DuckDuckGoSearchRun()
 search_tool = Tool.from_langchain(search)
