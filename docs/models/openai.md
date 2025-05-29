@@ -407,3 +407,21 @@ model = OpenAIModel(
 agent = Agent(model)
 ...
 ```
+
+### Cerebras 
+
+Go to [Cerebras](https://www.cerebras.ai/) and create an API key in your account settings.
+Once you have the API key, you can use it with the `Provider`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.cerebras import CerebrasProvider
+
+model = OpenAIModel(
+    'qwen-3-32b',  # model library available at https://inference-docs.cerebras.ai/introduction
+    provider=CerebrasProvider(api_key='your-cerebras-api-key'),
+)
+agent = Agent(model)
+...
+```
