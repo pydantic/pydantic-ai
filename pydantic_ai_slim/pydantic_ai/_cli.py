@@ -37,6 +37,7 @@ try:
     from rich.style import Style
     from rich.syntax import Syntax
     from rich.text import Text
+    import httpx
 except ImportError as _import_error:
     raise ImportError(
         'Please install `rich`, `prompt-toolkit` and `argcomplete` to use the PydanticAI CLI, '
@@ -54,6 +55,71 @@ This folder is used to store the prompt history and configuration.
 """
 
 PROMPT_HISTORY_FILENAME = 'prompt-history.txt'
+DISCOVERY_CONFIG_FILENAME = 'discovery.json'
+
+
+def save_discovery_config(endpoint: str, model_name: str) -> None:
+    """Save the last used discovery configuration to a file."""
+    try:
+        PYDANTIC_AI_HOME.mkdir(parents=True, exist_ok=True)
+        config_file = PYDANTIC_AI_HOME / DISCOVERY_CONFIG_FILENAME
+        import json
+
+        config = {
+            "endpoint": endpoint,
+            "model_name": model_name,
+            "timestamp": datetime.now().isoformat(),
+        }
+        with open(config_file, "w") as f:
+            json.dump(config, f, indent=2)
+    except Exception:
+        # Silently ignore errors when saving config
+        pass
+
+
+def load_discovery_config() -> tuple[str, str, str] | None:
+    """Load the last used discovery configuration from a file."""
+    try:
+        config_file = PYDANTIC_AI_HOME / DISCOVERY_CONFIG_FILENAME
+        if config_file.exists():
+            import json
+
+            with open(config_file, "r") as f:
+                config = json.load(f)
+            return (
+                config.get("endpoint"),
+                config.get("model_name"),
+                config.get("timestamp"),
+            )
+    except Exception:
+        # Silently ignore errors when loading config
+        pass
+    return None
+
+
+async def discover_local_models(base_url: str) -> list[str]:
+    """Discover models from a local OpenAI-compatible API endpoint.
+
+    Args:
+        base_url: The complete API base URL (e.g., 'http://localhost:11434/v1' or 'http://localhost:1234/v1')
+
+    Returns:
+        List of discovered model names in alphabetical order
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            models_url = f"{base_url.rstrip('/')}/models"
+            response = await client.get(models_url)
+            response.raise_for_status()
+
+            data = response.json()
+            if "data" in data and isinstance(data["data"], list):
+                models = [model["id"] for model in data["data"] if "id" in model]
+                return sorted(models)  # Return alphabetically sorted
+            else:
+                return []
+    except Exception as e:
+        raise UserError(f"Failed to discover models from {base_url}: {e}")
 
 
 class SimpleCodeBlock(CodeBlock):
@@ -97,7 +163,7 @@ The current date and time is {datetime.now()} {tzname}.
 The user is running {sys.platform}."""
 
 
-def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
+def cli_exit(prog_name: str = 'pai') -> None:  # pragma: no cover
     """Run the CLI and exit."""
     sys.exit(cli(prog_name=prog_name))
 
@@ -139,6 +205,22 @@ Special prompts:
         help='List all available models and exit',
     )
     parser.add_argument(
+        "-d",
+        "--discover-models",
+        nargs="?",
+        const="",
+        metavar="API_URL",
+        help='Discover models from a local OpenAI-compatible API endpoint and interactively select one to chat with. '
+             'Requires complete API URL including version (e.g., "http://localhost:11434/v1" for Ollama or "http://localhost:1234/v1" for LM Studio). '
+             'If no URL provided, uses the last discovered endpoint.',
+    )
+    parser.add_argument(
+        "-dd",
+        "--discover-direct",
+        action="store_true",
+        help='Directly connect to the last used model and endpoint without any prompts. Equivalent to "clai -d" + pressing Enter twice.',
+    )
+    parser.add_argument(
         '-t',
         '--code-theme',
         nargs='?',
@@ -160,7 +242,181 @@ Special prompts:
         console.print(f'{name_version}\n\n[green]Available models:[/green]')
         for model in qualified_model_names:
             console.print(f'  {model}', highlight=False)
+
+        # Show last discovery configuration if available
+        last_config = load_discovery_config()
+        if last_config and last_config[0]:
+            try:
+                timestamp = datetime.fromisoformat(last_config[2])
+                time_str = timestamp.strftime("%Y-%m-%d %H:%M")
+                console.print(
+                    f"\n[dim]Last discovery: {last_config[1]} at {last_config[0]} ({time_str})[/dim]"
+                )
+                console.print(f'[dim]Use "clai -d" to reconnect to last endpoint[/dim]')
+            except (ValueError, TypeError):
+                console.print(
+                    f"\n[dim]Last discovery: {last_config[1]} at {last_config[0]}[/dim]"
+                )
+                console.print(f'[dim]Use "clai -d" to reconnect to last endpoint[/dim]')
         return 0
+
+    if args.discover_direct:
+        # Direct connection to last used model and endpoint
+        last_config = load_discovery_config()
+        if not last_config or not last_config[0] or not last_config[1]:
+            console.print(f"{name_version}\n\n[red]No previous discovery found.[/red]")
+            console.print(
+                '[dim]Use "clai -d <api_url>" to discover models first (e.g., clai -d http://localhost:1234/v1)[/dim]'
+            )
+            return 1
+
+        endpoint, model_name, timestamp_str = last_config
+        try:
+            ts = datetime.fromisoformat(timestamp_str)
+            time_str = ts.strftime("%Y-%m-%d %H:%M")
+            console.print(
+                f"{name_version}\n\n[green]Connecting directly to: {model_name} at {endpoint} (last used {time_str})[/green]"
+            )
+        except (ValueError, TypeError):
+            console.print(
+                f"{name_version}\n\n[green]Connecting directly to: {model_name} at {endpoint}[/green]"
+            )
+
+        # Configure the agent with the saved model and provider
+        try:
+            from .providers.openai import OpenAIProvider
+            from .models.openai import OpenAIModel
+
+            provider = OpenAIProvider(base_url=endpoint)
+            model = OpenAIModel(model_name, provider=provider)
+            cli_agent.model = model
+
+        except Exception as e:
+            console.print(f"[red]Error connecting to {endpoint}: {e}[/red]")
+            console.print('[dim]Try "clai -d" to rediscover models[/dim]')
+            return 1
+
+    if args.discover_models is not None:
+        # Determine the endpoint to use
+        endpoint = args.discover_models
+        if not endpoint:
+            # No endpoint provided, try to use the last saved one
+            last_config = load_discovery_config()
+            if last_config and last_config[0]:
+                endpoint = last_config[0]
+                console.print(
+                    f"{name_version}\n\n[dim]Using last discovered endpoint: {endpoint}[/dim]"
+                )
+            else:
+                console.print(
+                    f"{name_version}\n\n[red]No endpoint provided and no previous discovery found.[/red]"
+                )
+                console.print(
+                    "[dim]Usage: clai -d <api_url> (e.g., clai -d http://localhost:1234/v1)[/dim]"
+                )
+                return 1
+
+        console.print(f"[green]Discovering models from {endpoint}...[/green]")
+        try:
+            # Load last used configuration
+            last_config = load_discovery_config()
+            if last_config and last_config[0] == endpoint:
+                try:
+                    timestamp = datetime.fromisoformat(last_config[2])
+                    time_str = timestamp.strftime("%Y-%m-%d %H:%M")
+                    console.print(
+                        f"[dim]Last used: {last_config[1]} ({time_str})[/dim]"
+                    )
+                except (ValueError, TypeError):
+                    console.print(f"[dim]Last used: {last_config[1]}[/dim]")
+
+            discovered_models = asyncio.run(discover_local_models(endpoint))
+            if discovered_models:
+                console.print(
+                    f"\n[green]Found {len(discovered_models)} models:[/green]"
+                )
+
+                # Check if last used model is still available
+                default_index = None
+                if (
+                    last_config
+                    and last_config[0] == endpoint
+                    and last_config[1] in discovered_models
+                ):
+                    default_index = discovered_models.index(last_config[1])
+
+                for i, model in enumerate(discovered_models, 1):
+                    if default_index is not None and i - 1 == default_index:
+                        console.print(
+                            f"  {i}. {model} [dim](last used)[/dim]", highlight=False
+                        )
+                    else:
+                        console.print(f"  {i}. {model}", highlight=False)
+
+                # Interactive model selection
+                if default_index is not None:
+                    console.print(
+                        f"\n[cyan]Select a model to chat with (1-{len(discovered_models)}) or press Enter for default ({default_index + 1}):[/cyan]"
+                    )
+                else:
+                    console.print(
+                        f"\n[cyan]Select a model to chat with (1-{len(discovered_models)}) or press Enter to exit:[/cyan]"
+                    )
+
+                try:
+                    choice = input().strip()
+                    if not choice:
+                        if default_index is not None:
+                            model_index = default_index
+                            console.print(
+                                f"[dim]Using default: {discovered_models[model_index]}[/dim]"
+                            )
+                        else:
+                            console.print("[dim]Exiting...[/dim]")
+                            return 0
+                    else:
+                        model_index = int(choice) - 1
+
+                    if 0 <= model_index < len(discovered_models):
+                        selected_model = discovered_models[model_index]
+                        console.print(
+                            f"[green]Selected model: {selected_model}[/green]"
+                        )
+
+                        # Save the selection for next time
+                        save_discovery_config(endpoint, selected_model)
+
+                        # Configure the agent with the selected model and local provider
+                        from .providers.openai import OpenAIProvider
+                        from .models.openai import OpenAIModel
+
+                        # Use the endpoint as provided by the user
+                        provider = OpenAIProvider(base_url=endpoint)
+                        model = OpenAIModel(selected_model, provider=provider)
+                        cli_agent.model = model
+
+                        console.print(
+                            f"[green]Starting chat with {selected_model} at {endpoint}[/green]"
+                        )
+                    else:
+                        console.print(
+                            "[red]Invalid selection. Please choose a number from the list.[/red]"
+                        )
+                        return 1
+                except ValueError:
+                    console.print("[red]Invalid input. Please enter a number.[/red]")
+                    return 1
+                except KeyboardInterrupt:
+                    console.print("\n[dim]Exiting...[/dim]")
+                    return 0
+            else:
+                console.print(
+                    "[yellow]No models found at the specified endpoint.[/yellow]"
+                )
+                return 1
+        except UserError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            return 1
 
     agent: Agent[None, str] = cli_agent
     if args.agent:
