@@ -203,34 +203,30 @@ class LLMJudge(Evaluator[object, object, object]):
         self,
         ctx: EvaluatorContext[object, object, object],
     ) -> EvaluatorOutput:
-        if (self.include_input is False) and (self.include_expected_output is False):
-            from .llm_as_a_judge import judge_output
+        if self.include_input:
+            if self.include_expected_output:
+                from .llm_as_a_judge import judge_input_output_expected
 
-            grading_output = await judge_output(ctx.output, self.rubric, self.model, self.model_settings)
+                grading_output = await judge_input_output_expected(
+                    ctx.inputs, ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
+                )
+            else:
+                from .llm_as_a_judge import judge_input_output
 
-        elif (self.include_input is True) and (self.include_expected_output is False):
-            from .llm_as_a_judge import judge_input_output
+                grading_output = await judge_input_output(
+                    ctx.inputs, ctx.output, self.rubric, self.model, self.model_settings
+                )
+        else:
+            if self.include_expected_output:
+                from .llm_as_a_judge import judge_output_expected
 
-            grading_output = await judge_input_output(
-                ctx.inputs, ctx.output, self.rubric, self.model, self.model_settings
-            )
+                grading_output = await judge_output_expected(
+                    ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
+                )
+            else:
+                from .llm_as_a_judge import judge_output
 
-        elif (self.include_input is True) and (self.include_expected_output is True):
-            from .llm_as_a_judge import judge_input_output_expected
-
-            grading_output = await judge_input_output_expected(
-                ctx.inputs, ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
-            )
-
-        elif (self.include_input is False) and (self.include_expected_output is True):
-            from .llm_as_a_judge import judge_output_expected
-
-            grading_output = await judge_output_expected(
-                ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
-            )
-
-        else:  # pragma: no cover - unreachable due to type constraints
-            raise ValueError(f'Unexpected values for {self.include_input=} and {self.include_expected_output=}')
+                grading_output = await judge_output(ctx.output, self.rubric, self.model, self.model_settings)
 
         output: dict[str, EvaluationScalar | EvaluationReason] = {}
         include_both = self.score is not False and self.assertion is not False
