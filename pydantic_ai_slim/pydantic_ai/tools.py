@@ -392,7 +392,7 @@ class Tool(Generic[AgentDepsT]):
             raise UnexpectedModelBehavior(f'Tool exceeded max retries count of {self.max_retries}') from exc
         else:
             if isinstance(exc, ValidationError):
-                content = exc.errors(include_url=False)
+                content = exc.errors(include_url=False, include_context=False)
             else:
                 content = exc.message
             return _messages.RetryPromptPart(

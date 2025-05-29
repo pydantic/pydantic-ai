@@ -407,7 +407,7 @@ class OutputTool(Generic[OutputDataT]):
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
                     tool_name=tool_call.tool_name,
-                    content=e.errors(include_url=False),
+                    content=e.errors(include_url=False, include_context=False),
                     tool_call_id=tool_call.tool_call_id,
                 )
                 raise ToolRetryError(m) from e
