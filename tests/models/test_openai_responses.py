@@ -510,6 +510,7 @@ def test_model_profile_strict_not_supported():
 
 async def test_no_sync_content_responses(allow_model_requests: None):
     from unittest.mock import AsyncMock, Mock
+
     from openai.types import responses
 
     mock_response = Mock(spec=responses.Response)
