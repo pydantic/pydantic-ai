@@ -9,6 +9,7 @@ a task function to produce an evaluation report.
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import functools
 import inspect
 import sys
@@ -28,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError,
 from pydantic._internal import _typing_extra
 from pydantic_core import to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
+from tqdm import tqdm
 from typing_extensions import NotRequired, Self, TypedDict, TypeVar
 
 from pydantic_evals._utils import get_event_loop
@@ -270,13 +272,20 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             A report containing the results of the evaluation.
         """
         name = name or get_unwrapped_function_name(task)
+        total_cases = len(self.cases)
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
+        progress = tqdm(total=total_cases, desc=f'Evaluating {name}')
+        lock = asyncio.Lock()
+
         with _logfire.span('evaluate {name}', name=name) as eval_span:
 
             async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
                 async with limiter:
-                    return await _run_task_and_evaluators(task, case, report_case_name, self.evaluators)
+                    result = await _run_task_and_evaluators(task, case, report_case_name, self.evaluators)
+                    async with lock:
+                        progress.update(1)
+                    return result
 
             report = EvaluationReport(
                 name=name,
@@ -291,7 +300,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             eval_span.set_attribute('cases', report.cases)
             # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
             eval_span.set_attribute('averages', report.averages())
-
+        progress.close()
         return report
 
     def evaluate_sync(
