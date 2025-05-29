@@ -56,6 +56,9 @@ class MCPServer(ABC):
     e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
 
+    skip_initialization: bool = False
+    """Determines whether to send the initialization request when first entering context"""
+
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
@@ -139,11 +142,13 @@ class MCPServer(ABC):
         client = ClientSession(read_stream=self._read_stream, write_stream=self._write_stream)
         self._client = await self._exit_stack.enter_async_context(client)
 
-        with anyio.fail_after(self._get_client_initialize_timeout()):
-            await self._client.initialize()
+        if not self.skip_initialization:
+            with anyio.fail_after(self._get_client_initialize_timeout()):
+                await self._client.initialize()
 
         if log_level := self._get_log_level():
             await self._client.set_logging_level(log_level)
+
         self.is_running = True
         return self
 
@@ -352,6 +357,9 @@ class MCPServerHTTP(MCPServer):
 
     For example, if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
+
+    skip_initialization: bool = False
+    """Determines whether to send the initialization request when first entering context"""
 
     def __post_init__(self):
         # streamablehttp_client expects timedeltas, so we accept them too to match,

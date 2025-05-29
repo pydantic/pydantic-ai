@@ -215,6 +215,12 @@ async def test_agent_with_prefix_tool_name(openai_api_key: str):
             await agent.run('No conflict')
 
 
+async def test_with_skipped_initialization():
+    server = MCPServerHTTP('no-url', skip_initialization=True)
+    async with server:
+        assert server.is_running  # no error occurs because we haven't made a call yet
+
+
 async def test_agent_with_server_not_running(openai_api_key: str):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))

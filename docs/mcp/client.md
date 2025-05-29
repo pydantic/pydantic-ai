@@ -83,6 +83,29 @@ Will display as follows:
 
 ![Logfire run python code](../img/logfire-run-python-code.png)
 
+#### Initialization
+
+If you're connecting to an HTTP server that is stateless (one that doesn't require a persistent connection or session), you
+may want to skip sending the initialization request and only send requests as needed. To do this, you can set the
+`skip_initialization` parameter to `True` when instantiating the server.
+
+This allows you to de-couple instantiating your agents with connecting to MCP servers for situations like multi-agent systems or health checks.
+
+```python {title="mcp_http_client_skip_initialization.py" py="3.10"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerHTTP
+
+server = MCPServerHTTP(url='http://localhost:3001/mcp', skip_initialization=True)
+agent = Agent('openai:gpt-4o', mcp_servers=[server])
+
+
+async def main():
+    async with agent.run_mcp_servers():  # No call to the MCP server is made here
+        result = await agent.run('What tools do you have access to?') # the first call is made here
+```
+
+
+
 ### MCP "stdio" Server
 
 The other transport offered by MCP is the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. In this case, you'd use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class.
