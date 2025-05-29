@@ -101,7 +101,7 @@ agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
 async def main():
     async with agent.run_mcp_servers():  # No call to the MCP server is made here
-        result = await agent.run('What tools do you have access to?') # the first call is made here
+        await agent.run('What tools do you have access to?') # the first call is made here
 ```
 
 
