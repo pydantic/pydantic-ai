@@ -62,7 +62,16 @@ async def judge_output(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = f'<Output>\n{_stringify(output)}\n</Output>\n<Rubric>\n{rubric}\n</Rubric>'
+    user_prompt = dedent(
+        f"""
+        <Output>
+        {_stringify(output)}
+        </Output>
+        <Rubric>
+        {rubric}
+        </Rubric>
+        """
+    )
     return (
         await _judge_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
     ).output
@@ -103,7 +112,19 @@ async def judge_input_output(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = f'<Input>\n{_stringify(inputs)}\n</Input>\n<Output>\n{_stringify(output)}\n</Output>\n<Rubric>\n{rubric}\n</Rubric>'
+    user_prompt = dedent(
+        f"""
+        <Input>
+        {_stringify(inputs)}
+        </Input>
+        <Output>
+        {_stringify(output)}
+        </Output>
+        <Rubric>
+        {rubric}
+        </Rubric>
+        """
+    )
     return (
         await _judge_input_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
     ).output
@@ -147,7 +168,23 @@ async def judge_input_output_expected(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = f'<Input>\n{_stringify(inputs)}\n</Input>\n<ExpectedOutput>\n{_stringify(expected_output)}\n</ExpectedOutput>\n<Output>\n{_stringify(output)}\n</Output>\n<Rubric>\n{rubric}\n</Rubric>'
+    user_prompt = dedent(
+        f"""
+        <Input>
+        {_stringify(inputs)}
+        </Input>
+        <ExpectedOutput>
+        {_stringify(expected_output)}
+        </ExpectedOutput>
+        <Output>
+        {_stringify(output)}
+        </Output>
+        <Rubric>
+        {rubric}
+        </Rubric>
+        """
+    )
+
     return (
         await _judge_input_output_expected_agent.run(
             user_prompt, model=model or _default_model, model_settings=model_settings
@@ -190,7 +227,19 @@ async def judge_output_expected(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = f'<ExpectedOutput>\n{_stringify(expected_output)}\n</ExpectedOutput>\n<Output>\n{_stringify(output)}\n</Output>\n<Rubric>\n{rubric}\n</Rubric>'
+    user_prompt = dedent(
+        f"""
+        <ExpectedOutput>
+        {_stringify(expected_output)}
+        </ExpectedOutput>
+        <Output>
+        {_stringify(output)}
+        </Output>
+        <Rubric>
+        {rubric}
+        </Rubric>
+        """
+    )
     return (
         await _judge_output_expected_agent.run(
             user_prompt, model=model or _default_model, model_settings=model_settings
