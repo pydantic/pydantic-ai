@@ -572,7 +572,7 @@ async def test_no_sync_content(allow_model_requests: None):
     assert messages
 
     last_response = None
-    for message in reversed(messages):
+    for message in reversed(messages):  # pragma: no cover
         if isinstance(message, ModelResponse):
             last_response = message
             break
@@ -582,6 +582,52 @@ async def test_no_sync_content(allow_model_requests: None):
     now = datetime.now(timezone.utc)
     time_diff = (now - last_response.timestamp).total_seconds()
     assert time_diff < 5
+
+
+async def test_stream_created_zero(allow_model_requests: None):
+    def chunk_with_created_zero(
+        delta: list[ChoiceDelta], finish_reason: FinishReason | None = None
+    ) -> chat.ChatCompletionChunk:
+        return chat.ChatCompletionChunk(
+            id='test-stream-id',
+            choices=[
+                ChunkChoice(index=index, delta=delta, finish_reason=finish_reason) for index, delta in enumerate(delta)
+            ],
+            created=0,
+            model='gpt-4o',
+            object='chat.completion.chunk',
+            usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
+        )
+
+    def text_chunk_with_created_zero(text: str, finish_reason: FinishReason | None = None) -> chat.ChatCompletionChunk:
+        return chunk_with_created_zero([ChoiceDelta(content=text, role='assistant')], finish_reason=finish_reason)
+
+    stream = [
+        text_chunk_with_created_zero('hello '),
+        text_chunk_with_created_zero('world'),
+        chunk_with_created_zero([], finish_reason='stop'),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert not result.is_complete
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert result.is_complete
+        assert result.usage() == snapshot(Usage(requests=4, request_tokens=6, response_tokens=3, total_tokens=9))
+
+        messages = result.all_messages()
+        last_response = None
+        for message in reversed(messages):  # pragma: no cover
+            if isinstance(message, ModelResponse):
+                last_response = message
+                break
+
+        assert last_response is not None, 'No ModelResponse found in messages'
+        now = datetime.now(timezone.utc)
+        time_diff = (now - last_response.timestamp).total_seconds()
+        assert time_diff < 5
 
 
 async def test_no_delta(allow_model_requests: None):

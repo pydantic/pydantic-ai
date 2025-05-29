@@ -600,11 +600,7 @@ class OpenAIResponsesModel(Model):
 
     def _process_response(self, response: responses.Response) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        if response.created_at:
-            timestamp = datetime.fromtimestamp(response.created_at, tz=timezone.utc)
-        else:
-            timestamp = _utils.now_utc()
-
+        timestamp = datetime.fromtimestamp(response.created_at, tz=timezone.utc)
         items: list[ModelResponsePart] = []
         items.append(TextPart(response.output_text))
         for item in response.output:
@@ -623,15 +619,10 @@ class OpenAIResponsesModel(Model):
 
         assert isinstance(first_chunk, responses.ResponseCreatedEvent)
 
-        if first_chunk.response.created_at:
-            timestamp = datetime.fromtimestamp(first_chunk.response.created_at, tz=timezone.utc)
-        else:
-            timestamp = _utils.now_utc()
-
         return OpenAIResponsesStreamedResponse(
             _model_name=self._model_name,
             _response=peekable_response,
-            _timestamp=timestamp,
+            _timestamp=datetime.fromtimestamp(first_chunk.response.created_at, tz=timezone.utc),
         )
 
     @overload
