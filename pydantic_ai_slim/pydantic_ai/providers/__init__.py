@@ -107,5 +107,9 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .together import TogetherProvider
 
         return TogetherProvider()
+    elif provider == 'cerebras':
+        from .cerebras import CerebrasProvider
+
+        return CerebrasProvider()
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
