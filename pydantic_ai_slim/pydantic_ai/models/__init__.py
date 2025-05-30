@@ -18,6 +18,7 @@ from typing_extensions import Literal, TypeAliasType
 
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 
+from .._output import OutputMode, OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent
@@ -292,8 +293,13 @@ class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition] = field(default_factory=list)
-    allow_text_output: bool = True
+
+    output_mode: OutputMode | None = None
+    output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list)
+    require_tool_use: bool = (
+        True  # TODO: Rename back to allow_text_output because this is public API. Support bool as well as plain/json
+    )
 
 
 class Model(ABC):
@@ -338,6 +344,11 @@ class Model(ABC):
                 function_tools=[_customize_tool_def(transformer, t) for t in model_request_parameters.function_tools],
                 output_tools=[_customize_tool_def(transformer, t) for t in model_request_parameters.output_tools],
             )
+            if output_object := model_request_parameters.output_object:
+                model_request_parameters = replace(
+                    model_request_parameters,
+                    output_object=_customize_output_object(transformer, output_object),
+                )
 
         return model_request_parameters
 
@@ -418,6 +429,18 @@ class Model(ABC):
             return second_most_recent_request.instructions
 
         return None
+
+    @property
+    def supported_output_modes(self) -> set[OutputMode]:
+        """The supported output modes for the model."""
+        # TODO: Move to ModelProfile
+        return {'tool'}  # TODO: Support manual_json on all
+
+    @property
+    def default_output_mode(self) -> OutputMode:
+        """The default output mode for the model."""
+        # TODO: Move to ModelProfile
+        return 'tool'
 
 
 @dataclass
@@ -620,3 +643,11 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinit
     if t.strict is None:
         t = replace(t, strict=schema_transformer.is_strict_compatible)
     return replace(t, parameters_json_schema=parameters_json_schema)
+
+
+def _customize_output_object(transformer: type[JsonSchemaTransformer], o: OutputObjectDefinition):
+    schema_transformer = transformer(o.json_schema, strict=o.strict)
+    son_schema = schema_transformer.walk()
+    if o.strict is None:
+        o = replace(o, strict=schema_transformer.is_strict_compatible)
+    return replace(o, json_schema=son_schema)

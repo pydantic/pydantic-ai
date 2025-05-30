@@ -264,10 +264,29 @@ async def _prepare_request_parameters(
         function_tool_defs = await ctx.deps.prepare_tools(run_context, function_tool_defs) or []
 
     output_schema = ctx.deps.output_schema
+    model = ctx.deps.model
+
+    # TODO: This is horrible
+    output_mode = None
+    output_object = None
+    output_tools = []
+    require_tool_use = False
+    if output_schema:
+        output_mode = output_schema.forced_mode or model.default_output_mode
+        output_object = output_schema.object_schema.definition
+        output_tools = output_schema.tool_defs()
+        require_tool_use = output_mode == 'tool' and output_schema.allow_text_output != 'plain'
+
+        supported_modes = model.supported_output_modes
+        if output_mode not in supported_modes:
+            raise exceptions.UserError(f"Output mode '{output_mode}' is not among supported modes: {supported_modes}")
+
     return models.ModelRequestParameters(
         function_tools=function_tool_defs,
-        allow_text_output=_output.allow_text_output(output_schema),
-        output_tools=output_schema.tool_defs() if output_schema is not None else [],
+        output_mode=output_mode,
+        output_object=output_object,
+        output_tools=output_tools,
+        require_tool_use=require_tool_use,
     )
 
 
@@ -536,9 +555,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         text = '\n\n'.join(texts)
         try:
-            if _output.allow_text_output(output_schema):
+            if output_schema is None or output_schema.allow_text_output == 'plain':
                 # The following cast is safe because we know `str` is an allowed result type
                 result_data = cast(NodeRunEndT, text)
+            elif output_schema.allow_text_output == 'json':
+                run_context = build_run_context(ctx)
+                result_data = await output_schema.process(text, run_context)
             else:
                 m = _messages.RetryPromptPart(
                     content='Plain text responses are not permitted, please include your response in a tool call',

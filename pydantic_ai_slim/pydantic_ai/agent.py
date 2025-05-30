@@ -326,6 +326,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._instructions_functions = []
         if isinstance(instructions, (str, Callable)):
             instructions = [instructions]
+        # TODO: Add OutputSchema to the instructions in JSON mode
         for instruction in instructions or []:
             if isinstance(instruction, str):
                 self._instructions += instruction + '\n'

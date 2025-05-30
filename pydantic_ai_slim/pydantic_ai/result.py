@@ -11,6 +11,7 @@ from typing_extensions import TypeVar, assert_type, deprecated, overload
 
 from . import _output, _utils, exceptions, messages as _messages, models
 from ._output import (
+    JSONSchemaOutput,
     OutputDataT,
     OutputDataT_inv,
     OutputSchema,
@@ -22,7 +23,7 @@ from .messages import AgentStreamEvent, FinalResultEvent
 from .tools import AgentDepsT, RunContext
 from .usage import Usage, UsageLimits
 
-__all__ = 'OutputDataT', 'OutputDataT_inv', 'ToolOutput', 'OutputValidatorFunc'
+__all__ = 'OutputDataT', 'OutputDataT_inv', 'ToolOutput', 'JSONSchemaOutput', 'OutputValidatorFunc'
 
 
 T = TypeVar('T')
@@ -93,8 +94,14 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             )
         else:
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
-            # The following cast is safe because we know `str` is an allowed output type
-            result_data = cast(OutputDataT, text)
+
+            if self._output_schema is None or self._output_schema.allow_text_output == 'plain':
+                # The following cast is safe because we know `str` is an allowed output type
+                result_data = cast(OutputDataT, text)
+            else:
+                result_data = await self._output_schema.process(
+                    text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
+                )
 
         for validator in self._output_validators:
             result_data = await validator.validate(result_data, call, self._run_ctx)
@@ -311,7 +318,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
-        if self._output_schema and not self._output_schema.allow_text_output:
+        if self._output_schema and self._output_schema.allow_text_output != 'plain':
             raise exceptions.UserError('stream_text() can only be used with text responses')
 
         if delta:
@@ -403,7 +410,14 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             )
         else:
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
-            result_data = cast(OutputDataT, text)
+
+            if self._output_schema is None or self._output_schema.allow_text_output == 'plain':
+                # The following cast is safe because we know `str` is an allowed output type
+                result_data = cast(OutputDataT, text)
+            else:
+                result_data = await self._output_schema.process(
+                    text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
+                )
 
         for validator in self._output_validators:
             result_data = await validator.validate(result_data, call, self._run_ctx)  # pragma: no cover

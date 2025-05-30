@@ -130,7 +130,7 @@ class TestModel(Model):
 
     def _get_output(self, model_request_parameters: ModelRequestParameters) -> _WrappedTextOutput | _WrappedToolOutput:
         if self.custom_output_text is not None:
-            assert model_request_parameters.allow_text_output, (
+            assert not model_request_parameters.require_tool_use, (
                 'Plain response not allowed, but `custom_output_text` is set.'
             )
             assert self.custom_output_args is None, 'Cannot set both `custom_output_text` and `custom_output_args`.'
@@ -145,7 +145,7 @@ class TestModel(Model):
                 return _WrappedToolOutput({k: self.custom_output_args})
             else:
                 return _WrappedToolOutput(self.custom_output_args)
-        elif model_request_parameters.allow_text_output:
+        elif not model_request_parameters.require_tool_use:
             return _WrappedTextOutput(None)
         elif model_request_parameters.output_tools:
             return _WrappedToolOutput(None)

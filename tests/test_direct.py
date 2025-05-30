@@ -51,7 +51,7 @@ async def test_model_request_tool_call():
             function_tools=[
                 ToolDefinition(name='tool_name', description='', parameters_json_schema={'type': 'object'})
             ],
-            allow_text_output=False,
+            require_tool_use=True,
         ),
     )
     assert model_response == snapshot(

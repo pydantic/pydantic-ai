@@ -213,7 +213,7 @@ class AnthropicModel(Model):
         if not tools:
             tool_choice = None
         else:
-            if not model_request_parameters.allow_text_output:
+            if model_request_parameters.require_tool_use:
                 tool_choice = {'type': 'any'}
             else:
                 tool_choice = {'type': 'auto'}

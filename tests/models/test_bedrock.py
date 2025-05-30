@@ -684,7 +684,7 @@ async def test_bedrock_anthropic_no_tool_choice(bedrock_provider: BedrockProvide
         'This is my tool',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
     )
-    mrp = ModelRequestParameters(function_tools=[my_tool], allow_text_output=False, output_tools=[])
+    mrp = ModelRequestParameters(function_tools=[my_tool], require_tool_use=True, output_tools=[])
 
     # Models other than Anthropic support tool_choice
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
