@@ -409,6 +409,33 @@ print(test_model.last_model_request_parameters.function_tools)
 
 _(This example is complete, it can be run "as is")_
 
+If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of *args or **kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the `Tool.from_schema` function. With this you provide the name, description and JSON schema for the function directly:
+
+```python
+from pydantic_ai import Tool
+
+def foobar(**kwargs) -> str:
+    return kwargs['a'] + kwargs['b']
+
+tool = Tool.from_schema(
+    function=foobar,
+    name="sum",
+    description="Sum two numbers."
+    json_schema={
+        'additionalProperties': False,
+        'properties': {
+            'a': {'description': 'the first number', 'type': 'integer'},
+            'b': {'description': 'the second number', 'type': 'integer'},
+        },
+        'required': ['a', 'b'],
+        'type': 'object',
+    }
+)
+```
+
+
+Please note that validation of the tool arguments will not be performed, and this will pass all arguments as keyword arguments.
+
 ## Dynamic Function tools {#tool-prepare}
 
 Tools can optionally be defined with another function: `prepare`, which is called at each step of a run to
