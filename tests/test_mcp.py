@@ -73,7 +73,7 @@ async def test_stdio_server_with_cwd():
 def test_sse_server():
     sse_server = MCPServerHTTP(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
-    assert sse_server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
+    assert sse_server.log_level is None
 
 
 def test_sse_server_with_header_and_timeout():
@@ -88,7 +88,7 @@ def test_sse_server_with_header_and_timeout():
     assert sse_server.headers is not None and sse_server.headers['my-custom-header'] == 'my-header-value'
     assert sse_server.timeout == 10
     assert sse_server.sse_read_timeout == 100
-    assert sse_server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
+    assert sse_server.log_level == 'info'
 
 
 @pytest.mark.vcr()
@@ -209,7 +209,7 @@ async def test_agent_with_server_not_running(openai_api_key: str):
 
 async def test_log_level_unset():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    assert server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
+    assert server.log_level is None
     async with server:
         tools = await server.list_tools()
         assert len(tools) == 10
@@ -221,7 +221,7 @@ async def test_log_level_unset():
 
 async def test_log_level_set():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
-    assert server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
+    assert server.log_level == 'info'
     async with server:
         result = await server.call_tool('get_log_level', {})
         assert result == snapshot('info')
