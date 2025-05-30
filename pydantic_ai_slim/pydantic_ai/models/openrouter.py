@@ -1,9 +1,27 @@
 from typing import Any, cast
 
 from openai.types import chat
+from typing_extensions import TypedDict
 
+from .. import ModelHTTPError
 from ..messages import ModelResponse
 from .openai import OpenAIModel
+
+
+class OpenRouterErrorResponse(TypedDict):
+    """Represents error responses from upstream LLM providers returned by OpenRouter.
+
+    Attributes:
+        code: The error code returned by OpenRouter.
+        message: The error message returned by OpenRouter
+        metadata: Additional error context provided by OpenRouter.
+
+    See: https://openrouter.ai/docs/api-reference/errors
+    """
+
+    code: int
+    message: str
+    metadata: dict[str, Any] | None
 
 
 class OpenRouterChatCompletion(chat.ChatCompletion):
@@ -15,9 +33,11 @@ class OpenRouterChatCompletion(chat.ChatCompletion):
     Attributes:
         provider: The name of the upstream LLM provider (e.g., "Anthropic",
             "OpenAI", etc.) that processed the request through OpenRouter.
+        error: Optional error information returned by the upstream LLM provider.
     """
 
     provider: str
+    error: OpenRouterErrorResponse | None
 
 
 class OpenRouterModel(OpenAIModel):
@@ -25,7 +45,11 @@ class OpenRouterModel(OpenAIModel):
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         response = cast(OpenRouterChatCompletion, response)
-        model_response = super()._process_response(response=response)
+        if hasattr(response, 'error') and response.error is not None:
+            error = response.error
+            raise ModelHTTPError(status_code=error['code'], model_name=self.model_name, body=error)
+        else:
+            model_response = super()._process_response(response=response)
         openrouter_provider: str | None = response.provider if hasattr(response, 'provider') else None
         if openrouter_provider:
             vendor_details: dict[str, Any] = getattr(model_response, 'vendor_details') or {}
