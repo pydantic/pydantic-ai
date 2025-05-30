@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import dataclasses
 import json
 from collections.abc import Awaitable, Sequence
@@ -9,15 +10,35 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
-from pydantic_core import core_schema
-from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
+from pydantic_core import SchemaValidator, core_schema
+from typing_extensions import Concatenate, ParamSpec, Self, TypeAlias, TypeVar
 
 from . import _function_schema, _utils, messages as _messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
 
 if TYPE_CHECKING:
+    from typing import Protocol
+
     from .models import Model
     from .result import Usage
+
+    class LangChainTool(Protocol):
+        # args are like
+        # {'dir_path': {'default': '.', 'description': 'Subdirectory to search in.', 'title': 'Dir Path', 'type': 'string'},
+        #  'pattern': {'description': 'Unix shell regex, where * matches everything.', 'title': 'Pattern', 'type': 'string'}}
+        @property
+        def args(self) -> dict[str, JsonSchemaValue]: ...
+
+        def get_input_jsonschema(self) -> JsonSchemaValue: ...
+
+        @property
+        def name(self) -> str: ...
+
+        @property
+        def description(self) -> str: ...
+
+        def run(self, *args: Any, **kwargs: Any) -> str: ...
+
 
 __all__ = (
     'AgentDepsT',
@@ -63,7 +84,9 @@ class RunContext(Generic[AgentDepsT]):
     """The current step in the run."""
 
     def replace_with(
-        self, retry: int | None = None, tool_name: str | None | _utils.Unset = _utils.UNSET
+        self,
+        retry: int | None = None,
+        tool_name: str | None | _utils.Unset = _utils.UNSET,
     ) -> RunContext[AgentDepsT]:
         # Create a new `RunContext` a new `retry` value and `tool_name`.
         kwargs = {}
@@ -304,6 +327,80 @@ class Tool(Generic[AgentDepsT]):
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
 
+    @classmethod
+    def from_schema(
+        cls,
+        function: Callable[..., Any],
+        name: str,
+        description: str,
+        json_schema: JsonSchemaValue,
+    ) -> Self:
+        """Creates a Pydantic tool from a function and a JSON schema.
+
+        Args:
+            function: The function to call.
+                This will be called with keywords only, and no validation of
+                the arguments will be performed.
+            name: The unique name of the tool that clearly communicates its purpose
+            description: Used to tell the model how/when/why to use the tool.
+                You can provide few-shot examples as a part of the description.
+            json_schema: The schema for the function arguments
+
+        Returns:
+            A Pydantic tool that calls the function
+        """
+        function_schema = _function_schema.FunctionSchema(
+            function=function,
+            description=description,
+            validator=SchemaValidator(schema=core_schema.any_schema()),
+            json_schema=json_schema,
+            takes_ctx=False,
+            is_async=asyncio.iscoroutinefunction(function),
+        )
+
+        return cls(
+            function,
+            takes_ctx=False,
+            name=name,
+            description=description,
+            function_schema=function_schema,
+        )
+
+    @classmethod
+    def from_langchain(cls, langchain_tool: LangChainTool) -> Self:
+        """Creates a Pydantic tool proxy from a LangChain tool.
+
+        Args:
+            langchain_tool: The LangChain tool to wrap.
+
+        Returns:
+            A Pydantic tool that corresponds to the LangChain tool.
+        """
+        function_name = langchain_tool.name
+        function_description = langchain_tool.description
+        inputs = langchain_tool.args.copy()
+        required = sorted({name for name, detail in inputs.items() if 'default' not in detail})
+        schema: JsonSchemaValue = langchain_tool.get_input_jsonschema()
+        if 'additionalProperties' not in schema:
+            schema['additionalProperties'] = False
+        if required:
+            schema['required'] = required
+
+        defaults = {name: detail['default'] for name, detail in inputs.items() if 'default' in detail}
+
+        # restructures the arguments to match langchain tool run
+        def proxy(*args: Any, **kwargs: Any) -> str:
+            assert not args, 'This should always be called with kwargs'
+            kwargs = defaults | kwargs
+            return langchain_tool.run(kwargs)
+
+        return cls.from_schema(
+            function=proxy,
+            name=function_name,
+            description=function_description,
+            json_schema=schema,
+        )
+
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
 
@@ -325,7 +422,10 @@ class Tool(Generic[AgentDepsT]):
             return tool_def
 
     async def run(
-        self, message: _messages.ToolCallPart, run_context: RunContext[AgentDepsT], tracer: Tracer
+        self,
+        message: _messages.ToolCallPart,
+        run_context: RunContext[AgentDepsT],
+        tracer: Tracer,
     ) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
         """Run the tool function asynchronously.
 

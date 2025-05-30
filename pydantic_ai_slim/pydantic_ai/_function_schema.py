@@ -7,7 +7,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, Callable, cast
 
@@ -43,9 +43,9 @@ class FunctionSchema:
     # if not None, the function takes a single by that name (besides potentially `info`)
     takes_ctx: bool
     is_async: bool
-    single_arg_name: str | None
-    positional_fields: list[str]
-    var_positional_field: str | None
+    single_arg_name: str | None = None
+    positional_fields: list[str] = field(default_factory=list)
+    var_positional_field: str | None = None
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
