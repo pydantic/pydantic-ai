@@ -31,6 +31,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, try_import
@@ -630,4 +632,97 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
                 ],
             },
         ]
+    )
+
+
+async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvider):
+    now = datetime.datetime.now()
+    req = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='tool1', content={'foo': 'bar'}, tool_call_id='id1', timestamp=now),
+            ]
+        ),
+    ]
+
+    # Models other than Mistral support toolResult.content with text, not json
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    # Call the mapping function directly
+    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'text': '{"foo":"bar"}'}], 'status': 'success'}},
+                ],
+            },
+        ]
+    )
+
+    # Mistral requires toolResult.content to hold json, not text
+    model = BedrockConverseModel('mistral.mistral-7b-instruct-v0:2', provider=bedrock_provider)
+    # Call the mapping function directly
+    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'json': {'foo': 'bar'}}], 'status': 'success'}},
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_anthropic_no_tool_choice(bedrock_provider: BedrockProvider):
+    my_tool = ToolDefinition(
+        'my_tool',
+        'This is my tool',
+        {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+    )
+    mrp = ModelRequestParameters(function_tools=[my_tool], allow_text_output=False, output_tools=[])
+
+    # Models other than Anthropic support tool_choice
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
+
+    assert tool_config == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'my_tool',
+                        'description': 'This is my tool',
+                        'inputSchema': {
+                            'json': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}}
+                        },
+                    }
+                }
+            ],
+            'toolChoice': {'any': {}},
+        }
+    )
+
+    # Anthropic models don't support tool_choice
+    model = BedrockConverseModel('us.anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
+
+    assert tool_config == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'my_tool',
+                        'description': 'This is my tool',
+                        'inputSchema': {
+                            'json': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}}
+                        },
+                    }
+                }
+            ]
+        }
     )

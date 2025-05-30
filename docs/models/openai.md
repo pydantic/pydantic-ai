@@ -2,7 +2,7 @@
 
 ## Install
 
-To use OpenAI models, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
+To use OpenAI models or OpenAI-compatible APIs, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[openai]"
@@ -10,7 +10,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 
 ## Configuration
 
-To use `OpenAIModel` through their main API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
+To use `OpenAIModel` with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
 
 ## Environment variable
 
@@ -130,7 +130,7 @@ You can learn more about the differences between the Responses API and Chat Comp
 
 ## OpenAI-compatible Models
 
-Many models are compatible with the OpenAI API, and can be used with `OpenAIModel` in PydanticAI.
+Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIModel` in PydanticAI.
 Before getting started, check the [installation and configuration](#install) instructions above.
 
 To use another OpenAI-compatible API, you can make use of the `base_url` and `api_key` arguments from `OpenAIProvider`:
@@ -150,7 +150,40 @@ agent = Agent(model)
 ...
 ```
 
-You can also use the `provider` argument with a custom provider class like the `DeepSeekProvider`:
+Various providers also have their own provider classes so that you don't need to specify the base URL yourself and you can use the standard `<PROVIDER>_API_KEY` environment variable to set the API key.
+When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-chat")` or `Agent("openrouter:google/gemini-2.5-pro-preview")`, instead of building the `OpenAIModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIModel` instead of building instantiating the provider class explicitly.
+
+#### Model Profile
+
+Sometimes, the provider or model you're using will have slightly different requirements than OpenAI's API or models, like having different restrictions on JSON schemas for tool definitions, or not supporting tool definitions to be marked as strict.
+
+When using an alternative provider class provided by PydanticAI, an appropriate model profile is typically selected automatically based on the model name.
+If the model you're using is not working correctly out of the box, you can tweak various aspects of how model requests are constructed by providing your own [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (for behaviors shared among all model classes) or [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (for behaviors specific to `OpenAIModel`):
+
+```py
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIModelProfile
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIModel(
+    'model_name',
+    provider=OpenAIProvider(
+        base_url='https://<openai-compatible-api-endpoint>.com', api_key='your-api-key'
+    ),
+    profile=OpenAIModelProfile(
+        json_schema_transformer=InlineDefsJsonSchemaTransformer,  # Supported by any model class on a plain ModelProfile
+        openai_supports_strict_tool_definition=False  # Supported by OpenAIModel only, requires OpenAIModelProfile
+    )
+)
+agent = Agent(model)
+```
+
+### DeepSeek
+
+To use the [DeepSeek](https://deepseek.com) provider, first create an API key by following the [Quick Start guide](https://api-docs.deepseek.com/).
+Once you have the API key, you can use it with the `DeepSeekProvider`:
 
 ```python
 from pydantic_ai import Agent
@@ -285,7 +318,7 @@ agent = Agent(model)
 
 To use [OpenRouter](https://openrouter.ai), first create an API key at [openrouter.ai/keys](https://openrouter.ai/keys).
 
-Once you have the API key, you can use it with the `OpenAIProvider`:
+Once you have the API key, you can use it with the `OpenRouterProvider`:
 
 ```python
 from pydantic_ai import Agent
@@ -303,16 +336,16 @@ agent = Agent(model)
 ### Grok (xAI)
 
 Go to [xAI API Console](https://console.x.ai/) and create an API key.
-Once you have the API key, you can use it with the `OpenAIProvider`:
+Once you have the API key, you can use it with the `GrokProvider`:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.grok import GrokProvider
 
 model = OpenAIModel(
     'grok-2-1212',
-    provider=OpenAIProvider(base_url='https://api.x.ai/v1', api_key='your-xai-api-key'),
+    provider=GrokProvider(api_key='your-xai-api-key'),
 )
 agent = Agent(model)
 ...
@@ -342,19 +375,16 @@ agent = Agent(model)
 ### Fireworks AI
 
 Go to [Fireworks.AI](https://fireworks.ai/) and create an API key in your account settings.
-Once you have the API key, you can use it with the `OpenAIProvider`:
+Once you have the API key, you can use it with the `FireworksProvider`:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.fireworks import FireworksProvider
 
 model = OpenAIModel(
     'accounts/fireworks/models/qwq-32b',  # model library available at https://fireworks.ai/models
-    provider=OpenAIProvider(
-        base_url='https://api.fireworks.ai/inference/v1',
-        api_key='your-fireworks-api-key',
-    ),
+    provider=FireworksProvider(api_key='your-fireworks-api-key'),
 )
 agent = Agent(model)
 ...
@@ -363,19 +393,16 @@ agent = Agent(model)
 ### Together AI
 
 Go to [Together.ai](https://www.together.ai/) and create an API key in your account settings.
-Once you have the API key, you can use it with the `OpenAIProvider`:
+Once you have the API key, you can use it with the `TogetherProvider`:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.together import TogetherProvider
 
 model = OpenAIModel(
     'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free',  # model library available at https://www.together.ai/models
-    provider=OpenAIProvider(
-        base_url='https://api.together.xyz/v1',
-        api_key='your-together-api-key',
-    ),
+    provider=TogetherProvider(api_key='your-together-api-key'),
 )
 agent = Agent(model)
 ...

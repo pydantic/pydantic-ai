@@ -2573,3 +2573,47 @@ def test_agent_repr() -> None:
     assert repr(agent) == snapshot(
         "Agent(model=None, name=None, end_strategy='early', model_settings=None, output_type=<class 'str'>, instrument=None)"
     )
+
+
+def test_tool_call_with_validation_value_error_serializable():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('foo_tool', {'bar': 0})])
+        elif len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('foo_tool', {'bar': 1})])
+        else:
+            return ModelResponse(parts=[TextPart('Tool returned 1')])
+
+    agent = Agent(FunctionModel(llm))
+
+    class Foo(BaseModel):
+        bar: int
+
+        @field_validator('bar')
+        def validate_bar(cls, v: int) -> int:
+            if v == 0:
+                raise ValueError('bar cannot be 0')
+            return v
+
+    @agent.tool_plain
+    def foo_tool(foo: Foo) -> int:
+        return foo.bar
+
+    result = agent.run_sync('Hello')
+    assert json.loads(result.all_messages_json())[2] == snapshot(
+        {
+            'parts': [
+                {
+                    'content': [
+                        {'type': 'value_error', 'loc': ['bar'], 'msg': 'Value error, bar cannot be 0', 'input': 0}
+                    ],
+                    'tool_name': 'foo_tool',
+                    'tool_call_id': IsStr(),
+                    'timestamp': IsStr(),
+                    'part_kind': 'retry-prompt',
+                }
+            ],
+            'instructions': None,
+            'kind': 'request',
+        }
+    )
