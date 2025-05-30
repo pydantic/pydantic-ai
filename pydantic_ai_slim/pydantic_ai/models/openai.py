@@ -14,7 +14,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._utils import guard_tool_call_id as _guard_tool_call_id
+from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -308,7 +308,11 @@ class OpenAIModel(Model):
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
+        if response.created:
+            timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
+        else:
+            timestamp = _now_utc()
+
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         vendor_details: dict[str, Any] | None = None
@@ -591,7 +595,11 @@ class OpenAIResponsesModel(Model):
 
     def _process_response(self, response: responses.Response) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = datetime.fromtimestamp(response.created_at, tz=timezone.utc)
+        if response.created_at:
+            timestamp = datetime.fromtimestamp(response.created_at, tz=timezone.utc)
+        else:
+            timestamp = _now_utc()
+
         items: list[ModelResponsePart] = []
         items.append(TextPart(response.output_text))
         for item in response.output:
