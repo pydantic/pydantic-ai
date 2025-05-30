@@ -338,7 +338,9 @@ class Tool(Generic[AgentDepsT]):
         """Creates a Pydantic tool from a function and a JSON schema.
 
         Args:
-            function: The function to call
+            function: The function to call.
+                This will be called with keywords only, and no validation of
+                the arguments will be performed.
             name: The unique name of the tool that clearly communicates its purpose
             description: Used to tell the model how/when/why to use the tool.
                 You can provide few-shot examples as a part of the description.
