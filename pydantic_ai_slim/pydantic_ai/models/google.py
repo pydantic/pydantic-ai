@@ -399,7 +399,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 raise UnexpectedModelBehavior('Streamed response has no content field')  # pragma: no cover
             assert candidate.content.parts is not None
             for part in candidate.content.parts:
-                if part.text:
+                if part.text is not None:
                     yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -447,7 +447,7 @@ def _process_response_from_parts(
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
-        if part.text:
+        if part.text is not None:
             items.append(TextPart(content=part.text))
         elif part.function_call:
             assert part.function_call.name is not None
