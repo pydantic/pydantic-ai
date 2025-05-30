@@ -16,6 +16,7 @@ from functools import cache, cached_property
 import httpx
 from typing_extensions import Literal, TypeAliasType
 
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 
 from .._parts_manager import ModelResponsePartsManager
@@ -292,6 +293,7 @@ class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition] = field(default_factory=list)
+    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
     allow_text_output: bool = True
     output_tools: list[ToolDefinition] = field(default_factory=list)
 

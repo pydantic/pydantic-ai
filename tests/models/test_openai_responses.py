@@ -6,6 +6,7 @@ from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BinaryContent,
@@ -465,6 +466,58 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
             ),
         ]
     )
+
+
+async def test_openai_responses_model_web_search_tool(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=['web-search'])
+
+    result = await agent.run('What day is it today?')
+    assert result.output == snapshot("""\
+Today is Wednesday, May 14, 2025.
+
+## Weather for San Francisco, CA:
+Current Conditions: Mostly clear, 50°F (10°C)
+
+Daily Forecast:
+* Wednesday, May 14: Low: 51°F (10°C), High: 65°F (18°C), Description: Areas of low clouds early; otherwise, mostly sunny
+* Thursday, May 15: Low: 53°F (12°C), High: 66°F (19°C), Description: Areas of low clouds, then sun
+* Friday, May 16: Low: 53°F (12°C), High: 64°F (18°C), Description: Partly sunny
+* Saturday, May 17: Low: 52°F (11°C), High: 63°F (17°C), Description: Low clouds breaking for some sun; breezy in the afternoon
+* Sunday, May 18: Low: 51°F (10°C), High: 68°F (20°C), Description: Clouds yielding to sun
+* Monday, May 19: Low: 53°F (12°C), High: 68°F (20°C), Description: Sunny
+* Tuesday, May 20: Low: 52°F (11°C), High: 70°F (21°C), Description: Mostly sunny
+ \
+""")
+
+
+async def test_openai_responses_model_web_search_tool_with_user_location(
+    allow_model_requests: None, openai_api_key: str
+):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[WebSearchTool(user_location={'city': 'Utrecht', 'country': 'NL'})],
+    )
+
+    result = await agent.run('What is the current temperature?')
+    assert result.output == snapshot("""\
+As of 12:58 PM on Wednesday, May 14, 2025, in Utrecht, Netherlands, the weather is sunny with a temperature of 22°C (71°F).
+
+## Weather for Utrecht, Netherlands:
+Current Conditions: Sunny, 71°F (22°C)
+
+Daily Forecast:
+* Wednesday, May 14: Low: 48°F (9°C), High: 71°F (22°C), Description: Clouds yielding to sun
+* Thursday, May 15: Low: 43°F (6°C), High: 67°F (20°C), Description: After a cloudy start, sun returns
+* Friday, May 16: Low: 45°F (7°C), High: 64°F (18°C), Description: Mostly sunny
+* Saturday, May 17: Low: 47°F (9°C), High: 68°F (20°C), Description: Mostly sunny
+* Sunday, May 18: Low: 47°F (8°C), High: 68°F (20°C), Description: Some sun
+* Monday, May 19: Low: 49°F (9°C), High: 70°F (21°C), Description: Delightful with partial sunshine
+* Tuesday, May 20: Low: 49°F (10°C), High: 72°F (22°C), Description: Warm with sunshine and a few clouds
+ \
+""")
 
 
 def test_model_profile_strict_not_supported():

@@ -10,6 +10,7 @@ from typing import Any, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers import Provider, infer_provider
 
@@ -26,6 +27,8 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
+    ServerToolCallPart,
+    ServerToolReturnPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -58,6 +61,11 @@ try:
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
+    from openai.types.chat.completion_create_params import (
+        WebSearchOptions,
+        WebSearchOptionsUserLocation,
+        WebSearchOptionsUserLocationApproximate,
+    )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.shared import ReasoningEffort
@@ -263,6 +271,7 @@ class OpenAIModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
+        web_search_options = self._get_web_search_options(model_request_parameters)
 
         # standalone function to make it easier to override
         if not tools:
@@ -298,6 +307,7 @@ class OpenAIModel(Model):
                 logprobs=model_settings.get('openai_logprobs', NOT_GIVEN),
                 top_logprobs=model_settings.get('openai_top_logprobs', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
+                web_search_options=web_search_options or NOT_GIVEN,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -365,6 +375,19 @@ class OpenAIModel(Model):
             tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
+    def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, WebSearchTool):
+                if tool.user_location:
+                    return WebSearchOptions(
+                        search_context_size=tool.search_context_size,
+                        user_location=WebSearchOptionsUserLocation(
+                            type='approximate',
+                            approximate=WebSearchOptionsUserLocationApproximate(**tool.user_location),
+                        ),
+                    )
+                return WebSearchOptions(search_context_size=tool.search_context_size)
+
     async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
@@ -380,6 +403,9 @@ class OpenAIModel(Model):
                         texts.append(item.content)
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
+                    # OpenAI doesn't return server tools calls.
+                    elif isinstance(item, (ServerToolCallPart, ServerToolReturnPart)):
+                        continue
                     else:
                         assert_never(item)
                 message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
@@ -642,6 +668,7 @@ class OpenAIResponsesModel(Model):
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
         tools = self._get_tools(model_request_parameters)
         tools = list(model_settings.get('openai_builtin_tools', [])) + tools
+        tools = self._get_builtin_tools(model_request_parameters) + tools
 
         # standalone function to make it easier to override
         if not tools:
@@ -692,6 +719,20 @@ class OpenAIResponsesModel(Model):
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
         if model_request_parameters.output_tools:
             tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
+        return tools
+
+    def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
+        tools: list[responses.ToolParam] = []
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, WebSearchTool):
+                web_search_tool = responses.WebSearchToolParam(
+                    type='web_search_preview', search_context_size=tool.search_context_size
+                )
+                if tool.user_location:
+                    web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
+                        type='approximate', **tool.user_location
+                    )
+                tools.append(web_search_tool)
         return tools
 
     def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
@@ -747,6 +788,9 @@ class OpenAIResponsesModel(Model):
                         openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
+                    # OpenAI doesn't return server tools calls.
+                    elif isinstance(item, (ServerToolCallPart, ServerToolReturnPart)):
+                        continue
                     else:
                         assert_never(item)
             else:

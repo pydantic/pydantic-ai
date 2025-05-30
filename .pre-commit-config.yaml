@@ -60,6 +60,6 @@ repos:
     rev: v2.3.0
     hooks:
     - id: codespell
-      args: ['--skip', 'tests/models/cassettes/*,docs/a2a/fasta2a.md']
+      args: ['--skip', 'tests/models/cassettes/*,docs/a2a/fasta2a.md,tests/models/test_groq.py']
       additional_dependencies:
       - tomli
