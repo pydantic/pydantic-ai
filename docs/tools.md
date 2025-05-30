@@ -412,7 +412,7 @@ _(This example is complete, it can be run "as is")_
 If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of *args or **kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the `Tool.from_schema` function. With this you provide the name, description and JSON schema for the function directly:
 
 ```python
-from pydantic_ai import Tool
+from pydantic_ai.tools import Tool
 
 def foobar(**kwargs) -> str:
     return kwargs['a'] + kwargs['b']
