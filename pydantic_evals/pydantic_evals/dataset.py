@@ -252,7 +252,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     async def evaluate(
         self, task: Callable[[InputsT], Awaitable[OutputT]], name: str | None = None, max_concurrency: int | None = None
-    ) -> EvaluationReport:
+    ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
         This method runs the task on each case in the dataset, applies evaluators,
@@ -296,7 +296,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     def evaluate_sync(
         self, task: Callable[[InputsT], Awaitable[OutputT]], name: str | None = None, max_concurrency: int | None = None
-    ) -> EvaluationReport:
+    ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
         This is a synchronous wrapper around [`evaluate`][pydantic_evals.Dataset.evaluate] provided for convenience.
@@ -858,7 +858,7 @@ async def _run_task_and_evaluators(
     case: Case[InputsT, OutputT, MetadataT],
     report_case_name: str,
     dataset_evaluators: list[Evaluator[InputsT, OutputT, MetadataT]],
-) -> ReportCase:
+) -> ReportCase[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
     Args:
@@ -908,7 +908,7 @@ async def _run_task_and_evaluators(
             span_id = f'{context.span_id:016x}'
         fallback_duration = time.time() - t0
 
-    return ReportCase(
+    return ReportCase[InputsT, OutputT, MetadataT](
         name=report_case_name,
         inputs=case.inputs,
         metadata=case.metadata,

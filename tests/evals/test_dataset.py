@@ -33,7 +33,7 @@ with try_import() as imports_successful:
         def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
             return self.output
 
-    from pydantic_evals.reporting import ReportCase
+    from pydantic_evals.reporting import ReportCase, ReportCaseAdapter
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
@@ -196,7 +196,7 @@ async def test_evaluate(
 
     assert report is not None
     assert len(report.cases) == 2
-    assert report.cases[0].model_dump() == snapshot(
+    assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
         {
             'assertions': {
                 'correct': {
@@ -248,7 +248,7 @@ async def test_evaluate_with_concurrency(
 
     assert report is not None
     assert len(report.cases) == 2
-    assert report.cases[0].model_dump() == snapshot(
+    assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
         {
             'assertions': {
                 'correct': {
