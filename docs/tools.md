@@ -419,8 +419,8 @@ def foobar(**kwargs) -> str:
 
 tool = Tool.from_schema(
     function=foobar,
-    name="sum",
-    description="Sum two numbers."
+    name='sum',
+    description='Sum two numbers.',
     json_schema={
         'additionalProperties': False,
         'properties': {
