@@ -17,7 +17,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, IsInstance, try_import
@@ -48,6 +48,21 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
     return_value = (NoOpCredentials(), 'pydantic-ai')
     mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
+
+
+@pytest.mark.skipif(
+    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+)
+@pytest.mark.vcr()
+async def test_labels(allow_model_requests: None) -> None:
+    m = GeminiModel('gemini-2.0-flash', provider='google-vertex')
+    agent = Agent(m)
+
+    result = await agent.run(
+        'What is the capital of France?',
+        model_settings=GeminiModelSettings(gemini_labels={'environment': 'test', 'team': 'analytics'}),
+    )
+    assert result.output == snapshot('The capital of France is **Paris**.\n')
 
 
 @pytest.mark.skipif(
