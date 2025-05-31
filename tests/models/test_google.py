@@ -1,9 +1,7 @@
-from __future__ import annotations as _annotations
-
 import datetime
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Union
 
 import pytest
 from httpx import Request
@@ -637,7 +635,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
     ],
 )
 async def test_google_url_input(
-    url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl, expected_output: str, allow_model_requests: None
+    url: Union[AudioUrl, DocumentUrl, ImageUrl, VideoUrl], expected_output: str, allow_model_requests: None
 ) -> None:
     provider = GoogleProvider(project='pydantic-ai', location='us-central1')
     m = GoogleModel('gemini-2.0-flash', provider=provider)
