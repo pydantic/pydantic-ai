@@ -21,6 +21,22 @@ def test_video_url():
     assert video_url.format == 'mp4'
 
 
+@pytest.mark.parametrize(
+    'url,is_youtube',
+    [
+        pytest.param('https://youtu.be/lCdaVNyHtjU', True, id='youtu.be'),
+        pytest.param('https://www.youtube.com/lCdaVNyHtjU', True, id='www.youtube.com'),
+        pytest.param('https://youtube.com/lCdaVNyHtjU', True, id='youtube.com'),
+        pytest.param('https://dummy.com/video.mp4', False, id='dummy.com'),
+    ],
+)
+def test_youtube_video_url(url: str, is_youtube: bool):
+    video_url = VideoUrl(url=url)
+    assert video_url.is_youtube is is_youtube
+    assert video_url.media_type == 'video/mp4'
+    assert video_url.format == 'mp4'
+
+
 def test_document_url():
     with pytest.raises(ValueError, match='Unknown document file extension: https://example.com/document.potato'):
         document_url = DocumentUrl(url='https://example.com/document.potato')
