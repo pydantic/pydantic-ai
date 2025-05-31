@@ -38,8 +38,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    cached_async_http_client,
     check_allow_model_requests,
+    download_item,
     get_user_agent,
 )
 
@@ -375,12 +375,8 @@ class GoogleModel(Model):
                     if self.system == 'google-vertex':
                         content.append({'file_data': {'file_uri': item.url, 'mime_type': item.media_type}})
                     else:
-                        client = cached_async_http_client()
-                        response = await client.get(item.url, follow_redirects=True)
-                        response.raise_for_status()
-                        # NOTE: The type from Google GenAI is incorrect, it should be `str`, not `bytes`.
-                        base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                        content.append({'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}})  # type: ignore
+                        base64_data, media_type = await download_item(item, data_format='base64')
+                        content.append({'inline_data': {'data': base64_data, 'mime_type': media_type}})  # type: ignore
                 else:
                     assert_never(item)
         return content

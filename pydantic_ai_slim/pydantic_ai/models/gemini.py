@@ -41,8 +41,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    cached_async_http_client,
     check_allow_model_requests,
+    download_item,
     get_user_agent,
 )
 
@@ -356,16 +356,8 @@ class GeminiModel(Model):
                         file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         content.append(file_data)
                     else:
-                        client = cached_async_http_client()
-                        response = await client.get(item.url, follow_redirects=True)
-                        response.raise_for_status()
-                        mime_type = response.headers['Content-Type'].split(';')[0]
-                        inline_data = _GeminiInlineDataPart(
-                            inline_data={
-                                'data': base64.b64encode(response.content).decode('utf-8'),
-                                'mime_type': mime_type,
-                            }
-                        )
+                        base64_data, media_type = await download_item(item, data_format='base64')
+                        inline_data = _GeminiInlineDataPart(inline_data={'data': base64_data, 'mime_type': media_type})
                         content.append(inline_data)
                 else:
                     assert_never(item)
