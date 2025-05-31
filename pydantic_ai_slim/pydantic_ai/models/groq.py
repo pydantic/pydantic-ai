@@ -27,10 +27,17 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, get_user_agent
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    check_allow_model_requests,
+    get_user_agent,
+)
 
 try:
     from groq import NOT_GIVEN, APIStatusError, AsyncGroq, AsyncStream
@@ -105,7 +112,13 @@ class GroqModel(Model):
     _model_name: GroqModelName = field(repr=False)
     _system: str = field(default='groq', repr=False)
 
-    def __init__(self, model_name: GroqModelName, *, provider: Literal['groq'] | Provider[AsyncGroq] = 'groq'):
+    def __init__(
+        self,
+        model_name: GroqModelName,
+        *,
+        provider: Literal['groq'] | Provider[AsyncGroq] = 'groq',
+        profile: ModelProfileSpec | None = None,
+    ):
         """Initialize a Groq model.
 
         Args:
@@ -114,12 +127,14 @@ class GroqModel(Model):
             provider: The provider to use for authentication and API access. Can be either the string
                 'groq' or an instance of `Provider[AsyncGroq]`. If not provided, a new provider will be
                 created using the other parameters.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
+        self._profile = profile or provider.model_profile
 
     @property
     def base_url(self) -> str:

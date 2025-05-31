@@ -1,15 +1,18 @@
 """This file is used to test static typing, it's analyzed with pyright and mypy."""
 
-from collections.abc import Awaitable, Iterator
-from contextlib import contextmanager
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Callable, TypeAlias, Union
 
 from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
+from pydantic_ai._output import ToolOutput
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.tools import ToolDefinition
+
+# Define here so we can check `if MYPY` below. This will not be executed, MYPY will always set it to True
+MYPY = False
 
 
 @dataclass
@@ -35,16 +38,6 @@ def system_prompt_ok2() -> str:
 # we have overloads for every possible signature of system_prompt, so the type of decorated functions is correct
 assert_type(system_prompt_ok1, Callable[[RunContext[MyDeps]], Awaitable[str]])
 assert_type(system_prompt_ok2, Callable[[], str])
-
-
-@contextmanager
-def expect_error(error_type: type[Exception]) -> Iterator[None]:
-    try:
-        yield None
-    except Exception as e:
-        assert isinstance(e, error_type), f'Expected {error_type}, got {type(e)}'
-    else:
-        raise AssertionError('Expected an error')
 
 
 @typed_agent.tool
@@ -106,13 +99,6 @@ async def bad_tool1(ctx: RunContext[MyDeps], x: str) -> str:
 @typed_agent.tool  # type: ignore[arg-type]
 async def bad_tool2(ctx: RunContext[int], x: str) -> str:
     return f'{x} {ctx.deps}'
-
-
-with expect_error(ValueError):
-
-    @typed_agent.tool  # type: ignore[arg-type]
-    async def bad_tool3(x: str) -> str:
-        return x
 
 
 @typed_agent.output_validator
@@ -187,8 +173,51 @@ def foobar_ctx(ctx: RunContext[int], x: str, y: int) -> str:
     return f'{x} {y}'
 
 
-def foobar_plain(x: str, y: int) -> str:
-    return f'{x} {y}'
+async def foobar_plain(x: int, y: int) -> int:
+    return x * y
+
+
+class MyClass:
+    def my_method(self) -> bool:
+        return True
+
+
+str_function_agent = Agent(output_type=foobar_ctx)
+assert_type(str_function_agent, Agent[None, str])
+
+bool_method_agent = Agent(output_type=MyClass().my_method)
+assert_type(bool_method_agent, Agent[None, bool])
+
+if MYPY:
+    # mypy requires the generic parameters to be specified explicitly to be happy here
+    async_int_function_agent = Agent[None, int](output_type=foobar_plain)
+    assert_type(async_int_function_agent, Agent[None, int])
+
+    two_models_output_agent = Agent[None, Foo | Bar](output_type=[Foo, Bar])
+    assert_type(two_models_output_agent, Agent[None, Foo | Bar])
+
+    two_scalars_output_agent = Agent[None, int | str](output_type=[int, str])
+    assert_type(two_scalars_output_agent, Agent[None, int | str])
+
+    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
+    complex_output_agent = Agent[None, Foo | Bar | str | int | bool | tuple[str, int]](
+        output_type=[Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker]
+    )
+    assert_type(complex_output_agent, Agent[None, Foo | Bar | str | int | bool | tuple[str, int]])
+else:
+    # pyright is able to correctly infer the type here
+    async_int_function_agent = Agent(output_type=foobar_plain)
+    assert_type(async_int_function_agent, Agent[None, int])
+
+    two_models_output_agent = Agent(output_type=[Foo, Bar])
+    assert_type(two_models_output_agent, Agent[None, Foo | Bar])
+
+    two_scalars_output_agent = Agent(output_type=[int, str])
+    assert_type(two_scalars_output_agent, Agent[None, int | str])
+
+    marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
+    complex_output_agent = Agent(output_type=[Foo, Bar, foobar_ctx, ToolOutput(foobar_plain), marker])
+    assert_type(complex_output_agent, Agent[None, Foo | Bar | str | int | bool | tuple[str, int]])
 
 
 Tool(foobar_ctx, takes_ctx=True)
@@ -235,7 +264,6 @@ greet_agent = Agent[str, str]('test', tools=[greet_tool], deps_type=str)
 result = greet_agent.run_sync('testing...', deps='human')
 assert result.output == '{"greet":"hello a"}'
 
-MYPY = False
 if not MYPY:
     default_agent = Agent()
     assert_type(default_agent, Agent[None, str])

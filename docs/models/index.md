@@ -3,10 +3,8 @@
 PydanticAI is model-agnostic and has built-in support for multiple model providers:
 
 * [OpenAI](openai.md)
-* [DeepSeek](openai.md#openai-compatible-models)
 * [Anthropic](anthropic.md)
 * [Gemini](gemini.md) (via two different APIs: Generative Language API and VertexAI API)
-* [Ollama](openai.md#ollama)
 * [Groq](groq.md)
 * [Mistral](mistral.md)
 * [Cohere](cohere.md)
@@ -14,10 +12,12 @@ PydanticAI is model-agnostic and has built-in support for multiple model provide
 
 ## OpenAI-compatible Providers
 
-Many models are compatible with the OpenAI API, and can be used with `OpenAIModel` in PydanticAI:
+In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIModel` in PydanticAI:
 
-* [OpenRouter](openai.md#openrouter)
+* [DeepSeek](openai.md#deepseek)
 * [Grok (xAI)](openai.md#grok-xai)
+* [Ollama](openai.md#ollama)
+* [OpenRouter](openai.md#openrouter)
 * [Perplexity](openai.md#perplexity)
 * [Fireworks AI](openai.md#fireworks-ai)
 * [Together AI](openai.md#together-ai)
@@ -40,26 +40,32 @@ PydanticAI uses a few key terms to describe how it interacts with different LLMs
     roughly in the format `<VendorSdk>Model`, for example, we have `OpenAIModel`, `AnthropicModel`, `GeminiModel`,
     etc. When using a Model class, you specify the actual LLM model name (e.g., `gpt-4o`,
     `claude-3-5-sonnet-latest`, `gemini-1.5-flash`) as a parameter.
-* **Provider**: This refers to Model-specific classes which handle the authentication and connections
+* **Provider**: This refers to provider-specific classes which handle the authentication and connections
     to an LLM vendor. Passing a non-default _Provider_ as a parameter to a Model is how you can ensure
     that your agent will make requests to a specific endpoint, or make use of a specific approach to
     authentication (e.g., you can use Vertex-specific auth with the `GeminiModel` by way of the `VertexProvider`).
     In particular, this is how you can make use of an AI gateway, or an LLM vendor that offers API compatibility
     with the vendor SDK used by an existing Model (such as `OpenAIModel`).
+* **Profile**: This refers to a description of how requests to a specific model or family of models need to be
+    constructed to get the best results, independent of the model and provider classes used.
+    For example, different models have different restrictions on the JSON schemas that can be used for tools,
+    and the same schema transformer needs to be used for Gemini models whether you're using `GoogleModel`
+    with model name `gemini-2.5-pro-preview`, or `OpenAIModel` with `OpenRouterProvider` and model name `google/gemini-2.5-pro-preview`.
 
-In short, you select a specific model name (like `gpt-4o`), PydanticAI uses the appropriate Model class (like `OpenAIModel`), and the provider handles the connection and authentication to the underlying service.
+When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `openai:gpt-4o` or `openrouter:google/gemini-2.5-pro-preview`,
+PydanticAI will automatically select the appropriate model class, provider, and profile.
+If you want to use a different provider or profile, you can instantiate a model class directly and pass in `provider` and/or `profile` arguments.
 
 ## Custom Models
 
-To implement support for models not already supported, you will need to subclass the [`Model`][pydantic_ai.models.Model] abstract base class.
-
-For streaming, you'll also need to implement the following abstract base class:
-
-* [`StreamedResponse`][pydantic_ai.models.StreamedResponse]
+To implement support for a model API that's not already supported, you will need to subclass the [`Model`][pydantic_ai.models.Model] abstract base class.
+For streaming, you'll also need to implement the [`StreamedResponse`][pydantic_ai.models.StreamedResponse] abstract base class.
 
 The best place to start is to review the source code for existing implementations, e.g. [`OpenAIModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).
 
 For details on when we'll accept contributions adding new models to PydanticAI, see the [contributing guidelines](../contributing.md#new-model-rules).
+
+If a model API is compatible with the OpenAI API, you do not need a custom model class and can provide your own [custom provider](openai.md#openai-compatible-models) instead.
 
 <!-- TODO(Marcelo): We need to create a section in the docs about reliability. -->
 ## Fallback Model

@@ -65,7 +65,15 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
 
     result = await agent.run('Hello!')
     assert result.output == snapshot('Hello there! How can I help you today?\n')
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=7, response_tokens=11, total_tokens=18))
+    assert result.usage() == snapshot(
+        Usage(
+            requests=1,
+            request_tokens=7,
+            response_tokens=11,
+            total_tokens=18,
+            details={'text_prompt_tokens': 7, 'text_candidates_tokens': 11},
+        )
+    )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -82,7 +90,13 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello there! How can I help you today?\n')],
-                usage=Usage(requests=1, request_tokens=7, response_tokens=11, total_tokens=18, details={}),
+                usage=Usage(
+                    requests=1,
+                    request_tokens=7,
+                    response_tokens=11,
+                    total_tokens=18,
+                    details={'text_prompt_tokens': 7, 'text_candidates_tokens': 11},
+                ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
@@ -115,7 +129,15 @@ async def test_google_model_structured_response(allow_model_requests: None, goog
 
     result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
     assert result.output == snapshot({'temperature': '30°C', 'date': datetime.date(2022, 1, 1), 'city': 'London'})
-    assert result.usage() == snapshot(Usage(requests=2, request_tokens=224, response_tokens=35, total_tokens=259))
+    assert result.usage() == snapshot(
+        Usage(
+            requests=2,
+            request_tokens=224,
+            response_tokens=35,
+            total_tokens=259,
+            details={'text_prompt_tokens': 224, 'text_candidates_tokens': 35},
+        )
+    )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -136,7 +158,13 @@ async def test_google_model_structured_response(allow_model_requests: None, goog
                         tool_name='temperature', args={'date': '2022-01-01', 'city': 'London'}, tool_call_id=IsStr()
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=101, response_tokens=14, total_tokens=115, details={}),
+                usage=Usage(
+                    requests=1,
+                    request_tokens=101,
+                    response_tokens=14,
+                    total_tokens=115,
+                    details={'text_prompt_tokens': 101, 'text_candidates_tokens': 14},
+                ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
@@ -156,7 +184,13 @@ async def test_google_model_structured_response(allow_model_requests: None, goog
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=123, response_tokens=21, total_tokens=144, details={}),
+                usage=Usage(
+                    requests=1,
+                    request_tokens=123,
+                    response_tokens=21,
+                    total_tokens=144,
+                    details={'text_prompt_tokens': 123, 'text_candidates_tokens': 21},
+                ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
@@ -214,7 +248,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     request_tokens=57,
                     response_tokens=15,
                     total_tokens=173,
-                    details={'thoughts_token_count': 101},
+                    details={'thoughts_tokens': 101, 'text_prompt_tokens': 57},
                 ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
@@ -236,7 +270,13 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         content='I am sorry, I cannot fulfill this request. The country you provided is not supported.'
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=104, response_tokens=18, total_tokens=122, details={}),
+                usage=Usage(
+                    requests=1,
+                    request_tokens=104,
+                    response_tokens=18,
+                    total_tokens=122,
+                    details={'text_prompt_tokens': 104},
+                ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
@@ -493,7 +533,13 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.\n')],
-                usage=Usage(requests=1, request_tokens=13, response_tokens=8, total_tokens=21, details={}),
+                usage=Usage(
+                    requests=1,
+                    request_tokens=13,
+                    response_tokens=8,
+                    total_tokens=21,
+                    details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8},
+                ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},

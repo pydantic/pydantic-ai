@@ -4,14 +4,15 @@ import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     import openai
 
+    from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.deepseek import DeepSeekProvider
-
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
@@ -46,3 +47,9 @@ def test_deep_seek_pass_openai_client() -> None:
     openai_client = openai.AsyncOpenAI(api_key='api-key')
     provider = DeepSeekProvider(openai_client=openai_client)
     assert provider.client == openai_client
+
+
+def test_deep_seek_model_profile():
+    provider = DeepSeekProvider(api_key='api-key')
+    model = OpenAIModel('deepseek-r1', provider=provider)
+    assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
