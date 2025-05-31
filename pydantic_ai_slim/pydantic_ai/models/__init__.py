@@ -653,9 +653,17 @@ async def download_item(
             - `mime`: The media type as a MIME type.
             - `extension`: The media type as an extension.
 
+    Raises:
+        UserError: If the URL points to a YouTube video or its protocol is gs://.
+
     Returns:
         A tuple containing the content and the type of the item.
     """
+    if item.url.startswith('gs://'):
+        raise UserError('Downloading from protocol "gs://" is not supported.')
+    elif isinstance(item, VideoUrl) and item.is_youtube:
+        raise UserError('Downloading YouTube videos is not supported.')
+
     client = cached_async_http_client()
     response = await client.get(item.url, follow_redirects=True)
     response.raise_for_status()

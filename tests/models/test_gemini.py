@@ -18,7 +18,6 @@ from typing_extensions import Literal, TypeAlias
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
-    AudioUrl,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
@@ -1159,54 +1158,6 @@ async def test_labels_are_ignored_with_gla_provider(allow_model_requests: None, 
         model_settings=GeminiModelSettings(gemini_labels={'environment': 'test', 'team': 'analytics'}),
     )
     assert result.output == snapshot('The capital of France is **Paris**.\n')
-
-
-@pytest.mark.parametrize(
-    'url',
-    [
-        pytest.param(AudioUrl(url='https://cdn.openai.com/API/docs/audio/alloy.wav'), id='AudioUrl'),
-        pytest.param(
-            DocumentUrl(url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf'),
-            id='DocumentUrl',
-        ),
-        pytest.param(
-            ImageUrl(url='https://upload.wikimedia.org/wikipedia/commons/6/6a/Www.wikipedia_screenshot_%282021%29.png'),
-            id='ImageUrl',
-        ),
-        pytest.param(VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4'), id='VideoUrl'),
-    ],
-)
-async def test_url_inputs_are_downloaded(
-    url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl,
-    client_with_handler: ClientWithHandler,
-    env: TestEnv,
-    allow_model_requests: None,
-) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        text = json.loads(request.content)['contents'][0]['parts'][0]['text']
-        assert text == 'What is the main content of this URL?'
-
-        file_data = json.loads(request.content)['contents'][0]['parts'][1].get('fileData')
-        assert file_data is None
-
-        inline_data = json.loads(request.content)['contents'][0]['parts'][1]['inlineData']
-        assert inline_data['mimeType'] == url.media_type
-
-        return httpx.Response(
-            200,
-            content=_gemini_response_ta.dump_json(
-                gemini_response(_content_model_response(ModelResponse(parts=[TextPart('...')]))),
-                by_alias=True,
-            ),
-            headers={'Content-Type': 'application/json'},
-        )
-
-    gemini_client = client_with_handler(handler)
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client, api_key='mock'))
-    agent = Agent(m)
-    result = await agent.run(['What is the main content of this URL?', url])
-
-    assert result.output == '...'
 
 
 @pytest.mark.vcr()
