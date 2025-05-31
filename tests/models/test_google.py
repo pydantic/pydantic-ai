@@ -1,3 +1,5 @@
+from __future__ import annotations as _annotations
+
 import datetime
 import os
 from dataclasses import dataclass
@@ -635,7 +637,11 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
     ],
 )
 async def test_google_url_input(
-    url: Union[AudioUrl, DocumentUrl, ImageUrl, VideoUrl], expected_output: str, allow_model_requests: None
+    # Need to use noqa because with runtime annotations this always fails linting
+    # https://docs.astral.sh/ruff/rules/non-pep604-annotation-union/
+    url: Union[AudioUrl, DocumentUrl, ImageUrl, VideoUrl],  # noqa
+    expected_output: str,
+    allow_model_requests: None,
 ) -> None:
     provider = GoogleProvider(project='pydantic-ai', location='us-central1')
     m = GoogleModel('gemini-2.0-flash', provider=provider)
