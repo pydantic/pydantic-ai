@@ -1372,6 +1372,7 @@ async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini
                 usage=Usage(requests=1, request_tokens=9, response_tokens=72, total_tokens=81, details={}),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
