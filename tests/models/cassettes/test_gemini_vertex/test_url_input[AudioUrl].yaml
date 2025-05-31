@@ -72,7 +72,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "936"
+          - "957"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -83,29 +83,29 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.27675287811844435
+          - avgLogprobs: -0.32768359780311584
             content:
               parts:
                 - text:
-                    The URL discusses the phenomenon of the sun rising in the east and setting in the west, a basic observation
-                    known to humans for millennia.
+                    The content of the URL discusses the observation that the sun rises in the east and sets in the west, a
+                    phenomenon that has been noted by humans for millennia.
               role: model
             finishReason: STOP
-        createTime: "2025-05-08T20:29:04.574870Z"
+        createTime: "2025-05-31T21:49:24.539116Z"
         modelVersion: gemini-2.0-flash
-        responseId: EBQdaJaLI8rM-O4P0dK02Qs
+        responseId: ZHk7aOzzIPjqld8PpP6_qAk
         usageMetadata:
-          candidatesTokenCount: 27
+          candidatesTokenCount: 32
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 27
+              tokenCount: 32
           promptTokenCount: 159
           promptTokensDetails:
-            - modality: AUDIO
-              tokenCount: 150
             - modality: TEXT
               tokenCount: 9
-          totalTokenCount: 186
+            - modality: AUDIO
+              tokenCount: 150
+          totalTokenCount: 191
           trafficType: ON_DEMAND
       status:
         code: 200

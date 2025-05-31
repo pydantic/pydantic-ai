@@ -73,7 +73,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "1122"
+          - "1089"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -84,30 +84,28 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.5879494396608267
+          - avgLogprobs: -0.7131219751694623
             content:
               parts:
                 - text:
-                    The main content of the URL appears to be a picturesque alleyway in a Greek island town. The alleyway has
-                    whitewashed buildings on either side, with outdoor seating for a cafe or restaurant. At the end of the alleyway,
-                    there's a view of the sea. The scene evokes a sense of relaxation and Mediterranean charm.
+                    The image shows a charming outdoor cafe in a Greek coastal town. The cafe is nestled between traditional
+                    whitewashed buildings, with tables and chairs set along a narrow cobblestone pathway. The sea is visible in
+                    the distance, adding to the picturesque and relaxing atmosphere.
               role: model
             finishReason: STOP
-        createTime: "2025-05-24T11:02:41.664628Z"
+        createTime: "2025-05-31T21:37:05.265336Z"
         modelVersion: gemini-2.0-flash
-        responseId: UacxaLTIKMiWmecP_PiroQQ
+        responseId: gXY7aPiYEL_z2PgP1KyaoAY
         usageMetadata:
-          candidatesTokenCount: 67
+          candidatesTokenCount: 51
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 67
+              tokenCount: 51
           promptTokenCount: 9
           promptTokensDetails:
-            - modality: VIDEO
-            - modality: AUDIO
             - modality: TEXT
               tokenCount: 9
-          totalTokenCount: 76
+          totalTokenCount: 60
           trafficType: ON_DEMAND
       status:
         code: 200

@@ -72,7 +72,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "1041"
+          - "1163"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -83,30 +83,31 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.6030277583910071
+          - avgLogprobs: -0.6945994785853795
             content:
               parts:
                 - text:
-                    The image shows a picturesque outdoor dining area in a Greek island town. The tables and chairs are set
-                    up in a narrow, whitewashed alleyway leading towards the blue sea. The white buildings are typical of Cycladic
-                    architecture.
+                    The image shows a narrow alleyway between white buildings, leading to the Aegean Sea. There are tables and
+                    chairs set up as if for a cafe or restaurant, giving the impression of a picturesque, seaside dining spot. The
+                    water is a vibrant blue with choppy waves. The overall scene is reminiscent of the Greek islands, particularly
+                    Mykonos or Santorini.
               role: model
             finishReason: STOP
-        createTime: "2025-05-08T20:54:24.532032Z"
+        createTime: "2025-05-31T21:56:45.677803Z"
         modelVersion: gemini-2.0-flash
-        responseId: ABodaMC8IN6WmecP0ZuhmQw
+        responseId: HXs7aKuvKbSOmecP5un24Qg
         usageMetadata:
-          candidatesTokenCount: 46
+          candidatesTokenCount: 70
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 46
+              tokenCount: 70
           promptTokenCount: 9
           promptTokensDetails:
-            - modality: TEXT
-              tokenCount: 9
             - modality: AUDIO
             - modality: VIDEO
-          totalTokenCount: 55
+            - modality: TEXT
+              tokenCount: 9
+          totalTokenCount: 79
           trafficType: ON_DEMAND
       status:
         code: 200

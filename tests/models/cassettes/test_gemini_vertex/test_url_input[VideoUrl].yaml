@@ -52,7 +52,7 @@ interactions:
         connection:
           - keep-alive
         content-length:
-          - "185"
+          - "222"
         content-type:
           - application/json
         host:
@@ -63,8 +63,8 @@ interactions:
           - parts:
               - text: What is the main content of this URL?
               - fileData:
-                  fileUri: https://data.grepit.app/assets/tiny_video.mp4
-                  mimeType: video/mp4
+                  fileUri: https://upload.wikimedia.org/wikipedia/commons/8/8f/Panda_at_Smithsonian_zoo.webm
+                  mimeType: video/webm
             role: user
       uri: https://us-central1-aiplatform.googleapis.com/v1/projects/pydantic-ai/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent
     response:
@@ -72,7 +72,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "1120"
+          - "1057"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -83,30 +83,30 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.5653226999136117
+          - avgLogprobs: -0.7096007005223688
             content:
               parts:
                 - text:
-                    The image shows a picturesque alley in a Greek island town, likely in the Cyclades. The alley is lined with
-                    traditional white-washed buildings, and has a restaurant or cafe setup with tables and chairs. The alley leads
-                    to a view of the blue Aegean Sea. The scene evokes a relaxing, vacation-like atmosphere.
+                    The main content of the URL is a video of a panda bear sitting amongst bamboo shoots in an enclosure. The
+                    enclosure has a rocky background, an artificial mountain scene painted on the back wall, a window, and a large
+                    beige ball. The panda is eating bamboo.
               role: model
             finishReason: STOP
-        createTime: "2025-05-08T20:41:14.577587Z"
+        createTime: "2025-05-31T21:51:44.439491Z"
         modelVersion: gemini-2.0-flash
-        responseId: 6hYdaLOgI-uGm9IPvaKO8Qw
+        responseId: 8Hk7aMPpGtWLmecPzZeogQw
         usageMetadata:
-          candidatesTokenCount: 65
+          candidatesTokenCount: 53
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 65
-          promptTokenCount: 9
+              tokenCount: 53
+          promptTokenCount: 1569
           promptTokensDetails:
-            - modality: VIDEO
-            - modality: AUDIO
             - modality: TEXT
               tokenCount: 9
-          totalTokenCount: 74
+            - modality: VIDEO
+              tokenCount: 1560
+          totalTokenCount: 1622
           trafficType: ON_DEMAND
       status:
         code: 200

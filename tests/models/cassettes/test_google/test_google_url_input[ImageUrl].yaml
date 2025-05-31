@@ -73,7 +73,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "1117"
+          - "974"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -84,28 +84,29 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.7419579489189282
+          - avgLogprobs: -0.5529902487090139
             content:
               parts:
-                - text: |
-                    The main content of the URL is the multilingual portal page for Wikipedia, The Free Encyclopedia. It presents a list of Wikipedia versions in various languages, each with the respective number of articles. The page also features a search bar to find specific content and provides links to other Wikimedia projects.
+                - text:
+                    The URL's main content is the landing page of Wikipedia, showcasing the available language editions with
+                    article counts, a search bar, and links to other Wikimedia projects.
               role: model
             finishReason: STOP
-        createTime: "2025-05-24T10:56:13.579378Z"
+        createTime: "2025-05-31T21:26:25.776828Z"
         modelVersion: gemini-2.0-flash
-        responseId: zaUxaLKuI_u_gLUP9IzQuQw
+        responseId: AXQ7aPy0L-PPnvgPkLyl8Qg
         usageMetadata:
-          candidatesTokenCount: 57
+          candidatesTokenCount: 33
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 57
+              tokenCount: 33
           promptTokenCount: 2589
           promptTokensDetails:
             - modality: TEXT
               tokenCount: 9
             - modality: IMAGE
               tokenCount: 2580
-          totalTokenCount: 2646
+          totalTokenCount: 2622
           trafficType: ON_DEMAND
       status:
         code: 200

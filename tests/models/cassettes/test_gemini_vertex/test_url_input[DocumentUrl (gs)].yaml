@@ -72,7 +72,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "1697"
+          - "1412"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -83,33 +83,33 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.32861627114785685
-            citationMetadata:
-              citations:
-                - endIndex: 329
-                  startIndex: 198
-                  uri: https://linnk.ai/insight/technology/gemini-1-5-multimodal-understanding-across-millions-of-tokens-Nnm3gRJK/
+          - avgLogprobs: -0.5160888263157436
             content:
               parts:
-                - text: |
-                    The main content of the URL is a research report titled "Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context". The report introduces Gemini 1.5 Pro, a highly compute-efficient multimodal model capable of recalling and reasoning over fine-grained information from millions of tokens of context. It details the model's architecture, performance on various benchmarks, and evaluations of its long-context capabilities across modalities like text, video, and audio. The report also discusses responsible deployment aspects, such as impact assessment and safety evaluations.
+                - text:
+                    The main content of this URL is a technical report about Gemini 1.5 Pro, a new model from Google DeepMind's
+                    Gemini family, that is designed to unlock multimodal understanding across millions of tokens of context. It
+                    describes the model architecture, performance benchmarks, and new capabilities, such as near-perfect recall
+                    in long-context retrieval tasks and the ability to translate between English and Kalamang, a language with very
+                    few speakers, using only a provided grammar manual. The report also covers the responsible deployment of the
+                    model, including impact assessments and safety evaluations.
               role: model
             finishReason: STOP
-        createTime: "2025-05-08T20:52:31.645305Z"
+        createTime: "2025-05-31T21:54:44.822227Z"
         modelVersion: gemini-2.0-flash
-        responseId: jxkdaLmxJ5Lj-O4P4f6NoAg
+        responseId: pHo7aNOXMpKHm9IPsNr50As
         usageMetadata:
-          candidatesTokenCount: 111
+          candidatesTokenCount: 112
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 111
+              tokenCount: 112
           promptTokenCount: 19875
           promptTokensDetails:
             - modality: DOCUMENT
               tokenCount: 19866
             - modality: TEXT
               tokenCount: 9
-          totalTokenCount: 19986
+          totalTokenCount: 19987
           trafficType: ON_DEMAND
       status:
         code: 200

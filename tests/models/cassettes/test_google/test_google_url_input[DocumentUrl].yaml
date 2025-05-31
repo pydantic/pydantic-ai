@@ -73,7 +73,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "2199"
+          - "1364"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -84,38 +84,33 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.5090974272874297
-            citationMetadata:
-              citations:
-                - endIndex: 338
-                  startIndex: 144
-                  uri: https://rosanneliu.com/publication/gemini/
-                - endIndex: 384
-                  startIndex: 244
-                  uri: https://rosanneliu.com/publication/gemini/
+          - avgLogprobs: -0.45115502366741883
             content:
               parts:
-                - text: |
-                    The URL points to a report titled "Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context."
-
-                    The report introduces Gemini 1.5 Pro, a highly compute-efficient multimodal mixture-of-experts model capable of recalling and reasoning over fine-grained information from millions of tokens of context, including multiple long documents and hours of video and audio. The report details the model's capabilities, including long-context retrieval, long-document QA, long-video QA, long-context ASR, and its ability to learn and translate languages with limited training data by leveraging in-context learning from grammar manuals. The report also discusses the model's architecture, evaluations across various benchmarks, and its approach to responsible deployment, including impact assessment and safety mitigations. The report emphasizes Gemini 1.5 Pro's performance improvements compared to previous Gemini models and its potential for applications in areas like preserving endangered languages.
+                - text:
+                    The URL points to a technical report from Google DeepMind introducing Gemini 1.5 Pro, a multimodal AI model
+                    designed for understanding and reasoning over extremely large contexts (millions of tokens). It details the
+                    model's architecture, training, performance across a range of tasks, and responsible deployment considerations.
+                    Key highlights include near-perfect recall on long-context retrieval tasks, state-of-the-art performance in
+                    areas like long-document question answering, and surprising new capabilities like in-context learning of new
+                    languages.
               role: model
             finishReason: STOP
-        createTime: "2025-05-24T10:53:51.355388Z"
+        createTime: "2025-05-31T21:23:50.139470Z"
         modelVersion: gemini-2.0-flash
-        responseId: P6UxaLzYFYP-698Pj6fb6AE
+        responseId: ZnM7aM7BCL_z2PgP1KyaoAY
         usageMetadata:
-          candidatesTokenCount: 189
+          candidatesTokenCount: 103
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 189
+              tokenCount: 103
           promptTokenCount: 19875
           promptTokensDetails:
             - modality: DOCUMENT
               tokenCount: 19866
             - modality: TEXT
               tokenCount: 9
-          totalTokenCount: 20064
+          totalTokenCount: 19978
           trafficType: ON_DEMAND
       status:
         code: 200

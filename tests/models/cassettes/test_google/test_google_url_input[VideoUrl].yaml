@@ -52,7 +52,7 @@ interactions:
         connection:
           - keep-alive
         content-length:
-          - "221"
+          - "258"
         content-type:
           - application/json
         host:
@@ -63,8 +63,8 @@ interactions:
           - parts:
               - text: What is the main content of this URL?
               - fileData:
-                  file_uri: https://data.grepit.app/assets/tiny_video.mp4
-                  mime_type: video/mp4
+                  file_uri: https://upload.wikimedia.org/wikipedia/commons/8/8f/Panda_at_Smithsonian_zoo.webm
+                  mime_type: video/webm
             role: user
         generationConfig: {}
       uri: https://us-central1-aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent
@@ -73,7 +73,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "1107"
+          - "1075"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -84,30 +84,30 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.4417571034924737
+          - avgLogprobs: -0.4537404378255208
             content:
               parts:
                 - text:
-                    The image shows a narrow alleyway in a Greek island town. The alley is lined with whitewashed buildings,
-                    and there are several tables and chairs set up for outdoor dining. In the distance, the blue sea is visible.
-                    The overall impression is one of a charming and picturesque Mediterranean scene.
+                    The main content of the image is a panda eating bamboo in a zoo enclosure. The enclosure is designed to
+                    mimic the panda's natural habitat, with rocks, bamboo, and a painted backdrop of mountains. There is also a
+                    large, smooth, tan-colored ball-shaped object in the enclosure.
               role: model
             finishReason: STOP
-        createTime: "2025-05-24T10:56:49.754170Z"
+        createTime: "2025-05-31T21:19:11.379049Z"
         modelVersion: gemini-2.0-flash
-        responseId: 8aUxaPqDLsLxgLUP2ouHmQ8
+        responseId: T3I7aKmRF7jFnvgPocrJaA
         usageMetadata:
-          candidatesTokenCount: 58
+          candidatesTokenCount: 60
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 58
-          promptTokenCount: 9
+              tokenCount: 60
+          promptTokenCount: 1569
           promptTokensDetails:
-            - modality: AUDIO
-            - modality: VIDEO
             - modality: TEXT
               tokenCount: 9
-          totalTokenCount: 67
+            - modality: VIDEO
+              tokenCount: 1560
+          totalTokenCount: 1629
           trafficType: ON_DEMAND
       status:
         code: 200

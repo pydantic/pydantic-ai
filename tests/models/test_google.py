@@ -591,70 +591,51 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
     [
         pytest.param(
             AudioUrl(url='https://cdn.openai.com/API/docs/audio/alloy.wav'),
-            'The URL discusses the daily cycle of the sun, its rise in the east, and its setting in the west, a fundamental and ancient human observation.',
+            'The URL discusses the sunrise in the east and sunset in the west, a phenomenon known to humans for millennia.',
             id='AudioUrl',
         ),
         pytest.param(
             DocumentUrl(url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf'),
-            (
-                'The URL points to a report titled "Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context."'
-                '\n\n'
-                'The report introduces Gemini 1.5 Pro, a highly compute-efficient multimodal mixture-of-experts model capable of recalling and'
-                ' reasoning over fine-grained information from millions of tokens of context, including multiple long documents and hours of video and audio.'
-                " The report details the model's capabilities, including long-context retrieval, long-document QA, long-video QA, long-context ASR, and its ability to learn and translate languages with limited training data by leveraging in-context learning from grammar manuals."
-                " The report also discusses the model's architecture, evaluations across various benchmarks, and its approach to responsible deployment, including impact assessment and safety mitigations. The report emphasizes Gemini 1.5 Pro's performance improvements compared to previous Gemini models and its potential for applications in areas like preserving endangered languages.\n"
-            ),
+            "The URL points to a technical report from Google DeepMind introducing Gemini 1.5 Pro, a multimodal AI model designed for understanding and reasoning over extremely large contexts (millions of tokens). It details the model's architecture, training, performance across a range of tasks, and responsible deployment considerations. Key highlights include near-perfect recall on long-context retrieval tasks, state-of-the-art performance in areas like long-document question answering, and surprising new capabilities like in-context learning of new languages.",
             id='DocumentUrl',
         ),
         pytest.param(
             ImageUrl(url='https://upload.wikimedia.org/wikipedia/commons/6/6a/Www.wikipedia_screenshot_%282021%29.png'),
-            'The main content of the URL is the multilingual portal page for Wikipedia, The Free Encyclopedia. It presents a list of Wikipedia versions in various languages, each with the respective number of articles. The page also features a search bar to find specific content and provides links to other Wikimedia projects.\n',
+            "The URL's main content is the landing page of Wikipedia, showcasing the available language editions with article counts, a search bar, and links to other Wikimedia projects.",
             id='ImageUrl',
         ),
         pytest.param(
-            VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4'),
-            'The image shows a narrow alleyway in a Greek island town. The alley is lined with whitewashed buildings, and there are several tables and chairs set up for outdoor dining. In the distance, the blue sea is visible. The overall impression is one of a charming and picturesque Mediterranean scene.',
+            VideoUrl(url='https://upload.wikimedia.org/wikipedia/commons/8/8f/Panda_at_Smithsonian_zoo.webm'),
+            """The main content of the image is a panda eating bamboo in a zoo enclosure. The enclosure is designed to mimic the panda's natural habitat, with rocks, bamboo, and a painted backdrop of mountains. There is also a large, smooth, tan-colored ball-shaped object in the enclosure.""",
             id='VideoUrl',
         ),
         pytest.param(
             VideoUrl(url='https://youtu.be/lCdaVNyHtjU'),
-            (
-                'The main content of the URL is an analysis of recent 404 HTTP responses using logflre.'
-                ' It identifies several patterns, including common endpoints with 404s, request patterns, timeline-related issues, organization/project access, and configuration/authentication issues. It also provides recommendations for addressing these issues.'
-                ' Additionally, the URL shows code related to browser routing, specifically a BrowserRouter.tsx file defining routes for organization and project-related pages.'
-            ),
+            'The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several patterns including the most common endpoints with 404 errors, request patterns, timeline-related issues, organization/project access, and configuration and authentication. The analysis also provides some recommendations.',
             id='VideoUrl (YouTube)',
         ),
         pytest.param(
             AudioUrl(url='gs://pydantic-ai-dev/openai-alloy.wav'),
-            'The URL discusses the observation that the sun rises in the east and sets in the west.',
+            'The content describes the basic concept of the sun rising in the east and setting in the west.',
             id='AudioUrl (gs)',
         ),
         pytest.param(
             DocumentUrl(url='gs://pydantic-ai-dev/Gemini_1_5_Pro_Technical_Report_Arxiv_1805.pdf'),
-            "The main content of this URL is a technical report introducing Google DeepMind's Gemini 1.5 Pro, a highly compute-efficient multimodal mixture-of-experts model capable of recalling and reasoning over millions of tokens of context. The report details its performance, architecture, and approach to responsible deployment. Key highlights include:"
-            '\n\n*   Near-perfect recall on long-context retrieval tasks across modalities.'
-            '\n*   State-of-the-art performance in long-document QA, long-video QA, and long-context ASR.'
-            '\n*   The ability to translate English to Kalamang, a low-resource language, with similar quality to a human learner.'
-            '\n*   Extensive evaluations on both synthetic and real-world tasks, covering text, code, image, video, and audio modalities.'
-            '\n*   A discussion on responsible deployment strategies.'
-            '\n*   Comparisons against Gemini 1.0 Pro and Gemini 1.0 Ultra, Claude 2.1 and GPT-4 Turbo.'
-            '\n* A model card outlining usage, limitations and ethical considerations.',
+            "The URL leads to a research paper titled \"Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context\".  \n\nThe paper introduces Gemini 1.5 Pro, a new model in the Gemini family. It's described as a highly compute-efficient multimodal mixture-of-experts model.  A key feature is its ability to recall and reason over fine-grained information from millions of tokens of context, including long documents and hours of video and audio.  The paper presents experimental results showcasing the model's capabilities on long-context retrieval tasks, QA, ASR, and its performance compared to Gemini 1.0 models. It covers the model's architecture, training data, and evaluations on both synthetic and real-world tasks.  A notable highlight is its ability to learn to translate from English to Kalamang, a low-resource language, from just a grammar manual and dictionary provided in context.  The paper also discusses responsible deployment considerations, including impact assessments and mitigation efforts.\n",
             id='DocumentUrl (gs)',
         ),
         pytest.param(
             ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png'),
-            'The main content of the URL is the Wikipedia main page, listing the different language versions of the online encyclopedia with the number of articles each contains. It also provides access to other Wikimedia projects.',
+            "The main content of the URL is the Wikipedia homepage, featuring options to access Wikipedia in different languages and information about the number of articles in each language. It also includes links to other Wikimedia projects and information about Wikipedia's host, the Wikimedia Foundation.\n",
             id='ImageUrl (gs)',
         ),
         pytest.param(
             VideoUrl(url='gs://pydantic-ai-dev/grepit-tiny-video.mp4'),
-            "The main content of the URL appears to be a picturesque alleyway in a Greek island town. The alleyway has whitewashed buildings on either side, with outdoor seating for a cafe or restaurant. At the end of the alleyway, there's a view of the sea. The scene evokes a sense of relaxation and Mediterranean charm.",
+            'The image shows a charming outdoor cafe in a Greek coastal town. The cafe is nestled between traditional whitewashed buildings, with tables and chairs set along a narrow cobblestone pathway. The sea is visible in the distance, adding to the picturesque and relaxing atmosphere.',
             id='VideoUrl (gs)',
         ),
     ],
 )
-@pytest.mark.vcr()
 async def test_google_url_input(
     url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl, expected_output: str, allow_model_requests: None
 ) -> None:
@@ -679,6 +660,8 @@ async def test_google_url_input(
                 usage=IsInstance(Usage),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
             ),
         ]
     )

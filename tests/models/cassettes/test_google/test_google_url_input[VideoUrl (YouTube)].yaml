@@ -73,7 +73,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "1367"
+          - "1202"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -84,34 +84,32 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.5165860134622325
+          - avgLogprobs: -0.24390505154927572
             content:
               parts:
                 - text:
-                    The main content of the URL is an analysis of recent 404 HTTP responses using logflre. It identifies several
-                    patterns, including common endpoints with 404s, request patterns, timeline-related issues, organization/project
-                    access, and configuration/authentication issues. It also provides recommendations for addressing these issues.
-                    Additionally, the URL shows code related to browser routing, specifically a BrowserRouter.tsx file defining
-                    routes for organization and project-related pages.
+                    The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several
+                    patterns including the most common endpoints with 404 errors, request patterns, timeline-related issues, organization/project
+                    access, and configuration and authentication. The analysis also provides some recommendations.
               role: model
             finishReason: STOP
-        createTime: "2025-05-24T10:57:57.800316Z"
+        createTime: "2025-05-31T21:32:48.281457Z"
         modelVersion: gemini-2.0-flash
-        responseId: NaYxaLzsMJaJ1dkPmpP1qQI
+        responseId: gHU7aPGWEdO8nvgPkuvc0QY
         usageMetadata:
-          candidatesTokenCount: 92
+          candidatesTokenCount: 60
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 92
+              tokenCount: 60
           promptTokenCount: 16824
           promptTokensDetails:
-            - modality: AUDIO
-              tokenCount: 1475
             - modality: VIDEO
               tokenCount: 15340
+            - modality: AUDIO
+              tokenCount: 1475
             - modality: TEXT
               tokenCount: 9
-          totalTokenCount: 16916
+          totalTokenCount: 16884
           trafficType: ON_DEMAND
       status:
         code: 200

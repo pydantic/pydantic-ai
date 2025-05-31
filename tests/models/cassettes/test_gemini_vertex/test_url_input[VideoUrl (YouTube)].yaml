@@ -72,7 +72,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "1287"
+          - "1523"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -83,24 +83,26 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.3470164275750881
+          - avgLogprobs: -0.6241577390640501
             content:
               parts:
                 - text:
-                    The main content of the URL is a discussion about analyzing recent 404 HTTP responses using Logfire. The
-                    analysis identifies patterns and trends in the 404 errors, including the most common endpoints returning 404s,
-                    request patterns, timeline-related issues, organization/project access problems, and configuration/authentication
-                    issues. The analysis also provides recommendations for addressing the 404 errors.
+                    The main content of the URL is a code editor (likely VS Code) displaying a TypeScript file named "browserRouter.tsx".
+                    The code seems to define routing logic for a web application, likely using React, potentially including features
+                    like lazy loading of components.  A chat window is open where a user has asked an AI assistant to analyze recent
+                    404 HTTP responses using logfile data. The AI provides a detailed analysis of the 404 errors, breaking them
+                    down by common endpoints, request patterns, timeline issues, project access problems, and configuration/authentication
+                    concerns. The analysis also contains some recommendations for the user.
               role: model
             finishReason: STOP
-        createTime: "2025-05-08T20:41:54.661779Z"
+        createTime: "2025-05-31T21:52:38.742447Z"
         modelVersion: gemini-2.0-flash
-        responseId: EhcdaJOyKMmJm9IPt--RuAo
+        responseId: Jno7aK-oLciQm9IP8u60mQ0
         usageMetadata:
-          candidatesTokenCount: 82
+          candidatesTokenCount: 126
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 82
+              tokenCount: 126
           promptTokenCount: 16824
           promptTokensDetails:
             - modality: TEXT
@@ -109,7 +111,7 @@ interactions:
               tokenCount: 1475
             - modality: VIDEO
               tokenCount: 15340
-          totalTokenCount: 16906
+          totalTokenCount: 16950
           trafficType: ON_DEMAND
       status:
         code: 200

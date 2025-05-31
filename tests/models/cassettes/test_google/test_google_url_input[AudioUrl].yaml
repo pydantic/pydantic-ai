@@ -73,7 +73,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "939"
+          - "907"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -84,29 +84,27 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.8259474436442057
+          - avgLogprobs: -0.4016600522128018
             content:
               parts:
-                - text:
-                    The URL discusses the daily cycle of the sun, its rise in the east, and its setting in the west, a fundamental
-                    and ancient human observation.
+                - text: The URL discusses the sunrise in the east and sunset in the west, a phenomenon known to humans for millennia.
               role: model
             finishReason: STOP
-        createTime: "2025-05-24T10:52:50.247154Z"
+        createTime: "2025-05-31T21:23:04.717155Z"
         modelVersion: gemini-2.0-flash
-        responseId: AqUxaPKKD4P-698Pj6fb6AE
+        responseId: OHM7aOPiK7zcnvgPqOGiiQc
         usageMetadata:
-          candidatesTokenCount: 30
+          candidatesTokenCount: 22
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 30
+              tokenCount: 22
           promptTokenCount: 159
           promptTokensDetails:
-            - modality: AUDIO
-              tokenCount: 150
             - modality: TEXT
               tokenCount: 9
-          totalTokenCount: 189
+            - modality: AUDIO
+              tokenCount: 150
+          totalTokenCount: 181
           trafficType: ON_DEMAND
       status:
         code: 200

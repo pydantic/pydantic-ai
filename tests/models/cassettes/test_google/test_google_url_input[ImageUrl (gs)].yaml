@@ -73,7 +73,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "1017"
+          - "1098"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -84,29 +84,28 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.604018161171361
+          - avgLogprobs: -0.5187065648097618
             content:
               parts:
-                - text:
-                    The main content of the URL is the Wikipedia main page, listing the different language versions of the online
-                    encyclopedia with the number of articles each contains. It also provides access to other Wikimedia projects.
+                - text: |
+                    The main content of the URL is the Wikipedia homepage, featuring options to access Wikipedia in different languages and information about the number of articles in each language. It also includes links to other Wikimedia projects and information about Wikipedia's host, the Wikimedia Foundation.
               role: model
             finishReason: STOP
-        createTime: "2025-05-24T11:01:46.516459Z"
+        createTime: "2025-05-31T21:36:19.466819Z"
         modelVersion: gemini-2.0-flash
-        responseId: GqcxaOvCH4P-698Pj6fb6AE
+        responseId: U3Y7aIO_HMT22PgP2-Cw0Ac
         usageMetadata:
-          candidatesTokenCount: 38
+          candidatesTokenCount: 51
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 38
+              tokenCount: 51
           promptTokenCount: 2589
           promptTokensDetails:
             - modality: IMAGE
               tokenCount: 2580
             - modality: TEXT
               tokenCount: 9
-          totalTokenCount: 2627
+          totalTokenCount: 2640
           trafficType: ON_DEMAND
       status:
         code: 200

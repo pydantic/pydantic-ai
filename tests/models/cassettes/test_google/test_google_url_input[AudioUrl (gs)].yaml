@@ -73,7 +73,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "884"
+          - "891"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -84,27 +84,27 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.3964819378323025
+          - avgLogprobs: -0.4282286794562089
             content:
               parts:
-                - text: The URL discusses the observation that the sun rises in the east and sets in the west.
+                - text: The content describes the basic concept of the sun rising in the east and setting in the west.
               role: model
             finishReason: STOP
-        createTime: "2025-05-24T10:59:07.627628Z"
+        createTime: "2025-05-31T21:33:48.763452Z"
         modelVersion: gemini-2.0-flash
-        responseId: e6YxaKynJpaJ1dkPmpP1qQI
+        responseId: vHU7aLzMLryqnvgP7vyi0Qg
         usageMetadata:
-          candidatesTokenCount: 18
+          candidatesTokenCount: 19
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 18
+              tokenCount: 19
           promptTokenCount: 159
           promptTokensDetails:
             - modality: TEXT
               tokenCount: 9
             - modality: AUDIO
               tokenCount: 150
-          totalTokenCount: 177
+          totalTokenCount: 178
           trafficType: ON_DEMAND
       status:
         code: 200

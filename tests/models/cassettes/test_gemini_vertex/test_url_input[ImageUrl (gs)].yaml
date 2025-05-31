@@ -72,7 +72,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "1022"
+          - "1090"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -83,27 +83,28 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.45060195922851565
+          - avgLogprobs: -0.6639282520000751
             content:
               parts:
-                - text: The main content of the URL is the Wikipedia homepage, listing different languages and the number of articles available in each language. It also provides links to download the Wikipedia app, and other related projects.
+                - text: |
+                    The main content of the URL appears to be the multilingual portal page for Wikipedia, "The Free Encyclopedia." It showcases the numerous language editions available, highlighting the number of articles in each. It also provides links to download the app and to other Wikimedia projects.
               role: model
             finishReason: STOP
-        createTime: "2025-05-08T20:53:59.425369Z"
+        createTime: "2025-05-31T21:55:42.343639Z"
         modelVersion: gemini-2.0-flash
-        responseId: 5xkdaJn7GYb-ld8P683kuA4
+        responseId: 3no7aNf8FMiQm9IP8u60mQ0
         usageMetadata:
-          candidatesTokenCount: 40
+          candidatesTokenCount: 52
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 40
+              tokenCount: 52
           promptTokenCount: 2589
           promptTokensDetails:
             - modality: TEXT
               tokenCount: 9
             - modality: IMAGE
               tokenCount: 2580
-          totalTokenCount: 2629
+          totalTokenCount: 2641
           trafficType: ON_DEMAND
       status:
         code: 200

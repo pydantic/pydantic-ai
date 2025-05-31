@@ -72,7 +72,7 @@ interactions:
         alt-svc:
           - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         content-length:
-          - "1803"
+          - "2139"
         content-type:
           - application/json; charset=UTF-8
         transfer-encoding:
@@ -83,41 +83,35 @@ interactions:
           - Referer
       parsed_body:
         candidates:
-          - avgLogprobs: -0.4855387268066406
-            citationMetadata:
-              citations:
-                - endIndex: 385
-                  startIndex: 207
-                  uri: https://rosanneliu.com/publication/gemini/
-                - endIndex: 431
-                  startIndex: 291
-                  uri: https://rosanneliu.com/publication/gemini/
+          - avgLogprobs: -0.49283143110498534
             content:
               parts:
-                - text:
-                    'The URL points to a report titled "Gemini 1.5: Unlocking multimodal understanding across millions of tokens
-                    of context". The report introduces the latest model in the Gemini family, Gemini 1.5 Pro, which is a highly
-                    compute-efficient multimodal mixture-of-experts model capable of recalling and reasoning over fine-grained information
-                    from millions of tokens of context, including multiple long documents and hours of video and audio. The report
-                    compares Gemini 1.5 Pro''s performance with Gemini 1.0 Pro and Ultra across several benchmarks. The model''s
-                    responsible deployment, training, and evaluation processes are detailed.'
+                - text: |-
+                    The URL provided links to a technical report about Google DeepMind's Gemini 1.5 Pro model. Here's a summary of its main content:
+
+                    *   **Introduction of Gemini 1.5 Pro:** The report introduces Gemini 1.5 Pro, a new model in the Gemini family. It's described as a compute-efficient multimodal mixture-of-experts model.
+                    *   **Key Capabilities:** Gemini 1.5 Pro can handle millions of tokens of context, including long documents, and hours of video and audio. It excels in long-context retrieval tasks, and performs on par with Gemini 1.0 Ultra in various benchmarks.
+                    *   **Long-Context Ability:** The model demonstrates near-perfect retrieval up to 10M tokens, a big jump from existing models. It also learns to translate between English and Kalamang.
+                    *   **Model Architecture:** Gemini 1.5 Pro is based on a sparse mixture-of-expert (MoE) Transformer architecture.
+                    *   **Training and Evaluation:** The report outlines the training infrastructure and dataset, including multimodal and multilingual data. It details long-context evaluations across text, vision, and audio modalities. Evaluation tasks include needle-in-a-haystack, long-document QA, ASR, and translation.
+                    *   **Responsible Deployment:** Discusses Google's approach to responsible deployment of Gemini 1.5 Pro, including impact assessment and mitigation efforts.
               role: model
             finishReason: STOP
-        createTime: "2025-05-08T20:30:21.093116Z"
+        createTime: "2025-05-31T21:50:13.662664Z"
         modelVersion: gemini-2.0-flash
-        responseId: XRQdaLzXBfiEidsPq4Si-Ao
+        responseId: lXk7aIi5KJKHm9IPsNr50As
         usageMetadata:
-          candidatesTokenCount: 125
+          candidatesTokenCount: 299
           candidatesTokensDetails:
             - modality: TEXT
-              tokenCount: 125
+              tokenCount: 299
           promptTokenCount: 19875
           promptTokensDetails:
             - modality: TEXT
               tokenCount: 9
             - modality: DOCUMENT
               tokenCount: 19866
-          totalTokenCount: 20000
+          totalTokenCount: 20174
           trafficType: ON_DEMAND
       status:
         code: 200
