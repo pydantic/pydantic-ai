@@ -243,6 +243,10 @@ class InstrumentedModel(WrapperModel):
                         )
                     )
                 new_attributes: dict[str, AttributeValue] = response.usage.opentelemetry_attributes()  # pyright: ignore[reportAssignmentType]
+                if response.vendor_id is not None:
+                    new_attributes['gen_ai.response.id'] = response.vendor_id
+                if response.vendor_details is not None:
+                    new_attributes['gen_ai.response.finish_reasons'] = json.dumps(response.vendor_details)
                 attributes.update(getattr(span, 'attributes', {}))
                 request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
                 new_attributes['gen_ai.response.model'] = response.model_name or request_model

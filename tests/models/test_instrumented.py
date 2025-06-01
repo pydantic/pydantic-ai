@@ -81,6 +81,8 @@ class MyModel(Model):
             ],
             usage=Usage(request_tokens=100, response_tokens=200),
             model_name='my_model_123',
+            vendor_id='chatcmpl-123',
+            vendor_details={'stop': True},
         )
 
     @asynccontextmanager
@@ -158,6 +160,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'my_model_123',
                     'gen_ai.usage.input_tokens': 100,
+                    'gen_ai.response.id': 'chatcmpl-123',
+                    'gen_ai.response.finish_reasons': '{"stop": true}',
                     'gen_ai.usage.output_tokens': 200,
                 },
             },
@@ -566,6 +570,8 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'my_model_123',
                     'gen_ai.usage.input_tokens': 100,
+                    'gen_ai.response.id': 'chatcmpl-123',
+                    'gen_ai.response.finish_reasons': '{"stop": true}',
                     'gen_ai.usage.output_tokens': 200,
                     'events': IsJson(
                         snapshot(
