@@ -1509,11 +1509,11 @@ def test_model_requests_blocked(env: TestEnv):
     try:
         env.set('GEMINI_API_KEY', 'foobar')
         agent = Agent('google-gla:gemini-1.5-flash', output_type=tuple[str, str], defer_model_check=True)
+
+        with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
+            agent.run_sync('Hello')
     except ImportError:  # pragma: no cover
         pytest.skip('google-genai not installed')
-
-    with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
-        agent.run_sync('Hello')
 
 
 def test_override_model(env: TestEnv):
