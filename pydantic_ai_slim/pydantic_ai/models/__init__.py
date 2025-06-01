@@ -668,7 +668,7 @@ async def download_item(
     response = await client.get(item.url, follow_redirects=True)
     response.raise_for_status()
 
-    if content_type := response.headers.get('content-type'):  # pragma: no cover
+    if content_type := response.headers.get('content-type'):
         content_type = content_type.split(';')[0]
         if content_type == 'application/octet-stream':
             content_type = None
