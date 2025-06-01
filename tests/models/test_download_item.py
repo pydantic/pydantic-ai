@@ -26,3 +26,14 @@ async def test_download_item_raises_user_error_with_gs_uri(
 async def test_download_item_raises_user_error_with_youtube_url() -> None:
     with pytest.raises(UserError, match='Downloading YouTube videos is not supported.'):
         _ = await download_item(VideoUrl(url='https://youtu.be/lCdaVNyHtjU'), data_format='bytes')
+
+
+@pytest.mark.vcr()
+async def test_download_item_application_octet_stream() -> None:
+    _, media_type = await download_item(
+        VideoUrl(
+            url='https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/tests/assets/small_video.mp4'
+        ),
+        data_format='bytes',
+    )
+    assert media_type == 'video/mp4'
