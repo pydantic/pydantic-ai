@@ -12,7 +12,7 @@ from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -669,3 +669,60 @@ async def test_google_url_input(
             ),
         ]
     )
+
+
+@pytest.mark.skipif(
+    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+)
+@pytest.mark.vcr()
+async def test_google_url_input_force_download(allow_model_requests: None) -> None:
+    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
+    m = GoogleModel('gemini-2.0-flash', provider=provider)
+    agent = Agent(m)
+
+    video_url = VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4', force_download=True)
+    result = await agent.run(['What is the main content of this URL?', video_url])
+
+    output = 'The image shows a picturesque scene in what appears to be a Greek island town. The focus is on an outdoor dining area with tables and chairs, situated in a narrow alleyway between whitewashed buildings. The ocean is visible at the end of the alley, creating a beautiful and inviting atmosphere.'
+
+    assert result.output == output
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What is the main content of this URL?', Is(video_url)],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content=Is(output))],
+                usage=IsInstance(Usage),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_google_youtube_url_force_download_raises_user_error(allow_model_requests: None) -> None:
+    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
+    m = GoogleModel('gemini-2.0-flash', provider=provider)
+    agent = Agent(m)
+
+    url = VideoUrl(url='https://youtu.be/lCdaVNyHtjU', force_download=True)
+    with pytest.raises(UserError, match='Downloading YouTube videos is not supported.'):
+        _ = await agent.run(['What is the main content of this URL?', url])
+
+
+async def test_google_gs_url_force_download_raises_user_error(allow_model_requests: None) -> None:
+    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
+    m = GoogleModel('gemini-2.0-flash', provider=provider)
+    agent = Agent(m)
+
+    url = ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png', force_download=True)
+    with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported.'):
+        _ = await agent.run(['What is the main content of this URL?', url])

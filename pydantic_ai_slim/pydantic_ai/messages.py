@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import uuid
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -80,7 +81,34 @@ class SystemPromptPart:
 
 
 @dataclass(repr=False)
-class VideoUrl:
+class FileUrl(ABC):
+    """Abstract base class for any URL-based file."""
+
+    url: str
+    """The URL of the file."""
+
+    force_download: bool = False
+    """If the model supports it:
+
+    * If True, the file is downloaded and the data is sent to the model as bytes.
+    * If False, the URL is sent directly to the model and no download is performed.
+    """
+
+    @property
+    @abstractmethod
+    def media_type(self) -> str:
+        """Return the media type of the file, based on the url."""
+
+    @property
+    @abstractmethod
+    def format(self) -> str:
+        """The file format."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class VideoUrl(FileUrl):
     """A URL to a video."""
 
     url: str
@@ -133,11 +161,9 @@ class VideoUrl:
         """
         return _video_format_lookup[self.media_type]
 
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
 
 @dataclass(repr=False)
-class AudioUrl:
+class AudioUrl(FileUrl):
     """A URL to an audio file."""
 
     url: str
@@ -161,11 +187,9 @@ class AudioUrl:
         """The file format of the audio file."""
         return _audio_format_lookup[self.media_type]
 
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
 
 @dataclass(repr=False)
-class ImageUrl:
+class ImageUrl(FileUrl):
     """A URL to an image."""
 
     url: str
@@ -196,11 +220,9 @@ class ImageUrl:
         """
         return _image_format_lookup[self.media_type]
 
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
 
 @dataclass(repr=False)
-class DocumentUrl:
+class DocumentUrl(FileUrl):
     """The URL of the document."""
 
     url: str
@@ -228,8 +250,6 @@ class DocumentUrl:
             return _document_format_lookup[media_type]
         except KeyError as e:
             raise ValueError(f'Unknown document media type: {media_type}') from e
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass(repr=False)

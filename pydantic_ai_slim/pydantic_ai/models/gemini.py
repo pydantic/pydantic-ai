@@ -348,17 +348,17 @@ class GeminiModel(Model):
                     content.append(
                         _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
                     )
-                elif isinstance(item, VideoUrl) and item.is_youtube:
+                elif isinstance(item, VideoUrl) and item.is_youtube and not item.force_download:
                     file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                     content.append(file_data)
                 elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl, VideoUrl)):
-                    if self.system == 'google-vertex':
-                        file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
-                        content.append(file_data)
-                    else:
+                    if self.system != 'google-vertex' or item.force_download:
                         base64_data, media_type = await download_item(item, data_format='base64')
                         inline_data = _GeminiInlineDataPart(inline_data={'data': base64_data, 'mime_type': media_type})
                         content.append(inline_data)
+                    else:
+                        file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
+                        content.append(file_data)
                 else:
                     assert_never(item)
         return content

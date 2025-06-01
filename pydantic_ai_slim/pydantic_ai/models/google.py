@@ -369,14 +369,14 @@ class GoogleModel(Model):
                     # NOTE: The type from Google GenAI is incorrect, it should be `str`, not `bytes`.
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     content.append({'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}})  # type: ignore
-                elif isinstance(item, VideoUrl) and item.is_youtube:
+                elif isinstance(item, VideoUrl) and item.is_youtube and not item.force_download:
                     content.append({'file_data': {'file_uri': item.url, 'mime_type': item.media_type}})
                 elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl, VideoUrl)):
-                    if self.system == 'google-vertex':
-                        content.append({'file_data': {'file_uri': item.url, 'mime_type': item.media_type}})
-                    else:
+                    if self.system != 'google-vertex' or item.force_download:
                         base64_data, media_type = await download_item(item, data_format='base64')
                         content.append({'inline_data': {'data': base64_data, 'mime_type': media_type}})  # type: ignore
+                    else:
+                        content.append({'file_data': {'file_uri': item.url, 'mime_type': item.media_type}})
                 else:
                     assert_never(item)
         return content
