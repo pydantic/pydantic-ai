@@ -4,6 +4,8 @@ import pytest
 
 from pydantic_ai.models import AudioUrl, DocumentUrl, ImageUrl, UserError, VideoUrl, download_item
 
+from ..conftest import IsInstance, IsStr
+
 pytestmark = [pytest.mark.anyio]
 
 
@@ -30,10 +32,21 @@ async def test_download_item_raises_user_error_with_youtube_url() -> None:
 
 @pytest.mark.vcr()
 async def test_download_item_application_octet_stream() -> None:
-    _, media_type = await download_item(
+    result, media_type = await download_item(
         VideoUrl(
             url='https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/tests/assets/small_video.mp4'
         ),
         data_format='bytes',
     )
     assert media_type == 'video/mp4'
+    assert result == IsInstance(bytes)
+
+
+@pytest.mark.vcr()
+async def test_download_item_no_content_type() -> None:
+    result, media_type = await download_item(
+        DocumentUrl(url='https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.md'),
+        data_format='text',
+    )
+    assert media_type == 'text/markdown'
+    assert result == IsStr()
