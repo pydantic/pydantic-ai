@@ -14,8 +14,6 @@ import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing_extensions import Self, assert_never
 
-from . import exceptions, messages, models, tools
-
 try:
     from mcp import types as mcp_types
     from mcp.client.session import ClientSession
@@ -27,6 +25,9 @@ except ImportError as _import_error:
         'Please install the `mcp` package to use the MCP server, '
         'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
     ) from _import_error
+
+# after mcp imports so any import error maps to this file, not _mcp.py
+from . import _mcp, exceptions, messages, models, tools
 
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP'
 
@@ -133,7 +134,11 @@ class MCPServer(ABC):
             self._exit_stack = AsyncExitStack()
 
             self._read_stream, self._write_stream = await self._exit_stack.enter_async_context(self.client_streams())
-            client = ClientSession(read_stream=self._read_stream, write_stream=self._write_stream)
+            client = ClientSession(
+                read_stream=self._read_stream,
+                write_stream=self._write_stream,
+                sampling_callback=self._sampling_callback,
+            )
             self._client = await self._exit_stack.enter_async_context(client)
 
             with anyio.fail_after(self._get_client_initialize_timeout()):
@@ -155,34 +160,28 @@ class MCPServer(ABC):
             await self._exit_stack.aclose()
 
     async def _sampling_callback(
-        self, _context: RequestContext[ClientSession, Any], params: mcp_types.CreateMessageRequestParams
+        self, context: RequestContext[ClientSession, Any], params: mcp_types.CreateMessageRequestParams
     ) -> mcp_types.CreateMessageResult | mcp_types.ErrorData:
         """MCP sampling callback."""
         if self.sampling_model is None:
             raise ValueError('Sampling model is not set')
-        pai_messages = self._map_sampling_msgs(params)
+        pai_messages = _mcp.map_to_pai_messages(params)
         model_settings = models.ModelSettings()
         if max_tokens := params.maxTokens:
             model_settings['max_tokens'] = max_tokens
         if temperature := params.temperature:
             model_settings['temperature'] = temperature
+        if stop_sequences := params.stopSequences:
+            model_settings['stop_sequences'] = stop_sequences
 
         model_response = await self.sampling_model.request(
             pai_messages,
             model_settings,
             models.ModelRequestParameters(),
         )
-        text_parts: list[str] = []
-        for part in model_response.parts:
-            if isinstance(part, mcp_types.TextContent):
-                text_parts.append(part.text)
-            else:
-                raise exceptions.UnexpectedModelBehavior(
-                    f'Unexpected part type: {type(part)}, expected TextContent only'
-                )
         return mcp_types.CreateMessageResult(
             role='assistant',
-            content=mcp_types.TextContent(type='text', text=''.join(text_parts)),
+            content=_mcp.map_from_model_response(model_response),
             model=self.sampling_model.model_name,
         )
 
@@ -215,47 +214,6 @@ class MCPServer(ABC):
                 assert_never(resource)
         else:
             assert_never(part)
-
-    @staticmethod
-    def _map_sampling_msgs(params: mcp_types.CreateMessageRequestParams) -> list[messages.ModelMessage]:
-        pai_messages: list[messages.ModelMessage] = []
-        request_parts: list[messages.ModelRequestPart] = []
-        if params.systemPrompt:
-            request_parts.append(messages.SystemPromptPart(content=params.systemPrompt))
-        response_parts: list[messages.ModelResponsePart] = []
-        for msg in params.messages:
-            content = msg.content
-            if msg.role == 'user':
-                # if there are any response parts, add a response message wrapping them
-                if response_parts:
-                    pai_messages.append(messages.ModelResponse(parts=response_parts))
-                    response_parts = []
-
-                if isinstance(content, mcp_types.TextContent):
-                    user_part_content: str | Sequence[messages.UserContent] = content.text
-                else:
-                    # image content
-                    user_part_content = [
-                        messages.BinaryContent(data=base64.b64decode(content.data), media_type=content.mimeType)
-                    ]
-
-                request_parts.append(messages.UserPromptPart(content=user_part_content))
-            else:
-                # role is assistant
-                # if there are any request parts, add a request message wrapping them
-                if request_parts:
-                    pai_messages.append(messages.ModelRequest(parts=request_parts))
-                    request_parts = []
-                if isinstance(content, mcp_types.TextContent):
-                    response_parts.append(messages.TextPart(content=content.text))
-                else:
-                    raise NotImplementedError('Image responses in sampling are not yet supported')
-
-        if response_parts:
-            pai_messages.append(messages.ModelResponse(parts=response_parts))
-        elif request_parts:
-            pai_messages.append(messages.ModelRequest(parts=request_parts))
-        return pai_messages
 
 
 @dataclass
