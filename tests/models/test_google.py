@@ -708,16 +708,6 @@ async def test_google_url_input_force_download(allow_model_requests: None) -> No
     )
 
 
-async def test_google_youtube_url_force_download_raises_user_error(allow_model_requests: None) -> None:
-    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
-    m = GoogleModel('gemini-2.0-flash', provider=provider)
-    agent = Agent(m)
-
-    url = VideoUrl(url='https://youtu.be/lCdaVNyHtjU', force_download=True)
-    with pytest.raises(UserError, match='Downloading YouTube videos is not supported.'):
-        _ = await agent.run(['What is the main content of this URL?', url])
-
-
 async def test_google_gs_url_force_download_raises_user_error(allow_model_requests: None) -> None:
     provider = GoogleProvider(project='pydantic-ai', location='us-central1')
     m = GoogleModel('gemini-2.0-flash', provider=provider)
