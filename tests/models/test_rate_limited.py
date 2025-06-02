@@ -313,6 +313,10 @@ async def test_rate_limited_model_stream_retry():
             output_tools=[],
         ),
     ) as response_stream:
+        # Check stream properties
+        assert response_stream.model_name == 'success_model'
+        assert response_stream.timestamp == datetime(2023, 1, 1, tzinfo=timezone.utc)
+
         events = [event async for event in response_stream]
 
         # Check events exist
@@ -335,6 +339,10 @@ async def test_rate_limited_model_max_retries_exceeded():
     )
 
     rate_limited_model = RateLimitedModel(failing_model, retryer=retry_config)
+
+    # Test that properties are passed through
+    assert rate_limited_model.system == 'failing_system'
+    assert rate_limited_model.model_name == 'failing_model'
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -537,6 +545,43 @@ async def test_rate_limited_model_concurrent_requests():
 
     # But it shouldn't take too much longer (allow some margin for processing)
     assert total_time < 2.5, f'Expected less than 2.5 seconds for 5 requests at 2/sec, but took {total_time}s'
+
+
+async def test_rate_limited_model_retryer_exhausted():
+    """Test that RuntimeError is raised when retryer is exhausted without raising an exception."""
+
+    # Create a custom retryer that exhausts immediately without yielding any attempts
+    class ExhaustedRetryer(AsyncRetrying):
+        async def __aiter__(self):
+            # Don't yield any attempts - just return
+            return
+            # Make this a generator
+            yield  # pragma: no cover
+
+    simple_model = SimpleModel()
+    exhausted_retryer = ExhaustedRetryer()
+
+    rate_limited_model = RateLimitedModel(simple_model, retryer=exhausted_retryer)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('test exhausted retryer'),
+            ]
+        ),
+    ]
+
+    # This should raise RuntimeError when the retryer is exhausted
+    with pytest.raises(RuntimeError, match='Model request failed after all retries'):
+        await rate_limited_model.request(
+            messages,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(
+                function_tools=[],
+                allow_text_output=True,
+                output_tools=[],
+            ),
+        )
 
 
 async def test_rate_limited_model_neither_limiter_nor_retryer():
