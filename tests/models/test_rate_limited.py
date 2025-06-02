@@ -513,7 +513,7 @@ async def test_rate_limited_model_concurrent_requests():
 
     # Make 5 sequential requests and measure time
     start_time = time.time()
-    
+
     for i in range(5):
         response = await rate_limited_model.request(
             messages,
@@ -525,16 +525,16 @@ async def test_rate_limited_model_concurrent_requests():
             ),
         )
         assert response.model_name == 'simple_model'
-    
+
     total_time = time.time() - start_time
-    
+
     # With 2 requests per second and 5 requests total, with GCRA algorithm:
     # - First 2 requests go immediately (burst allowed)
     # - Wait ~0.5s, next 2 requests go
     # - Wait ~0.5s, last request goes
     # Total should be at least 1 second
     assert total_time >= 1.0, f'Expected at least 1 second for 5 requests at 2/sec, but took {total_time}s'
-    
+
     # But it shouldn't take too much longer (allow some margin for processing)
     assert total_time < 2.5, f'Expected less than 2.5 seconds for 5 requests at 2/sec, but took {total_time}s'
 
