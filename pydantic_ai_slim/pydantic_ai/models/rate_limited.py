@@ -32,15 +32,16 @@ class RateLimitedModel(WrapperModel):
 
     ```python
     from tenacity import AsyncRetrying, stop_after_attempt
-    from throttled.asyncio import RateLimiterType, Throttled, rate_limiter, store
+    from throttled.asyncio import Throttled, rate_limiter
+    from throttled.asyncio.store import MemoryStore
 
     from pydantic_ai import Agent
     from pydantic_ai.models.rate_limited import RateLimitedModel
 
     throttle = Throttled(
-        using=RateLimiterType.GCRA.value,
+        using='gcra',
         quota=rate_limiter.per_sec(1_000, burst=1_000),
-        store=store.MemoryStore(),
+        store=MemoryStore(),
     )
 
     model = RateLimitedModel(

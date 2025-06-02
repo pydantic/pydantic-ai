@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 
 import pytest
 from tenacity import AsyncRetrying, RetryError, retry_if_exception_type, stop_after_attempt, wait_fixed
-from throttled.asyncio import RateLimiterType, Throttled, rate_limiter, store
+from throttled.asyncio import Throttled, rate_limiter
+from throttled.asyncio.store import MemoryStore
 
 from pydantic_ai.messages import (
     ModelMessage,
@@ -377,9 +378,9 @@ async def test_rate_limited_model_limiter_only():
 
     # Create a rate limiter - 10 requests per second to make tests fast
     throttle = Throttled(
-        using=RateLimiterType.GCRA.value,
+        using='gcra',
         quota=rate_limiter.per_sec(10, burst=10),
-        store=store.MemoryStore(),
+        store=MemoryStore(),
     )
     rate_limited_model = RateLimitedModel(simple_model, limiter=throttle)
 
@@ -434,9 +435,9 @@ async def test_rate_limited_model_both_limiter_and_retryer():
 
     # Configure the limiter and retryer
     throttle = Throttled(
-        using=RateLimiterType.GCRA.value,
+        using='gcra',
         quota=rate_limiter.per_sec(10, burst=10),
-        store=store.MemoryStore(),
+        store=MemoryStore(),
     )
     retry_config = AsyncRetrying(
         retry=retry_if_exception_type(ValueError),
@@ -503,9 +504,9 @@ async def test_rate_limited_model_concurrent_requests():
 
     # Create a real rate limiter that will allow 2 requests per second
     throttle = Throttled(
-        using=RateLimiterType.GCRA.value,
+        using='gcra',
         quota=rate_limiter.per_sec(2),  # 2 requests per second
-        store=store.MemoryStore(),
+        store=MemoryStore(),
     )
 
     rate_limited_model = RateLimitedModel(simple_model, limiter=throttle)
@@ -522,7 +523,7 @@ async def test_rate_limited_model_concurrent_requests():
     # Make 5 sequential requests and measure time
     start_time = time.time()
 
-    for i in range(5):
+    for _ in range(5):
         response = await rate_limited_model.request(
             messages,
             model_settings=None,
@@ -552,11 +553,13 @@ async def test_rate_limited_model_retryer_exhausted():
 
     # Create a custom retryer that exhausts immediately without yielding any attempts
     class ExhaustedRetryer(AsyncRetrying):
-        async def __aiter__(self):
-            # Don't yield any attempts - just return
-            return
-            # Make this a generator
-            yield  # pragma: no cover
+        def __aiter__(self):
+            # Return self to make it compatible with the protocol
+            return self
+
+        async def __anext__(self):
+            # Stop iteration immediately
+            raise StopAsyncIteration
 
     simple_model = SimpleModel()
     exhausted_retryer = ExhaustedRetryer()
