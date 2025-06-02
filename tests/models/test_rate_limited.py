@@ -380,7 +380,7 @@ async def test_rate_limited_model_limiter_only():
     throttle = Throttled(
         using='gcra',
         quota=rate_limiter.per_sec(10, burst=10),
-        store=MemoryStore(),
+        store=MemoryStore(),  # type: ignore
     )
     rate_limited_model = RateLimitedModel(simple_model, limiter=throttle)
 
@@ -437,7 +437,7 @@ async def test_rate_limited_model_both_limiter_and_retryer():
     throttle = Throttled(
         using='gcra',
         quota=rate_limiter.per_sec(10, burst=10),
-        store=MemoryStore(),
+        store=MemoryStore(),  # type: ignore
     )
     retry_config = AsyncRetrying(
         retry=retry_if_exception_type(ValueError),
@@ -506,7 +506,7 @@ async def test_rate_limited_model_concurrent_requests():
     throttle = Throttled(
         using='gcra',
         quota=rate_limiter.per_sec(2),  # 2 requests per second
-        store=MemoryStore(),
+        store=MemoryStore(),  # type: ignore
     )
 
     rate_limited_model = RateLimitedModel(simple_model, limiter=throttle)
