@@ -334,7 +334,9 @@ class OpenAIModel(Model):
             items.append(TextPart(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
-                items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
+                part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
+                part.tool_call_id = _guard_tool_call_id(part)
+                items.append(part)
         return ModelResponse(
             items,
             usage=_map_usage(response),

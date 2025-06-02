@@ -1710,3 +1710,25 @@ def test_model_profile_strict_not_supported():
             },
         }
     )
+
+
+@pytest.mark.vcr
+async def test_compatible_api_with_tool_calls_without_id(allow_model_requests: None, gemini_api_key: str):
+    provider = OpenAIProvider(
+        openai_client=AsyncOpenAI(
+            base_url='https://generativelanguage.googleapis.com/v1beta/openai/',
+            api_key=gemini_api_key,
+        )
+    )
+
+    model = OpenAIModel('gemini-2.5-pro-preview-05-06', provider=provider)
+
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_current_time() -> str:
+        """Get the current time."""
+        return 'Noon'
+
+    response = await agent.run('What is the current time?')
+    assert response.output == snapshot('The current time is Noon.')
