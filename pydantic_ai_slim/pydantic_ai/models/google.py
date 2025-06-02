@@ -14,10 +14,8 @@ from pydantic_ai.providers import Provider
 
 from .. import UnexpectedModelBehavior, _utils, usage
 from ..messages import (
-    AudioUrl,
     BinaryContent,
-    DocumentUrl,
-    ImageUrl,
+    FileUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -371,8 +369,8 @@ class GoogleModel(Model):
                     content.append({'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}})  # type: ignore
                 elif isinstance(item, VideoUrl) and item.is_youtube and not item.force_download:
                     content.append({'file_data': {'file_uri': item.url, 'mime_type': item.media_type}})
-                elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl, VideoUrl)):
-                    if self.system != 'google-vertex' or item.force_download:
+                elif isinstance(item, FileUrl):
+                    if self.system == 'google-gla' or item.force_download:
                         base64_data, media_type = await download_item(item, data_format='base64')
                         content.append({'inline_data': {'data': base64_data, 'mime_type': media_type}})  # type: ignore
                     else:

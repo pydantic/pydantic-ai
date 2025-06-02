@@ -2,7 +2,8 @@ from typing import Union
 
 import pytest
 
-from pydantic_ai.models import AudioUrl, DocumentUrl, ImageUrl, UserError, VideoUrl, download_item
+from pydantic_ai.messages import AudioUrl, DocumentUrl, ImageUrl, VideoUrl
+from pydantic_ai.models import UserError, download_item
 
 from ..conftest import IsInstance, IsStr
 

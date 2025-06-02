@@ -147,11 +147,7 @@ class VideoUrl(FileUrl):
     @property
     def is_youtube(self) -> bool:
         """True if the URL has a YouTube domain."""
-        return (
-            self.url.startswith('https://youtu.be/')
-            or self.url.startswith('https://youtube.com/')
-            or self.url.startswith('https://www.youtube.com/')
-        )
+        return self.url.startswith(('https://youtu.be/', 'https://youtube.com/', 'https://www.youtube.com/'))
 
     @property
     def format(self) -> VideoFormat:

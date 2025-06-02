@@ -22,16 +22,7 @@ from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
-from ..messages import (
-    AudioUrl,
-    DocumentUrl,
-    ImageUrl,
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    ModelResponseStreamEvent,
-    VideoUrl,
-)
+from ..messages import FileUrl, ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent, VideoUrl
 from ..profiles._json_schema import JsonSchemaTransformer
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -619,7 +610,7 @@ def _cached_async_http_transport() -> httpx.AsyncHTTPTransport:
 
 @overload
 async def download_item(
-    item: ImageUrl | AudioUrl | DocumentUrl | VideoUrl,
+    item: FileUrl,
     data_format: Literal['bytes'],
     type_format: Literal['mime', 'extension'] = 'mime',
 ) -> tuple[bytes, str]:
@@ -628,7 +619,7 @@ async def download_item(
 
 @overload
 async def download_item(
-    item: ImageUrl | AudioUrl | DocumentUrl | VideoUrl,
+    item: FileUrl,
     data_format: Literal['base64', 'base64_uri', 'text'],
     type_format: Literal['mime', 'extension'] = 'mime',
 ) -> tuple[str, str]:
@@ -636,7 +627,7 @@ async def download_item(
 
 
 async def download_item(
-    item: ImageUrl | AudioUrl | DocumentUrl | VideoUrl,
+    item: FileUrl,
     data_format: Literal['bytes', 'base64', 'base64_uri', 'text'] = 'bytes',
     type_format: Literal['mime', 'extension'] = 'mime',
 ) -> tuple[bytes | str, str]:
