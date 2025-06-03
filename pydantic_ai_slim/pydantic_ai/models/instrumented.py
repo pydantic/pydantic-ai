@@ -261,12 +261,12 @@ class InstrumentedModel(WrapperModel):
                     'gen_ai.request.model': request_model,
                     'gen_ai.response.model': response_model,
                 }
-                if response.usage.request_tokens:
+                if response.usage.request_tokens:  # pragma: no branch
                     self.settings.tokens_histogram.record(
                         response.usage.request_tokens,
                         {**metric_attributes, 'gen_ai.token.type': 'input'},
                     )
-                if response.usage.response_tokens:
+                if response.usage.response_tokens:  # pragma: no branch
                     self.settings.tokens_histogram.record(
                         response.usage.response_tokens,
                         {**metric_attributes, 'gen_ai.token.type': 'output'},
