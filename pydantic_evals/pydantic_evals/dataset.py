@@ -290,8 +290,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 async with limiter:
                     result = await _run_task_and_evaluators(task, case, report_case_name, self.evaluators)
                     if progress:  # pragma: no branch
-                        async with lock:
-                            progress_bar.update(1)
+                        async with lock:  # pyright: ignore[reportPossiblyUnboundVariable, reportGeneralTypeIssues]
+                            progress_bar.update(1)  # pyright: ignore[reportPossiblyUnboundVariable]
                     return result
 
             report = EvaluationReport(
@@ -308,7 +308,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
             eval_span.set_attribute('averages', report.averages())
         if progress:  # pragma: no branch
-            progress_bar.close()
+            progress_bar.close()  # pyright: ignore[reportPossiblyUnboundVariable]
         return report
 
     def evaluate_sync(
