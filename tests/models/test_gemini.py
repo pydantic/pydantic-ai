@@ -569,7 +569,6 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 model_name='gemini-1.5-flash-123',
                 finish_reason='stop',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -1280,7 +1279,6 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
                 model_name='gemini-1.5-flash',
                 finish_reason='stop',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )

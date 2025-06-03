@@ -99,7 +99,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                 ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -167,7 +167,7 @@ async def test_google_model_structured_response(allow_model_requests: None, goog
                 ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -193,7 +193,7 @@ async def test_google_model_structured_response(allow_model_requests: None, goog
                 ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -252,7 +252,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -279,7 +279,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 ),
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -542,7 +542,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                finish_reason='stop',
             ),
         ]
     )

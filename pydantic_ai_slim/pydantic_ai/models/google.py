@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Union, cast, overload
+from typing import Literal, Union, cast, overload
 from uuid import uuid4
 
 from typing_extensions import assert_never
@@ -91,6 +91,21 @@ Since Gemini supports a variety of date-stamped models, we explicitly list the l
 allow any name in the type hints.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
+_FINISH_REASONS = {
+    'STOP': 'stop',
+    'MAX_TOKENS': 'length',
+    'SAFETY': 'content_filter',
+    # 'RECITATION': 'content_filter',
+    # 'LANGUAGE': 'content_filter',
+    # 'BLOCKLIST': 'content_filter',
+    # 'PROHIBITED_CONTENT': 'content_filter',
+    # 'SPII': 'content_filter',
+    # 'MALFORMED_FUNCTION_CALL': 'error',  # or 'tool_calls' if you prefer
+    # 'OTHER': 'error',
+    # 'FINISH_REASON_UNSPECIFIED': 'error',  # unspecified is still a model stop reason
+    # 'IMAGE_SAFETY': 'content_filter',
+    # Kept the other mappings as comments based on finish_reason
+}
 
 
 class GoogleModelSettings(ModelSettings, total=False):
@@ -275,6 +290,9 @@ class GoogleModel(Model):
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
         if not response.candidates or len(response.candidates) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
+        finish_reason_key = getattr(response.candidates[0], 'finish_reason', '')
+        finish_reason = _FINISH_REASONS.get(finish_reason_key, finish_reason_key)
+
         if response.candidates[0].content is None or response.candidates[0].content.parts is None:
             if response.candidates[0].finish_reason == 'SAFETY':
                 raise UnexpectedModelBehavior('Safety settings triggered', str(response))
@@ -284,14 +302,14 @@ class GoogleModel(Model):
                 )  # pragma: no cover
         parts = response.candidates[0].content.parts or []
         vendor_id = response.response_id or None
-        vendor_details: dict[str, Any] | None = None
-        finish_reason = response.candidates[0].finish_reason
-        if finish_reason:  # pragma: no branch
-            vendor_details = {'finish_reason': finish_reason.value}
         usage = _metadata_as_usage(response)
         usage.requests = 1
         return _process_response_from_parts(
-            parts, response.model_version or self._model_name, usage, vendor_id=vendor_id, vendor_details=vendor_details
+            parts,
+            response.model_version or self._model_name,
+            usage,
+            vendor_id=vendor_id,
+            finish_reason=finish_reason,
         )
 
     async def _process_streamed_response(self, response: AsyncIterator[GenerateContentResponse]) -> StreamedResponse:
@@ -443,7 +461,7 @@ def _process_response_from_parts(
     model_name: GoogleModelName,
     usage: usage.Usage,
     vendor_id: str | None,
-    vendor_details: dict[str, Any] | None = None,
+    finish_reason: str | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
@@ -460,7 +478,7 @@ def _process_response_from_parts(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(
-        parts=items, model_name=model_name, usage=usage, vendor_id=vendor_id, vendor_details=vendor_details
+        parts=items, model_name=model_name, usage=usage, vendor_id=vendor_id, finish_reason=finish_reason
     )
 
 
