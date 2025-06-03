@@ -23,7 +23,7 @@ pytestmark = pytest.mark.anyio
         (None, snapshot([[1], [2], [3]])),
         (0, snapshot([[1], [2], [3]])),
         (0.02, snapshot([[1], [2], [3]])),
-        (0.04, snapshot([[1, 2], [3]])),
+        (0.04, snapshot([[1, 2, 3]])),
         (0.1, snapshot([[1, 2, 3]])),
     ],
 )
