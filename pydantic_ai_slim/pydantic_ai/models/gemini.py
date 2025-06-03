@@ -68,6 +68,22 @@ allow any name in the type hints.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
 
+_FINISH_REASONS = {
+    'STOP': 'stop',
+    'MAX_TOKENS': 'length',
+    'SAFETY': 'content_filter',
+    # 'RECITATION': 'content_filter',
+    # 'LANGUAGE': 'content_filter',
+    # 'BLOCKLIST': 'content_filter',
+    # 'PROHIBITED_CONTENT': 'content_filter',
+    # 'SPII': 'content_filter',
+    # 'MALFORMED_FUNCTION_CALL': 'error',  # or 'tool_calls' if you prefer
+    # 'OTHER': 'error',
+    # 'FINISH_REASON_UNSPECIFIED': 'error',  # unspecified is still a model stop reason
+    # 'IMAGE_SAFETY': 'content_filter',
+    # Kept the other mappings as comments based on finish_reason
+}
+
 
 class GeminiModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request.
@@ -255,8 +271,10 @@ class GeminiModel(Model):
 
         if len(response['candidates']) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
+        finish_reason_key = response['candidates'][0].get('finish_reason', '')
+        finish_reason = _FINISH_REASONS.get(finish_reason_key, finish_reason_key)
         if 'content' not in response['candidates'][0]:
-            if response['candidates'][0].get('finish_reason') == 'SAFETY':
+            if finish_reason_key == 'SAFETY':
                 raise UnexpectedModelBehavior('Safety settings triggered', str(response))
             else:
                 raise UnexpectedModelBehavior(  # pragma: no cover
@@ -760,7 +778,17 @@ class _GeminiCandidates(TypedDict):
     """See <https://ai.google.dev/api/generate-content#v1beta.Candidate>."""
 
     content: NotRequired[_GeminiContent]
-    finish_reason: NotRequired[Annotated[Literal['STOP', 'MAX_TOKENS', 'SAFETY'], pydantic.Field(alias='finishReason')]]
+    finish_reason: NotRequired[
+        Annotated[
+            Literal[
+                'STOP',
+                'MAX_TOKENS',
+                'SAFETY',
+                #  'MALFORMED_FUNCTION_CALL'  https://github.com/pydantic/pydantic-ai/issues/631
+            ],
+            pydantic.Field(alias='finishReason'),
+        ]
+    ]
     """
     See <https://ai.google.dev/api/generate-content#FinishReason>, lots of other values are possible,
     but let's wait until we see them and know what they mean to add them here.
