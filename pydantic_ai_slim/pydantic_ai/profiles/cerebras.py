@@ -12,10 +12,10 @@ class CerebrasJsonSchemaTransformer(JsonSchemaTransformer):
 
     Cerebras supports a subset of OpenAI's structured output capabilities, which is documented here:
     - https://inference-docs.cerebras.ai/capabilities/structured-outputs#advanced-schema-features
-    - https://inference-docs.cerebras.ai/capabilities/structured-outputs#variations-from-openai’s-structured-output-capabilities
+    - https://inference-docs.cerebras.ai/capabilities/structured-outputs#variations-from-openai's-structured-output-capabilities
     - https://inference-docs.cerebras.ai/capabilities/tool-use
 
-    TODO: `transform` method is based on GoogleJsonSchemaTransformer, and it doesn't handle all cases mentioned in linkes above.
+    TODO: `transform` method is based on GoogleJsonSchemaTransformer, and it doesn't handle all cases mentioned in links above.
     """
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
