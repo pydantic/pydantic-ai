@@ -13,6 +13,7 @@ from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
+from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     BinaryContent,
@@ -26,6 +27,8 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
+    ServerToolCallPart,
+    ServerToolReturnPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -40,7 +43,7 @@ from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from google.genai import _api_client
-    from google.genai.types import HarmBlockThreshold, HarmCategory
+    from google.genai.types import HarmBlockThreshold, HarmCategory, Language
 
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import GoogleProvider
@@ -581,3 +584,75 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
 
     with pytest.raises(UnexpectedModelBehavior, match='Safety settings triggered'):
         await agent.run('Tell me a joke about a Brazilians.')
+
+
+async def test_google_model_web_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[WebSearchTool()])
+
+    result = await agent.run('What day is today in Utrecht?')
+    assert result.output == snapshot('Today is Wednesday, May 28, 2025, in Utrecht.\n')
+
+
+async def test_google_model_code_execution_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('What day is today in Utrecht?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
+                    UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+To determine the current day in Utrecht, I need to know the current date and time. I will use a tool to get this information.
+
+"""
+                    ),
+                    ServerToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+import datetime
+import pytz
+
+utrecht_timezone = pytz.timezone('Europe/Amsterdam')
+now_utrecht = datetime.datetime.now(utrecht_timezone)
+print(now_utrecht.strftime("%A, %Y-%m-%d"))
+""",
+                            'language': Language.PYTHON,
+                        },
+                        tool_call_id=IsStr(),
+                    ),
+                    ServerToolReturnPart(
+                        tool_name='code_execution',
+                        content='Wednesday, 2025-05-28\n',
+                        tool_call_id="It doesn't have.",
+                        timestamp=IsDatetime(),
+                    ),
+                    TextPart(content='Today is Wednesday, May 28, 2025 in Utrecht.\n'),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=13,
+                    response_tokens=119,
+                    total_tokens=246,
+                    details={
+                        'tool_use_prompt_tokens': 114,
+                        'text_candidates_tokens': 119,
+                        'text_prompt_tokens': 13,
+                        'text_tool_use_prompt_tokens': 114,
+                    },
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+        ]
+    )

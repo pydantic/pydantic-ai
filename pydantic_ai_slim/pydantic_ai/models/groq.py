@@ -10,7 +10,7 @@ from typing import Literal, Union, cast, overload
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._utils import guard_tool_call_id as _guard_tool_call_id
+from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     BinaryContent,
     DocumentUrl,
@@ -21,6 +21,8 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
+    ServerToolCallPart,
+    ServerToolReturnPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -220,7 +222,7 @@ class GroqModel(Model):
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.chat.completions.create(
-                model=str(self._model_name),
+                model=self._model_name,
                 messages=groq_messages,
                 n=1,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
@@ -249,6 +251,15 @@ class GroqModel(Model):
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+        if choice.message.executed_tools:
+            for tool in choice.message.executed_tools:
+                tool_call_id = generate_tool_call_id()
+                items.append(
+                    ServerToolCallPart(
+                        tool_name=tool.type, args=tool.arguments, model_name='groq', tool_call_id=tool_call_id
+                    )
+                )
+                items.append(ServerToolReturnPart(tool_name=tool.type, content=tool.output, tool_call_id=tool_call_id))
         if choice.message.content is not None:
             items.append(TextPart(content=choice.message.content))
         if choice.message.tool_calls is not None:

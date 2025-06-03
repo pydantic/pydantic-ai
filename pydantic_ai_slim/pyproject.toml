@@ -66,7 +66,7 @@ cohere = ["cohere>=5.13.11; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
 google = ["google-genai>=1.15.0"]
 anthropic = ["anthropic>=0.52.0"]
-groq = ["groq>=0.15.0"]
+groq = ["groq>=0.25.0"]
 mistral = ["mistralai>=1.2.5"]
 bedrock = ["boto3>=1.35.74"]
 # Tools
