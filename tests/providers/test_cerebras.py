@@ -4,7 +4,8 @@ import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai.profiles.cerebras import CerebrasJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 
 from ..conftest import TestEnv, try_import
@@ -12,7 +13,6 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.cerebras import CerebrasProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
@@ -52,7 +52,33 @@ def test_cerebras_pass_openai_client() -> None:
 
 def test_cerebras_model_profile():
     provider = CerebrasProvider(api_key='api-key')
-    model = OpenAIModel('qwen-3-32b', provider=provider)
-    assert isinstance(model.profile, OpenAIModelProfile)
-    assert model.profile.json_schema_transformer == GoogleJsonSchemaTransformer
-    assert model.profile.openai_supports_strict_tool_definition is False
+
+    model = provider.model_profile('llama-4-scout-17b-16e-instruct')
+    assert isinstance(model, OpenAIModelProfile)
+    assert model.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert model.openai_supports_strict_tool_definition is True
+
+    model = provider.model_profile('llama3.1-8b')
+    assert isinstance(model, OpenAIModelProfile)
+    assert model.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert model.openai_supports_strict_tool_definition is True
+
+    model = provider.model_profile('llama3.3-70b')
+    assert isinstance(model, OpenAIModelProfile)
+    assert model.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert model.openai_supports_strict_tool_definition is True
+
+    model = provider.model_profile('qwen-3-32b')
+    assert isinstance(model, OpenAIModelProfile)
+    assert model.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert model.openai_supports_strict_tool_definition is True
+
+    model = provider.model_profile('deepseek-r1-distill-llama-70b')
+    assert isinstance(model, OpenAIModelProfile)
+    assert model.json_schema_transformer == CerebrasJsonSchemaTransformer
+    assert model.openai_supports_strict_tool_definition is True
+
+    model = provider.model_profile('new-non-existing-model')
+    assert isinstance(model, OpenAIModelProfile)
+    assert model.json_schema_transformer == CerebrasJsonSchemaTransformer
+    assert model.openai_supports_strict_tool_definition is True

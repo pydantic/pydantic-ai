@@ -9,8 +9,11 @@ from openai import AsyncOpenAI
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+from pydantic_ai.profiles.cerebras import CerebrasJsonSchemaTransformer
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
+from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -38,12 +41,25 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        # As the Cerebras API is OpenAI-compatible, we use GoogleJsonSchemaTransformer
-        # based on the configuration in src/core/models/llm.py
+        provider_to_profile = {
+            'deepseek': deepseek_model_profile,
+            'qwen': qwen_model_profile,
+            'llama': meta_model_profile,
+        }
+        profile = None
+
+        try:
+            model_provider = model_name.split('-')[0]
+            for provider, profile_func in provider_to_profile.items():
+                if model_provider.startswith(provider):
+                    profile = profile_func(model_name)
+                    break
+        except Exception as _:  # pragma: no cover
+            pass
+
         return OpenAIModelProfile(
-            json_schema_transformer=GoogleJsonSchemaTransformer,
-            openai_supports_strict_tool_definition=False,
-        )
+            json_schema_transformer=CerebrasJsonSchemaTransformer, openai_supports_strict_tool_definition=True
+        ).update(profile)
 
     @overload
     def __init__(self) -> None: ...
