@@ -118,12 +118,21 @@ class InstrumentationSettings:
         self.event_logger = event_logger_provider.get_event_logger('pydantic-ai', __version__)
         self.event_mode = event_mode
         self.include_binary_content = include_binary_content
-        self.tokens_histogram = self.meter.create_histogram(
-            'gen_ai.client.token.usage',
+        histogram_kwargs = dict(
+            name='gen_ai.client.token.usage',
             unit='{token}',
             description='Measures number of input and output tokens used',
-            explicit_bucket_boundaries_advisory=TOKEN_HISTOGRAM_BOUNDARIES,
         )
+        try:
+            self.tokens_histogram = self.meter.create_histogram(
+                **histogram_kwargs,
+                explicit_bucket_boundaries_advisory=TOKEN_HISTOGRAM_BOUNDARIES,
+            )
+        except TypeError:
+            # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
+            self.tokens_histogram = self.meter.create_histogram(
+                **histogram_kwargs,  # pyright: ignore
+            )
 
     def messages_to_otel_events(self, messages: list[ModelMessage]) -> list[Event]:
         """Convert a list of model messages to OpenTelemetry events.
