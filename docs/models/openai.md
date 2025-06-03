@@ -408,7 +408,7 @@ agent = Agent(model)
 ...
 ```
 
-### Cerebras 
+### Cerebras
 
 Go to [Cerebras](https://www.cerebras.ai/) and create an API key in your account settings.
 Once you have the API key, you can use it with the `Provider`:
