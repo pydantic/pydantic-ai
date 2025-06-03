@@ -82,7 +82,7 @@ class MyModel(Model):
             usage=Usage(request_tokens=100, response_tokens=200),
             model_name='my_model_123',
             vendor_id='chatcmpl-123',
-            vendor_details={'stop': True},
+            finish_reason='stop',
         )
 
     @asynccontextmanager
