@@ -596,6 +596,13 @@ class ModelResponse:
     For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
     """
 
+    finish_reason: Literal['stop', 'length', 'content_filter', 'tool_calls', 'error'] | str | None = None
+    """The reason why the model finished generating the response.
+    This can be one of the standard reasons like 'stop', 'length', 'content_filter', 'tool_calls', or 'error',
+    or a custom reason provided by the model.
+    If the model does not provide a finish reason, this will be `None`.
+    """
+
     vendor_id: str | None = None
     """Vendor ID as specified by the model provider. This can be used to track the specific request to the model."""
 
