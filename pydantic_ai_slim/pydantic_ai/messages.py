@@ -612,6 +612,8 @@ class ModelResponse:
 
         def new_event_body():
             new_body: dict[str, Any] = {'role': 'assistant'}
+            if self.finish_reason is not None:
+                new_body['finish_reason'] = self.finish_reason
             ev = Event('gen_ai.assistant.message', body=new_body)
             result.append(ev)
             return new_body
