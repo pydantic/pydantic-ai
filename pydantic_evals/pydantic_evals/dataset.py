@@ -253,7 +253,11 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         )
 
     async def evaluate(
-        self, task: Callable[[InputsT], Awaitable[OutputT]], name: str | None = None, max_concurrency: int | None = None
+        self,
+        task: Callable[[InputsT], Awaitable[OutputT]],
+        name: str | None = None,
+        max_concurrency: int | None = None,
+        progress: bool = True,
     ) -> EvaluationReport:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -267,6 +271,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 If omitted, the name of the task function will be used.
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
+            progress: Whether to show a progress bar for the evaluation. Defaults to True.
 
         Returns:
             A report containing the results of the evaluation.
@@ -275,16 +280,18 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         total_cases = len(self.cases)
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
-        progress = tqdm(total=total_cases, desc=f'Evaluating {name}')
-        lock = asyncio.Lock()
+        if progress:  # pragma: no branch
+            progress_bar = tqdm(total=total_cases, desc=f'Evaluating {name}')
+            lock = asyncio.Lock()
 
         with _logfire.span('evaluate {name}', name=name) as eval_span:
 
             async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
                 async with limiter:
                     result = await _run_task_and_evaluators(task, case, report_case_name, self.evaluators)
-                    async with lock:
-                        progress.update(1)
+                    if progress:  # pragma: no branch
+                        async with lock:
+                            progress_bar.update(1)
                     return result
 
             report = EvaluationReport(
@@ -300,11 +307,16 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             eval_span.set_attribute('cases', report.cases)
             # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
             eval_span.set_attribute('averages', report.averages())
-        progress.close()
+        if progress:  # pragma: no branch
+            progress_bar.close()
         return report
 
     def evaluate_sync(
-        self, task: Callable[[InputsT], Awaitable[OutputT]], name: str | None = None, max_concurrency: int | None = None
+        self,
+        task: Callable[[InputsT], Awaitable[OutputT]],
+        name: str | None = None,
+        max_concurrency: int | None = None,
+        progress: bool = True,
     ) -> EvaluationReport:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -317,11 +329,14 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 If omitted, the name of the task function will be used.
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
+            progress: Whether to show a progress bar for the evaluation. Defaults to True.
 
         Returns:
             A report containing the results of the evaluation.
         """
-        return get_event_loop().run_until_complete(self.evaluate(task, name=name, max_concurrency=max_concurrency))
+        return get_event_loop().run_until_complete(
+            self.evaluate(task, name=name, max_concurrency=max_concurrency, progress=progress)
+        )
 
     def add_case(
         self,
