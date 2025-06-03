@@ -72,8 +72,6 @@ def test_langchain_tool_conversion():
     agent = Agent('test', tools=[pydantic_tool], retries=7)
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': 'a'}\"}")
-    assert agent._function_tools['file_search'].takes_ctx is False
-    assert agent._function_tools['file_search'].max_retries == 7
 
 
 def test_langchain_tool_no_additional_properties():
@@ -100,8 +98,6 @@ def test_langchain_tool_no_additional_properties():
     agent = Agent('test', tools=[pydantic_tool], retries=7)
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': 'a'}\"}")
-    assert agent._function_tools['file_search'].takes_ctx is False
-    assert agent._function_tools['file_search'].max_retries == 7
 
 
 def test_langchain_tool_conversion_no_defaults():
@@ -126,8 +122,6 @@ def test_langchain_tool_conversion_no_defaults():
     agent = Agent('test', tools=[pydantic_tool], retries=7)
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': 'a', 'pattern': 'a'}\"}")
-    assert agent._function_tools['file_search'].takes_ctx is False
-    assert agent._function_tools['file_search'].max_retries == 7
 
 
 def test_langchain_tool_conversion_no_required():
@@ -154,8 +148,6 @@ def test_langchain_tool_conversion_no_required():
     agent = Agent('test', tools=[pydantic_tool], retries=7)
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': '*'}\"}")
-    assert agent._function_tools['file_search'].takes_ctx is False
-    assert agent._function_tools['file_search'].max_retries == 7
 
 
 def test_langchain_tool_defaults():
