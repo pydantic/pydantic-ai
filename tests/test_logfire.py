@@ -228,7 +228,7 @@ def test_logfire(
                                 'exemplars': IsList(length=...),  # type: ignore
                             },
                         ],
-                        'aggregation_temporality': 2,
+                        'aggregation_temporality': 1,
                     },
                 }
             ]
