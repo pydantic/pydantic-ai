@@ -30,6 +30,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
+from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -120,6 +121,7 @@ class MistralModel(Model):
         model_name: MistralModelName,
         *,
         provider: Literal['mistral'] | Provider[Mistral] = 'mistral',
+        profile: ModelProfileSpec | None = None,
         json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n""",
     ):
         """Initialize a Mistral model.
@@ -129,6 +131,7 @@ class MistralModel(Model):
             provider: The provider to use for authentication and API access. Can be either the string
                 'mistral' or an instance of `Provider[Mistral]`. If not provided, a new provider will be
                 created using the other parameters.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             json_mode_schema_prompt: The prompt to show when the model expects a JSON object as input.
         """
         self._model_name = model_name
@@ -137,6 +140,7 @@ class MistralModel(Model):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
+        self._profile = profile or provider.model_profile
 
     @property
     def base_url(self) -> str:

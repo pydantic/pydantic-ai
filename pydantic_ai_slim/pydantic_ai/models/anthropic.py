@@ -27,6 +27,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -118,6 +119,7 @@ class AnthropicModel(Model):
         model_name: AnthropicModelName,
         *,
         provider: Literal['anthropic'] | Provider[AsyncAnthropic] = 'anthropic',
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize an Anthropic model.
 
@@ -126,12 +128,14 @@ class AnthropicModel(Model):
                 [here](https://docs.anthropic.com/en/docs/about-claude/models).
             provider: The provider to use for the Anthropic API. Can be either the string 'anthropic' or an
                 instance of `Provider[AsyncAnthropic]`. If not provided, the other parameters will be used.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
+        self._profile = profile or provider.model_profile
 
     @property
     def base_url(self) -> str:
@@ -312,7 +316,8 @@ class AnthropicModel(Model):
                                 is_error=True,
                             )
                         user_content_params.append(retry_param)
-                anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
+                if len(user_content_params) > 0:
+                    anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
             elif isinstance(m, ModelResponse):
                 assistant_content_params: list[BetaTextBlockParam | BetaToolUseBlockParam] = []
                 for response_part in m.parts:

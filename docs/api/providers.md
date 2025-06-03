@@ -19,3 +19,9 @@
 ::: pydantic_ai.providers.cohere
 
 ::: pydantic_ai.providers.mistral
+
+::: pydantic_ai.providers.fireworks
+
+::: pydantic_ai.providers.grok
+
+::: pydantic_ai.providers.together
