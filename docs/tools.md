@@ -654,17 +654,18 @@ Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception
 
 ## Use LangChain Tools {#langchain-tools}
 
-If you'd like to use a tool from LangChain's [community tool library](https://python.langchain.com/docs/integrations/tools/) with PydanticAI, you can use the `Tool.from_langchain` convenience method. Note that PydanticAI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the LangChain tool, and up to the LangChain tool to raise an error if the arguments are invalid.
+If you'd like to use a tool from LangChain's [community tool library](https://python.langchain.com/docs/integrations/tools/) with PydanticAI, you can use the `pydancic_ai.ext.langchain.from_langchain_tool` convenience method. Note that PydanticAI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the LangChain tool, and up to the LangChain tool to raise an error if the arguments are invalid.
 
 Here is how you can use it to augment model responses using a LangChain web search tool. This tool will need you to install the `langchain-community` and `duckduckgo-search` dependencies to work properly.
 
 ```python {test="skip"}
 from langchain_community.tools import DuckDuckGoSearchRun
 
-from pydantic_ai import Agent, Tool
+from pydantic_ai import Agent
+from pydantic_ai.ext.langchain import from_langchain_tool
 
 search = DuckDuckGoSearchRun()
-search_tool = Tool.from_langchain(search)
+search_tool = from_langchain_tool(search)
 
 agent = Agent(
     'google-gla:gemini-2.0-flash',  # (1)!

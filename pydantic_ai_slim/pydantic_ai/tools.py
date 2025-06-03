@@ -17,28 +17,8 @@ from . import _function_schema, _utils, messages as _messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
 
 if TYPE_CHECKING:
-    from typing import Protocol
-
     from .models import Model
     from .result import Usage
-
-    class LangChainTool(Protocol):
-        # args are like
-        # {'dir_path': {'default': '.', 'description': 'Subdirectory to search in.', 'title': 'Dir Path', 'type': 'string'},
-        #  'pattern': {'description': 'Unix shell regex, where * matches everything.', 'title': 'Pattern', 'type': 'string'}}
-        @property
-        def args(self) -> dict[str, JsonSchemaValue]: ...
-
-        def get_input_jsonschema(self) -> JsonSchemaValue: ...
-
-        @property
-        def name(self) -> str: ...
-
-        @property
-        def description(self) -> str: ...
-
-        def run(self, *args: Any, **kwargs: Any) -> str: ...
-
 
 __all__ = (
     'AgentDepsT',
@@ -364,41 +344,6 @@ class Tool(Generic[AgentDepsT]):
             name=name,
             description=description,
             function_schema=function_schema,
-        )
-
-    @classmethod
-    def from_langchain(cls, langchain_tool: LangChainTool) -> Self:
-        """Creates a Pydantic tool proxy from a LangChain tool.
-
-        Args:
-            langchain_tool: The LangChain tool to wrap.
-
-        Returns:
-            A Pydantic tool that corresponds to the LangChain tool.
-        """
-        function_name = langchain_tool.name
-        function_description = langchain_tool.description
-        inputs = langchain_tool.args.copy()
-        required = sorted({name for name, detail in inputs.items() if 'default' not in detail})
-        schema: JsonSchemaValue = langchain_tool.get_input_jsonschema()
-        if 'additionalProperties' not in schema:
-            schema['additionalProperties'] = False
-        if required:
-            schema['required'] = required
-
-        defaults = {name: detail['default'] for name, detail in inputs.items() if 'default' in detail}
-
-        # restructures the arguments to match langchain tool run
-        def proxy(*args: Any, **kwargs: Any) -> str:
-            assert not args, 'This should always be called with kwargs'
-            kwargs = defaults | kwargs
-            return langchain_tool.run(kwargs)
-
-        return cls.from_schema(
-            function=proxy,
-            name=function_name,
-            description=function_description,
-            json_schema=schema,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
