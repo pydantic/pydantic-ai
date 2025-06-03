@@ -48,7 +48,7 @@ class Provider(ABC, Generic[InterfaceClient]):
         return None  # pragma: no cover
 
 
-def infer_provider(provider: str) -> Provider[Any]:
+def infer_provider(provider: str) -> Provider[Any]:  # noqa: C901
     """Infer the provider from the provider name."""
     if provider == 'openai':
         from .openai import OpenAIProvider
