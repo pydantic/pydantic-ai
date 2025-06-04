@@ -16,7 +16,7 @@ from typing_extensions import Self, assert_never
 
 try:
     from mcp import types as mcp_types
-    from mcp.client.session import ClientSession
+    from mcp.client.session import ClientSession, LoggingFnT
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
     from mcp.shared.context import RequestContext
@@ -41,6 +41,7 @@ class MCPServer(ABC):
     # these two fields should be re-implemented by dataclass subclasses so they appear as fields
     log_level: mcp_types.LoggingLevel | None = None
     tool_prefix: str | None = None
+    log_handler: LoggingFnT | None = None
 
     _running_count: int = 0
     _client: ClientSession
@@ -138,6 +139,7 @@ class MCPServer(ABC):
                 read_stream=self._read_stream,
                 write_stream=self._write_stream,
                 sampling_callback=self._sampling_callback,
+                logging_callback=self.log_handler,
             )
             self._client = await self._exit_stack.enter_async_context(client)
 
@@ -286,6 +288,8 @@ class MCPServerStdio(MCPServer):
 
     e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
+    log_handler: LoggingFnT | None = None
+    """A handler for logging messages from the server."""
 
     timeout: float = 5
     """ The timeout in seconds to wait for the client to initialize."""
@@ -383,6 +387,8 @@ class MCPServerHTTP(MCPServer):
 
     For example, if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
+    log_handler: LoggingFnT | None = None
+    """A handler for logging messages from the server."""
 
     @asynccontextmanager
     async def client_streams(

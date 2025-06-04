@@ -76,7 +76,7 @@ class MCPSamplingModel(Model):
     @property
     def model_name(self) -> str:
         """The model name."""
-        return 'unknown'
+        return 'mcp-sampling'
 
     @property
     def system(self) -> str:
