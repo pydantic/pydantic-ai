@@ -82,7 +82,6 @@ evals = ["pydantic-evals=={{ version }}"]
 # A2A
 a2a = ["fasta2a=={{ version }}"]
 
-
 [dependency-groups]
 dev = [
     "anyio>=4.5.0",
