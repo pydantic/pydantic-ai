@@ -16,7 +16,7 @@ from . import Provider
 
 
 class HuggingFaceProvider(Provider[AsyncInferenceClient]):
-    """Provider for HuggingFace API."""
+    """Provider for Hugging Face."""
 
     @property
     def name(self) -> str:
