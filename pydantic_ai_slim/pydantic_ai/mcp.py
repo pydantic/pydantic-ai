@@ -6,9 +6,10 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
@@ -16,7 +17,6 @@ from mcp.types import (
     BlobResourceContents,
     EmbeddedResource,
     ImageContent,
-    JSONRPCMessage,
     LoggingLevel,
     TextContent,
     TextResourceContents,
@@ -31,6 +31,8 @@ try:
     from mcp.client.session import ClientSession
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
+    from mcp.client.streamable_http import streamablehttp_client
+    from mcp.shared.message import SessionMessage
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `mcp` package to use the MCP server, '
@@ -56,8 +58,8 @@ class MCPServer(ABC):
     """
 
     _client: ClientSession
-    _read_stream: MemoryObjectReceiveStream[JSONRPCMessage | Exception]
-    _write_stream: MemoryObjectSendStream[JSONRPCMessage]
+    _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
+    _write_stream: MemoryObjectSendStream[SessionMessage]
     _exit_stack: AsyncExitStack
 
     @abstractmethod
@@ -66,8 +68,8 @@ class MCPServer(ABC):
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
         ]
     ]:
         """Create the streams for the MCP server."""
@@ -266,8 +268,8 @@ class MCPServerStdio(MCPServer):
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
         ]
     ]:
         server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
@@ -288,11 +290,8 @@ class MCPServerStdio(MCPServer):
 class MCPServerHTTP(MCPServer):
     """An MCP server that connects over streamable HTTP connections.
 
-    This class implements the SSE transport from the MCP specification.
-    See <https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse> for more information.
-
-    The name "HTTP" is used since this implemented will be adapted in future to use the new
-    [Streamable HTTP](https://github.com/modelcontextprotocol/specification/pull/206) currently in development.
+    This class implements both the SSE and Streamable HTTP transports from the MCP specification.
+    See <https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http> for more information.
 
     !!! note
         Using this class as an async context manager will create a new pool of HTTP connections to connect
@@ -303,7 +302,7 @@ class MCPServerHTTP(MCPServer):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerHTTP
 
-    server = MCPServerHTTP('http://localhost:3001/sse')  # (1)!
+    server = MCPServerHTTP('http://localhost:3001/sse', transport='sse')  # (1)!
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
@@ -358,22 +357,38 @@ class MCPServerHTTP(MCPServer):
     For example, if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
 
+    transport: Literal['sse', 'streamable-http'] = 'sse'
+    """The transport the MCP server is using.
+
+    If empty, sse will be assumed for backwards compatibality reasons.
+    """
+
     @asynccontextmanager
     async def client_streams(
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
         ]
     ]:  # pragma: no cover
-        async with sse_client(
-            url=self.url,
-            headers=self.headers,
-            timeout=self.timeout,
-            sse_read_timeout=self.sse_read_timeout,
-        ) as (read_stream, write_stream):
-            yield read_stream, write_stream
+        if self.transport == 'sse':
+            async with sse_client(
+                url=self.url,
+                headers=self.headers,
+                timeout=self.timeout,
+                sse_read_timeout=self.sse_read_timeout,
+            ) as (read_stream, write_stream):
+                yield read_stream, write_stream
+        elif self.transport == 'streamable-http':
+            async with streamablehttp_client(
+                url=self.url,
+                headers=self.headers,
+                timeout=self.timeout if isinstance(self.timeout, timedelta) else timedelta(seconds=self.timeout),
+            ) as (read_stream, write_stream, _):
+                yield read_stream, write_stream
+        else:
+            raise ValueError(f'Unsupported transport type: {self.transport}')
 
     def _get_log_level(self) -> LoggingLevel | None:
         return self.log_level

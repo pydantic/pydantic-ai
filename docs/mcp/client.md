@@ -18,22 +18,19 @@ pip/uv-add "pydantic-ai-slim[mcp]"
 
 PydanticAI comes with two ways to connect to MCP servers:
 
-- [`MCPServerHTTP`][pydantic_ai.mcp.MCPServerHTTP] which connects to an MCP server using the [HTTP SSE](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport
+- [`MCPServerHTTP`][pydantic_ai.mcp.MCPServerHTTP] which connects to an MCP server using the [HTTP SSE](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) or [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) transport
 - [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] which runs the server as a subprocess and connects to it using the [stdio](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) transport
 
 Examples of both are shown below; [mcp-run-python](run-python.md) is used as the MCP server in both examples.
 
-### SSE Client
+### SSE or Streamable HTTP Client
 
-[`MCPServerHTTP`][pydantic_ai.mcp.MCPServerHTTP] connects over HTTP using the [HTTP + Server Sent Events transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) to a server.
+[`MCPServerHTTP`][pydantic_ai.mcp.MCPServerHTTP] connects over HTTP using the [HTTP + Server Sent Events transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) or the [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) to a server.
 
 !!! note
     [`MCPServerHTTP`][pydantic_ai.mcp.MCPServerHTTP] requires an MCP server to be running and accepting HTTP connections before calling [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers]. Running the server is not managed by PydanticAI.
 
-The name "HTTP" is used since this implemented will be adapted in future to use the new
-[Streamable HTTP](https://github.com/modelcontextprotocol/specification/pull/206) currently in development.
-
-Before creating the SSE client, we need to run the server (docs [here](run-python.md)):
+Before creating the client, we need to run the server (docs [here](run-python.md)):
 
 ```bash {title="terminal (run sse server)"}
 deno run \
@@ -45,7 +42,7 @@ deno run \
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerHTTP
 
-server = MCPServerHTTP(url='http://localhost:3001/sse')  # (1)!
+server = MCPServerHTTP(url='http://localhost:3001/sse', transport='sse')  # (1)!
 agent = Agent('openai:gpt-4o', mcp_servers=[server])  # (2)!
 
 
@@ -56,7 +53,7 @@ async def main():
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
 
-1. Define the MCP server with the URL used to connect.
+1. Define the MCP server with the URL and transport used to connect. The url will typically end in `/mcp` for HTTP servers and `/sse` for SSE. Transport can be either sse or streamable-http.
 2. Create an agent with the MCP server attached.
 3. Create a client session to connect to the server.
 
@@ -83,6 +80,10 @@ logfire.instrument_pydantic_ai()
 Will display as follows:
 
 ![Logfire run python code](../img/logfire-run-python-code.png)
+
+#### Transport
+
+`MCPServerHTTP` supports both SSE (`sse`) and Streamable HTTP (`streamable-http`) servers which can be specified via the `transport` parameter.
 
 ### MCP "stdio" Server
 
