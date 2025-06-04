@@ -69,6 +69,7 @@ anthropic = ["anthropic>=0.52.0"]
 groq = ["groq>=0.15.0"]
 mistral = ["mistralai>=1.2.5"]
 bedrock = ["boto3>=1.35.74"]
+huggingface = ["huggingface-hub>=0.32.0", "aiohttp"]
 # Tools
 duckduckgo = ["duckduckgo-search>=7.0.0"]
 tavily = ["tavily-python>=0.5.0"]
@@ -80,6 +81,7 @@ mcp = ["mcp>=1.9.0; python_version >= '3.10'"]
 evals = ["pydantic-evals=={{ version }}"]
 # A2A
 a2a = ["fasta2a=={{ version }}"]
+
 
 [dependency-groups]
 dev = [

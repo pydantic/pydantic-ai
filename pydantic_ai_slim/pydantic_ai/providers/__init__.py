@@ -89,5 +89,9 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .cohere import CohereProvider
 
         return CohereProvider()
+    elif provider == 'huggingface':
+        from .huggingface import HuggingFaceProvider
+
+        return HuggingFaceProvider()
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
