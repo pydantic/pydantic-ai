@@ -330,7 +330,7 @@ class MCPServerHTTP(MCPServer):
     """
 
     extra_http_client_args: dict[str, Any] | None = None
-    """Optional extra arguments to pass to the HTTP client factory 
+    """Optional extra arguments to pass to the HTTP client factory
        the headers key-value pairs will be merged with `headers`.
        those provided in the headers argument will take precedence.
     """
@@ -381,9 +381,19 @@ class MCPServerHTTP(MCPServer):
         ) -> httpx.AsyncClient:
             extra_http_client_args = self.extra_http_client_args.copy() if self.extra_http_client_args else {}
             if headers is not None:
-                base_headers: dict[str, Any] = (extra_http_client_args.get("headers") or {}).copy()
+                base_headers: dict[str, str] = {}
+
+                existing_headers_val = extra_http_client_args.get('headers')
+                if isinstance(existing_headers_val, dict):
+                    typed_existing_headers: dict[Any, Any] = existing_headers_val
+                    for k, v in typed_existing_headers.items():
+                        if isinstance(k, str) and isinstance(v, str):
+                            base_headers[k] = v
+                        # else: one might want to log or handle non-string keys/values here
+
                 base_headers.update(headers)
-                extra_http_client_args["headers"] = base_headers
+
+                extra_http_client_args['headers'] = base_headers
             if timeout is not None:
                 extra_http_client_args.update(timeout=timeout)
             if auth is not None:
