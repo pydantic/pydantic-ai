@@ -381,7 +381,9 @@ class MCPServerHTTP(MCPServer):
         ) -> httpx.AsyncClient:
             extra_http_client_args = self.extra_http_client_args.copy() if self.extra_http_client_args else {}
             if headers is not None:
-                extra_http_client_args.update(headers=headers)
+                base_headers: dict[str, Any] = (extra_http_client_args.get("headers") or {}).copy()
+                base_headers.update(headers)
+                extra_http_client_args["headers"] = base_headers
             if timeout is not None:
                 extra_http_client_args.update(timeout=timeout)
             if auth is not None:
