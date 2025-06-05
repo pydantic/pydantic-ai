@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, Union, cast, overload
 
+from openai.types.responses.response_code_interpreter_tool_call import ResultLogs
 from typing_extensions import assert_never
 
 from pydantic_ai.builtin_tools import WebSearchTool
@@ -623,6 +624,8 @@ class OpenAIResponsesModel(Model):
         for item in response.output:
             if item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
+            if item.type == 'code_interpreter_call':
+                items.append(ServerToolCallPart(tool_name=item.type, model_name="openai", args={"code": item.code, "container_id": item.container_id, "out": item.results}, tool_call_id=item.id))
         return ModelResponse(items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp)
 
     async def _process_streamed_response(
@@ -680,12 +683,12 @@ class OpenAIResponsesModel(Model):
 
         instructions, openai_messages = await self._map_messages(messages)
         reasoning = self._get_reasoning(model_settings)
-
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.responses.create(
                 input=openai_messages,
+                include=["code_interpreter_call.outputs"],
                 model=self._model_name,
                 instructions=instructions,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
@@ -789,13 +792,14 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
                     # OpenAI doesn't return server tools calls.
-                    elif isinstance(item, (ServerToolCallPart, ServerToolReturnPart)):
-                        continue
+                    elif isinstance(item, (ServerToolCallPart)):
+                        openai_messages.append(self._map_code_interpreter_tool_call(item))
                     else:
                         assert_never(item)
             else:
                 assert_never(message)
         instructions = self._get_instructions(messages) or NOT_GIVEN
+        print(openai_messages)
         return instructions, openai_messages
 
     @staticmethod
@@ -805,6 +809,18 @@ class OpenAIResponsesModel(Model):
             call_id=_guard_tool_call_id(t=t),
             name=t.tool_name,
             type='function_call',
+        )
+    
+    @staticmethod
+    def _map_code_interpreter_tool_call(t: ServerToolCallPart) -> responses.ResponseCodeInterpreterToolCallParam:
+        args = t.args_as_dict() if t.args else {}
+        return responses.ResponseCodeInterpreterToolCallParam( # type: ignore the results parameter is wrong it uses output
+            id=t.tool_call_id,
+            code=args.get("code", ""),
+            container_id=args.get("container_id", ""),
+            status="completed",
+            type="code_interpreter_call",
+            outputs=[ResultLogs(logs="hello", type="logs").model_dump()]  # Convert to dict for JSON serialization
         )
 
     @staticmethod
