@@ -346,8 +346,10 @@ class GoogleModel(Model):
                     else:
                         assert_never(part)
 
-                if message_parts:  # pragma: no branch
-                    contents.append({'role': 'user', 'parts': message_parts})
+                # Google GenAI requires at least one part in the message.
+                if not message_parts:
+                    message_parts = [{'text': ''}]
+                contents.append({'role': 'user', 'parts': message_parts})
             elif isinstance(m, ModelResponse):
                 contents.append(_content_model_response(m))
             else:
