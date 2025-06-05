@@ -379,31 +379,33 @@ class MCPServerHTTP(MCPServer):
             timeout: httpx.Timeout | None = None,
             auth: httpx.Auth | None = None,
         ) -> httpx.AsyncClient:
-            extra_http_client_args = self.extra_http_client_args.copy() if self.extra_http_client_args else {}
+            extra_args = self.extra_http_client_args.copy() if self.extra_http_client_args else {}
+
             if headers is not None:
-                base_headers: dict[str, str] = {}
+                current_config_headers = extra_args.get('headers')
+                filtered_config_headers: dict[str, str] = {}
+                if isinstance(current_config_headers, dict):
+                    typed_current_config_headers: dict[Any, Any] = current_config_headers
+                    filtered_config_headers = {
+                        k_typed: v_typed
+                        for k_typed, v_typed in typed_current_config_headers.items()
+                        if isinstance(k_typed, str) and isinstance(v_typed, str)
+                    }
+                extra_args['headers'] = {**filtered_config_headers, **headers}
 
-                existing_headers_val = extra_http_client_args.get('headers')
-                if isinstance(existing_headers_val, dict):
-                    typed_existing_headers: dict[Any, Any] = existing_headers_val
-                    for k, v in typed_existing_headers.items():
-                        if isinstance(k, str) and isinstance(v, str):
-                            base_headers[k] = v
-                        # else: one might want to log or handle non-string keys/values here
-
-                base_headers.update(headers)
-
-                extra_http_client_args['headers'] = base_headers
             if timeout is not None:
-                extra_http_client_args.update(timeout=timeout)
+                extra_args['timeout'] = timeout
+
             if auth is not None:
-                extra_http_client_args.update(auth=auth)
-            return httpx.AsyncClient(**extra_http_client_args)
+                extra_args['auth'] = auth
+
+            return httpx.AsyncClient(**extra_args)
 
         async with sse_client(
             url=self.url,
             timeout=self.timeout,
             sse_read_timeout=self.sse_read_timeout,
+            headers=self.headers,
             httpx_client_factory=httpx_client_factory,
         ) as (read_stream, write_stream):
             yield read_stream, write_stream  # pyright: ignore
