@@ -13,6 +13,11 @@ export async function runCode(
   files: CodeFile[],
   log: (level: LoggingLevel, data: string) => void,
 ): Promise<RunSuccess | RunError> {
+  // remove once https://github.com/pyodide/pyodide/pull/5514 is released
+  const realConsoleLog = console.log
+  // deno-lint-ignore no-explicit-any
+  console.log = (...args: any[]) => log('debug', args.join(' '))
+
   const output: string[] = []
   const pyodide = await loadPyodide({
     stdout: (msg) => {
@@ -85,6 +90,7 @@ export async function runCode(
   }
   sys.stdout.flush()
   sys.stderr.flush()
+  console.log = realConsoleLog
   return runResult
 }
 
