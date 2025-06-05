@@ -1,6 +1,6 @@
 {
   "name": "@pydantic/mcp-run-python",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "license": "MIT",
   "nodeModulesDir": "auto",
   "exports": {
@@ -23,9 +23,7 @@
     "lineWidth": 120,
     "semiColons": false,
     "singleQuote": true,
-    "include": [
-      "."
-    ]
+    "include": ["."]
   },
   "publish": {
     "include": [
