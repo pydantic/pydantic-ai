@@ -385,7 +385,7 @@ class MCPServerHTTP(MCPServer):
 
                 existing_headers_val = extra_http_client_args.get('headers')
                 if isinstance(existing_headers_val, dict):
-                    typed_existing_headers: dict[Any, Any] = existing_headers_val  # pyright: ignore
+                    typed_existing_headers: dict[Any, Any] = existing_headers_val
                     for k, v in typed_existing_headers.items():
                         if isinstance(k, str) and isinstance(v, str):
                             base_headers[k] = v
