@@ -25,7 +25,7 @@ from typing_extensions import Self, assert_never
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import BinaryContent
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import McpHttpClientFactory, ToolDefinition, create_mcp_http_client
 
 try:
     from mcp.client.session import ClientSession
@@ -358,6 +358,14 @@ class MCPServerHTTP(MCPServer):
     For example, if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
 
+    httpx_client_factory: McpHttpClientFactory = create_mcp_http_client
+    """Factory function to create the underlying HTTPX client.
+
+    This allows customization of the HTTP client used for the SSE connection.
+
+    See <https://github.com/modelcontextprotocol/python-sdk/pull/752>
+    """
+
     @asynccontextmanager
     async def client_streams(
         self,
@@ -372,6 +380,7 @@ class MCPServerHTTP(MCPServer):
             headers=self.headers,
             timeout=self.timeout,
             sse_read_timeout=self.sse_read_timeout,
+            httpx_client_factory=self.httpx_client_factory,
         ) as (read_stream, write_stream):
             yield read_stream, write_stream
 
