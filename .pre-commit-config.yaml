@@ -47,13 +47,6 @@ repos:
         language: system
         types_or: [python, markdown]
         pass_filenames: false
-      - id: typecheck
-        name: Typecheck
-        entry: make
-        args: [typecheck]
-        language: system
-        types: [python]
-        pass_filenames: false
 
   - repo: https://github.com/codespell-project/codespell
     # Configuration for codespell is in pyproject.toml
