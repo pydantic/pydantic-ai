@@ -653,7 +653,7 @@ Instead of running the entire graph in a single process invocation, we run the g
 
     from dataclasses import dataclass, field
 
-    from groq import BaseModel
+    from pydantic import BaseModel
     from pydantic_graph import (
         BaseNode,
         End,
