@@ -215,8 +215,10 @@ class Tool(Generic[AgentDepsT]):
     This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
     """
 
-    # TODO: Move this state off the Tool class, which is otherwise stateless.
-    #   This should be tracked inside a specific agent run, not the tool.
+    # TODO: Consider moving this current_retry state to live on something other than the tool.
+    #   We've worked around this for now by copying instances of the tool when creating new runs,
+    #   but this is a bit fragile. Moving the tool retry counts to live on the agent run state would likely clean things
+    #   up, though is also likely a larger effort to refactor.
     current_retry: int = field(default=0, init=False)
 
     def __init__(
