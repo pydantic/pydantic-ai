@@ -1,0 +1,21 @@
+name: pydantic-ai_devcontainer
+
+services:
+  pydantic-ai: 
+    build: 
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - GIT_EMAIL=${GIT_EMAIL}
+        - GIT_USERNAME=${GIT_USERNAME}
+    volumes:
+      - ..:/home/coder/workspace
+      - ~/.ssh:/home/coder/.ssh:ro
+    working_dir: /home/coder/workspace
+    hostname: pydantic-ai
+    command: /bin/sh -c "while sleep 1000; do :; done"
+
+networks:
+  default:
+    external: true
+    name: maia

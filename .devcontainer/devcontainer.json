@@ -1,0 +1,33 @@
+{
+  "name": "pydantic-ai",
+  "dockerComposeFile": ["docker-compose.yml"],
+  "service": "pydantic-ai",
+  "remoteUser": "coder",
+  "shutdownAction": "stopCompose",
+  "workspaceFolder": "/home/coder/workspace",
+  "customizations": {
+    "vscode": {
+      "settings": {},
+      "extensions": [
+        "anweber.vscode-httpyac",
+        "donjayamanne.python-environment-manager",
+        "esbenp.prettier-vscode",
+        "github.copilot",
+        "github.copilot-chat",
+        "mhutchie.git-graph",
+        "ms-azuretools.vscode-docker",
+        "ms-python.debugpy",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "ms-toolsai.jupyter-keymap",
+        "ms-toolsai.jupyter-renderers",
+        "ms-toolsai.vscode-jupyter-cell-tags",
+        "ms-toolsai.vscode-jupyter-slideshow",
+        "visualstudioexptteam.intellicode-api-usage-examples",
+        "visualstudioexptteam.vscodeintellicode"
+      ]
+    }
+  },
+  "runArgs": "--network=maia"
+}
