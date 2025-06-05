@@ -11,6 +11,7 @@ from types import TracebackType
 from typing import Any
 
 import anyio
+import httpx
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp.types import (
     BlobResourceContents,
@@ -328,6 +329,12 @@ class MCPServerHTTP(MCPServer):
     Useful for authentication, custom headers, or other HTTP-specific configurations.
     """
 
+    extra_http_client_args: dict[str, Any] | None = None
+    """Optional extra arguments to pass to the HTTP client factory 
+       the headers key-value pairs will be merged with `headers`.
+       those provided in the headers argument will take precedence.
+    """
+
     timeout: float = 5
     """Initial connection timeout in seconds for establishing the connection.
 
@@ -367,11 +374,25 @@ class MCPServerHTTP(MCPServer):
             MemoryObjectSendStream[JSONRPCMessage],
         ]
     ]:  # pragma: no cover
+        def httpx_client_factory(
+            headers: dict[str, str] | None = None,
+            timeout: httpx.Timeout | None = None,
+            auth: httpx.Auth | None = None,
+        ) -> httpx.AsyncClient:
+            extra_http_client_args = self.extra_http_client_args.copy() if self.extra_http_client_args else {}
+            if headers is not None:
+                extra_http_client_args.update(headers=headers)
+            if timeout is not None:
+                extra_http_client_args.update(timeout=timeout)
+            if auth is not None:
+                extra_http_client_args.update(auth=auth)
+            return httpx.AsyncClient(**extra_http_client_args)
+
         async with sse_client(
             url=self.url,
-            headers=self.headers,
             timeout=self.timeout,
             sse_read_timeout=self.sse_read_timeout,
+            httpx_client_factory=httpx_client_factory,
         ) as (read_stream, write_stream):
             yield read_stream, write_stream
 
