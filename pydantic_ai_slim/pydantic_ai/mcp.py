@@ -139,7 +139,7 @@ class MCPServer(ABC):
         self._exit_stack = AsyncExitStack()
 
         self._read_stream, self._write_stream = await self._exit_stack.enter_async_context(self.client_streams())
-        client = ClientSession(read_stream=self._read_stream, write_stream=self._write_stream)
+        client = ClientSession(read_stream=self._read_stream, write_stream=self._write_stream)  # pyright: ignore
         self._client = await self._exit_stack.enter_async_context(client)
 
         with anyio.fail_after(self._get_client_initialize_timeout()):
@@ -273,7 +273,7 @@ class MCPServerStdio(MCPServer):
     ]:
         server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
         async with stdio_client(server=server) as (read_stream, write_stream):
-            yield read_stream, write_stream
+            yield read_stream, write_stream  # pyright: ignore
 
     def _get_log_level(self) -> LoggingLevel | None:
         return self.log_level
@@ -385,7 +385,7 @@ class MCPServerHTTP(MCPServer):
 
                 existing_headers_val = extra_http_client_args.get('headers')
                 if isinstance(existing_headers_val, dict):
-                    typed_existing_headers: dict[Any, Any] = existing_headers_val
+                    typed_existing_headers: dict[Any, Any] = existing_headers_val  # pyright: ignore
                     for k, v in typed_existing_headers.items():
                         if isinstance(k, str) and isinstance(v, str):
                             base_headers[k] = v
@@ -406,7 +406,7 @@ class MCPServerHTTP(MCPServer):
             sse_read_timeout=self.sse_read_timeout,
             httpx_client_factory=httpx_client_factory,
         ) as (read_stream, write_stream):
-            yield read_stream, write_stream
+            yield read_stream, write_stream  # pyright: ignore
 
     def _get_log_level(self) -> LoggingLevel | None:
         return self.log_level
