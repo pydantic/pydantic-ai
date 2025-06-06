@@ -3,18 +3,18 @@ from __future__ import annotations as _annotations
 import datetime
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Union
 
 import pytest
-from dirty_equals import IsInstance
 from httpx import Request
-from inline_snapshot import snapshot
+from inline_snapshot import Is, snapshot
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryContent,
     DocumentUrl,
     FinalResultEvent,
@@ -36,7 +36,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import Usage
 
-from ..conftest import IsDatetime, IsStr, try_import
+from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     from google.genai import _api_client
@@ -46,7 +46,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
 
 pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='google not installed'),
+    pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
@@ -591,3 +591,138 @@ async def test_google_model_empty_user_prompt(allow_model_requests: None, google
     assert result.output == snapshot(
         'Please provide me with a question or task. I need some information to be able to help you.\n'
     )
+
+
+@pytest.mark.skipif(
+    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+)
+@pytest.mark.parametrize(
+    'url,expected_output',
+    [
+        pytest.param(
+            AudioUrl(url='https://cdn.openai.com/API/docs/audio/alloy.wav'),
+            'The URL discusses the sunrise in the east and sunset in the west, a phenomenon known to humans for millennia.',
+            id='AudioUrl',
+        ),
+        pytest.param(
+            DocumentUrl(url='https://storage.googleapis.com/cloud-samples-data/generative-ai/pdf/2403.05530.pdf'),
+            "The URL points to a technical report from Google DeepMind introducing Gemini 1.5 Pro, a multimodal AI model designed for understanding and reasoning over extremely large contexts (millions of tokens). It details the model's architecture, training, performance across a range of tasks, and responsible deployment considerations. Key highlights include near-perfect recall on long-context retrieval tasks, state-of-the-art performance in areas like long-document question answering, and surprising new capabilities like in-context learning of new languages.",
+            id='DocumentUrl',
+        ),
+        pytest.param(
+            ImageUrl(url='https://upload.wikimedia.org/wikipedia/commons/6/6a/Www.wikipedia_screenshot_%282021%29.png'),
+            "The URL's main content is the landing page of Wikipedia, showcasing the available language editions with article counts, a search bar, and links to other Wikimedia projects.",
+            id='ImageUrl',
+        ),
+        pytest.param(
+            VideoUrl(url='https://upload.wikimedia.org/wikipedia/commons/8/8f/Panda_at_Smithsonian_zoo.webm'),
+            """The main content of the image is a panda eating bamboo in a zoo enclosure. The enclosure is designed to mimic the panda's natural habitat, with rocks, bamboo, and a painted backdrop of mountains. There is also a large, smooth, tan-colored ball-shaped object in the enclosure.""",
+            id='VideoUrl',
+        ),
+        pytest.param(
+            VideoUrl(url='https://youtu.be/lCdaVNyHtjU'),
+            'The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several patterns including the most common endpoints with 404 errors, request patterns, timeline-related issues, organization/project access, and configuration and authentication. The analysis also provides some recommendations.',
+            id='VideoUrl (YouTube)',
+        ),
+        pytest.param(
+            AudioUrl(url='gs://pydantic-ai-dev/openai-alloy.wav'),
+            'The content describes the basic concept of the sun rising in the east and setting in the west.',
+            id='AudioUrl (gs)',
+        ),
+        pytest.param(
+            DocumentUrl(url='gs://pydantic-ai-dev/Gemini_1_5_Pro_Technical_Report_Arxiv_1805.pdf'),
+            "The URL leads to a research paper titled \"Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context\".  \n\nThe paper introduces Gemini 1.5 Pro, a new model in the Gemini family. It's described as a highly compute-efficient multimodal mixture-of-experts model.  A key feature is its ability to recall and reason over fine-grained information from millions of tokens of context, including long documents and hours of video and audio.  The paper presents experimental results showcasing the model's capabilities on long-context retrieval tasks, QA, ASR, and its performance compared to Gemini 1.0 models. It covers the model's architecture, training data, and evaluations on both synthetic and real-world tasks.  A notable highlight is its ability to learn to translate from English to Kalamang, a low-resource language, from just a grammar manual and dictionary provided in context.  The paper also discusses responsible deployment considerations, including impact assessments and mitigation efforts.\n",
+            id='DocumentUrl (gs)',
+        ),
+        pytest.param(
+            ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png'),
+            "The main content of the URL is the Wikipedia homepage, featuring options to access Wikipedia in different languages and information about the number of articles in each language. It also includes links to other Wikimedia projects and information about Wikipedia's host, the Wikimedia Foundation.\n",
+            id='ImageUrl (gs)',
+        ),
+        pytest.param(
+            VideoUrl(url='gs://pydantic-ai-dev/grepit-tiny-video.mp4'),
+            'The image shows a charming outdoor cafe in a Greek coastal town. The cafe is nestled between traditional whitewashed buildings, with tables and chairs set along a narrow cobblestone pathway. The sea is visible in the distance, adding to the picturesque and relaxing atmosphere.',
+            id='VideoUrl (gs)',
+        ),
+    ],
+)
+async def test_google_url_input(
+    # Need to use noqa because with runtime annotations this always fails linting
+    # https://docs.astral.sh/ruff/rules/non-pep604-annotation-union/
+    url: Union[AudioUrl, DocumentUrl, ImageUrl, VideoUrl],  # noqa
+    expected_output: str,
+    allow_model_requests: None,
+) -> None:
+    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
+    m = GoogleModel('gemini-2.0-flash', provider=provider)
+    agent = Agent(m)
+    result = await agent.run(['What is the main content of this URL?', url])
+
+    assert result.output == snapshot(Is(expected_output))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What is the main content of this URL?', Is(url)],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content=Is(expected_output))],
+                usage=IsInstance(Usage),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.skipif(
+    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+)
+@pytest.mark.vcr()
+async def test_google_url_input_force_download(allow_model_requests: None) -> None:
+    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
+    m = GoogleModel('gemini-2.0-flash', provider=provider)
+    agent = Agent(m)
+
+    video_url = VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4', force_download=True)
+    result = await agent.run(['What is the main content of this URL?', video_url])
+
+    output = 'The image shows a picturesque scene in what appears to be a Greek island town. The focus is on an outdoor dining area with tables and chairs, situated in a narrow alleyway between whitewashed buildings. The ocean is visible at the end of the alley, creating a beautiful and inviting atmosphere.'
+
+    assert result.output == output
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What is the main content of this URL?', Is(video_url)],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content=Is(output))],
+                usage=IsInstance(Usage),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_google_gs_url_force_download_raises_user_error(allow_model_requests: None) -> None:
+    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
+    m = GoogleModel('gemini-2.0-flash', provider=provider)
+    agent = Agent(m)
+
+    url = ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png', force_download=True)
+    with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported.'):
+        _ = await agent.run(['What is the main content of this URL?', url])
