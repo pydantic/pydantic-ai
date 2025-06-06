@@ -14,6 +14,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._output import OutputObjectDefinition
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     AudioUrl,
@@ -262,17 +263,25 @@ class OpenAIModel(Model):
         model_settings: OpenAIModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
-        tools = self._get_tools(model_request_parameters)
+        openai_messages = await self._map_messages(messages)
 
-        # standalone function to make it easier to override
+        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
+        response_format: chat.completion_create_params.ResponseFormat | None = None
+
+        output_mode = model_request_parameters.output_mode
+        if output_mode == 'tool':
+            tools.extend(self._map_tool_definition(r) for r in model_request_parameters.output_tools)
+        elif output_mode == 'json_schema':
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            response_format = self._map_output_object_definition(output_object)
+
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
+        elif model_request_parameters.output_mode == 'tool':
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
-
-        openai_messages = await self._map_messages(messages)
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -290,6 +299,7 @@ class OpenAIModel(Model):
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
+                response_format=response_format or NOT_GIVEN,
                 seed=model_settings.get('seed', NOT_GIVEN),
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
@@ -405,6 +415,22 @@ class OpenAIModel(Model):
             type='function',
             function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
         )
+
+    @staticmethod
+    def _map_output_object_definition(o: OutputObjectDefinition) -> chat.completion_create_params.ResponseFormat:
+        # TODO: Use ResponseFormatJSONObject on older models
+        response_format_param: chat.completion_create_params.ResponseFormatJSONSchema = {  # pyright: ignore[reportPrivateImportUsage]
+            'type': 'json_schema',
+            'json_schema': {
+                'name': o.name,
+                'schema': o.json_schema,
+            },
+        }
+        if o.description:
+            response_format_param['json_schema']['description'] = o.description
+        if o.strict:
+            response_format_param['json_schema']['strict'] = o.strict
+        return response_format_param
 
     def _map_tool_definition(self, f: ToolDefinition) -> chat.ChatCompletionToolParam:
         tool_param: chat.ChatCompletionToolParam = {
@@ -648,7 +674,7 @@ class OpenAIResponsesModel(Model):
         # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
+        elif model_request_parameters.output_mode == 'tool':
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -659,6 +685,8 @@ class OpenAIResponsesModel(Model):
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
+            # TODO: Pass text.format = ResponseFormatTextJSONSchemaConfigParam(...): {'type': 'json_schema', 'strict': True, 'name': '...', 'schema': ...}
+            # TODO: Fall back on ResponseFormatJSONObject/json_object on older models?
             return await self.client.responses.create(
                 input=openai_messages,
                 model=self._model_name,

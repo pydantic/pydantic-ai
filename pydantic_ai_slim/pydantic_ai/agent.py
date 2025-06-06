@@ -14,6 +14,7 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
+from pydantic_ai.profiles import ModelProfile
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
 
@@ -140,7 +141,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _deprecated_result_tool_name: str | None = dataclasses.field(repr=False)
     _deprecated_result_tool_description: str | None = dataclasses.field(repr=False)
-    _output_schema: _output.OutputSchema[OutputDataT] | None = dataclasses.field(repr=False)
+    _output_schema: _output.OutputSchema[OutputDataT] = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
     _instructions: str | None = dataclasses.field(repr=False)
     _instructions_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
@@ -318,7 +319,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_retries = result_retries
 
         self._output_schema = _output.OutputSchema[OutputDataT].build(
-            output_type, self._deprecated_result_tool_name, self._deprecated_result_tool_description
+            output_type,
+            self._deprecated_result_tool_name,
+            self._deprecated_result_tool_description,
         )
         self._output_validators = []
 
@@ -326,6 +329,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._instructions_functions = []
         if isinstance(instructions, (str, Callable)):
             instructions = [instructions]
+        # TODO: Add OutputSchema to the instructions in JSON mode
         for instruction in instructions or []:
             if isinstance(instruction, str):
                 self._instructions += instruction + '\n'
@@ -623,7 +627,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
-        output_schema = self._prepare_output_schema(output_type)
+        output_schema = self._prepare_output_schema(output_type, model_used.profile)
 
         output_type_ = output_type or self.output_type
 
@@ -666,13 +670,18 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         )
 
         async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            if self._instructions is None and not self._instructions_functions:
-                return None
+            parts = [
+                self._instructions,
+                *[await func.run(run_context) for func in self._instructions_functions],
+            ]
 
-            instructions = self._instructions or ''
-            for instructions_runner in self._instructions_functions:
-                instructions += '\n' + await instructions_runner.run(run_context)
-            return instructions.strip()
+            if output_schema.mode == 'manual_json' and (output_object_schema := output_schema.object_schema):
+                parts.append(output_object_schema.definition.manual_json_instructions)
+
+            parts = [p for p in parts if p]
+            if not parts:
+                return None
+            return '\n\n'.join(parts).strip()
 
         # Copy the function tools so that retry state is agent-run-specific
         # Note that the retry count is reset to 0 when this happens due to the `default=0` and `init=False`.
@@ -993,9 +1002,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                 if isinstance(maybe_part_event, _messages.PartStartEvent):
                                     new_part = maybe_part_event.part
                                     if isinstance(new_part, _messages.TextPart):
-                                        if _output.allow_text_output(output_schema):
+                                        if output_schema.allow_text_output:
                                             return FinalResult(s, None, None)
-                                    elif isinstance(new_part, _messages.ToolCallPart) and output_schema:
+                                    elif isinstance(new_part, _messages.ToolCallPart):
                                         for call, _ in output_schema.find_tool([new_part]):
                                             return FinalResult(s, call.tool_name, call.tool_call_id)
                             return None
@@ -1551,8 +1560,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if tool.name in self._function_tools:
             raise exceptions.UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
 
-        if self._output_schema and tool.name in self._output_schema.tools:
-            raise exceptions.UserError(f'Tool name conflicts with result schema name: {tool.name!r}')
+        if tool.name in self._output_schema.tools:
+            raise exceptions.UserError(f'Tool name conflicts with output tool name: {tool.name!r}')
 
         self._function_tools[tool.name] = tool
 
@@ -1627,18 +1636,29 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         raise AttributeError('The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.')
 
     def _prepare_output_schema(
-        self, output_type: _output.OutputType[RunOutputDataT] | None
-    ) -> _output.OutputSchema[RunOutputDataT] | None:
+        self, output_type: _output.OutputType[RunOutputDataT] | None, model_profile: ModelProfile
+    ) -> _output.OutputSchema[RunOutputDataT]:
         if output_type is not None:
             if self._output_validators:
                 raise exceptions.UserError('Cannot set a custom run `output_type` when the agent has output validators')
-            return _output.OutputSchema[RunOutputDataT].build(
+            schema = _output.OutputSchema[RunOutputDataT].build(
                 output_type,
                 self._deprecated_result_tool_name,
                 self._deprecated_result_tool_description,
             )
         else:
-            return self._output_schema  # pyright: ignore[reportReturnType]
+            schema = self._output_schema
+
+        if schema.mode is None:
+            # TODO: This may need to be done later, when we know if there are any model_request_parameters.function_tools,
+            # as some models do not support tool calls at the same time as json_schema output, and which mode we pick may be different...
+            schema.mode = model_profile.default_output_mode
+        if not schema.is_mode_supported(model_profile):
+            raise exceptions.UserError(
+                f"Output mode '{schema.mode}' is not among supported modes: {model_profile.output_modes}"
+            )
+
+        return schema  # pyright: ignore[reportReturnType]
 
     @staticmethod
     def is_model_request_node(

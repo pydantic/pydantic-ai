@@ -21,7 +21,7 @@ class OpenAIModelProfile(ModelProfile):
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
-    return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
+    return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer, output_modes={'tool', 'json_schema'})
 
 
 _STRICT_INCOMPATIBLE_KEYS = [

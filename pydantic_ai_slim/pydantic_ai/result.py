@@ -5,12 +5,14 @@ from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Generic, cast
+from typing import Generic
 
 from typing_extensions import TypeVar, assert_type, deprecated, overload
 
-from . import _output, _utils, exceptions, messages as _messages, models
+from . import _utils, exceptions, messages as _messages, models
 from ._output import (
+    JSONSchemaOutput,
+    ManualJSONOutput,
     OutputDataT,
     OutputDataT_inv,
     OutputSchema,
@@ -22,7 +24,7 @@ from .messages import AgentStreamEvent, FinalResultEvent
 from .tools import AgentDepsT, RunContext
 from .usage import Usage, UsageLimits
 
-__all__ = 'OutputDataT', 'OutputDataT_inv', 'ToolOutput', 'OutputValidatorFunc'
+__all__ = 'OutputDataT', 'OutputDataT_inv', 'ToolOutput', 'JSONSchemaOutput', 'ManualJSONOutput', 'OutputValidatorFunc'
 
 
 T = TypeVar('T')
@@ -32,7 +34,7 @@ T = TypeVar('T')
 @dataclass
 class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _raw_stream_response: models.StreamedResponse
-    _output_schema: OutputSchema[OutputDataT] | None
+    _output_schema: OutputSchema[OutputDataT]
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]
     _usage_limits: UsageLimits | None
@@ -80,7 +82,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     ) -> OutputDataT:
         """Validate a structured result message."""
         call = None
-        if self._output_schema is not None and output_tool_name is not None:
+        if output_tool_name is not None:
             match = self._output_schema.find_named_tool(message.parts, output_tool_name)
             if match is None:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
@@ -93,8 +95,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             )
         else:
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
-            # The following cast is safe because we know `str` is an allowed output type
-            result_data = cast(OutputDataT, text)
+
+            result_data = await self._output_schema.process(
+                text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
+            )
 
         for validator in self._output_validators:
             result_data = await validator.validate(result_data, call, self._run_ctx)
@@ -118,12 +122,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 if isinstance(e, _messages.PartStartEvent):
                     new_part = e.part
                     if isinstance(new_part, _messages.ToolCallPart):
-                        if output_schema:
-                            for call, _ in output_schema.find_tool([new_part]):  # pragma: no branch
-                                return _messages.FinalResultEvent(
-                                    tool_name=call.tool_name, tool_call_id=call.tool_call_id
-                                )
-                    elif _output.allow_text_output(output_schema):  # pragma: no branch
+                        for call, _ in output_schema.find_tool([new_part]):  # pragma: no branch
+                            return _messages.FinalResultEvent(tool_name=call.tool_name, tool_call_id=call.tool_call_id)
+                    elif output_schema.allow_text_output:  # pragma: no branch
                         assert_type(e, _messages.PartStartEvent)
                         return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
 
@@ -155,7 +156,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     _usage_limits: UsageLimits | None
     _stream_response: models.StreamedResponse
-    _output_schema: OutputSchema[OutputDataT] | None
+    _output_schema: OutputSchema[OutputDataT]
     _run_ctx: RunContext[AgentDepsT]
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _output_tool_name: str | None
@@ -311,7 +312,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
-        if self._output_schema and not self._output_schema.allow_text_output:
+        if self._output_schema.allow_text_output != 'plain':
             raise exceptions.UserError('stream_text() can only be used with text responses')
 
         if delta:
@@ -390,7 +391,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     ) -> OutputDataT:
         """Validate a structured result message."""
         call = None
-        if self._output_schema is not None and self._output_tool_name is not None:
+        if self._output_tool_name is not None:
             match = self._output_schema.find_named_tool(message.parts, self._output_tool_name)
             if match is None:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
@@ -403,7 +404,10 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             )
         else:
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
-            result_data = cast(OutputDataT, text)
+
+            result_data = await self._output_schema.process(
+                text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
+            )
 
         for validator in self._output_validators:
             result_data = await validator.validate(result_data, call, self._run_ctx)  # pragma: no cover

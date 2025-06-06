@@ -13,6 +13,7 @@ from pydantic_core import to_json
 from typing_extensions import Self
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
+from pydantic_ai._output import ToolOutput
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.messages import (
     BinaryContent,
@@ -30,7 +31,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.result import ToolOutput, Usage
+from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
@@ -261,7 +262,7 @@ def test_plain_response_then_tuple():
             args_json = '{"response": ["foo", "bar"]}'
             return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_tuple), output_type=tuple[str, str])
+    agent = Agent(FunctionModel(return_tuple), output_type=ToolOutput(tuple[str, str]))
 
     result = agent.run_sync('Hello')
     assert result.output == ('foo', 'bar')
@@ -353,7 +354,7 @@ def test_response_tuple():
     m = TestModel()
 
     agent = Agent(m, output_type=tuple[str, str])
-    assert agent._output_schema.allow_text_output is False  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
+    assert agent._output_schema.allow_text_output is False  # pyright: ignore[reportPrivateUsage]
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(('a', 'a'))
@@ -410,7 +411,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         got_tool_call_name = ctx.tool_name
         return o
 
-    assert agent._output_schema.allow_text_output is True  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
+    assert agent._output_schema.allow_text_output == 'plain'  # pyright: ignore[reportPrivateUsage]
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot('success (no tool calls)')
@@ -2486,6 +2487,7 @@ def test_instructions_parameter_with_sequence():
             parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
             instructions="""\
 You are a helpful assistant.
+
 You are a potato.\
 """,
         )
