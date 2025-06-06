@@ -254,63 +254,74 @@ class InstrumentedModel(WrapperModel):
                 if isinstance(value := model_settings.get(key), (float, int)):
                     attributes[f'gen_ai.request.{key}'] = value
 
-        with self.settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
+        record_metrics: Callable[[], None] | None = None
+        try:
+            with self.settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
 
-            def finish(response: ModelResponse):
-                # FallbackModel updates these span attributes.
-                attributes.update(getattr(span, 'attributes', {}))
-                request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
-                system = attributes[GEN_AI_SYSTEM_ATTRIBUTE]
+                def finish(response: ModelResponse):
+                    # FallbackModel updates these span attributes.
+                    attributes.update(getattr(span, 'attributes', {}))
+                    request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
+                    system = attributes[GEN_AI_SYSTEM_ATTRIBUTE]
 
-                response_model = response.model_name or request_model
+                    response_model = response.model_name or request_model
 
-                metric_attributes = {
-                    GEN_AI_SYSTEM_ATTRIBUTE: system,
-                    'gen_ai.operation.name': operation,
-                    'gen_ai.request.model': request_model,
-                    'gen_ai.response.model': response_model,
-                }
-                if response.usage.request_tokens:  # pragma: no branch
-                    self.settings.tokens_histogram.record(
-                        response.usage.request_tokens,
-                        {**metric_attributes, 'gen_ai.token.type': 'input'},
-                    )
-                if response.usage.response_tokens:  # pragma: no branch
-                    self.settings.tokens_histogram.record(
-                        response.usage.response_tokens,
-                        {**metric_attributes, 'gen_ai.token.type': 'output'},
-                    )
+                    def _record_metrics():
+                        metric_attributes = {
+                            GEN_AI_SYSTEM_ATTRIBUTE: system,
+                            'gen_ai.operation.name': operation,
+                            'gen_ai.request.model': request_model,
+                            'gen_ai.response.model': response_model,
+                        }
+                        if response.usage.request_tokens:  # pragma: no branch
+                            self.settings.tokens_histogram.record(
+                                response.usage.request_tokens,
+                                {**metric_attributes, 'gen_ai.token.type': 'input'},
+                            )
+                        if response.usage.response_tokens:  # pragma: no branch
+                            self.settings.tokens_histogram.record(
+                                response.usage.response_tokens,
+                                {**metric_attributes, 'gen_ai.token.type': 'output'},
+                            )
 
-                if not span.is_recording():
-                    return
+                    nonlocal record_metrics
+                    record_metrics = _record_metrics
 
-                events = self.settings.messages_to_otel_events(messages)
-                for event in self.settings.messages_to_otel_events([response]):
-                    events.append(
-                        Event(
-                            'gen_ai.choice',
-                            body={
-                                # TODO finish_reason
-                                'index': 0,
-                                'message': event.body,
-                            },
+                    if not span.is_recording():
+                        return
+
+                    events = self.settings.messages_to_otel_events(messages)
+                    for event in self.settings.messages_to_otel_events([response]):
+                        events.append(
+                            Event(
+                                'gen_ai.choice',
+                                body={
+                                    # TODO finish_reason
+                                    'index': 0,
+                                    'message': event.body,
+                                },
+                            )
                         )
+                    span.set_attributes(
+                        {
+                            **response.usage.opentelemetry_attributes(),
+                            'gen_ai.response.model': response_model,
+                        }
                     )
-                span.set_attributes(
-                    {
-                        **response.usage.opentelemetry_attributes(),
-                        'gen_ai.response.model': response_model,
-                    }
-                )
-                span.update_name(f'{operation} {request_model}')
-                for event in events:
-                    event.attributes = {
-                        GEN_AI_SYSTEM_ATTRIBUTE: system,
-                        **(event.attributes or {}),
-                    }
-                self._emit_events(span, events)
+                    span.update_name(f'{operation} {request_model}')
+                    for event in events:
+                        event.attributes = {
+                            GEN_AI_SYSTEM_ATTRIBUTE: system,
+                            **(event.attributes or {}),
+                        }
+                    self._emit_events(span, events)
 
-            yield finish
+                yield finish
+        finally:
+            if record_metrics:
+                # We only want to record metrics after the span is finished,
+                # to prevent them from being redundantly recorded in the span itself by logfire.
+                record_metrics()
 
     def _emit_events(self, span: Span, events: list[Event]) -> None:
         if self.settings.event_mode == 'logs':
