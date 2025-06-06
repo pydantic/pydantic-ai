@@ -1,7 +1,11 @@
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
+import multiprocessing
 import re
+import socket
+import time
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from inline_snapshot import snapshot
@@ -21,6 +25,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.usage import Usage
 
 from .conftest import IsDatetime, try_import
+from .mcp_server import mcp as test_mcp_server
 
 with try_import() as imports_successful:
     from pydantic_ai.mcp import MCPServerHTTP, MCPServerStdio
@@ -31,7 +36,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mcp and openai not installed'),
     pytest.mark.anyio,
-    pytest.mark.vcr,
 ]
 
 
@@ -40,6 +44,71 @@ def agent(openai_api_key: str):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     return Agent(model, mcp_servers=[server])
+
+
+def run_sse_server() -> None:
+    """Run the Streamable HTTP MCP server."""
+    test_mcp_server.run(transport='sse')
+
+
+def run_streamable_http_server() -> None:
+    """Run the SSE MCP Server"""
+    test_mcp_server.run(transport='streamable-http')
+
+
+@pytest.fixture
+def mcp_server(request: pytest.FixtureRequest):
+    proc = multiprocessing.Process(target=request.param, daemon=True)
+    print('Staring streamable http server process on port port')
+    proc.start()
+
+    max_attempts = 20
+    attempt = 0
+
+    while attempt < max_attempts:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect(('localhost', 8000))
+                print('MCP server started.')
+                break
+        except ConnectionRefusedError:
+            time.sleep(0.1)
+            attempt += 1
+    else:
+        proc.kill()  # Ensure process is killed if it fails to start
+        proc.join(timeout=1)
+        raise RuntimeError(f'StreamableHTTP server failed to start on port after {max_attempts} attempts')
+
+    yield
+    proc.kill()
+
+
+@pytest.mark.parametrize(
+    'mcp_server, path, transport',
+    [
+        (
+            run_sse_server,
+            'sse',
+            'sse',
+        ),
+        (
+            run_streamable_http_server,
+            'mcp',
+            'streamable-http',
+        ),
+    ],
+    indirect=['mcp_server'],
+)
+async def test_http_servers(mcp_server: None, path: str, transport: Literal['sse', 'streamable-http']):
+    server = MCPServerHTTP(url=f'http://localhost:8000/{path}', transport=transport)
+    async with server:
+        tools = await server.list_tools()
+        assert len(tools) == 10
+        assert tools[0].name == 'celsius_to_fahrenheit'
+        assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
+
+        result = await server.call_tool('celsius_to_fahrenheit', {'celsius': 0})
+        assert result == snapshot('32.0')
 
 
 async def test_stdio_server():
