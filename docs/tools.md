@@ -415,6 +415,7 @@ If you have a function that lacks appropriate documentation (i.e. poorly named, 
 from pydantic_ai import Agent, Tool
 from pydantic_ai.models.test import TestModel
 
+
 def foobar(**kwargs) -> str:
     return kwargs['a'] + kwargs['b']
 
