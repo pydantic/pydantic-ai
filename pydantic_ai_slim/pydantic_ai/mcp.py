@@ -13,11 +13,11 @@ from typing import Any
 import anyio
 import httpx
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from mcp.shared.message import SessionMessage
 from mcp.types import (
     BlobResourceContents,
     EmbeddedResource,
     ImageContent,
-    JSONRPCMessage,
     LoggingLevel,
     TextContent,
     TextResourceContents,
@@ -57,8 +57,8 @@ class MCPServer(ABC):
     """
 
     _client: ClientSession
-    _read_stream: MemoryObjectReceiveStream[JSONRPCMessage | Exception]
-    _write_stream: MemoryObjectSendStream[JSONRPCMessage]
+    _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
+    _write_stream: MemoryObjectSendStream[SessionMessage]
     _exit_stack: AsyncExitStack
 
     @abstractmethod
@@ -67,8 +67,8 @@ class MCPServer(ABC):
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
         ]
     ]:
         """Create the streams for the MCP server."""
@@ -139,7 +139,7 @@ class MCPServer(ABC):
         self._exit_stack = AsyncExitStack()
 
         self._read_stream, self._write_stream = await self._exit_stack.enter_async_context(self.client_streams())
-        client = ClientSession(read_stream=self._read_stream, write_stream=self._write_stream)  # pyright: ignore
+        client = ClientSession(read_stream=self._read_stream, write_stream=self._write_stream)
         self._client = await self._exit_stack.enter_async_context(client)
 
         with anyio.fail_after(self._get_client_initialize_timeout()):
@@ -267,13 +267,13 @@ class MCPServerStdio(MCPServer):
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
         ]
     ]:
         server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
         async with stdio_client(server=server) as (read_stream, write_stream):
-            yield read_stream, write_stream  # pyright: ignore
+            yield read_stream, write_stream
 
     def _get_log_level(self) -> LoggingLevel | None:
         return self.log_level
@@ -370,8 +370,8 @@ class MCPServerHTTP(MCPServer):
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
         ]
     ]:  # pragma: no cover
         def httpx_client_factory(
@@ -408,7 +408,7 @@ class MCPServerHTTP(MCPServer):
             headers=self.headers,
             httpx_client_factory=httpx_client_factory,
         ) as (read_stream, write_stream):
-            yield read_stream, write_stream  # pyright: ignore
+            yield read_stream, write_stream
 
     def _get_log_level(self) -> LoggingLevel | None:
         return self.log_level
