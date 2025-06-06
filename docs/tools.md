@@ -681,11 +681,11 @@ agent = Agent(
     tools=[search_tool],
 )
 
-agent.run('What is the release date of Elden Ring Nightreign?')  # (2)!
-#> Elden Ring Nightreign is planned to be released on May 30, 2025. ...  # (3)!
+result = agent.run_sync("What is the release date of Elden Ring Nightreign?")  # (2)!
+print(result.output)
+# > Elden Ring Nightreign is planned to be released on May 30, 2025.
 ```
 
 
 1. While this task is simple Gemini 1.5 didn't want to use the provided tool. Gemini 2.0 is still fast and cheap.
 2. The release date of this game is the 30th of May 2025, which was confirmed after the knowledge cutoff for Gemini 2.0 (August 2024).
-3. Without the tool you get the answer: _There is no Elden Ring expansion called "Nightreign."..._
