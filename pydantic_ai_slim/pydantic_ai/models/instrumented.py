@@ -50,6 +50,8 @@ MODEL_SETTING_ATTRIBUTES: tuple[
 
 ANY_ADAPTER = TypeAdapter[Any](Any)
 
+# These are in the spec:
+# https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
 TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
 
 
@@ -113,25 +115,29 @@ class InstrumentationSettings:
         tracer_provider = tracer_provider or get_tracer_provider()
         meter_provider = meter_provider or get_meter_provider()
         event_logger_provider = event_logger_provider or get_event_logger_provider()
-        self.tracer = tracer_provider.get_tracer('pydantic-ai', __version__)
-        self.meter = meter_provider.get_meter('pydantic-ai', __version__)
-        self.event_logger = event_logger_provider.get_event_logger('pydantic-ai', __version__)
+        scope_name = 'pydantic-ai'
+        self.tracer = tracer_provider.get_tracer(scope_name, __version__)
+        self.meter = meter_provider.get_meter(scope_name, __version__)
+        self.event_logger = event_logger_provider.get_event_logger(scope_name, __version__)
         self.event_mode = event_mode
         self.include_binary_content = include_binary_content
-        histogram_kwargs = dict(
+
+        # As specified in the OpenTelemetry GenAI metrics spec:
+        # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
+        tokens_histogram_kwargs = dict(
             name='gen_ai.client.token.usage',
             unit='{token}',
             description='Measures number of input and output tokens used',
         )
         try:
             self.tokens_histogram = self.meter.create_histogram(
-                **histogram_kwargs,
+                **tokens_histogram_kwargs,
                 explicit_bucket_boundaries_advisory=TOKEN_HISTOGRAM_BOUNDARIES,
             )
         except TypeError:
             # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
             self.tokens_histogram = self.meter.create_histogram(
-                **histogram_kwargs,  # pyright: ignore
+                **tokens_histogram_kwargs,  # pyright: ignore
             )
 
     def messages_to_otel_events(self, messages: list[ModelMessage]) -> list[Event]:
@@ -251,12 +257,15 @@ class InstrumentedModel(WrapperModel):
         with self.settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
 
             def finish(response: ModelResponse):
+                # FallbackModel updates these span attributes.
                 attributes.update(getattr(span, 'attributes', {}))
                 request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
+                system = attributes[GEN_AI_SYSTEM_ATTRIBUTE]
+
                 response_model = response.model_name or request_model
 
                 metric_attributes = {
-                    GEN_AI_SYSTEM_ATTRIBUTE: attributes[GEN_AI_SYSTEM_ATTRIBUTE],
+                    GEN_AI_SYSTEM_ATTRIBUTE: system,
                     'gen_ai.operation.name': operation,
                     'gen_ai.request.model': request_model,
                     'gen_ai.response.model': response_model,
@@ -293,7 +302,7 @@ class InstrumentedModel(WrapperModel):
                 span.update_name(f'{operation} {request_model}')
                 for event in events:
                     event.attributes = {
-                        GEN_AI_SYSTEM_ATTRIBUTE: attributes[GEN_AI_SYSTEM_ATTRIBUTE],
+                        GEN_AI_SYSTEM_ATTRIBUTE: system,
                         **(event.attributes or {}),
                     }
                 self._emit_events(span, events)
