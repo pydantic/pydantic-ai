@@ -1,5 +1,5 @@
 {
-  "version": "4",
+  "version": "5",
   "specifiers": {
     "jsr:@std/cli@*": "1.0.15",
     "jsr:@std/cli@^1.0.15": "1.0.15",
@@ -9,7 +9,7 @@
     "npm:@types/node@*": "22.12.0",
     "npm:@types/node@22.12.0": "22.12.0",
     "npm:eslint@*": "9.23.0",
-    "npm:pyodide@~0.27.4": "0.27.4",
+    "npm:pyodide@0.27.3": "0.27.3",
     "npm:zod@^3.24.2": "3.24.2"
   },
   "jsr": {
@@ -135,7 +135,8 @@
       ]
     },
     "acorn@8.14.1": {
-      "integrity": "sha512-OvQ/2pUDKmgfCg++xsTX1wGxfTaszcHVcTctW4UJB4hibJx2HXxxO5UmVgyjMa+ZDsiaf5wWLXYpRWMmBI0QHg=="
+      "integrity": "sha512-OvQ/2pUDKmgfCg++xsTX1wGxfTaszcHVcTctW4UJB4hibJx2HXxxO5UmVgyjMa+ZDsiaf5wWLXYpRWMmBI0QHg==",
+      "bin": true
     },
     "ajv@6.12.6": {
       "integrity": "sha512-j3fVLgvTo527anyYyJOGTYJbG+vnnQYvE0m5mmkc1TK+nxAppkCLMIL0aZ4dblVCNoGShhm+kzE4ZUykBoMg4g==",
@@ -343,7 +344,8 @@
         "minimatch",
         "natural-compare",
         "optionator"
-      ]
+      ],
+      "bin": true
     },
     "espree@10.3.0_acorn@8.14.1": {
       "integrity": "sha512-0QYC8b24HWY8zjRnDTL6RiHfDbAWn63qb4LMj1Z4b076A4une81+z03Kg7l7mn/48PUTqoLptSXez8oknU8Clg==",
@@ -573,7 +575,8 @@
       "integrity": "sha512-wpxZs9NoxZaJESJGIZTyDEaYpl0FKSA+FB9aJiyemKhMwkxQg63h4T1KJgUGHpTqPDNRcmmYLugrRjJlBtWvRA==",
       "dependencies": [
         "argparse"
-      ]
+      ],
+      "bin": true
     },
     "json-buffer@3.0.1": {
       "integrity": "sha512-4bV5BfR2mqfQTJm+V5tPPdf+ZpuhiIvTuAB5g8kcrXOZpTT/QwwVRWBywX1ozr6lEuPdbHxwaJlm9G6mI2sfSQ=="
@@ -714,8 +717,8 @@
     "punycode@2.3.1": {
       "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg=="
     },
-    "pyodide@0.27.4": {
-      "integrity": "sha512-2y3ySHCBmyzYDUlB939SaU3n7RxYQxwnGHgdakW/CPrNFX2L9fC+4nfJWQJH8a0ruQa8bBZSKCImMt/cq15RiQ==",
+    "pyodide@0.27.3": {
+      "integrity": "sha512-6NwKEbPk0M3Wic2T1TCZijgZH9VE4RkHp1VGljS1sou0NjGdsmY2R/fG5oLmdDkjTRMI1iW7WYaY9pofX8gg1g==",
       "dependencies": [
         "ws"
       ]
@@ -878,7 +881,8 @@
       "integrity": "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==",
       "dependencies": [
         "isexe"
-      ]
+      ],
+      "bin": true
     },
     "word-wrap@1.2.5": {
       "integrity": "sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA=="
@@ -886,8 +890,8 @@
     "wrappy@1.0.2": {
       "integrity": "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ=="
     },
-    "ws@8.18.1": {
-      "integrity": "sha512-RKW2aJZMXeMxVpnZ6bck+RswznaxmzdULiBr6KY7XkTnW8uvt0iT9H5DkHUChXrc+uurzwa0rVI16n/Xzjdz1w=="
+    "ws@8.18.2": {
+      "integrity": "sha512-DMricUmwGZUVr++AEAe2uiVM7UoO9MAVZMDu05UQOaUII0lp+zOzLLU4Xqh/JvTqklB1T4uELaaPBKyjE1r4fQ=="
     },
     "yocto-queue@0.1.0": {
       "integrity": "sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q=="
@@ -907,7 +911,7 @@
       "jsr:@std/cli@^1.0.15",
       "jsr:@std/path@^1.0.8",
       "npm:@modelcontextprotocol/sdk@^1.8.0",
-      "npm:pyodide@~0.27.4",
+      "npm:pyodide@0.27.3",
       "npm:zod@^3.24.2"
     ]
   }
