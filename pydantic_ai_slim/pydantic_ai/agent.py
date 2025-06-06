@@ -674,10 +674,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             if self._instructions is None and not self._instructions_functions:
                 return None
 
-            instructions = self._instructions or ''
+            instructions = [self._instructions] if self._instructions else []
             for instructions_runner in self._instructions_functions:
-                instructions += '\n' + await instructions_runner.run(run_context)
-            return instructions.strip()
+                instructions.append(await instructions_runner.run(run_context))
+            concatenated_instructions = '/n'.join(instruction for instruction in instructions if instruction)
+            return concatenated_instructions.strip() if concatenated_instructions else None
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
