@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '193'
+      - '272'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       max_tokens: 1024
       messages:
       - content:
-        - text: What is the capital of France?
+        - text: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
           type: text
         role: user
       model: claude-3-5-sonnet-latest
@@ -31,7 +31,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '359'
+      - '356'
       content-type:
       - application/json
       strict-transport-security:
@@ -40,9 +40,9 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - text: 'The capital of France is '
+      - text: 'The beautiful city of '
         type: text
-      id: msg_01SVFZqkSLhUPkAA4w6rhzFD
+      id: msg_01376yZQxHcw9pER2Ab2SvQb
       model: claude-3-5-sonnet-20241022
       role: assistant
       stop_reason: stop_sequence
@@ -51,8 +51,8 @@ interactions:
       usage:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 14
-        output_tokens: 6
+        input_tokens: 32
+        output_tokens: 5
         service_tier: standard
     status:
       code: 200

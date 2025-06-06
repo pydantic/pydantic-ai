@@ -139,6 +139,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * Groq
     * Cohere
+    * Google
     """
 
     extra_headers: dict[str, str]
