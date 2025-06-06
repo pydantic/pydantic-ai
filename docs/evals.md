@@ -453,7 +453,7 @@ class SpanTracingEvaluator(Evaluator[str, str]):
         has_errors = span_tree.any(error_query)
 
         # Calculate a performance score (lower is better)
-        performance_score = 1.0 if total_processing_time < 0.5 else 0.5
+        performance_score = 1.0 if total_processing_time < 1.0 else 0.5
 
         return {
             'has_spans': True,

@@ -211,6 +211,11 @@ KnownModelName = TypeAliasType(
         'groq:llama-3.2-3b-preview',
         'groq:llama-3.2-11b-vision-preview',
         'groq:llama-3.2-90b-vision-preview',
+        'heroku:claude-3-5-haiku',
+        'heroku:claude-3-5-sonnet-latest',
+        'heroku:claude-3-7-sonnet',
+        'heroku:claude-4-sonnet',
+        'heroku:claude-3-haiku',
         'mistral:codestral-latest',
         'mistral:mistral-large-latest',
         'mistral:mistral-moderation-latest',
@@ -543,7 +548,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
-    elif provider in ('openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together'):
+    elif provider in ('openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku'):
         from .openai import OpenAIModel
 
         return OpenAIModel(model_name, provider=provider)

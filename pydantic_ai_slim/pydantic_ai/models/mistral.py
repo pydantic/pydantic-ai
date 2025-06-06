@@ -4,7 +4,7 @@ import base64
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal, Union, cast
 
 import pydantic_core
@@ -12,7 +12,7 @@ from httpx import Timeout
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
-from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
+from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..messages import (
     BinaryContent,
     DocumentUrl,
@@ -312,7 +312,7 @@ class MistralModel(Model):
         assert response.choices, 'Unexpected empty response choice.'
 
         if response.created:
-            timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
+            timestamp = number_to_datetime(response.created)
         else:
             timestamp = _now_utc()
 
@@ -347,9 +347,9 @@ class MistralModel(Model):
             )
 
         if first_chunk.data.created:
-            timestamp = datetime.fromtimestamp(first_chunk.data.created, tz=timezone.utc)
+            timestamp = number_to_datetime(first_chunk.data.created)
         else:
-            timestamp = datetime.now(tz=timezone.utc)
+            timestamp = _now_utc()
 
         return MistralStreamedResponse(
             _response=peekable_response,

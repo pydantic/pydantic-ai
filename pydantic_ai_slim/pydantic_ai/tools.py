@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import dataclasses
 import json
 from collections.abc import Awaitable, Sequence
@@ -9,8 +10,8 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
-from pydantic_core import core_schema
-from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
+from pydantic_core import SchemaValidator, core_schema
+from typing_extensions import Concatenate, ParamSpec, Self, TypeAlias, TypeVar
 
 from . import _function_schema, _utils, messages as _messages
 from .exceptions import ModelRetry, UnexpectedModelBehavior
@@ -63,7 +64,9 @@ class RunContext(Generic[AgentDepsT]):
     """The current step in the run."""
 
     def replace_with(
-        self, retry: int | None = None, tool_name: str | None | _utils.Unset = _utils.UNSET
+        self,
+        retry: int | None = None,
+        tool_name: str | None | _utils.Unset = _utils.UNSET,
     ) -> RunContext[AgentDepsT]:
         # Create a new `RunContext` a new `retry` value and `tool_name`.
         kwargs = {}
@@ -215,8 +218,10 @@ class Tool(Generic[AgentDepsT]):
     This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
     """
 
-    # TODO: Move this state off the Tool class, which is otherwise stateless.
-    #   This should be tracked inside a specific agent run, not the tool.
+    # TODO: Consider moving this current_retry state to live on something other than the tool.
+    #   We've worked around this for now by copying instances of the tool when creating new runs,
+    #   but this is a bit fragile. Moving the tool retry counts to live on the agent run state would likely clean things
+    #   up, though is also likely a larger effort to refactor.
     current_retry: int = field(default=0, init=False)
 
     def __init__(
@@ -304,6 +309,45 @@ class Tool(Generic[AgentDepsT]):
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
 
+    @classmethod
+    def from_schema(
+        cls,
+        function: Callable[..., Any],
+        name: str,
+        description: str,
+        json_schema: JsonSchemaValue,
+    ) -> Self:
+        """Creates a Pydantic tool from a function and a JSON schema.
+
+        Args:
+            function: The function to call.
+                This will be called with keywords only, and no validation of
+                the arguments will be performed.
+            name: The unique name of the tool that clearly communicates its purpose
+            description: Used to tell the model how/when/why to use the tool.
+                You can provide few-shot examples as a part of the description.
+            json_schema: The schema for the function arguments
+
+        Returns:
+            A Pydantic tool that calls the function
+        """
+        function_schema = _function_schema.FunctionSchema(
+            function=function,
+            description=description,
+            validator=SchemaValidator(schema=core_schema.any_schema()),
+            json_schema=json_schema,
+            takes_ctx=False,
+            is_async=asyncio.iscoroutinefunction(function),
+        )
+
+        return cls(
+            function,
+            takes_ctx=False,
+            name=name,
+            description=description,
+            function_schema=function_schema,
+        )
+
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
 
@@ -325,7 +369,10 @@ class Tool(Generic[AgentDepsT]):
             return tool_def
 
     async def run(
-        self, message: _messages.ToolCallPart, run_context: RunContext[AgentDepsT], tracer: Tracer
+        self,
+        message: _messages.ToolCallPart,
+        run_context: RunContext[AgentDepsT],
+        tracer: Tracer,
     ) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
         """Run the tool function asynchronously.
 

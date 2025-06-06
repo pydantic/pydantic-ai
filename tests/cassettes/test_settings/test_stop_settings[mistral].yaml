@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '153'
+      - '232'
       content-type:
       - application/json
       host:
@@ -16,7 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: What is the capital of France?
+      - content: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
         role: user
       model: ministral-8b-latest
       n: 1
@@ -37,14 +37,6 @@ interactions:
       - '322'
       content-type:
       - application/json
-      ratelimitbysize-limit:
-      - '500000'
-      ratelimitbysize-query-cost:
-      - '32008'
-      ratelimitbysize-remaining:
-      - '467992'
-      ratelimitbysize-reset:
-      - '42'
       transfer-encoding:
       - chunked
     parsed_body:
@@ -55,14 +47,14 @@ interactions:
           content: 'The capital of France is '
           role: assistant
           tool_calls: null
-      created: 1744190898
-      id: 0bbc8cf8fc76455fae759fb9109f8547
+      created: 1749229172
+      id: 59bee455a928496eb22bbf8b8b817252
       model: ministral-8b-latest
       object: chat.completion
       usage:
         completion_tokens: 6
-        prompt_tokens: 10
-        total_tokens: 16
+        prompt_tokens: 28
+        total_tokens: 34
     status:
       code: 200
       message: OK

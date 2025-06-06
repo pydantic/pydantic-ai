@@ -4,13 +4,13 @@ import base64
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._utils import guard_tool_call_id as _guard_tool_call_id
+from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..messages import (
     BinaryContent,
     DocumentUrl,
@@ -246,7 +246,7 @@ class GroqModel(Model):
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
+        timestamp = number_to_datetime(response.created)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         if choice.message.content is not None:
@@ -270,7 +270,7 @@ class GroqModel(Model):
         return GroqStreamedResponse(
             _response=peekable_response,
             _model_name=self._model_name,
-            _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+            _timestamp=number_to_datetime(first_chunk.created),
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
