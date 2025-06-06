@@ -1748,7 +1748,7 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.9.0"
+version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio", marker = "python_full_version >= '3.10'" },
@@ -1756,14 +1756,13 @@ dependencies = [
     { name = "httpx-sse", marker = "python_full_version >= '3.10'" },
     { name = "pydantic", marker = "python_full_version >= '3.10'" },
     { name = "pydantic-settings", marker = "python_full_version >= '3.10'" },
-    { name = "python-multipart", marker = "python_full_version >= '3.10'" },
     { name = "sse-starlette", marker = "python_full_version >= '3.10'" },
     { name = "starlette", marker = "python_full_version >= '3.10'" },
-    { name = "uvicorn", marker = "python_full_version >= '3.10' and sys_platform != 'emscripten'" },
+    { name = "uvicorn", marker = "python_full_version >= '3.10'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bc/8d/0f4468582e9e97b0a24604b585c651dfd2144300ecffd1c06a680f5c8861/mcp-1.9.0.tar.gz", hash = "sha256:905d8d208baf7e3e71d70c82803b89112e321581bcd2530f9de0fe4103d28749", size = 281432, upload-time = "2025-05-15T18:51:06.615Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/95/d2/f587cb965a56e992634bebc8611c5b579af912b74e04eb9164bd49527d21/mcp-1.6.0.tar.gz", hash = "sha256:d9324876de2c5637369f43161cd71eebfd803df5a95e46225cab8d280e366723", size = 200031, upload-time = "2025-03-27T16:46:32.336Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a5/d5/22e36c95c83c80eb47c83f231095419cf57cf5cca5416f1c960032074c78/mcp-1.9.0-py3-none-any.whl", hash = "sha256:9dfb89c8c56f742da10a5910a1f64b0d2ac2c3ed2bd572ddb1cfab7f35957178", size = 125082, upload-time = "2025-05-15T18:51:04.916Z" },
+    { url = "https://files.pythonhosted.org/packages/10/30/20a7f33b0b884a9d14dd3aa94ff1ac9da1479fe2ad66dd9e2736075d2506/mcp-1.6.0-py3-none-any.whl", hash = "sha256:7bd24c6ea042dbec44c754f100984d186620d8b841ec30f1b19eda9b93a634d0", size = 76077, upload-time = "2025-03-27T16:46:29.919Z" },
 ]
 
 [package.optional-dependencies]
