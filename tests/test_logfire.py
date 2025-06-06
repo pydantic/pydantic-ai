@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import pytest
-from dirty_equals import IsJson
+from dirty_equals import IsInt, IsJson, IsList
 from inline_snapshot import snapshot
 from typing_extensions import NotRequired, TypedDict
 
@@ -71,7 +71,11 @@ def get_logfire_summary(capfire: CaptureLogfire) -> Callable[[], LogfireSummary]
         InstrumentationSettings(event_mode='logs'),
     ],
 )
-def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings | bool) -> None:
+def test_logfire(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    instrument: InstrumentationSettings | bool,
+    capfire: CaptureLogfire,
+) -> None:
     my_agent = Agent(model=TestModel(), instrument=instrument)
 
     @my_agent.tool_plain
@@ -167,6 +171,70 @@ def test_logfire(get_logfire_summary: Callable[[], LogfireSummary], instrument: 
     )
     chat_span_attributes = summary.attributes[1]
     if instrument is True or instrument.event_mode == 'attributes':
+        if hasattr(capfire, 'get_collected_metrics'):
+            assert capfire.get_collected_metrics() == snapshot(
+                [
+                    {
+                        'name': 'gen_ai.client.token.usage',
+                        'description': 'Measures number of input and output tokens used',
+                        'unit': '{token}',
+                        'data': {
+                            'data_points': [
+                                {
+                                    'attributes': {
+                                        'gen_ai.system': 'test',
+                                        'gen_ai.operation.name': 'chat',
+                                        'gen_ai.request.model': 'test',
+                                        'gen_ai.response.model': 'test',
+                                        'gen_ai.token.type': 'input',
+                                    },
+                                    'start_time_unix_nano': IsInt(),
+                                    'time_unix_nano': IsInt(),
+                                    'count': 2,
+                                    'sum': 103,
+                                    'scale': 12,
+                                    'zero_count': 0,
+                                    'positive': {
+                                        'offset': 23234,
+                                        'bucket_counts': IsList(length=...),  # type: ignore
+                                    },
+                                    'negative': {'offset': 0, 'bucket_counts': [0]},
+                                    'flags': 0,
+                                    'min': 51,
+                                    'max': 52,
+                                    'exemplars': IsList(length=...),  # type: ignore
+                                },
+                                {
+                                    'attributes': {
+                                        'gen_ai.system': 'test',
+                                        'gen_ai.operation.name': 'chat',
+                                        'gen_ai.request.model': 'test',
+                                        'gen_ai.response.model': 'test',
+                                        'gen_ai.token.type': 'output',
+                                    },
+                                    'start_time_unix_nano': IsInt(),
+                                    'time_unix_nano': IsInt(),
+                                    'count': 2,
+                                    'sum': 12,
+                                    'scale': 7,
+                                    'zero_count': 0,
+                                    'positive': {
+                                        'offset': 255,
+                                        'bucket_counts': IsList(length=...),  # type: ignore
+                                    },
+                                    'negative': {'offset': 0, 'bucket_counts': [0]},
+                                    'flags': 0,
+                                    'min': 4,
+                                    'max': 8,
+                                    'exemplars': IsList(length=...),  # type: ignore
+                                },
+                            ],
+                            'aggregation_temporality': 1,
+                        },
+                    }
+                ]
+            )
+
         attribute_mode_attributes = {k: chat_span_attributes.pop(k) for k in ['events']}
         assert attribute_mode_attributes == snapshot(
             {
@@ -450,8 +518,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'factuality': 0.1,
                     'foo': 'bar',
                     'logfire.feedback.comment': 'the agent lied',
-                    'logfire.disable_console_log': True,
-                    'logfire.json_schema': '{"type":"object","properties":{"logfire.feedback.name":{},"factuality":{},"foo":{},"logfire.feedback.comment":{},"logfire.span_type":{},"logfire.disable_console_log":{}}}',
+                    'logfire.json_schema': '{"type":"object","properties":{"logfire.feedback.name":{},"factuality":{},"foo":{},"logfire.feedback.comment":{},"logfire.span_type":{}}}',
                 },
             },
         ]
