@@ -3,6 +3,7 @@ import re
 from collections.abc import AsyncIterator
 from dataclasses import asdict
 from datetime import timezone
+from typing import Union
 
 import pydantic_core
 import pytest
@@ -319,8 +320,18 @@ def quz(x) -> str:  # pyright: ignore[reportUnknownParameterType,reportMissingPa
 
 
 @agent_all.system_prompt
-def spam() -> str:
+def spam() -> Union[str, None]:
     return 'foobar'
+
+
+@agent_all.system_prompt
+def empty1() -> Union[str, None]:
+    return None
+
+
+@agent_all.system_prompt
+def empty2() -> Union[str, None]:
+    return ''
 
 
 def test_register_all():
