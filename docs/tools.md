@@ -409,6 +409,42 @@ print(test_model.last_model_request_parameters.function_tools)
 
 _(This example is complete, it can be run "as is")_
 
+If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of *args or **kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the `Tool.from_schema` function. With this you provide the name, description and JSON schema for the function directly:
+
+```python
+from pydantic_ai import Agent, Tool
+from pydantic_ai.models.test import TestModel
+
+
+def foobar(**kwargs) -> str:
+    return kwargs['a'] + kwargs['b']
+
+tool = Tool.from_schema(
+    function=foobar,
+    name='sum',
+    description='Sum two numbers.',
+    json_schema={
+        'additionalProperties': False,
+        'properties': {
+            'a': {'description': 'the first number', 'type': 'integer'},
+            'b': {'description': 'the second number', 'type': 'integer'},
+        },
+        'required': ['a', 'b'],
+        'type': 'object',
+    }
+)
+
+test_model = TestModel()
+agent = Agent(test_model, tools=[tool])
+
+result = agent.run_sync('testing...')
+print(result.output)
+#> {"sum":0}
+```
+
+
+Please note that validation of the tool arguments will not be performed, and this will pass all arguments as keyword arguments.
+
 ## Dynamic Function tools {#tool-prepare}
 
 Tools can optionally be defined with another function: `prepare`, which is called at each step of a run to
@@ -624,3 +660,32 @@ def my_flaky_tool(query: str) -> str:
     return 'Success!'
 ```
 Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the `retries` setting configured on the `Tool` or `Agent`.
+
+## Use LangChain Tools {#langchain-tools}
+
+If you'd like to use a tool from LangChain's [community tool library](https://python.langchain.com/docs/integrations/tools/) with PydanticAI, you can use the `pydancic_ai.ext.langchain.tool_from_langchain` convenience method. Note that PydanticAI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the LangChain tool, and up to the LangChain tool to raise an error if the arguments are invalid.
+
+Here is how you can use it to augment model responses using a LangChain web search tool. This tool will need you to install the `langchain-community` and `duckduckgo-search` dependencies to work properly.
+
+```python {test="skip"}
+from langchain_community.tools import DuckDuckGoSearchRun
+
+from pydantic_ai import Agent
+from pydantic_ai.ext.langchain import tool_from_langchain
+
+search = DuckDuckGoSearchRun()
+search_tool = tool_from_langchain(search)
+
+agent = Agent(
+    'google-gla:gemini-2.0-flash',  # (1)!
+    tools=[search_tool],
+)
+
+result = agent.run_sync('What is the release date of Elden Ring Nightreign?')  # (2)!
+print(result.output)
+#> Elden Ring Nightreign is planned to be released on May 30, 2025.
+```
+
+
+1. While this task is simple Gemini 1.5 didn't want to use the provided tool. Gemini 2.0 is still fast and cheap.
+2. The release date of this game is the 30th of May 2025, which was confirmed after the knowledge cutoff for Gemini 2.0 (August 2024).

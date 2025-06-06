@@ -23,6 +23,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
     from pydantic_ai.providers.grok import GrokProvider
     from pydantic_ai.providers.groq import GroqProvider
+    from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
@@ -42,6 +43,7 @@ with try_import() as imports_successful:
         ('grok', GrokProvider, 'GROK_API_KEY'),
         ('fireworks', FireworksProvider, 'FIREWORKS_API_KEY'),
         ('together', TogetherProvider, 'TOGETHER_API_KEY'),
+        ('heroku', HerokuProvider, 'HEROKU_INFERENCE_KEY'),
     ]
 
 if not imports_successful():

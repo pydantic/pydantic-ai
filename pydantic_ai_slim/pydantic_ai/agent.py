@@ -646,11 +646,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
         output_validators = cast(list[_output.OutputValidator[AgentDepsT, RunOutputDataT]], self._output_validators)
 
-        # TODO: Instead of this, copy the function tools to ensure they don't share current_retry state between agent
-        #  runs. Requires some changes to `Tool` to make them copyable though.
-        for v in self._function_tools.values():
-            v.current_retry = 0
-
         model_settings = merge_model_settings(self.model_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
 
@@ -679,6 +674,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 instructions += '\n' + await instructions_runner.run(run_context)
             return instructions.strip()
 
+        # Copy the function tools so that retry state is agent-run-specific
+        # Note that the retry count is reset to 0 when this happens due to the `default=0` and `init=False`.
+        run_function_tools = {k: dataclasses.replace(v) for k, v in self._function_tools.items()}
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
             prompt=user_prompt,
@@ -690,7 +689,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             end_strategy=self.end_strategy,
             output_schema=output_schema,
             output_validators=output_validators,
-            function_tools=self._function_tools,
+            function_tools=run_function_tools,
             mcp_servers=self._mcp_servers,
             default_retries=self._default_retries,
             tracer=tracer,

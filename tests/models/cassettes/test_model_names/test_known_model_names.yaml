@@ -1,0 +1,66 @@
+interactions:
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - us.inference.heroku.com
+    method: GET
+    uri: https://us.inference.heroku.com/available-models
+  response:
+    headers:
+      content-length:
+      - '545'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=63072000
+    parsed_body:
+    - model_id: claude-3-5-haiku
+      regions:
+      - us
+      type:
+      - text-to-text
+    - model_id: claude-3-5-sonnet-latest
+      regions:
+      - us
+      type:
+      - text-to-text
+    - model_id: claude-3-7-sonnet
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-text
+    - model_id: claude-3-haiku
+      regions:
+      - eu
+      type:
+      - text-to-text
+    - model_id: claude-4-sonnet
+      regions:
+      - us
+      type:
+      - text-to-text
+    - model_id: cohere-embed-multilingual
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-embedding
+    - model_id: stable-image-ultra
+      regions:
+      - us
+      type:
+      - text-to-image
+    status:
+      code: 200
+      message: OK
+version: 1

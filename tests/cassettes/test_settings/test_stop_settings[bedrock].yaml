@@ -1,16 +1,16 @@
 interactions:
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}], "system": [], "inferenceConfig":
-      {"stopSequences": ["Paris"]}}'
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France? Give me an answer that contains
+      the word \"Paris\", but is not the first word."}]}], "system": [], "inferenceConfig": {"stopSequences": ["Paris"]}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        YzVkZjljOTMtMDQ1Zi00NWE0LWJhY2YtMDAwMjdjYTg1NmRl
+        YWEyMWExMDYtNjJjMy00MmNiLTlkNjUtYTEwYzYzYTIxNGFk
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '152'
+      - '231'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -21,22 +21,22 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '209'
+      - '197'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 179
+        latencyMs: 189
       output:
         message:
           content:
-          - text: The capital of France is Paris
+          - text: The city of Paris
           role: assistant
       stopReason: end_turn
       usage:
-        inputTokens: 7
-        outputTokens: 6
-        totalTokens: 13
+        inputTokens: 25
+        outputTokens: 4
+        totalTokens: 29
     status:
       code: 200
       message: OK
