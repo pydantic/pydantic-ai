@@ -6,7 +6,7 @@ from inline_snapshot import snapshot
 from pydantic.json_schema import JsonSchemaValue
 
 from pydantic_ai import Agent
-from pydantic_ai.ext.langchain import from_langchain_tool
+from pydantic_ai.ext.langchain import tool_from_langchain
 
 
 @dataclass
@@ -67,7 +67,7 @@ def test_langchain_tool_conversion():
             },
         },
     )
-    pydantic_tool = from_langchain_tool(langchain_tool)
+    pydantic_tool = tool_from_langchain(langchain_tool)
 
     agent = Agent('test', tools=[pydantic_tool], retries=7)
     result = agent.run_sync('foobar')
@@ -93,7 +93,7 @@ def test_langchain_tool_no_additional_properties():
         },
         additional_properties_missing=True,
     )
-    pydantic_tool = from_langchain_tool(langchain_tool)
+    pydantic_tool = tool_from_langchain(langchain_tool)
 
     agent = Agent('test', tools=[pydantic_tool], retries=7)
     result = agent.run_sync('foobar')
@@ -117,7 +117,7 @@ def test_langchain_tool_conversion_no_defaults():
             },
         },
     )
-    pydantic_tool = from_langchain_tool(langchain_tool)
+    pydantic_tool = tool_from_langchain(langchain_tool)
 
     agent = Agent('test', tools=[pydantic_tool], retries=7)
     result = agent.run_sync('foobar')
@@ -143,7 +143,7 @@ def test_langchain_tool_conversion_no_required():
             },
         },
     )
-    pydantic_tool = from_langchain_tool(langchain_tool)
+    pydantic_tool = tool_from_langchain(langchain_tool)
 
     agent = Agent('test', tools=[pydantic_tool], retries=7)
     result = agent.run_sync('foobar')
@@ -168,7 +168,7 @@ def test_langchain_tool_defaults():
             },
         },
     )
-    pydantic_tool = from_langchain_tool(langchain_tool)
+    pydantic_tool = tool_from_langchain(langchain_tool)
 
     result = pydantic_tool.function(pattern='something')  # type: ignore
     assert result == snapshot("I was called with {'dir_path': '.', 'pattern': 'something'}")
@@ -192,7 +192,7 @@ def test_langchain_tool_positional():
             },
         },
     )
-    pydantic_tool = from_langchain_tool(langchain_tool)
+    pydantic_tool = tool_from_langchain(langchain_tool)
 
     with pytest.raises(AssertionError, match='This should always be called with kwargs'):
         pydantic_tool.function('something')  # type: ignore
@@ -216,7 +216,7 @@ def test_langchain_tool_default_override():
             },
         },
     )
-    pydantic_tool = from_langchain_tool(langchain_tool)
+    pydantic_tool = tool_from_langchain(langchain_tool)
 
     result = pydantic_tool.function(pattern='something', dir_path='somewhere')  # type: ignore
     assert result == snapshot("I was called with {'dir_path': 'somewhere', 'pattern': 'something'}")

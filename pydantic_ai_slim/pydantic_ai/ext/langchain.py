@@ -23,10 +23,10 @@ class LangChainTool(Protocol):
     def run(self, *args: Any, **kwargs: Any) -> str: ...
 
 
-__all__ = ('from_langchain_tool',)
+__all__ = ('tool_from_langchain',)
 
 
-def from_langchain_tool(langchain_tool: LangChainTool) -> Tool:
+def tool_from_langchain(langchain_tool: LangChainTool) -> Tool:
     """Creates a Pydantic tool proxy from a LangChain tool.
 
     Args:
