@@ -44,6 +44,16 @@ def test_known_model_names():
     ]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(BedrockModelName)]
     deepseek_names = ['deepseek:deepseek-chat', 'deepseek:deepseek-reasoner']
+    heroku_names = [
+        'heroku:claude-3-5-haiku',
+        'heroku:claude-3-5-sonnet',
+        'heroku:claude-3-5-sonnet-latest',
+        'heroku:claude-3-7-sonnet',
+        'heroku:claude-3-haiku',
+        'heroku:claude-4-sonnet',
+        'heroku:cohere-embed-multilingual',
+        'heroku:stable-image-ultra',
+    ]
     extra_names = ['test']
 
     generated_names = sorted(
@@ -55,6 +65,7 @@ def test_known_model_names():
         + openai_names
         + bedrock_names
         + deepseek_names
+        + heroku_names
         + extra_names
     )
 

@@ -170,7 +170,7 @@ class OpenAIModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together']
+        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku']
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,

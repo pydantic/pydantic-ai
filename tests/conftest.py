@@ -282,6 +282,11 @@ def openrouter_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def heroku_inference_key() -> str:
+    return os.getenv('HEROKU_INFERENCE_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def bedrock_provider():
     try:
         import boto3
