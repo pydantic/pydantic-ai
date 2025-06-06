@@ -53,7 +53,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 ## Help
 
 ```
-usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]
+usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-d [API_URL]] [-dd] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]
 
 PydanticAI CLI v...
 
@@ -72,6 +72,10 @@ options:
   -a AGENT, --agent AGENT
                         Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"
   -l, --list-models     List all available models and exit
+  -d [API_URL], --discover-models [API_URL]
+                        Discover models from a local OpenAI-compatible API endpoint and interactively select one to chat with. Requires complete API URL including version (e.g., "http://localhost:11434/v1" for Ollama or "http://localhost:1234/v1" for LM Studio). If no URL provided, uses the last discovered endpoint.
+  -dd, --discover-direct
+                        Directly connect to the last used model and endpoint without any prompts. Equivalent to "clai -d" + pressing Enter twice.
   -t [CODE_THEME], --code-theme [CODE_THEME]
                         Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
   --no-stream           Disable streaming from the model
