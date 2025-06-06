@@ -8,7 +8,6 @@ import pytest
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.heroku import HerokuProvider
 
 from ..conftest import try_import
 
@@ -24,6 +23,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
     from pydantic_ai.providers.grok import GrokProvider
     from pydantic_ai.providers.groq import GroqProvider
+    from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
