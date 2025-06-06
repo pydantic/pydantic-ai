@@ -296,9 +296,12 @@ class InstrumentedModel(WrapperModel):
                             },
                         )
                     )
-                new_attributes: dict[str, AttributeValue] = response.usage.opentelemetry_attributes()  # pyright: ignore[reportAssignmentType]
-                new_attributes['gen_ai.response.model'] = response_model
-                span.set_attributes(new_attributes)
+                span.set_attributes(
+                    {
+                        **response.usage.opentelemetry_attributes(),
+                        'gen_ai.response.model': response_model,
+                    }
+                )
                 span.update_name(f'{operation} {request_model}')
                 for event in events:
                     event.attributes = {
