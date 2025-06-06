@@ -681,9 +681,9 @@ agent = Agent(
     tools=[search_tool],
 )
 
-result = agent.run_sync("What is the release date of Elden Ring Nightreign?")  # (2)!
+result = agent.run_sync('What is the release date of Elden Ring Nightreign?')  # (2)!
 print(result.output)
-# > Elden Ring Nightreign is planned to be released on May 30, 2025.
+#> Elden Ring Nightreign is planned to be released on May 30, 2025.
 ```
 
 
