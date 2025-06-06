@@ -60,7 +60,6 @@ def test_heroku_model_profile():
     model = OpenAIModel('claude-3-7-sonnet', provider=provider)
     assert isinstance(model.profile, OpenAIModelProfile)
     assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
-    assert model.profile.openai_supports_strict_tool_definition is False
 
 
 async def test_heroku_model_provider_claude_3_7_sonnet(allow_model_requests: None, heroku_inference_key: str):

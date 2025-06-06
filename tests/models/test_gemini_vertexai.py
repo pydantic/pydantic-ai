@@ -40,7 +40,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
 )
 @pytest.mark.vcr()
-async def test_labels(allow_model_requests: None) -> None:
+async def test_labels(allow_model_requests: None) -> None:  # pragma: lax no cover
     m = GeminiModel('gemini-2.0-flash', provider='google-vertex')
     agent = Agent(m)
 

@@ -8,6 +8,7 @@ import pytest
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers import Provider, infer_provider
+from pydantic_ai.providers.heroku import HerokuProvider
 
 from ..conftest import try_import
 
@@ -42,6 +43,7 @@ with try_import() as imports_successful:
         ('grok', GrokProvider, 'GROK_API_KEY'),
         ('fireworks', FireworksProvider, 'FIREWORKS_API_KEY'),
         ('together', TogetherProvider, 'TOGETHER_API_KEY'),
+        ('heroku', HerokuProvider, 'HEROKU_INFERENCE_KEY'),
     ]
 
 if not imports_successful():
