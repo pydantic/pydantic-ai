@@ -322,7 +322,8 @@ class AnthropicModel(Model):
                 assistant_content_params: list[BetaTextBlockParam | BetaToolUseBlockParam] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
-                        assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
+                        if response_part.content:  # Only add non-empty text
+                            assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
                     else:
                         tool_use_block_param = BetaToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),
@@ -331,7 +332,8 @@ class AnthropicModel(Model):
                             input=response_part.args_as_dict(),
                         )
                         assistant_content_params.append(tool_use_block_param)
-                anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
+                if len(assistant_content_params) > 0:
+                    anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
         system_prompt = '\n\n'.join(system_prompt_parts)
@@ -344,11 +346,13 @@ class AnthropicModel(Model):
         part: UserPromptPart,
     ) -> AsyncGenerator[BetaContentBlockParam]:
         if isinstance(part.content, str):
-            yield BetaTextBlockParam(text=part.content, type='text')
+            if part.content:  # Only yield non-empty text
+                yield BetaTextBlockParam(text=part.content, type='text')
         else:
             for item in part.content:
                 if isinstance(item, str):
-                    yield BetaTextBlockParam(text=item, type='text')
+                    if item:  # Only yield non-empty text
+                        yield BetaTextBlockParam(text=item, type='text')
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         yield BetaImageBlockParam(
