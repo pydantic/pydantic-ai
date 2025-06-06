@@ -1,3 +1,5 @@
+from __future__ import annotations as _annotations
+
 import re
 from abc import ABC, abstractmethod
 from copy import deepcopy
@@ -10,7 +12,7 @@ JsonSchema = dict[str, Any]
 
 
 @dataclass(init=False)
-class WalkJsonSchema(ABC):
+class JsonSchemaTransformer(ABC):
     """Walks a JSON schema, applying transformations to it at each level.
 
     Note: We may eventually want to rework tools to build the JSON schema from the type directly, using a subclass of
@@ -18,9 +20,18 @@ class WalkJsonSchema(ABC):
     """
 
     def __init__(
-        self, schema: JsonSchema, *, prefer_inlined_defs: bool = False, simplify_nullable_unions: bool = False
+        self,
+        schema: JsonSchema,
+        *,
+        strict: bool | None = None,
+        prefer_inlined_defs: bool = False,
+        simplify_nullable_unions: bool = False,
     ):
         self.schema = schema
+
+        self.strict = strict
+        self.is_strict_compatible = True  # Can be set to False by subclasses to set `strict` on `ToolDefinition` when set not set by user explicitly
+
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
 
@@ -164,3 +175,13 @@ class WalkJsonSchema(ABC):
                 return [cases[0]]
 
         return cases  # pragma: no cover
+
+
+class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
+    """Transforms the JSON Schema to inline $defs."""
+
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict, prefer_inlined_defs=True)
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        return schema

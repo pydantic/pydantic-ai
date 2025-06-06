@@ -4,7 +4,7 @@ import base64
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal, Union, cast
 
 import pydantic_core
@@ -12,7 +12,7 @@ from httpx import Timeout
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
-from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
+from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..messages import (
     BinaryContent,
     DocumentUrl,
@@ -30,6 +30,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
+from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -120,6 +121,7 @@ class MistralModel(Model):
         model_name: MistralModelName,
         *,
         provider: Literal['mistral'] | Provider[Mistral] = 'mistral',
+        profile: ModelProfileSpec | None = None,
         json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n""",
     ):
         """Initialize a Mistral model.
@@ -129,6 +131,7 @@ class MistralModel(Model):
             provider: The provider to use for authentication and API access. Can be either the string
                 'mistral' or an instance of `Provider[Mistral]`. If not provided, a new provider will be
                 created using the other parameters.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             json_mode_schema_prompt: The prompt to show when the model expects a JSON object as input.
         """
         self._model_name = model_name
@@ -137,6 +140,7 @@ class MistralModel(Model):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
+        self._profile = profile or provider.model_profile
 
     @property
     def base_url(self) -> str:
@@ -308,7 +312,7 @@ class MistralModel(Model):
         assert response.choices, 'Unexpected empty response choice.'
 
         if response.created:
-            timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
+            timestamp = number_to_datetime(response.created)
         else:
             timestamp = _now_utc()
 
@@ -343,9 +347,9 @@ class MistralModel(Model):
             )
 
         if first_chunk.data.created:
-            timestamp = datetime.fromtimestamp(first_chunk.data.created, tz=timezone.utc)
+            timestamp = number_to_datetime(first_chunk.data.created)
         else:
-            timestamp = datetime.now(tz=timezone.utc)
+            timestamp = _now_utc()
 
         return MistralStreamedResponse(
             _response=peekable_response,

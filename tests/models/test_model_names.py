@@ -1,8 +1,10 @@
+import os
 from collections.abc import Iterator
 from typing import Any
 
+import httpx
 import pytest
-from typing_extensions import get_args
+from typing_extensions import TypedDict, get_args
 
 from pydantic_ai.models import KnownModelName
 
@@ -19,7 +21,15 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
+    pytest.mark.vcr,
 ]
+
+
+@pytest.fixture(scope='module')
+def vcr_config():  # pragma: lax no cover
+    if not os.getenv('CI'):
+        return {'record_mode': 'rewrite'}
+    return {'record_mode': 'none'}
 
 
 def test_known_model_names():
@@ -44,6 +54,7 @@ def test_known_model_names():
     ]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(BedrockModelName)]
     deepseek_names = ['deepseek:deepseek-chat', 'deepseek:deepseek-reasoner']
+    heroku_names = get_heroku_model_names()
     extra_names = ['test']
 
     generated_names = sorted(
@@ -55,8 +66,26 @@ def test_known_model_names():
         + openai_names
         + bedrock_names
         + deepseek_names
+        + heroku_names
         + extra_names
     )
 
     known_model_names = sorted(get_args(KnownModelName.__value__))
     assert generated_names == known_model_names
+
+
+class HerokuModel(TypedDict):
+    model_id: str
+    regions: list[str]
+    type: list[str]
+
+
+def get_heroku_model_names():
+    response = httpx.get('https://us.inference.heroku.com/available-models')
+    heroku_models: list[HerokuModel] = response.json()
+
+    models: list[str] = []
+    for model in heroku_models:
+        if 'text-to-text' in model['type']:
+            models.append(f'heroku:{model["model_id"]}')
+    return sorted(models)

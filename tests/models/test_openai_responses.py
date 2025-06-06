@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 import pytest
 from inline_snapshot import snapshot
@@ -18,6 +19,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, IsStr, TestEnv, try_import
@@ -461,4 +464,44 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                 timestamp=IsDatetime(),
             ),
         ]
+    )
+
+
+def test_model_profile_strict_not_supported():
+    my_tool = ToolDefinition(
+        'my_tool',
+        'This is my tool',
+        {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+        strict=True,
+    )
+
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
+    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+
+    assert tool_param == snapshot(
+        {
+            'name': 'my_tool',
+            'parameters': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+            'type': 'function',
+            'description': 'This is my tool',
+            'strict': True,
+        }
+    )
+
+    # Some models don't support strict tool definitions
+    m = OpenAIResponsesModel(
+        'gpt-4o',
+        provider=OpenAIProvider(api_key='foobar'),
+        profile=replace(openai_model_profile('gpt-4o'), openai_supports_strict_tool_definition=False),
+    )
+    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+
+    assert tool_param == snapshot(
+        {
+            'name': 'my_tool',
+            'parameters': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+            'type': 'function',
+            'description': 'This is my tool',
+            'strict': False,
+        }
     )
