@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '140'
+      - '219'
       content-type:
       - application/json
       host:
@@ -16,7 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: What is the capital of France?
+      - content: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
         role: user
       model: command-r-plus
       stop_sequences:
@@ -32,34 +32,34 @@ interactions:
       cache-control:
       - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
       content-length:
-      - '280'
+      - '297'
       content-type:
       - application/json
       expires:
       - Thu, 01 Jan 1970 00:00:00 UTC
       num_chars:
-      - '1200'
+      - '521'
       num_tokens:
-      - '12'
+      - '34'
       pragma:
       - no-cache
       vary:
       - Origin
     parsed_body:
       finish_reason: STOP_SEQUENCE
-      id: 2ed6908c-e5cb-4063-b2a3-0ac4990d1b85
+      id: 02069ccc-65d6-4286-ba8c-097e317431c5
       message:
         content:
-        - text: The capital of France is
+        - text: The capital of France is a city known as
           type: text
         role: assistant
       usage:
         billed_units:
-          input_tokens: 7
-          output_tokens: 5
+          input_tokens: 25
+          output_tokens: 9
         tokens:
-          input_tokens: 200
-          output_tokens: 7
+          input_tokens: 91
+          output_tokens: 11
     status:
       code: 200
       message: OK

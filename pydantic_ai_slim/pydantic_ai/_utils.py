@@ -12,7 +12,7 @@ from types import GenericAlias
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union
 
 from anyio.to_thread import run_sync
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import ParamSpec, TypeAlias, TypeGuard, is_typeddict
 
@@ -298,3 +298,7 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
         f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr and getattr(self, f.name) != f.default
     )
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
+
+
+def number_to_datetime(x: int | float) -> datetime:
+    return TypeAdapter(datetime).validate_python(x)
