@@ -25,3 +25,5 @@
 ::: pydantic_ai.providers.grok
 
 ::: pydantic_ai.providers.together
+
+::: pydantic_ai.providers.cerebras
