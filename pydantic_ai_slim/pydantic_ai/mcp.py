@@ -11,12 +11,13 @@ from types import TracebackType
 from typing import Any
 
 import anyio
+import httpx
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from mcp.shared.message import SessionMessage
 from mcp.types import (
     BlobResourceContents,
     EmbeddedResource,
     ImageContent,
-    JSONRPCMessage,
     LoggingLevel,
     TextContent,
     TextResourceContents,
@@ -56,8 +57,8 @@ class MCPServer(ABC):
     """
 
     _client: ClientSession
-    _read_stream: MemoryObjectReceiveStream[JSONRPCMessage | Exception]
-    _write_stream: MemoryObjectSendStream[JSONRPCMessage]
+    _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
+    _write_stream: MemoryObjectSendStream[SessionMessage]
     _exit_stack: AsyncExitStack
 
     @abstractmethod
@@ -66,8 +67,8 @@ class MCPServer(ABC):
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
         ]
     ]:
         """Create the streams for the MCP server."""
@@ -266,8 +267,8 @@ class MCPServerStdio(MCPServer):
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
         ]
     ]:
         server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
@@ -328,6 +329,12 @@ class MCPServerHTTP(MCPServer):
     Useful for authentication, custom headers, or other HTTP-specific configurations.
     """
 
+    extra_http_client_args: dict[str, Any] | None = None
+    """Optional extra arguments to pass to the HTTP client factory
+       the headers key-value pairs will be merged with `headers`.
+       those provided in the headers argument will take precedence.
+    """
+
     timeout: float = 5
     """Initial connection timeout in seconds for establishing the connection.
 
@@ -363,15 +370,43 @@ class MCPServerHTTP(MCPServer):
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
         ]
     ]:  # pragma: no cover
+        def httpx_client_factory(
+            headers: dict[str, str] | None = None,
+            timeout: httpx.Timeout | None = None,
+            auth: httpx.Auth | None = None,
+        ) -> httpx.AsyncClient:
+            extra_args = self.extra_http_client_args.copy() if self.extra_http_client_args else {}
+
+            if headers is not None:
+                current_config_headers = extra_args.get('headers')
+                filtered_config_headers: dict[str, str] = {}
+                if isinstance(current_config_headers, dict):
+                    typed_current_config_headers: dict[Any, Any] = current_config_headers
+                    filtered_config_headers = {
+                        k_typed: v_typed
+                        for k_typed, v_typed in typed_current_config_headers.items()
+                        if isinstance(k_typed, str) and isinstance(v_typed, str)
+                    }
+                extra_args['headers'] = {**filtered_config_headers, **headers}
+
+            if timeout is not None:
+                extra_args['timeout'] = timeout
+
+            if auth is not None:
+                extra_args['auth'] = auth
+
+            return httpx.AsyncClient(**extra_args)
+
         async with sse_client(
             url=self.url,
-            headers=self.headers,
             timeout=self.timeout,
             sse_read_timeout=self.sse_read_timeout,
+            headers=self.headers,
+            httpx_client_factory=httpx_client_factory,
         ) as (read_stream, write_stream):
             yield read_stream, write_stream
 
