@@ -72,16 +72,16 @@ _FINISH_REASONS = {
     'STOP': 'stop',
     'MAX_TOKENS': 'length',
     'SAFETY': 'content_filter',
-    # 'RECITATION': 'content_filter',
-    # 'LANGUAGE': 'content_filter',
-    # 'BLOCKLIST': 'content_filter',
-    # 'PROHIBITED_CONTENT': 'content_filter',
-    # 'SPII': 'content_filter',
-    # 'MALFORMED_FUNCTION_CALL': 'error',  # or 'tool_calls' if you prefer
-    # 'OTHER': 'error',
-    # 'FINISH_REASON_UNSPECIFIED': 'error',  # unspecified is still a model stop reason
-    # 'IMAGE_SAFETY': 'content_filter',
-    # Kept the other mappings as comments based on finish_reason
+    'RECITATION': 'content_filter',
+    'LANGUAGE': 'content_filter',
+    'BLOCKLIST': 'content_filter',
+    'PROHIBITED_CONTENT': 'content_filter',
+    'SPII': 'content_filter',
+    'MALFORMED_FUNCTION_CALL': 'error',  # or 'tool_calls' if you prefer
+    'OTHER': 'error',
+    'FINISH_REASON_UNSPECIFIED': 'error',  # unspecified is still a model stop reason
+    'IMAGE_SAFETY': 'content_filter',
+    None: None,
 }
 
 
@@ -269,7 +269,7 @@ class GeminiModel(Model):
     def _process_response(self, response: _GeminiResponse) -> ModelResponse:
         if len(response['candidates']) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
-        finish_reason_key = response['candidates'][0].get('finish_reason', '')
+        finish_reason_key = response['candidates'][0].get('finish_reason', None)
         finish_reason = _FINISH_REASONS.get(finish_reason_key, finish_reason_key)
         if 'content' not in response['candidates'][0]:
             if finish_reason_key == 'SAFETY':
@@ -771,7 +771,15 @@ class _GeminiCandidates(TypedDict):
                 'STOP',
                 'MAX_TOKENS',
                 'SAFETY',
-                #  'MALFORMED_FUNCTION_CALL'  https://github.com/pydantic/pydantic-ai/issues/631
+                'MALFORMED_FUNCTION_CALL',
+                'FINISH_REASON_UNSPECIFIED',
+                'RECITATION',
+                'LANGUAGE',
+                'BLOCKLIST',
+                'PROHIBITED_CONTENT',
+                'SPII',
+                'OTHER',
+                'IMAGE_SAFETY',
             ],
             pydantic.Field(alias='finishReason'),
         ]

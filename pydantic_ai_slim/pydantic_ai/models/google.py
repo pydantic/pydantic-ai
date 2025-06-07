@@ -95,16 +95,16 @@ _FINISH_REASONS = {
     'STOP': 'stop',
     'MAX_TOKENS': 'length',
     'SAFETY': 'content_filter',
-    # 'RECITATION': 'content_filter',
-    # 'LANGUAGE': 'content_filter',
-    # 'BLOCKLIST': 'content_filter',
-    # 'PROHIBITED_CONTENT': 'content_filter',
-    # 'SPII': 'content_filter',
-    # 'MALFORMED_FUNCTION_CALL': 'error',  # or 'tool_calls' if you prefer
-    # 'OTHER': 'error',
-    # 'FINISH_REASON_UNSPECIFIED': 'error',  # unspecified is still a model stop reason
-    # 'IMAGE_SAFETY': 'content_filter',
-    # Kept the other mappings as comments based on finish_reason
+    'RECITATION': 'content_filter',
+    'LANGUAGE': 'content_filter',
+    'BLOCKLIST': 'content_filter',
+    'PROHIBITED_CONTENT': 'content_filter',
+    'SPII': 'content_filter',
+    'MALFORMED_FUNCTION_CALL': 'error',  # or 'tool_calls' if you prefer
+    'OTHER': 'error',
+    'FINISH_REASON_UNSPECIFIED': 'error',
+    'IMAGE_SAFETY': 'content_filter',
+    None: None,
 }
 
 
@@ -290,7 +290,7 @@ class GoogleModel(Model):
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
         if not response.candidates or len(response.candidates) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
-        finish_reason_key = getattr(response.candidates[0], 'finish_reason', '')
+        finish_reason_key = response.candidates[0].finish_reason or None
         finish_reason = _FINISH_REASONS.get(finish_reason_key, finish_reason_key)
 
         if response.candidates[0].content is None or response.candidates[0].content.parts is None:
