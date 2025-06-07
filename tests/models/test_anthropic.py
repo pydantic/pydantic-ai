@@ -1063,3 +1063,54 @@ I can't physically give you a potato since I'm a computer program. However, I ca
 
 What specifically would you like to know about potatoes?\
 """)
+
+
+async def test_anthropic_empty_content_filtering(env: TestEnv):
+    """Test the empty content filtering logic directly."""
+
+    from typing import cast
+
+    from anthropic.types.beta import BetaContentBlockParam
+
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelRequest,
+        ModelResponse,
+        SystemPromptPart,
+        TextPart,
+        UserPromptPart,
+    )
+
+    # Test _map_user_prompt with empty string
+    parts: list[BetaContentBlockParam] = []
+    async for part in AnthropicModel._map_user_prompt(UserPromptPart(content='')):  # type: ignore[attr-defined]
+        parts.append(part)
+    assert len(parts) == 0
+
+    # Test _map_user_prompt with list containing empty strings
+    parts = []
+    async for part in AnthropicModel._map_user_prompt(UserPromptPart(content=['', 'Hello', '', 'World'])):  # type: ignore[attr-defined]
+        parts.append(part)
+    assert len(parts) == 2
+    assert cast(dict[str, str], parts[0])['text'] == 'Hello'
+    assert cast(dict[str, str], parts[1])['text'] == 'World'
+
+    # Test _map_message with empty assistant response
+    env.set('ANTHROPIC_API_KEY', 'test-key')
+    model = AnthropicModel('claude-3-5-sonnet-latest', provider='anthropic')
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='You are helpful')], kind='request'),
+        ModelResponse(parts=[TextPart(content='')], kind='response'),  # Empty response
+        ModelRequest(parts=[UserPromptPart(content='Hello')], kind='request'),
+    ]
+    _, anthropic_messages = await model._map_message(messages)  # type: ignore[attr-defined]
+    # The empty assistant message should be filtered out
+    assert len(anthropic_messages) == 1
+    assert anthropic_messages[0]['role'] == 'user'
+
+    # Test with only empty assistant parts
+    messages_resp: list[ModelMessage] = [
+        ModelResponse(parts=[TextPart(content=''), TextPart(content='')], kind='response'),
+    ]
+    _, anthropic_messages = await model._map_message(messages_resp)  # type: ignore[attr-defined]
+    assert len(anthropic_messages) == 0  # No messages should be added
