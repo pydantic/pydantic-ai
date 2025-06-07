@@ -81,6 +81,8 @@ class MyModel(Model):
             ],
             usage=Usage(request_tokens=100, response_tokens=200),
             model_name='my_model_123',
+            vendor_id='chatcmpl-123',
+            finish_reason='stop',
         )
 
     @asynccontextmanager
@@ -158,6 +160,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'my_model_123',
                     'gen_ai.usage.input_tokens': 100,
+                    'gen_ai.response.id': 'chatcmpl-123',
+                    'gen_ai.response.finish_reasons': ('stop',),
                     'gen_ai.usage.output_tokens': 200,
                 },
             },
@@ -277,6 +281,7 @@ Fix the errors and try again.\
                     'index': 0,
                     'message': {
                         'role': 'assistant',
+                        'finish_reason': 'stop',
                         'content': 'text1',
                         'tool_calls': [
                             {
@@ -302,7 +307,7 @@ Fix the errors and try again.\
                 'trace_flags': 1,
             },
             {
-                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text2'}},
+                'body': {'index': 0, 'message': {'role': 'assistant', 'finish_reason': 'stop', 'content': 'text2'}},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
@@ -566,6 +571,8 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'my_model_123',
                     'gen_ai.usage.input_tokens': 100,
+                    'gen_ai.response.id': 'chatcmpl-123',
+                    'gen_ai.response.finish_reasons': ('stop',),
                     'gen_ai.usage.output_tokens': 200,
                     'events': IsJson(
                         snapshot(
@@ -629,6 +636,7 @@ Fix the errors and try again.\
                                     'index': 0,
                                     'message': {
                                         'role': 'assistant',
+                                        'finish_reason': 'stop',
                                         'content': 'text1',
                                         'tool_calls': [
                                             {
@@ -648,7 +656,7 @@ Fix the errors and try again.\
                                 {
                                     'event.name': 'gen_ai.choice',
                                     'index': 0,
-                                    'message': {'role': 'assistant', 'content': 'text2'},
+                                    'message': {'role': 'assistant', 'finish_reason': 'stop', 'content': 'text2'},
                                     'gen_ai.system': 'my_system',
                                 },
                             ]

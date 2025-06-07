@@ -2356,6 +2356,7 @@ def test_binary_content_all_messages_json():
                 'vendor_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
+                'finish_reason': None,
                 'vendor_details': None,
             },
         ]
