@@ -18,26 +18,36 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.google_gla import GoogleGLAProvider
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
+    from pydantic_ai.providers.grok import GrokProvider
     from pydantic_ai.providers.groq import GroqProvider
+    from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.together import TogetherProvider
 
     test_infer_provider_params = [
         ('anthropic', AnthropicProvider, 'ANTHROPIC_API_KEY'),
         ('cohere', CohereProvider, 'CO_API_KEY'),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
+        ('openrouter', OpenRouterProvider, 'OPENROUTER_API_KEY'),
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),
         ('azure', AzureProvider, 'AZURE_OPENAI'),
         ('google-vertex', GoogleVertexProvider, None),
         ('google-gla', GoogleGLAProvider, 'GEMINI_API_KEY'),
         ('groq', GroqProvider, 'GROQ_API_KEY'),
         ('mistral', MistralProvider, 'MISTRAL_API_KEY'),
+        ('grok', GrokProvider, 'GROK_API_KEY'),
+        ('fireworks', FireworksProvider, 'FIREWORKS_API_KEY'),
+        ('together', TogetherProvider, 'TOGETHER_API_KEY'),
+        ('heroku', HerokuProvider, 'HEROKU_INFERENCE_KEY'),
     ]
 
 if not imports_successful():
-    test_infer_provider_params = []  # pragma: no cover
+    test_infer_provider_params = []  # pragma: lax no cover
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='need to install all extra packages')
 

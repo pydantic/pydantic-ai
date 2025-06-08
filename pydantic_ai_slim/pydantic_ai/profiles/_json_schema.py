@@ -1,3 +1,5 @@
+from __future__ import annotations as _annotations
+
 import re
 from abc import ABC, abstractmethod
 from copy import deepcopy
@@ -10,7 +12,7 @@ JsonSchema = dict[str, Any]
 
 
 @dataclass(init=False)
-class WalkJsonSchema(ABC):
+class JsonSchemaTransformer(ABC):
     """Walks a JSON schema, applying transformations to it at each level.
 
     Note: We may eventually want to rework tools to build the JSON schema from the type directly, using a subclass of
@@ -18,14 +20,23 @@ class WalkJsonSchema(ABC):
     """
 
     def __init__(
-        self, schema: JsonSchema, *, prefer_inlined_defs: bool = False, simplify_nullable_unions: bool = False
+        self,
+        schema: JsonSchema,
+        *,
+        strict: bool | None = None,
+        prefer_inlined_defs: bool = False,
+        simplify_nullable_unions: bool = False,
     ):
         self.schema = schema
+
+        self.strict = strict
+        self.is_strict_compatible = True  # Can be set to False by subclasses to set `strict` on `ToolDefinition` when set not set by user explicitly
+
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
 
         self.defs: dict[str, JsonSchema] = self.schema.get('$defs', {})
-        self.refs_stack = tuple[str, ...]()
+        self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
 
     @abstractmethod
@@ -62,13 +73,16 @@ class WalkJsonSchema(ABC):
         return handled
 
     def _handle(self, schema: JsonSchema) -> JsonSchema:
+        nested_refs = 0
         if self.prefer_inlined_defs:
             while ref := schema.get('$ref'):
                 key = re.sub(r'^#/\$defs/', '', ref)
                 if key in self.refs_stack:
                     self.recursive_refs.add(key)
                     break  # recursive ref can't be unpacked
-                self.refs_stack += (key,)
+                self.refs_stack.append(key)
+                nested_refs += 1
+
                 def_schema = self.defs.get(key)
                 if def_schema is None:  # pragma: no cover
                     raise UserError(f'Could not find $ref definition for {key}')
@@ -87,6 +101,9 @@ class WalkJsonSchema(ABC):
         # Apply the base transform
         schema = self.transform(schema)
 
+        if nested_refs > 0:
+            self.refs_stack = self.refs_stack[:-nested_refs]
+
         return schema
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
@@ -99,7 +116,7 @@ class WalkJsonSchema(ABC):
         if (additional_properties := schema.get('additionalProperties')) is not None:
             if isinstance(additional_properties, bool):
                 schema['additionalProperties'] = additional_properties
-            else:  # pragma: no cover
+            else:
                 schema['additionalProperties'] = self._handle(additional_properties)
 
         if (pattern_properties := schema.get('patternProperties')) is not None:
@@ -158,3 +175,13 @@ class WalkJsonSchema(ABC):
                 return [cases[0]]
 
         return cases  # pragma: no cover
+
+
+class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
+    """Transforms the JSON Schema to inline $defs."""
+
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict, prefer_inlined_defs=True)
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        return schema

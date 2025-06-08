@@ -23,6 +23,7 @@ nav:
           - models/openai.md
           - models/anthropic.md
           - models/gemini.md
+          - models/google.md
           - models/bedrock.md
           - models/cohere.md
           - models/groq.md
@@ -39,11 +40,13 @@ nav:
       - evals.md
       - input.md
       - thinking.md
+      - direct.md
       - MCP:
           - mcp/index.md
           - mcp/client.md
           - mcp/server.md
           - mcp/run-python.md
+      - A2A: a2a.md
       - cli.md
   - Examples:
       - examples/index.md
@@ -68,12 +71,14 @@ nav:
       - api/usage.md
       - api/mcp.md
       - api/format_as_xml.md
+      - api/direct.md
       - api/models/base.md
       - api/models/openai.md
       - api/models/anthropic.md
       - api/models/bedrock.md
       - api/models/cohere.md
       - api/models/gemini.md
+      - api/models/google.md
       - api/models/groq.md
       - api/models/instrumented.md
       - api/models/mistral.md
@@ -81,6 +86,7 @@ nav:
       - api/models/function.md
       - api/models/fallback.md
       - api/models/wrapper.md
+      - api/profiles.md
       - api/providers.md
       - api/pydantic_graph/graph.md
       - api/pydantic_graph/nodes.md
@@ -92,6 +98,7 @@ nav:
       - api/pydantic_evals/reporting.md
       - api/pydantic_evals/otel.md
       - api/pydantic_evals/generation.md
+      - api/fasta2a.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
@@ -102,25 +109,24 @@ theme:
   custom_dir: docs/.overrides
   palette:
     - media: "(prefers-color-scheme)"
-      scheme: default
       primary: pink
       accent: pink
       toggle:
-        icon: material/lightbulb
+        icon: material/brightness-auto
         name: "Switch to light mode"
     - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: pink
       accent: pink
       toggle:
-        icon: material/lightbulb-outline
+        icon: material/brightness-7
         name: "Switch to dark mode"
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: pink
       accent: pink
       toggle:
-        icon: material/lightbulb-auto-outline
+        icon: material/brightness-4
         name: "Switch to system preference"
   features:
     - search.suggest
@@ -209,6 +215,7 @@ plugins:
             # 3 because docs are in pages with an H2 just above them
             heading_level: 3
           import:
+            - url: https://logfire.pydantic.dev/docs/objects.inv
             - url: https://docs.python.org/3/objects.inv
             - url: https://docs.pydantic.dev/latest/objects.inv
             - url: https://dirty-equals.helpmanual.io/latest/objects.inv
@@ -244,7 +251,6 @@ plugins:
           - cli.md
           - logfire.md
           - examples/*.md
-
 
 hooks:
   - "docs/.hooks/main.py"

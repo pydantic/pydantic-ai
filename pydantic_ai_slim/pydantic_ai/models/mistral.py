@@ -4,7 +4,7 @@ import base64
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal, Union, cast
 
 import pydantic_core
@@ -14,7 +14,7 @@ from typing_extensions import assert_never
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
-from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
+from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..messages import (
     BinaryContent,
     DocumentUrl,
@@ -33,6 +33,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
+from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -74,7 +75,7 @@ try:
     from mistralai.models.usermessage import UserMessage as MistralUserMessage
     from mistralai.types.basemodel import Unset as MistralUnset
     from mistralai.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
-except ImportError as e:
+except ImportError as e:  # pragma: lax no cover
     raise ImportError(
         'Please install `mistral` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
@@ -123,6 +124,7 @@ class MistralModel(Model):
         model_name: MistralModelName,
         *,
         provider: Literal['mistral'] | Provider[Mistral] = 'mistral',
+        profile: ModelProfileSpec | None = None,
         json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n""",
     ):
         """Initialize a Mistral model.
@@ -132,6 +134,7 @@ class MistralModel(Model):
             provider: The provider to use for authentication and API access. Can be either the string
                 'mistral' or an instance of `Provider[Mistral]`. If not provided, a new provider will be
                 created using the other parameters.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             json_mode_schema_prompt: The prompt to show when the model expects a JSON object as input.
         """
         self._model_name = model_name
@@ -140,6 +143,7 @@ class MistralModel(Model):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
+        self._profile = profile or provider.model_profile
 
     @property
     def base_url(self) -> str:
@@ -150,13 +154,15 @@ class MistralModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
+    ) -> ModelResponse:
         """Make a non-streaming request to the model from Pydantic AI call."""
         check_allow_model_requests()
         response = await self._completions_create(
             messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response), _map_usage(response)
+        model_response = self._process_response(response)
+        model_response.usage.requests = 1
+        return model_response
 
     @asynccontextmanager
     async def request_stream(
@@ -209,7 +215,7 @@ class MistralModel(Model):
         except SDKError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise
+            raise  # pragma: lax no cover
 
         assert response, 'A unexpected empty response from Mistral.'
         return response
@@ -309,7 +315,7 @@ class MistralModel(Model):
         assert response.choices, 'Unexpected empty response choice.'
 
         if response.created:
-            timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
+            timestamp = number_to_datetime(response.created)
         else:
             timestamp = _now_utc()
 
@@ -326,7 +332,9 @@ class MistralModel(Model):
                 tool = self._map_mistral_to_pydantic_tool_call(tool_call=tool_call)
                 parts.append(tool)
 
-        return ModelResponse(parts, model_name=response.model, timestamp=timestamp)
+        return ModelResponse(
+            parts, usage=_map_usage(response), model_name=response.model, timestamp=timestamp, vendor_id=response.id
+        )
 
     async def _process_streamed_response(
         self,
@@ -337,12 +345,14 @@ class MistralModel(Model):
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise UnexpectedModelBehavior(  # pragma: no cover
+                'Streamed response ended without content or tool calls'
+            )
 
         if first_chunk.data.created:
-            timestamp = datetime.fromtimestamp(first_chunk.data.created, tz=timezone.utc)
+            timestamp = number_to_datetime(first_chunk.data.created)
         else:
-            timestamp = datetime.now(tz=timezone.utc)
+            timestamp = _now_utc()
 
         return MistralStreamedResponse(
             _response=peekable_response,
@@ -365,7 +375,7 @@ class MistralModel(Model):
         return MistralToolCall(
             id=_utils.guard_tool_call_id(t=t),
             type='function',
-            function=MistralFunctionCall(name=t.tool_name, arguments=t.args),
+            function=MistralFunctionCall(name=t.tool_name, arguments=t.args or {}),
         )
 
     def _generate_user_output_format(self, schemas: list[dict[str, Any]]) -> MistralUserMessage:
@@ -438,7 +448,7 @@ class MistralModel(Model):
         """Convert a timeout to milliseconds."""
         if timeout is None:
             return None
-        if isinstance(timeout, float):
+        if isinstance(timeout, float):  # pragma: no cover
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
@@ -455,7 +465,7 @@ class MistralModel(Model):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield MistralUserMessage(content=part.model_response())
+                    yield MistralUserMessage(content=part.model_response())  # pragma: no cover
                 else:
                     yield MistralToolMessage(
                         tool_call_id=part.tool_call_id,
@@ -488,7 +498,20 @@ class MistralModel(Model):
                 assert_never(message)
         if instructions := self._get_instructions(messages):
             mistral_messages.insert(0, MistralSystemMessage(content=instructions))
-        return mistral_messages
+
+        # Post-process messages to insert fake assistant message after tool message if followed by user message
+        # to work around `Unexpected role 'user' after role 'tool'` error.
+        processed_messages: list[MistralMessages] = []
+        for i, current_message in enumerate(mistral_messages):
+            processed_messages.append(current_message)
+
+            if isinstance(current_message, MistralToolMessage) and i + 1 < len(mistral_messages):
+                next_message = mistral_messages[i + 1]
+                if isinstance(next_message, MistralUserMessage):
+                    # Insert a dummy assistant message
+                    processed_messages.append(MistralAssistantMessage(content=[MistralTextChunk(text='OK')]))
+
+        return processed_messages
 
     def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:
         content: str | list[MistralContentChunk]
@@ -509,7 +532,7 @@ class MistralModel(Model):
                     else:
                         raise RuntimeError('Only image binary content is supported for Mistral.')
                 elif isinstance(item, DocumentUrl):
-                    raise RuntimeError('DocumentUrl is not supported in Mistral.')
+                    raise RuntimeError('DocumentUrl is not supported in Mistral.')  # pragma: no cover
                 elif isinstance(item, VideoUrl):
                     raise RuntimeError('VideoUrl is not supported in Mistral.')
                 else:  # pragma: no cover
@@ -653,7 +676,7 @@ def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk)
             details=None,
         )
     else:
-        return Usage()
+        return Usage()  # pragma: no cover
 
 
 def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None:
@@ -667,7 +690,9 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None
             if isinstance(chunk, MistralTextChunk):
                 output = output or '' + chunk.text
             else:
-                assert False, f'Other data types like (Image, Reference) are not yet supported,  got {type(chunk)}'
+                assert False, (  # pragma: no cover
+                    f'Other data types like (Image, Reference) are not yet supported,  got {type(chunk)}'
+                )
     elif isinstance(content, str):
         output = content
 

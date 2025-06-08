@@ -34,8 +34,15 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client
+from pydantic_ai.models import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    cached_async_http_client,
+)
+from pydantic_ai.profiles import ModelProfileSpec
 from pydantic_ai.providers import Provider, infer_provider
+from pydantic_ai.providers.bedrock import BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -58,6 +65,7 @@ if TYPE_CHECKING:
         PromptVariableValuesTypeDef,
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
+        ToolConfigurationTypeDef,
         ToolTypeDef,
         VideoBlockTypeDef,
     )
@@ -87,6 +95,10 @@ LatestBedrockModelNames = Literal[
     'us.anthropic.claude-3-5-sonnet-20240620-v1:0',
     'anthropic.claude-3-7-sonnet-20250219-v1:0',
     'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+    'anthropic.claude-opus-4-20250514-v1:0',
+    'us.anthropic.claude-opus-4-20250514-v1:0',
+    'anthropic.claude-sonnet-4-20250514-v1:0',
+    'us.anthropic.claude-sonnet-4-20250514-v1:0',
     'cohere.command-text-v14',
     'cohere.command-r-v1:0',
     'cohere.command-r-plus-v1:0',
@@ -192,6 +204,7 @@ class BedrockConverseModel(Model):
         model_name: BedrockModelName,
         *,
         provider: Literal['bedrock'] | Provider[BaseClient] = 'bedrock',
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize a Bedrock model.
 
@@ -202,12 +215,14 @@ class BedrockConverseModel(Model):
             provider: The provider to use for authentication and API access. Can be either the string
                 'bedrock' or an instance of `Provider[BaseClient]`. If not provided, a new provider will be
                 created using the other parameters.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = cast('BedrockRuntimeClient', provider.client)
+        self._profile = profile or provider.model_profile
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
@@ -234,10 +249,12 @@ class BedrockConverseModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, settings, model_request_parameters)
-        return await self._process_response(response)
+        model_response = await self._process_response(response)
+        model_response.usage.requests = 1
+        return model_response
 
     @asynccontextmanager
     async def request_stream(
@@ -250,9 +267,9 @@ class BedrockConverseModel(Model):
         response = await self._messages_create(messages, True, settings, model_request_parameters)
         yield BedrockStreamedResponse(_model_name=self.model_name, _event_stream=response)
 
-    async def _process_response(self, response: ConverseResponseTypeDef) -> tuple[ModelResponse, usage.Usage]:
+    async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
         items: list[ModelResponsePart] = []
-        if message := response['output'].get('message'):
+        if message := response['output'].get('message'):  # pragma: no branch
             for item in message['content']:
                 if reasoning_content := item.get('reasoningContent'):
                     reasoning_text = reasoning_content.get('reasoningText')
@@ -276,7 +293,8 @@ class BedrockConverseModel(Model):
             response_tokens=response['usage']['outputTokens'],
             total_tokens=response['usage']['totalTokens'],
         )
-        return ModelResponse(items, model_name=self.model_name), u
+        vendor_id = response.get('ResponseMetadata', {}).get('RequestId', None)
+        return ModelResponse(items, usage=u, model_name=self.model_name, vendor_id=vendor_id)
 
     @overload
     async def _messages_create(
@@ -305,15 +323,6 @@ class BedrockConverseModel(Model):
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ConverseResponseTypeDef | EventStream[ConverseStreamOutputTypeDef]:
-        tools = self._get_tools(model_request_parameters)
-        support_tools_choice = self.model_name.startswith(('anthropic', 'us.anthropic'))
-        if not tools or not support_tools_choice:
-            tool_choice: ToolChoiceTypeDef = {}
-        elif not model_request_parameters.allow_text_output:
-            tool_choice = {'any': {}}
-        else:
-            tool_choice = {'auto': {}}
-
         system_prompt, bedrock_messages = await self._map_messages(messages)
         inference_config = self._map_inference_config(model_settings)
 
@@ -323,6 +332,10 @@ class BedrockConverseModel(Model):
             'system': system_prompt,
             'inferenceConfig': inference_config,
         }
+
+        tool_config = self._map_tool_config(model_request_parameters)
+        if tool_config:
+            params['toolConfig'] = tool_config
 
         # Bedrock supports a set of specific extra parameters
         if model_settings:
@@ -341,11 +354,6 @@ class BedrockConverseModel(Model):
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
 
-        if tools:
-            params['toolConfig'] = {'tools': tools}
-            if tool_choice:
-                params['toolConfig']['toolChoice'] = tool_choice
-
         if stream:
             model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
             model_response = model_response['stream']
@@ -362,7 +370,7 @@ class BedrockConverseModel(Model):
 
         if max_tokens := model_settings.get('max_tokens'):
             inference_config['maxTokens'] = max_tokens
-        if temperature := model_settings.get('temperature'):
+        if (temperature := model_settings.get('temperature')) is not None:
             inference_config['temperature'] = temperature
         if top_p := model_settings.get('top_p'):
             inference_config['topP'] = top_p
@@ -371,16 +379,37 @@ class BedrockConverseModel(Model):
 
         return inference_config
 
+    def _map_tool_config(self, model_request_parameters: ModelRequestParameters) -> ToolConfigurationTypeDef | None:
+        tools = self._get_tools(model_request_parameters)
+        if not tools:
+            return None
+
+        tool_choice: ToolChoiceTypeDef
+        if not model_request_parameters.allow_text_output:
+            tool_choice = {'any': {}}
+        else:
+            tool_choice = {'auto': {}}
+
+        tool_config: ToolConfigurationTypeDef = {'tools': tools}
+        if tool_choice and BedrockModelProfile.from_profile(self.profile).bedrock_supports_tool_choice:
+            tool_config['toolChoice'] = tool_choice
+
+        return tool_config
+
     async def _map_messages(
         self, messages: list[ModelMessage]
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
-        """Just maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`."""
+        """Maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`.
+
+        Groups consecutive ToolReturnPart objects into a single user message as required by Bedrock Claude/Nova models.
+        """
+        profile = BedrockModelProfile.from_profile(self.profile)
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)
-        for m in messages:
-            if isinstance(m, ModelRequest):
-                for part in m.parts:
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                for part in message.parts:
                     if isinstance(part, SystemPromptPart):
                         system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
@@ -394,7 +423,11 @@ class BedrockConverseModel(Model):
                                     {
                                         'toolResult': {
                                             'toolUseId': part.tool_call_id,
-                                            'content': [{'text': part.model_response_str()}],
+                                            'content': [
+                                                {'text': part.model_response_str()}
+                                                if profile.bedrock_tool_result_format == 'text'
+                                                else {'json': part.model_response_object()}
+                                            ],
                                             'status': 'success',
                                         }
                                     }
@@ -421,9 +454,9 @@ class BedrockConverseModel(Model):
                                     ],
                                 }
                             )
-            elif isinstance(m, ModelResponse):
+            elif isinstance(message, ModelResponse):
                 content: list[ContentBlockOutputTypeDef] = []
-                for item in m.parts:
+                for item in message.parts:
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
@@ -434,12 +467,31 @@ class BedrockConverseModel(Model):
                         content.append(self._map_tool_call(item))
                 bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
-                assert_never(m)
+                assert_never(message)
+
+        # Merge together sequential user messages.
+        processed_messages: list[MessageUnionTypeDef] = []
+        last_message: dict[str, Any] | None = None
+        for current_message in bedrock_messages:
+            if (
+                last_message is not None
+                and current_message['role'] == last_message['role']
+                and current_message['role'] == 'user'
+            ):
+                # Add the new user content onto the existing user message.
+                last_content = list(last_message['content'])
+                last_content.extend(current_message['content'])
+                last_message['content'] = last_content
+                continue
+
+            # Add the entire message to the list of messages.
+            processed_messages.append(current_message)
+            last_message = cast(dict[str, Any], current_message)
 
         if instructions := self._get_instructions(messages):
             system_prompt.insert(0, {'text': instructions})
 
-        return system_prompt, bedrock_messages
+        return system_prompt, processed_messages
 
     @staticmethod
     async def _map_user_prompt(part: UserPromptPart, document_count: Iterator[int]) -> list[MessageUnionTypeDef]:
@@ -478,7 +530,7 @@ class BedrockConverseModel(Model):
                         data = response.content
                         content.append({'document': {'name': name, 'format': item.format, 'source': {'bytes': data}}})
 
-                    elif item.kind == 'video-url':
+                    elif item.kind == 'video-url':  # pragma: no branch
                         format = item.media_type.split('/')[1]
                         assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp'), (
                             f'Unsupported video format: {format}'
@@ -521,13 +573,13 @@ class BedrockStreamedResponse(StreamedResponse):
             if 'messageStop' in chunk:
                 continue
             if 'metadata' in chunk:
-                if 'usage' in chunk['metadata']:
+                if 'usage' in chunk['metadata']:  # pragma: no branch
                     self._usage += self._map_usage(chunk['metadata'])
                 continue
             if 'contentBlockStart' in chunk:
                 index = chunk['contentBlockStart']['contentBlockIndex']
                 start = chunk['contentBlockStart']['start']
-                if 'toolUse' in start:
+                if 'toolUse' in start:  # pragma: no branch
                     tool_use_start = start['toolUse']
                     tool_id = tool_use_start['toolUseId']
                     tool_name = tool_use_start['name']
@@ -537,7 +589,7 @@ class BedrockStreamedResponse(StreamedResponse):
                         args=None,
                         tool_call_id=tool_id,
                     )
-                    if maybe_event:
+                    if maybe_event:  # pragma: no branch
                         yield maybe_event
             if 'contentBlockDelta' in chunk:
                 index = chunk['contentBlockDelta']['contentBlockIndex']
@@ -561,7 +613,7 @@ class BedrockStreamedResponse(StreamedResponse):
                         args=tool_use.get('input'),
                         tool_call_id=tool_id,
                     )
-                    if maybe_event:
+                    if maybe_event:  # pragma: no branch
                         yield maybe_event
 
     @property
@@ -597,4 +649,4 @@ class _AsyncIteratorWrapper(Generic[T]):
             if type(e.__cause__) is StopIteration:
                 raise StopAsyncIteration
             else:
-                raise e
+                raise e  # pragma: lax no cover

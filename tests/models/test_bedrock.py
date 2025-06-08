@@ -27,10 +27,13 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
@@ -76,6 +79,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                         content="Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=7, response_tokens=30, total_tokens=37),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -133,6 +137,7 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
                         tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
                     ),
                 ],
+                usage=Usage(requests=1, request_tokens=551, response_tokens=132, total_tokens=683),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -157,6 +162,7 @@ async def test_bedrock_model_structured_response(allow_model_requests: None, bed
                         tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                     ),
                 ],
+                usage=Usage(requests=1, request_tokens=685, response_tokens=166, total_tokens=851),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -256,6 +262,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
                     ),
                 ],
+                usage=Usage(requests=1, request_tokens=417, response_tokens=69, total_tokens=486),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -279,6 +286,7 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
 """
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=509, response_tokens=108, total_tokens=617),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -359,7 +367,7 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
         Args:
             city: The city name.
         """
-        return '30°C'  # pragma: no cover
+        return '30°C'
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='What is the temperature of the capital of France?') as agent_run:
@@ -392,10 +400,11 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='thinking')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='>\n')),
             PartStartEvent(
+                index=1, part=ToolCallPart(tool_name='get_temperature', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA')
+            ),
+            PartDeltaEvent(
                 index=1,
-                part=ToolCallPart(
-                    tool_name='get_temperature', args='{"city":"Paris"}', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'
-                ),
+                delta=ToolCallPartDelta(args_delta='{"city":"Paris"}', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'),
             ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
@@ -545,6 +554,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                         content='The capital of France is Paris. Paris is not only the political and economic hub of the country but also a major center for culture, fashion, art, and tourism. It is renowned for its rich history, iconic landmarks such as the Eiffel Tower, Notre-Dame Cathedral, and the Louvre Museum, as well as its influence on global culture and cuisine.'
                     )
                 ],
+                usage=Usage(requests=1, request_tokens=13, response_tokens=71, total_tokens=84),
                 model_name='us.amazon.nova-pro-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -594,6 +604,7 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
+                usage=Usage(requests=1, request_tokens=12, response_tokens=882, total_tokens=894),
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -616,6 +627,7 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[IsInstance(TextPart), IsInstance(ThinkingPart)],
+                usage=Usage(requests=1, request_tokens=12, response_tokens=882, total_tokens=894),
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
             ),
@@ -635,9 +647,52 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
                     ),
                     IsInstance(TextPart),
                 ],
+                usage=Usage(requests=1, request_tokens=636, response_tokens=690, total_tokens=1326),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
             ),
+        ]
+    )
+
+
+async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: BedrockProvider):
+    """
+    Test that consecutive ToolReturnPart objects are grouped into a single user message for Bedrock.
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    now = datetime.datetime.now()
+    # Create a ModelRequest with 3 consecutive ToolReturnParts
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Hello'])]),
+        ModelResponse(parts=[TextPart(content='Hi')]),
+        ModelRequest(parts=[UserPromptPart(content=['How are you?'])]),
+        ModelResponse(parts=[TextPart(content='Cloudy')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='tool1', content='result1', tool_call_id='id1', timestamp=now),
+                ToolReturnPart(tool_name='tool2', content='result2', tool_call_id='id2', timestamp=now),
+                ToolReturnPart(tool_name='tool3', content='result3', tool_call_id='id3', timestamp=now),
+            ]
+        ),
+    ]
+
+    # Call the mapping function directly
+    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Hello'}]},
+            {'role': 'assistant', 'content': [{'text': 'Hi'}]},
+            {'role': 'user', 'content': [{'text': 'How are you?'}]},
+            {'role': 'assistant', 'content': [{'text': 'Cloudy'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'text': 'result1'}], 'status': 'success'}},
+                    {'toolResult': {'toolUseId': 'id2', 'content': [{'text': 'result2'}], 'status': 'success'}},
+                    {'toolResult': {'toolUseId': 'id3', 'content': [{'text': 'result3'}], 'status': 'success'}},
+                ],
+            },
         ]
     )
 
@@ -1341,4 +1396,97 @@ Also\
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='️🚦')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='')),
         ]
+    )
+
+
+async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvider):
+    now = datetime.datetime.now()
+    req = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='tool1', content={'foo': 'bar'}, tool_call_id='id1', timestamp=now),
+            ]
+        ),
+    ]
+
+    # Models other than Mistral support toolResult.content with text, not json
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    # Call the mapping function directly
+    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'text': '{"foo":"bar"}'}], 'status': 'success'}},
+                ],
+            },
+        ]
+    )
+
+    # Mistral requires toolResult.content to hold json, not text
+    model = BedrockConverseModel('mistral.mistral-7b-instruct-v0:2', provider=bedrock_provider)
+    # Call the mapping function directly
+    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'json': {'foo': 'bar'}}], 'status': 'success'}},
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_anthropic_no_tool_choice(bedrock_provider: BedrockProvider):
+    my_tool = ToolDefinition(
+        'my_tool',
+        'This is my tool',
+        {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+    )
+    mrp = ModelRequestParameters(function_tools=[my_tool], allow_text_output=False, output_tools=[])
+
+    # Models other than Anthropic support tool_choice
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
+
+    assert tool_config == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'my_tool',
+                        'description': 'This is my tool',
+                        'inputSchema': {
+                            'json': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}}
+                        },
+                    }
+                }
+            ],
+            'toolChoice': {'any': {}},
+        }
+    )
+
+    # Anthropic models don't support tool_choice
+    model = BedrockConverseModel('us.anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
+
+    assert tool_config == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'my_tool',
+                        'description': 'This is my tool',
+                        'inputSchema': {
+                            'json': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}}
+                        },
+                    }
+                }
+            ]
+        }
     )

@@ -40,14 +40,16 @@ from pydantic_ai.models.test import TestModel
 from .conftest import ClientWithHandler, TestEnv, try_import
 
 try:
+    from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
-except ImportError:
+except ImportError:  # pragma: lax no cover
     GoogleVertexProvider = None
+    GoogleProvider = None
 
 
 try:
     import logfire
-except ImportError:
+except ImportError:  # pragma: lax no cover
     logfire = None
 
 
@@ -57,7 +59,10 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
-    pytest.mark.skipif(GoogleVertexProvider is None or logfire is None, reason='google-auth or logfire not installed'),
+    pytest.mark.skipif(
+        GoogleVertexProvider is None or logfire is None or GoogleProvider is None,
+        reason='google-auth or logfire or google-provider not installed',
+    ),
 ]
 
 
@@ -67,13 +72,27 @@ def find_filter_examples() -> Iterable[ParameterSet]:
 
     for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if ex.path.name != '_utils.py':
+            try:
+                path = ex.path.relative_to(Path.cwd())
+            except ValueError:
+                path = ex.path
+            test_id = f'{path}:{ex.start_line}'
             prefix_settings = ex.prefix_settings()
-            test_id = str(ex)
             if opt_title := prefix_settings.get('title'):
                 test_id += f':{opt_title}'
             yield pytest.param(ex, id=test_id)
 
 
+@pytest.fixture
+def reset_cwd():
+    original_cwd = os.getcwd()
+    try:
+        yield
+    finally:
+        os.chdir(original_cwd)
+
+
+@pytest.mark.xdist_group(name='doc_tests')
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(  # noqa: C901
     example: CodeExample,
@@ -83,6 +102,7 @@ def test_docs_examples(  # noqa: C901
     allow_model_requests: None,
     env: TestEnv,
     tmp_path: Path,
+    reset_cwd: None,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
@@ -97,7 +117,7 @@ def test_docs_examples(  # noqa: C901
 
     class CustomEvaluationReport(EvaluationReport):
         def print(self, *args: Any, **kwargs: Any) -> None:
-            if 'width' in kwargs:  # pragma: no cover
+            if 'width' in kwargs:  # pragma: lax no cover
                 raise ValueError('width should not be passed to CustomEvaluationReport')
             table = self.console_table(*args, **kwargs)
             io_file = StringIO()
@@ -106,12 +126,13 @@ def test_docs_examples(  # noqa: C901
 
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
 
-    if sys.version_info >= (3, 10):
+    if sys.version_info >= (3, 10):  # pragma: lax no cover
         mocker.patch('pydantic_ai.mcp.MCPServerHTTP', return_value=MockMCPServer())
         mocker.patch('mcp.server.fastmcp.FastMCP')
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
+    env.set('GOOGLE_API_KEY', 'testing')
     env.set('GROQ_API_KEY', 'testing')
     env.set('CO_API_KEY', 'testing')
     env.set('MISTRAL_API_KEY', 'testing')
@@ -132,19 +153,12 @@ def test_docs_examples(  # noqa: C901
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
         if sys.version_info < python_version_info:
-            pytest.skip(f'Python version {python_version} required')
-
-    cwd = Path.cwd()
+            pytest.skip(f'Python version {python_version} required')  # pragma: lax no cover
 
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
         pytest.skip('both running code and lint skipped')
 
-    if opt_title == 'sql_app_evals.py':
-        os.chdir(tmp_path)
-        examples = [{'request': f'sql prompt {i}', 'sql': f'SELECT {i}'} for i in range(15)]
-        with (tmp_path / 'examples.json').open('w') as f:
-            json.dump(examples, f)
-    elif opt_title in {
+    if opt_title in {
         'ai_q_and_a_run.py',
         'count_down_from_persistence.py',
         'generate_dataset_example.py',
@@ -173,7 +187,7 @@ def test_docs_examples(  # noqa: C901
 
     if not opt_lint.startswith('skip'):
         # ruff and seem to black disagree here, not sure if that's easily fixable
-        if eval_example.update_examples:  # pragma: no cover
+        if eval_example.update_examples:  # pragma: lax no cover
             eval_example.format_ruff(example)
         else:
             eval_example.lint_ruff(example)
@@ -184,12 +198,11 @@ def test_docs_examples(  # noqa: C901
         test_globals: dict[str, str] = {}
         if opt_title == 'mcp_client.py':
             test_globals['__name__'] = '__test__'
-        if eval_example.update_examples:  # pragma: no cover
+        if eval_example.update_examples:  # pragma: lax no cover
             module_dict = eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
         else:
             module_dict = eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
 
-        os.chdir(cwd)
         if title := opt_title:
             if title.endswith('.py'):
                 module_name = title[:-3]
@@ -230,9 +243,9 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         return '1'
     elif prompt == 'Select product':
         return 'crisps'
-    elif prompt == 'What is the capital of France?':
+    elif prompt == 'What is the capital of France?':  # pragma: no cover
         return 'Vichy'
-    elif prompt == 'what is 1 + 1?':
+    elif prompt == 'what is 1 + 1?':  # pragma: no cover
         return '2'
     else:  # pragma: no cover
         raise ValueError(f'Unexpected prompt: {prompt}')
@@ -387,6 +400,37 @@ text_responses: dict[str, str | ToolCallPart] = {
             'steps': ['Mix the ingredients', 'Bake at 350°F for 30 minutes'],
         },
     ),
+    'What is 123 / 456?': ToolCallPart(
+        tool_name='divide',
+        args={'numerator': '123', 'denominator': '456'},
+        tool_call_id='pyd_ai_2e0e396768a14fe482df90a29a78dc7b',
+    ),
+    'Select the names and countries of all capitals': ToolCallPart(
+        tool_name='final_result_hand_off_to_sql_agent',
+        args={'query': 'SELECT name, country FROM capitals;'},
+    ),
+    'SELECT name, country FROM capitals;': ToolCallPart(
+        tool_name='final_result_run_sql_query',
+        args={'query': 'SELECT name, country FROM capitals;'},
+    ),
+    'SELECT * FROM capital_cities;': ToolCallPart(
+        tool_name='final_result_run_sql_query',
+        args={'query': 'SELECT * FROM capital_cities;'},
+    ),
+    'Select all pets': ToolCallPart(
+        tool_name='final_result_hand_off_to_sql_agent',
+        args={'query': 'SELECT * FROM pets;'},
+    ),
+    'SELECT * FROM pets;': ToolCallPart(
+        tool_name='final_result_run_sql_query',
+        args={'query': 'SELECT * FROM pets;'},
+    ),
+    'How do I fly from Amsterdam to Mexico City?': ToolCallPart(
+        tool_name='final_result_RouterFailure',
+        args={
+            'explanation': 'I am not equipped to provide travel information, such as flights from Amsterdam to Mexico City.'
+        },
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -397,9 +441,16 @@ tool_responses: dict[tuple[str, str], str] = {
 }
 
 
-async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover  # noqa: C901
+async def model_logic(  # noqa: C901
+    messages: list[ModelMessage], info: AgentInfo
+) -> ModelResponse:  # pragma: lax no cover
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
+        if isinstance(m.content, list) and m.content[0] == 'This is file d9a13f:':
+            return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
+        elif isinstance(m.content, list) and m.content[0] == 'This is file c6720d:':
+            return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
+
         assert isinstance(m.content, str)
         if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
             return ModelResponse(
@@ -435,6 +486,22 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         elif '<Rubric>\n' in m.content:
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'reason': '-', 'pass': True, 'score': 1.0})]
+            )
+        elif m.content == 'What time is it?':
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_current_time', args={}, tool_call_id='pyd_ai_tool_call_id')]
+            )
+        elif m.content == 'What is the user name?':
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_user', args={}, tool_call_id='pyd_ai_tool_call_id')]
+            )
+        elif m.content == 'What is the company name in the logo?':
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_company_logo', args={}, tool_call_id='pyd_ai_tool_call_id')]
+            )
+        elif m.content == 'What is the main content of the document?':
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id')]
             )
         elif 'Generate question-answer pairs about world capitals and landmarks.' in m.content:
             return ModelResponse(
@@ -475,7 +542,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='final_result', args={'response': win}, tool_call_id='pyd_ai_tool_call_id')]
+            parts=[ToolCallPart(tool_name='final_result', args={'response': win}, tool_call_id='pyd_ai_tool_call_id')],
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roll_die':
         return ModelResponse(
@@ -535,6 +602,79 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
         return ModelResponse(
             parts=[ToolCallPart(tool_name='final_result_FlightDetails', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_current_time':
+        return ModelResponse(parts=[TextPart('The current time is 10:45 PM on April 17, 2025.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
+        return ModelResponse(parts=[TextPart("The user's name is John.")])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo':
+        return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document':
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='get_document', args={}, tool_call_id='pyd_ai_tool_call_id')]
+        )
+    elif (
+        isinstance(m, RetryPromptPart)
+        and m.tool_name == 'final_result_run_sql_query'
+        and m.content == "Only 'SELECT *' is supported, you'll have to do column filtering manually."
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result_run_sql_query',
+                    args={'query': 'SELECT * FROM capitals;'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
+    elif (
+        isinstance(m, RetryPromptPart)
+        and m.tool_name == 'final_result_hand_off_to_sql_agent'
+        and m.content
+        == "SQL agent failed: Unknown table 'capitals' in query 'SELECT * FROM capitals;'. Available tables: capital_cities."
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result_hand_off_to_sql_agent',
+                    args={'query': 'SELECT * FROM capital_cities;'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
+    elif (
+        isinstance(m, RetryPromptPart)
+        and m.tool_name == 'final_result_run_sql_query'
+        and m.content == "Unknown table 'pets' in query 'SELECT * FROM pets;'. Available tables: capital_cities."
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result_SQLFailure',
+                    args={
+                        'explanation': "The table 'pets' does not exist in the database. Only the table 'capital_cities' is available."
+                    },
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
+    # SQL agent failed: The table 'pets' does not exist in the database. Only the table 'capital_cities' is available.
+    elif (
+        isinstance(m, RetryPromptPart)
+        and m.tool_name == 'final_result_hand_off_to_sql_agent'
+        and m.content
+        == "SQL agent failed: The table 'pets' does not exist in the database. Only the table 'capital_cities' is available."
+    ):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result_RouterFailure',
+                    args={
+                        'explanation': "The requested table 'pets' does not exist in the database. The only available table is 'capital_cities', which does not contain data about pets."
+                    },
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')
@@ -542,7 +682,7 @@ async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelRes
 
 async def stream_model_logic(  # noqa C901
     messages: list[ModelMessage], info: AgentInfo
-) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: no cover
+) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: lax no cover
     async def stream_text_response(r: str) -> AsyncIterator[str]:
         if isinstance(r, str):
             words = r.split(' ')
@@ -600,14 +740,14 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
     if isinstance(model, FallbackModel):
         # When a fallback model is encountered, replace any OpenAIModel with a model that will raise a ModelHTTPError.
         # Otherwise, do the usual inference.
-        def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelHTTPError(401, 'Invalid API Key')
 
         mock_fallback_models: list[Model] = []
         for m in model.models:
             try:
                 from pydantic_ai.models.openai import OpenAIModel
-            except ImportError:
+            except ImportError:  # pragma: lax no cover
                 OpenAIModel = type(None)
 
             if isinstance(m, OpenAIModel):

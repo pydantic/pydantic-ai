@@ -27,7 +27,7 @@ and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`A
 
 Example of accessing methods on a [`RunResult`][pydantic_ai.agent.AgentRunResult] :
 
-```python {title="run_result_messages.py" hl_lines="10 28"}
+```python {title="run_result_messages.py" hl_lines="10"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
@@ -45,28 +45,22 @@ print(result.all_messages())
             SystemPromptPart(
                 content='Be a helpful assistant.',
                 timestamp=datetime.datetime(...),
-                dynamic_ref=None,
-                part_kind='system-prompt',
             ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
             ),
-        ],
-        instructions=None,
-        kind='request',
+        ]
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                part_kind='text',
+                content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
+        usage=Usage(requests=1, request_tokens=60, response_tokens=12, total_tokens=72),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
-        kind='response',
     ),
 ]
 """
@@ -75,7 +69,7 @@ _(This example is complete, it can be run "as is")_
 
 Example of accessing methods on a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] :
 
-```python {title="streamed_run_result_messages.py" hl_lines="9 31"}
+```python {title="streamed_run_result_messages.py" hl_lines="9 40"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
@@ -92,17 +86,12 @@ async def main():
                     SystemPromptPart(
                         content='Be a helpful assistant.',
                         timestamp=datetime.datetime(...),
-                        dynamic_ref=None,
-                        part_kind='system-prompt',
                     ),
                     UserPromptPart(
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
-                        part_kind='user-prompt',
                     ),
-                ],
-                instructions=None,
-                kind='request',
+                ]
             )
         ]
         """
@@ -123,28 +112,22 @@ async def main():
                     SystemPromptPart(
                         content='Be a helpful assistant.',
                         timestamp=datetime.datetime(...),
-                        dynamic_ref=None,
-                        part_kind='system-prompt',
                     ),
                     UserPromptPart(
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
-                        part_kind='user-prompt',
                     ),
-                ],
-                instructions=None,
-                kind='request',
+                ]
             ),
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                        part_kind='text',
+                        content='Did you hear about the toothpaste scandal? They called it Colgate.'
                     )
                 ],
+                usage=Usage(request_tokens=50, response_tokens=12, total_tokens=62),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
-                kind='response',
             ),
         ]
         """
@@ -182,50 +165,40 @@ print(result2.all_messages())
             SystemPromptPart(
                 content='Be a helpful assistant.',
                 timestamp=datetime.datetime(...),
-                dynamic_ref=None,
-                part_kind='system-prompt',
             ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
             ),
-        ],
-        instructions=None,
-        kind='request',
+        ]
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                part_kind='text',
+                content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
+        usage=Usage(requests=1, request_tokens=60, response_tokens=12, total_tokens=72),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
-        kind='response',
     ),
     ModelRequest(
         parts=[
             UserPromptPart(
                 content='Explain?',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
             )
-        ],
-        instructions=None,
-        kind='request',
+        ]
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
-                part_kind='text',
+                content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
+        usage=Usage(requests=1, request_tokens=61, response_tokens=26, total_tokens=87),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
-        kind='response',
     ),
 ]
 """
@@ -285,7 +258,7 @@ The message format is independent of the model used, so you can use messages in 
 
 In the example below, we reuse the message from the first agent run, which uses the `openai:gpt-4o` model, in a second agent run using the `google-gla:gemini-1.5-pro` model.
 
-```python {title="Reusing messages with a different model" hl_lines="11"}
+```python {title="Reusing messages with a different model" hl_lines="17"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
@@ -310,50 +283,40 @@ print(result2.all_messages())
             SystemPromptPart(
                 content='Be a helpful assistant.',
                 timestamp=datetime.datetime(...),
-                dynamic_ref=None,
-                part_kind='system-prompt',
             ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
             ),
-        ],
-        instructions=None,
-        kind='request',
+        ]
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                part_kind='text',
+                content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
+        usage=Usage(requests=1, request_tokens=60, response_tokens=12, total_tokens=72),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
-        kind='response',
     ),
     ModelRequest(
         parts=[
             UserPromptPart(
                 content='Explain?',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
             )
-        ],
-        instructions=None,
-        kind='request',
+        ]
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
-                part_kind='text',
+                content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
+        usage=Usage(requests=1, request_tokens=61, response_tokens=26, total_tokens=87),
         model_name='gemini-1.5-pro',
         timestamp=datetime.datetime(...),
-        kind='response',
     ),
 ]
 """

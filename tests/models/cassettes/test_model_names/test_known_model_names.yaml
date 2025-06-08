@@ -1,0 +1,30 @@
+interactions:
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - us.inference.heroku.com
+    method: GET
+    uri: https://us.inference.heroku.com/available-models
+  response:
+    body:
+      string: 404 page not found
+    headers:
+      content-length:
+      - '18'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/plain
+      strict-transport-security:
+      - max-age=63072000
+    status:
+      code: 404
+      message: Not Found
+version: 1

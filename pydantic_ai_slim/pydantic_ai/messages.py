@@ -1,19 +1,26 @@
 from __future__ import annotations as _annotations
 
+import base64
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
-from typing import Annotated, Any, Literal, Union, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
 
 import pydantic
 import pydantic_core
 from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
 from typing_extensions import TypeAlias
 
+from . import _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
+from .usage import Usage
+
+if TYPE_CHECKING:
+    from .models.instrumented import InstrumentationSettings
+
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
@@ -44,7 +51,7 @@ DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', '
 VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
 
 
-@dataclass
+@dataclass(repr=False)
 class SystemPromptPart:
     """A system prompt, generally written by the application developer.
 
@@ -66,11 +73,13 @@ class SystemPromptPart:
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self) -> Event:
+    def otel_event(self, _settings: InstrumentationSettings) -> Event:
         return Event('gen_ai.system.message', body={'content': self.content, 'role': 'system'})
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False)
 class VideoUrl:
     """A URL to an video."""
 
@@ -81,7 +90,7 @@ class VideoUrl:
     """Type identifier, this is available on all parts as a discriminator."""
 
     @property
-    def media_type(self) -> VideoMediaType:  # pragma: no cover
+    def media_type(self) -> VideoMediaType:
         """Return the media type of the video, based on the url."""
         if self.url.endswith('.mkv'):
             return 'video/x-matroska'
@@ -108,10 +117,12 @@ class VideoUrl:
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _video_format(self.media_type)
+        return _video_format_lookup[self.media_type]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass
+@dataclass(repr=False)
 class AudioUrl:
     """A URL to an audio file."""
 
@@ -131,8 +142,15 @@ class AudioUrl:
         else:
             raise ValueError(f'Unknown audio file extension: {self.url}')
 
+    @property
+    def format(self) -> AudioFormat:
+        """The file format of the audio file."""
+        return _audio_format_lookup[self.media_type]
 
-@dataclass
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class ImageUrl:
     """A URL to an image."""
 
@@ -162,10 +180,12 @@ class ImageUrl:
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _image_format(self.media_type)
+        return _image_format_lookup[self.media_type]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass
+@dataclass(repr=False)
 class DocumentUrl:
     """The URL of the document."""
 
@@ -180,7 +200,7 @@ class DocumentUrl:
         """Return the media type of the document, based on the url."""
         type_, _ = guess_type(self.url)
         if type_ is None:
-            raise RuntimeError(f'Unknown document file extension: {self.url}')
+            raise ValueError(f'Unknown document file extension: {self.url}')
         return type_
 
     @property
@@ -189,10 +209,16 @@ class DocumentUrl:
 
         The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
         """
-        return _document_format(self.media_type)
+        media_type = self.media_type
+        try:
+            return _document_format_lookup[media_type]
+        except KeyError as e:
+            raise ValueError(f'Unknown document media type: {media_type}') from e
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass
+@dataclass(repr=False)
 class BinaryContent:
     """Binary content, e.g. an audio or image file."""
 
@@ -223,93 +249,63 @@ class BinaryContent:
     @property
     def is_document(self) -> bool:
         """Return `True` if the media type is a document type."""
-        return self.media_type in {
-            'application/pdf',
-            'text/plain',
-            'text/csv',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'text/html',
-            'text/markdown',
-            'application/vnd.ms-excel',
-        }
+        return self.media_type in _document_format_lookup
 
     @property
     def format(self) -> str:
         """The file format of the binary content."""
-        if self.is_audio:
-            if self.media_type == 'audio/mpeg':
-                return 'mp3'
-            elif self.media_type == 'audio/wav':
-                return 'wav'
-        elif self.is_image:
-            return _image_format(self.media_type)
-        elif self.is_document:
-            return _document_format(self.media_type)
-        elif self.is_video:
-            return _video_format(self.media_type)
-        raise ValueError(f'Unknown media type: {self.media_type}')
+        try:
+            if self.is_audio:
+                return _audio_format_lookup[self.media_type]
+            elif self.is_image:
+                return _image_format_lookup[self.media_type]
+            elif self.is_video:
+                return _video_format_lookup[self.media_type]
+            else:
+                return _document_format_lookup[self.media_type]
+        except KeyError as e:
+            raise ValueError(f'Unknown media type: {self.media_type}') from e
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
 
-
-def _document_format(media_type: str) -> DocumentFormat:
-    if media_type == 'application/pdf':
-        return 'pdf'
-    elif media_type == 'text/plain':
-        return 'txt'
-    elif media_type == 'text/csv':
-        return 'csv'
-    elif media_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-        return 'docx'
-    elif media_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
-        return 'xlsx'
-    elif media_type == 'text/html':
-        return 'html'
-    elif media_type == 'text/markdown':
-        return 'md'
-    elif media_type == 'application/vnd.ms-excel':
-        return 'xls'
-    else:
-        raise ValueError(f'Unknown document media type: {media_type}')
-
-
-def _image_format(media_type: str) -> ImageFormat:
-    if media_type == 'image/jpeg':
-        return 'jpeg'
-    elif media_type == 'image/png':
-        return 'png'
-    elif media_type == 'image/gif':
-        return 'gif'
-    elif media_type == 'image/webp':
-        return 'webp'
-    else:
-        raise ValueError(f'Unknown image media type: {media_type}')
-
-
-def _video_format(media_type: str) -> VideoFormat:
-    if media_type == 'video/x-matroska':
-        return 'mkv'
-    elif media_type == 'video/quicktime':
-        return 'mov'
-    elif media_type == 'video/mp4':
-        return 'mp4'
-    elif media_type == 'video/webm':
-        return 'webm'
-    elif media_type == 'video/x-flv':
-        return 'flv'
-    elif media_type == 'video/mpeg':
-        return 'mpeg'
-    elif media_type == 'video/x-ms-wmv':
-        return 'wmv'
-    elif media_type == 'video/3gpp':
-        return 'three_gp'
-    else:  # pragma: no cover
-        raise ValueError(f'Unknown video media type: {media_type}')
+# Ideally this would be a Union of types, but Python 3.9 requires it to be a string, and strings don't work with `isinstance``.
+MultiModalContentTypes = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
+_document_format_lookup: dict[str, DocumentFormat] = {
+    'application/pdf': 'pdf',
+    'text/plain': 'txt',
+    'text/csv': 'csv',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'text/html': 'html',
+    'text/markdown': 'md',
+    'application/vnd.ms-excel': 'xls',
+}
+_audio_format_lookup: dict[str, AudioFormat] = {
+    'audio/mpeg': 'mp3',
+    'audio/wav': 'wav',
+}
+_image_format_lookup: dict[str, ImageFormat] = {
+    'image/jpeg': 'jpeg',
+    'image/png': 'png',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+}
+_video_format_lookup: dict[str, VideoFormat] = {
+    'video/x-matroska': 'mkv',
+    'video/quicktime': 'mov',
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'video/x-flv': 'flv',
+    'video/mpeg': 'mpeg',
+    'video/x-ms-wmv': 'wmv',
+    'video/3gpp': 'three_gp',
+}
 
 
-@dataclass
+@dataclass(repr=False)
 class UserPromptPart:
     """A user prompt, generally written by the end user.
 
@@ -326,7 +322,7 @@ class UserPromptPart:
     part_kind: Literal['user-prompt'] = 'user-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self) -> Event:
+    def otel_event(self, settings: InstrumentationSettings) -> Event:
         content: str | list[dict[str, Any] | str]
         if isinstance(self.content, str):
             content = self.content
@@ -337,15 +333,22 @@ class UserPromptPart:
                     content.append(part)
                 elif isinstance(part, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
                     content.append({'kind': part.kind, 'url': part.url})
+                elif isinstance(part, BinaryContent):
+                    converted_part = {'kind': part.kind, 'media_type': part.media_type}
+                    if settings.include_binary_content:
+                        converted_part['binary_content'] = base64.b64encode(part.data).decode()
+                    content.append(converted_part)
                 else:
-                    content.append({'kind': part.kind})
+                    content.append({'kind': part.kind})  # pragma: no cover
         return Event('gen_ai.user.message', body={'content': content, 'role': 'user'})
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(Any, config=pydantic.ConfigDict(defer_build=True))
 
 
-@dataclass
+@dataclass(repr=False)
 class ToolReturnPart:
     """A tool return message, this encodes the result of running a tool."""
 
@@ -379,17 +382,19 @@ class ToolReturnPart:
         else:
             return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
 
-    def otel_event(self) -> Event:
+    def otel_event(self, _settings: InstrumentationSettings) -> Event:
         return Event(
             'gen_ai.tool.message',
             body={'content': self.content, 'role': 'tool', 'id': self.tool_call_id, 'name': self.tool_name},
         )
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
 
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
-@dataclass
+@dataclass(repr=False)
 class RetryPromptPart:
     """A message back to a model asking it to try again.
 
@@ -436,7 +441,7 @@ class RetryPromptPart:
             description = f'{len(self.content)} validation errors: {json_errors.decode()}'
         return f'{description}\n\nFix the errors and try again.'
 
-    def otel_event(self) -> Event:
+    def otel_event(self, _settings: InstrumentationSettings) -> Event:
         if self.tool_name is None:
             return Event('gen_ai.user.message', body={'content': self.model_response(), 'role': 'user'})
         else:
@@ -450,6 +455,8 @@ class RetryPromptPart:
                 },
             )
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
 
 ModelRequestPart = Annotated[
     Union[SystemPromptPart, UserPromptPart, ToolReturnPart, RetryPromptPart], pydantic.Discriminator('part_kind')
@@ -457,7 +464,7 @@ ModelRequestPart = Annotated[
 """A message part sent by PydanticAI to a model."""
 
 
-@dataclass
+@dataclass(repr=False)
 class ModelRequest:
     """A request generated by PydanticAI and sent to a model, e.g. a message from the PydanticAI app to the model."""
 
@@ -470,8 +477,15 @@ class ModelRequest:
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
 
+    @classmethod
+    def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
+        """Create a `ModelRequest` with a single user prompt as text."""
+        return cls(parts=[UserPromptPart(user_prompt)], instructions=instructions)
 
-@dataclass
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class TextPart:
     """A plain text response from a model."""
 
@@ -484,6 +498,8 @@ class TextPart:
     def has_content(self) -> bool:
         """Return `True` if the text content is non-empty."""
         return bool(self.content)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass
@@ -504,14 +520,14 @@ class ThinkingPart:
         return bool(self.content)
 
 
-@dataclass
+@dataclass(repr=False)
 class ToolCallPart:
     """A tool call from a model."""
 
     tool_name: str
     """The name of the tool to call."""
 
-    args: str | dict[str, Any]
+    args: str | dict[str, Any] | None = None
     """The arguments to pass to the tool.
 
     This is stored either as a JSON string or a Python dictionary depending on how data was received.
@@ -531,10 +547,10 @@ class ToolCallPart:
 
         This is just for convenience with models that require dicts as input.
         """
+        if not self.args:
+            return {}
         if isinstance(self.args, dict):
             return self.args
-        if isinstance(self.args, str) and not self.args:
-            return {}
         args = pydantic_core.from_json(self.args)
         assert isinstance(args, dict), 'args should be a dict'
         return cast(dict[str, Any], args)
@@ -544,6 +560,8 @@ class ToolCallPart:
 
         This is just for convenience with models that require JSON strings as input.
         """
+        if not self.args:
+            return '{}'
         if isinstance(self.args, str):
             return self.args
         return pydantic_core.to_json(self.args).decode()
@@ -557,17 +575,25 @@ class ToolCallPart:
         else:
             return bool(self.args)
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
 
 ModelResponsePart = Annotated[Union[TextPart, ToolCallPart, ThinkingPart], pydantic.Discriminator('part_kind')]
 """A message part returned by a model."""
 
 
-@dataclass
+@dataclass(repr=False)
 class ModelResponse:
     """A response from a model, e.g. a message from the model to the PydanticAI app."""
 
     parts: list[ModelResponsePart]
     """The parts of the model message."""
+
+    usage: Usage = field(default_factory=Usage)
+    """Usage information for the request.
+
+    This has a default to make tests easier, and to support loading old messages where usage will be missing.
+    """
 
     model_name: str | None = None
     """The name of the model that generated the response."""
@@ -580,6 +606,16 @@ class ModelResponse:
 
     kind: Literal['response'] = 'response'
     """Message type identifier, this is available on all parts as a discriminator."""
+
+    vendor_details: dict[str, Any] | None = field(default=None)
+    """Additional vendor-specific details in a serializable format.
+
+    This allows storing selected vendor-specific data that isn't mapped to standard ModelResponse fields.
+    For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
+    """
+
+    vendor_id: str | None = None
+    """Vendor ID as specified by the model provider. This can be used to track the specific request to the model."""
 
     def otel_events(self) -> list[Event]:
         """Return OpenTelemetry events for the response."""
@@ -611,6 +647,8 @@ class ModelResponse:
 
         return result
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
 
 ModelMessage = Annotated[Union[ModelRequest, ModelResponse], pydantic.Discriminator('kind')]
 """Any message sent to or returned by a model."""
@@ -621,7 +659,7 @@ ModelMessagesTypeAdapter = pydantic.TypeAdapter(
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
 
 
-@dataclass
+@dataclass(repr=False)
 class TextPartDelta:
     """A partial update (delta) for a `TextPart` to append new text content."""
 
@@ -644,8 +682,10 @@ class TextPartDelta:
             ValueError: If `part` is not a `TextPart`.
         """
         if not isinstance(part, TextPart):
-            raise ValueError('Cannot apply TextPartDeltas to non-TextParts')
+            raise ValueError('Cannot apply TextPartDeltas to non-TextParts')  # pragma: no cover
         return replace(part, content=part.content + self.content_delta)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass
@@ -696,7 +736,7 @@ class ThinkingPartDelta:
         )
 
 
-@dataclass
+@dataclass(repr=False)
 class ToolCallPartDelta:
     """A partial update (delta) for a `ToolCallPart` to modify tool name, arguments, or tool call ID."""
 
@@ -723,9 +763,9 @@ class ToolCallPartDelta:
         """Convert this delta to a fully formed `ToolCallPart` if possible, otherwise return `None`.
 
         Returns:
-            A `ToolCallPart` if both `tool_name_delta` and `args_delta` are set, otherwise `None`.
+            A `ToolCallPart` if `tool_name_delta` is set, otherwise `None`.
         """
-        if self.tool_name_delta is None or self.args_delta is None:
+        if self.tool_name_delta is None:
             return None
 
         return ToolCallPart(self.tool_name_delta, self.args_delta, self.tool_call_id or _generate_tool_call_id())
@@ -755,7 +795,9 @@ class ToolCallPartDelta:
         if isinstance(part, ToolCallPartDelta):
             return self._apply_to_delta(part)
 
-        raise ValueError(f'Can only apply ToolCallPartDeltas to ToolCallParts or ToolCallPartDeltas, not {part}')
+        raise ValueError(  # pragma: no cover
+            f'Can only apply ToolCallPartDeltas to ToolCallParts or ToolCallPartDeltas, not {part}'
+        )
 
     def _apply_to_delta(self, delta: ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta:
         """Internal helper to apply this delta to another delta."""
@@ -783,7 +825,7 @@ class ToolCallPartDelta:
             delta = replace(delta, tool_call_id=self.tool_call_id)
 
         # If we now have enough data to create a full ToolCallPart, do so
-        if delta.tool_name_delta is not None and delta.args_delta is not None:
+        if delta.tool_name_delta is not None:
             return ToolCallPart(delta.tool_name_delta, delta.args_delta, delta.tool_call_id or _generate_tool_call_id())
 
         return delta
@@ -796,12 +838,12 @@ class ToolCallPartDelta:
             part = replace(part, tool_name=tool_name)
 
         if isinstance(self.args_delta, str):
-            if not isinstance(part.args, str):
+            if isinstance(part.args, dict):
                 raise UnexpectedModelBehavior(f'Cannot apply JSON deltas to non-JSON tool arguments ({part=}, {self=})')
-            updated_json = part.args + self.args_delta
+            updated_json = (part.args or '') + self.args_delta
             part = replace(part, args=updated_json)
         elif isinstance(self.args_delta, dict):
-            if not isinstance(part.args, dict):
+            if isinstance(part.args, str):
                 raise UnexpectedModelBehavior(f'Cannot apply dict deltas to non-dict tool arguments ({part=}, {self=})')
             updated_dict = {**(part.args or {}), **self.args_delta}
             part = replace(part, args=updated_dict)
@@ -810,6 +852,8 @@ class ToolCallPartDelta:
             part = replace(part, tool_call_id=self.tool_call_id)
         return part
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
 
 ModelResponsePartDelta = Annotated[
     Union[TextPartDelta, ThinkingPartDelta, ToolCallPartDelta], pydantic.Discriminator('part_delta_kind')
@@ -817,7 +861,7 @@ ModelResponsePartDelta = Annotated[
 """A partial update (delta) for any model response part."""
 
 
-@dataclass
+@dataclass(repr=False)
 class PartStartEvent:
     """An event indicating that a new part has started.
 
@@ -834,8 +878,10 @@ class PartStartEvent:
     event_kind: Literal['part_start'] = 'part_start'
     """Event type identifier, used as a discriminator."""
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False)
 class PartDeltaEvent:
     """An event indicating a delta update for an existing part."""
 
@@ -848,8 +894,10 @@ class PartDeltaEvent:
     event_kind: Literal['part_delta'] = 'part_delta'
     """Event type identifier, used as a discriminator."""
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False)
 class FinalResultEvent:
     """An event indicating the response to the current model request matches the output schema and will produce a result."""
 
@@ -859,6 +907,8 @@ class FinalResultEvent:
     """The tool call ID, if any, that this result is associated with."""
     event_kind: Literal['final_result'] = 'final_result'
     """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 ModelResponseStreamEvent = Annotated[Union[PartStartEvent, PartDeltaEvent], pydantic.Discriminator('event_kind')]
@@ -870,7 +920,7 @@ AgentStreamEvent = Annotated[
 """An event in the agent stream."""
 
 
-@dataclass
+@dataclass(repr=False)
 class FunctionToolCallEvent:
     """An event indicating the start to a call to a function tool."""
 
@@ -884,8 +934,10 @@ class FunctionToolCallEvent:
     def __post_init__(self):
         self.call_id = self.part.tool_call_id or str(uuid.uuid4())
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False)
 class FunctionToolResultEvent:
     """An event indicating the result of a function tool call."""
 
@@ -896,5 +948,9 @@ class FunctionToolResultEvent:
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-HandleResponseEvent = Annotated[Union[FunctionToolCallEvent, FunctionToolResultEvent], pydantic.Discriminator('kind')]
+
+HandleResponseEvent = Annotated[
+    Union[FunctionToolCallEvent, FunctionToolResultEvent], pydantic.Discriminator('event_kind')
+]

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '793'
+      - '778'
       content-type:
       - application/json
       host:
@@ -34,48 +34,49 @@ interactions:
           additionalProperties: false
           properties:
             name:
-              title: Name
               type: string
           required:
           - name
           type: object
         name: retrieve_entity_info
-    uri: https://api.anthropic.com/v1/messages
+    uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '833'
+      - '874'
       content-type:
       - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       content:
-      - text: I'll retrieve the information about each family member to determine their ages.
+      - text: I'll help you find out who is the youngest by retrieving information about each family member.
         type: text
-      - id: toolu_01GqTEj62q5VBiG1mMFcZ7hE
+      - id: toolu_01Mor8HP3PCQYDtARHAUqnPP
         input:
           name: Alice
         name: retrieve_entity_info
         type: tool_use
-      - id: toolu_01HEMkf9mGmss65HbM4E1K8Z
+      - id: toolu_0121cz6P8XDY54zjszVzt6rL
         input:
           name: Bob
         name: retrieve_entity_info
         type: tool_use
-      - id: toolu_01VodXtCizVDfWstMmmgf2Wm
+      - id: toolu_01LkwH9ot4irNcEDHMEYYvjr
         input:
           name: Charlie
         name: retrieve_entity_info
         type: tool_use
-      - id: toolu_01EEJV6Tiy89J1qcBHVoVeRc
+      - id: toolu_01S45MDAaqaBaUafAgCr7NBk
         input:
           name: Daisy
         name: retrieve_entity_info
         type: tool_use
-      id: msg_01KwuP4ctUBBfVFMZRqpWJ45
+      id: msg_01Tqz4xxLyw4Qt8AmhRxmGQm
       model: claude-3-5-haiku-20241022
       role: assistant
       stop_reason: tool_use
@@ -84,8 +85,9 @@ interactions:
       usage:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 429
-        output_tokens: 186
+        input_tokens: 423
+        output_tokens: 191
+        service_tier: standard
     status:
       code: 200
       message: OK
@@ -112,24 +114,24 @@ interactions:
           type: text
         role: user
       - content:
-        - text: I'll retrieve the information about each family member to determine their ages.
+        - text: I'll help you find out who is the youngest by retrieving information about each family member.
           type: text
-        - id: toolu_01GqTEj62q5VBiG1mMFcZ7hE
+        - id: toolu_01Mor8HP3PCQYDtARHAUqnPP
           input:
             name: Alice
           name: retrieve_entity_info
           type: tool_use
-        - id: toolu_01HEMkf9mGmss65HbM4E1K8Z
+        - id: toolu_0121cz6P8XDY54zjszVzt6rL
           input:
             name: Bob
           name: retrieve_entity_info
           type: tool_use
-        - id: toolu_01VodXtCizVDfWstMmmgf2Wm
+        - id: toolu_01LkwH9ot4irNcEDHMEYYvjr
           input:
             name: Charlie
           name: retrieve_entity_info
           type: tool_use
-        - id: toolu_01EEJV6Tiy89J1qcBHVoVeRc
+        - id: toolu_01S45MDAaqaBaUafAgCr7NBk
           input:
             name: Daisy
           name: retrieve_entity_info
@@ -138,19 +140,19 @@ interactions:
       - content:
         - content: alice is bob's wife
           is_error: false
-          tool_use_id: toolu_01GqTEj62q5VBiG1mMFcZ7hE
+          tool_use_id: toolu_01Mor8HP3PCQYDtARHAUqnPP
           type: tool_result
         - content: bob is alice's husband
           is_error: false
-          tool_use_id: toolu_01HEMkf9mGmss65HbM4E1K8Z
+          tool_use_id: toolu_0121cz6P8XDY54zjszVzt6rL
           type: tool_result
         - content: charlie is alice's son
           is_error: false
-          tool_use_id: toolu_01VodXtCizVDfWstMmmgf2Wm
+          tool_use_id: toolu_01LkwH9ot4irNcEDHMEYYvjr
           type: tool_result
         - content: daisy is bob's daughter and charlie's younger sister
           is_error: false
-          tool_use_id: toolu_01EEJV6Tiy89J1qcBHVoVeRc
+          tool_use_id: toolu_01S45MDAaqaBaUafAgCr7NBk
           type: tool_result
         role: user
       model: claude-3-5-haiku-latest
@@ -166,36 +168,31 @@ interactions:
           additionalProperties: false
           properties:
             name:
-              title: Name
               type: string
           required:
           - name
           type: object
         name: retrieve_entity_info
-    uri: https://api.anthropic.com/v1/messages
+    uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '634'
+      - '574'
       content-type:
       - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       content:
-      - text: |-
-          Based on the retrieved information, I can determine the family relationships:
-          - Alice and Bob are married
-          - Charlie is their son
-          - Daisy is their daughter and Charlie's younger sister
-
-          Since Daisy is explicitly mentioned as Charlie's younger sister, Daisy is the youngest in this family.
-
-          The answer is: Daisy is the youngest.
+      - text: Based on the information retrieved, I can determine that Daisy is the youngest in this family. The information
+          shows that Daisy is Charlie's younger sister, which means she is the youngest member of the family among Alice,
+          Bob, Charlie, and Daisy.
         type: text
-      id: msg_01QB2s6yNf6c4HaZdgXAgVpT
+      id: msg_01BqessYTqzkawR9ZzWo1WhP
       model: claude-3-5-haiku-20241022
       role: assistant
       stop_reason: end_turn
@@ -204,8 +201,9 @@ interactions:
       usage:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 761
-        output_tokens: 79
+        input_tokens: 760
+        output_tokens: 59
+        service_tier: standard
     status:
       code: 200
       message: OK

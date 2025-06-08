@@ -11,9 +11,9 @@ from dirty_equals import HasRepr
 from ..conftest import try_import
 
 if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup
+    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
 else:
-    ExceptionGroup = ExceptionGroup
+    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 
 with try_import() as imports_successful:

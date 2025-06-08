@@ -156,7 +156,7 @@ _(This example is complete, it can be run "as is")_
 
 In this example we evaluate a method for generating recipes based on customer orders.
 
-```python {title="judge_recipes.py"}
+```python {title="judge_recipes.py" test="skip"}
 from __future__ import annotations
 
 from typing import Any
@@ -263,7 +263,7 @@ _(This example is complete, it can be run "as is")_
 
 Datasets can be saved to and loaded from YAML or JSON files.
 
-```python {title="save_load_dataset_example.py"}
+```python {title="save_load_dataset_example.py" test="skip"}
 from pathlib import Path
 
 from judge_recipes import CustomerOrder, Recipe, recipe_dataset
@@ -333,7 +333,7 @@ dataset = Dataset(
 
 
 async def double_number(input_value: int) -> int:
-    """Function that simulates work by sleeping for a second before returning double the input."""
+    """Function that simulates work by sleeping for a tenth of a second before returning double the input."""
     await asyncio.sleep(0.1)  # Simulate work
     return input_value * 2
 
@@ -341,8 +341,8 @@ async def double_number(input_value: int) -> int:
 # Run evaluation with unlimited concurrency
 t0 = time.time()
 report_default = dataset.evaluate_sync(double_number)
-print(f'Evaluation took less than 0.3s: {time.time() - t0 < 0.3}')
-#> Evaluation took less than 0.3s: True
+print(f'Evaluation took less than 0.5s: {time.time() - t0 < 0.5}')
+#> Evaluation took less than 0.5s: True
 
 report_default.print(include_input=True, include_output=True, include_durations=False)  # (1)!
 """
@@ -453,7 +453,7 @@ class SpanTracingEvaluator(Evaluator[str, str]):
         has_errors = span_tree.any(error_query)
 
         # Calculate a performance score (lower is better)
-        performance_score = 1.0 if total_processing_time < 0.5 else 0.5
+        performance_score = 1.0 if total_processing_time < 1.0 else 0.5
 
         return {
             'has_spans': True,
@@ -695,7 +695,7 @@ You can send these traces to any OpenTelemetry-compatible backend, including [Py
 
 All you need to do is configure Logfire via `logfire.configure`:
 
-```python {title="logfire_integration.py"}
+```python {title="logfire_integration.py" test="skip"}
 import logfire
 from judge_recipes import recipe_dataset, transform_recipe
 

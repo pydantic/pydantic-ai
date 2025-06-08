@@ -5,100 +5,35 @@ from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Generic, Union, cast
+from typing import Generic, cast
 
 from typing_extensions import TypeVar, assert_type, deprecated, overload
 
-from . import _utils, exceptions, messages as _messages, models
+from . import _output, _utils, exceptions, messages as _messages, models
+from ._output import (
+    OutputDataT,
+    OutputDataT_inv,
+    OutputSchema,
+    OutputValidator,
+    OutputValidatorFunc,
+    ToolOutput,
+)
 from .messages import AgentStreamEvent, FinalResultEvent
 from .tools import AgentDepsT, RunContext
 from .usage import Usage, UsageLimits
-
-if TYPE_CHECKING:
-    from . import _output
 
 __all__ = 'OutputDataT', 'OutputDataT_inv', 'ToolOutput', 'OutputValidatorFunc'
 
 
 T = TypeVar('T')
 """An invariant TypeVar."""
-OutputDataT_inv = TypeVar('OutputDataT_inv', default=str)
-"""
-An invariant type variable for the result data of a model.
-
-We need to use an invariant typevar for `OutputValidator` and `OutputValidatorFunc` because the output data type is used
-in both the input and output of a `OutputValidatorFunc`. This can theoretically lead to some issues assuming that types
-possessing OutputValidator's are covariant in the result data type, but in practice this is rarely an issue, and
-changing it would have negative consequences for the ergonomics of the library.
-
-At some point, it may make sense to change the input to OutputValidatorFunc to be `Any` or `object` as doing that would
-resolve these potential variance issues.
-"""
-OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
-"""Covariant type variable for the result data type of a run."""
-
-OutputValidatorFunc = Union[
-    Callable[[RunContext[AgentDepsT], OutputDataT_inv], OutputDataT_inv],
-    Callable[[RunContext[AgentDepsT], OutputDataT_inv], Awaitable[OutputDataT_inv]],
-    Callable[[OutputDataT_inv], OutputDataT_inv],
-    Callable[[OutputDataT_inv], Awaitable[OutputDataT_inv]],
-]
-"""
-A function that always takes and returns the same type of data (which is the result type of an agent run), and:
-
-* may or may not take [`RunContext`][pydantic_ai.tools.RunContext] as a first argument
-* may or may not be async
-
-Usage `OutputValidatorFunc[AgentDepsT, T]`.
-"""
-
-DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
-
-
-@dataclass(init=False)
-class ToolOutput(Generic[OutputDataT]):
-    """Marker class to use tools for structured outputs, and customize the tool."""
-
-    output_type: type[OutputDataT]
-    # TODO: Add `output_call` support, for calling a function to get the output
-    # output_call: Callable[..., OutputDataT] | None
-    name: str
-    description: str | None
-    max_retries: int | None
-    strict: bool | None
-
-    def __init__(
-        self,
-        *,
-        type_: type[OutputDataT],
-        # call: Callable[..., OutputDataT] | None = None,
-        name: str = 'final_result',
-        description: str | None = None,
-        max_retries: int | None = None,
-        strict: bool | None = None,
-    ):
-        self.output_type = type_
-        self.name = name
-        self.description = description
-        self.max_retries = max_retries
-        self.strict = strict
-
-        # TODO: add support for call and make type_ optional, with the following logic:
-        # if type_ is None and call is None:
-        #     raise ValueError('Either type_ or call must be provided')
-        # if call is not None:
-        #     if type_ is None:
-        #         type_ = get_type_hints(call).get('return')
-        #         if type_ is None:
-        #             raise ValueError('Unable to determine type_ from call signature; please provide it explicitly')
-        # self.output_call = call
 
 
 @dataclass
 class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _raw_stream_response: models.StreamedResponse
-    _output_schema: _output.OutputSchema[OutputDataT] | None
-    _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]]
+    _output_schema: OutputSchema[OutputDataT] | None
+    _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]
     _usage_limits: UsageLimits | None
 
@@ -114,7 +49,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         async for response in self.stream_responses(debounce_by=debounce_by):
             if self._final_result_event is not None:
                 yield await self._validate_response(response, self._final_result_event.tool_name, allow_partial=True)
-        if self._final_result_event is not None:
+        if self._final_result_event is not None:  # pragma: no branch
             yield await self._validate_response(
                 self._raw_stream_response.get(), self._final_result_event.tool_name, allow_partial=False
             )
@@ -124,7 +59,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         # if the message currently has any parts with content, yield before streaming
         msg = self._raw_stream_response.get()
         for part in msg.parts:
-            if part.has_content():
+            if part.has_content():  # pragma: no cover
                 yield msg
                 break
 
@@ -144,29 +79,26 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         self, message: _messages.ModelResponse, output_tool_name: str | None, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
+        call = None
         if self._output_schema is not None and output_tool_name is not None:
             match = self._output_schema.find_named_tool(message.parts, output_tool_name)
             if match is None:
-                raise exceptions.UnexpectedModelBehavior(
+                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     f'Invalid response, unable to find tool: {self._output_schema.tool_names()}'
                 )
 
             call, output_tool = match
-            result_data = output_tool.validate(call, allow_partial=allow_partial, wrap_validation_errors=False)
-
-            for validator in self._output_validators:
-                result_data = await validator.validate(result_data, call, self._run_ctx)
-            return result_data
+            result_data = await output_tool.process(
+                call, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
+            )
         else:
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
-            for validator in self._output_validators:
-                text = await validator.validate(
-                    text,
-                    None,
-                    self._run_ctx,
-                )
-            # Since there is no output tool, we can assume that str is compatible with OutputDataT
-            return cast(OutputDataT, text)
+            # The following cast is safe because we know `str` is an allowed output type
+            result_data = cast(OutputDataT, text)
+
+        for validator in self._output_validators:
+            result_data = await validator.validate(result_data, call, self._run_ctx)
+        return result_data
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
@@ -180,7 +112,6 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         async def aiter():
             output_schema = self._output_schema
-            allow_text_output = output_schema is None or output_schema.allow_text_output
 
             def _get_final_result_event(e: _messages.ModelResponseStreamEvent) -> _messages.FinalResultEvent | None:
                 """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
@@ -188,11 +119,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     new_part = e.part
                     if isinstance(new_part, _messages.ToolCallPart):
                         if output_schema:
-                            for call, _ in output_schema.find_tool([new_part]):
+                            for call, _ in output_schema.find_tool([new_part]):  # pragma: no branch
                                 return _messages.FinalResultEvent(
                                     tool_name=call.tool_name, tool_call_id=call.tool_call_id
                                 )
-                    elif allow_text_output:
+                    elif _output.allow_text_output(output_schema):  # pragma: no branch
                         assert_type(e, _messages.PartStartEvent)
                         return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
 
@@ -224,9 +155,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     _usage_limits: UsageLimits | None
     _stream_response: models.StreamedResponse
-    _output_schema: _output.OutputSchema[OutputDataT] | None
+    _output_schema: OutputSchema[OutputDataT] | None
     _run_ctx: RunContext[AgentDepsT]
-    _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]]
+    _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _output_tool_name: str | None
     _on_complete: Callable[[], Awaitable[None]]
 
@@ -458,37 +389,29 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
+        call = None
         if self._output_schema is not None and self._output_tool_name is not None:
             match = self._output_schema.find_named_tool(message.parts, self._output_tool_name)
             if match is None:
-                raise exceptions.UnexpectedModelBehavior(
+                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     f'Invalid response, unable to find tool: {self._output_schema.tool_names()}'
                 )
 
             call, output_tool = match
-            result_data = output_tool.validate(call, allow_partial=allow_partial, wrap_validation_errors=False)
-
-            for validator in self._output_validators:
-                result_data = await validator.validate(result_data, call, self._run_ctx)
-            return result_data
+            result_data = await output_tool.process(
+                call, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
+            )
         else:
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
-            for validator in self._output_validators:
-                text = await validator.validate(
-                    text,
-                    None,
-                    self._run_ctx,
-                )
-            # Since there is no output tool, we can assume that str is compatible with OutputDataT
-            return cast(OutputDataT, text)
+            result_data = cast(OutputDataT, text)
+
+        for validator in self._output_validators:
+            result_data = await validator.validate(result_data, call, self._run_ctx)  # pragma: no cover
+        return result_data
 
     async def _validate_text_output(self, text: str) -> str:
         for validator in self._output_validators:
-            text = await validator.validate(
-                text,
-                None,
-                self._run_ctx,
-            )
+            text = await validator.validate(text, None, self._run_ctx)  # pragma: no cover
         return text
 
     async def _marked_completed(self, message: _messages.ModelResponse) -> None:
@@ -526,8 +449,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     and isinstance(event.part, _messages.TextPart)
                     and event.part.content
                 ):
-                    yield event.part.content, event.index
-                elif (
+                    yield event.part.content, event.index  # pragma: no cover
+                elif (  # pragma: no branch
                     isinstance(event, _messages.PartDeltaEvent)
                     and isinstance(event.delta, _messages.TextPartDelta)
                     and event.delta.content_delta
@@ -552,21 +475,23 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 yield ''.join(deltas)
 
 
-@dataclass
+@dataclass(repr=False)
 class FinalResult(Generic[OutputDataT]):
     """Marker class storing the final output of an agent run and associated metadata."""
 
     output: OutputDataT
     """The final result data."""
-    tool_name: str | None
+    tool_name: str | None = None
     """Name of the final output tool; `None` if the output came from unstructured text content."""
-    tool_call_id: str | None
+    tool_call_id: str | None = None
     """ID of the tool call that produced the final output; `None` if the output came from unstructured text content."""
 
     @property
     @deprecated('`data` is deprecated, use `output` instead.')
     def data(self) -> OutputDataT:
         return self.output
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 def _get_usage_checking_stream_response(
@@ -576,12 +501,12 @@ def _get_usage_checking_stream_response(
 ) -> AsyncIterable[_messages.ModelResponseStreamEvent]:
     if limits is not None and limits.has_token_limits():
 
-        async def _usage_checking_iterator():
+        async def _usage_checking_iterator():  # pragma: no cover
             async for item in stream_response:
                 limits.check_tokens(get_usage())
                 yield item
 
-        return _usage_checking_iterator()
+        return _usage_checking_iterator()  # pragma: no cover
     else:
         return stream_response
 

@@ -75,7 +75,7 @@ _R = TypeVar('_R')
 def get_event_loop():
     try:
         event_loop = asyncio.get_event_loop()
-    except RuntimeError:  # pragma: no cover
+    except RuntimeError:  # pragma: lax no cover
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop

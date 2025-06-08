@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 import pytest
 from inline_snapshot import snapshot
@@ -18,6 +19,9 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, IsStr, TestEnv, try_import
 
@@ -68,7 +72,7 @@ async def test_openai_responses_output_type(allow_model_requests: None, openai_a
 
     agent = Agent(model=model, output_type=MyOutput)
     result = await agent.run('Give me the name and age of Brazil, Argentina, and Chile.')
-    assert result.output == snapshot({'name': 'Brazil', 'age': 2023})  # pragma: no cover
+    assert result.output == snapshot({'name': 'Brazil', 'age': 2023})
 
 
 async def test_openai_responses_reasoning_effort(allow_model_requests: None, openai_api_key: str):
@@ -185,6 +189,12 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         tool_call_id=IsStr(),
                     ),
                 ],
+                usage=Usage(
+                    request_tokens=0,
+                    response_tokens=0,
+                    total_tokens=0,
+                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
             ),
@@ -214,6 +224,80 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
 """
                     )
                 ],
+                usage=Usage(
+                    request_tokens=335,
+                    response_tokens=44,
+                    total_tokens=379,
+                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_image_as_binary_content_tool_response(
+    allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_image() -> BinaryContent:
+        return image_content
+
+    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content=''),
+                    ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_FLm3B1f8QAan0KpbUXhNY8bA'),
+                ],
+                usage=Usage(
+                    request_tokens=40,
+                    response_tokens=11,
+                    total_tokens=51,
+                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_image',
+                        content='See file 1c8566',
+                        tool_call_id='call_FLm3B1f8QAan0KpbUXhNY8bA',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'This is file 1c8566:',
+                            image_content,
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The fruit in the image is a kiwi.')],
+                usage=Usage(
+                    request_tokens=1185,
+                    response_tokens=11,
+                    total_tokens=1196,
+                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
             ),
@@ -311,7 +395,7 @@ async def test_openai_responses_model_http_error(allow_model_requests: None, ope
 
     with pytest.raises(ModelHTTPError):
         async with agent.run_stream('What is the capital of France?'):
-            ...
+            ...  # pragma: lax no cover
 
 
 async def test_openai_responses_model_builtin_tools(allow_model_requests: None, openai_api_key: str):
@@ -343,6 +427,12 @@ In the past 24 hours, OpenAI announced plans to release its first open-weight la
 """
                     )
                 ],
+                usage=Usage(
+                    request_tokens=320,
+                    response_tokens=200,
+                    total_tokens=520,
+                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
             ),
@@ -364,8 +454,54 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
+                usage=Usage(
+                    request_tokens=24,
+                    response_tokens=8,
+                    total_tokens=32,
+                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
             ),
         ]
+    )
+
+
+def test_model_profile_strict_not_supported():
+    my_tool = ToolDefinition(
+        'my_tool',
+        'This is my tool',
+        {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+        strict=True,
+    )
+
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
+    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+
+    assert tool_param == snapshot(
+        {
+            'name': 'my_tool',
+            'parameters': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+            'type': 'function',
+            'description': 'This is my tool',
+            'strict': True,
+        }
+    )
+
+    # Some models don't support strict tool definitions
+    m = OpenAIResponsesModel(
+        'gpt-4o',
+        provider=OpenAIProvider(api_key='foobar'),
+        profile=replace(openai_model_profile('gpt-4o'), openai_supports_strict_tool_definition=False),
+    )
+    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+
+    assert tool_param == snapshot(
+        {
+            'name': 'my_tool',
+            'parameters': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+            'type': 'function',
+            'description': 'This is my tool',
+            'strict': False,
+        }
     )
