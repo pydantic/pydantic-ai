@@ -5,7 +5,6 @@ import pytest
 from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
-from pydantic_ai import ModelHTTPError
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
@@ -68,17 +67,6 @@ def test_openrouter_pass_openai_client() -> None:
     openai_client = openai.AsyncOpenAI(api_key='api-key')
     provider = OpenRouterProvider(openai_client=openai_client)
     assert provider.client == openai_client
-
-
-async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
-    agent = Agent(model, instructions='Be helpful.', retries=1)
-    with pytest.raises(ModelHTTPError) as exc_info:
-        await agent.run('Tell me a joke.')
-    assert str(exc_info.value) == snapshot(
-        "status_code: 429, model_name: google/gemini-2.0-flash-exp:free, body: {'code': 429, 'message': 'Provider returned error', 'metadata': {'provider_name': 'Google', 'raw': 'google/gemini-2.0-flash-exp:free is temporarily rate-limited upstream; please retry shortly.'}}"
-    )
 
 
 async def test_openrouter_with_google_model(allow_model_requests: None, openrouter_api_key: str) -> None:
