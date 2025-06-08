@@ -703,7 +703,6 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
     )
 
 
-@pytest.mark.vcr()
 async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
@@ -716,7 +715,6 @@ async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str)
     await agent.run('hello')
 
 
-@pytest.mark.vcr()
 async def test_image_url_input_invalid_mime_type(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -734,7 +732,6 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
     )
 
 
-@pytest.mark.vcr()
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, anthropic_api_key: str, image_content: BinaryContent
 ):
@@ -965,25 +962,26 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content="""\
-This is a basic question about street safety. I should provide a clear, step-by-step explanation of how to safely cross a street, which is important information for pedestrian safety.
-
-I'll include:
-1. Finding the right place to cross (crosswalks, intersections)
-2. Checking for traffic signals
-3. Looking both ways for approaching vehicles
-4. Making eye contact with drivers
-5. Walking (not running) across the street
-6. Staying alert while crossing
-
-I'll keep my answer straightforward but comprehensive enough to cover the safety basics.\
-""",
-                        signature='ErUBCkYIAhgCIkD6Sf780fvjL4z6Yhyi47E7OTaBUOozPicKLssA43+GnYsYdzS85o3UQzwQuV+Fu0+H3FEnUKyvBRGa+DDFRIZsEgwmJ7GKgytXI8oSssoaDOQwWyeED8Rn1NGmXSIwoZUSqGbh36VMg5xH0Rp7+9HzCcE1p8r0NFRY/YJ1l9rY6H3tOY55/eBrzfPayiK9Kh0XEK9GAM9LQgQPvaDlvDhdbDFQfcHoClFRoI4r4hgC',
+                        content="This is a basic question about pedestrian safety when crossing a street. I'll provide a clear, step-by-step explanation of how to safely cross a street. This is important safety information that applies to most places, though specific rules might vary slightly by country.",
+                        signature='ErUBCkYIBBgCIkDdtS5sPfAhQSct3TDKHzeqm87m7bk/P0ecMKVxqofk9q15fEDVWXxuIzQIYZCLUfcJzFi4/IYnpQYrgP34x4pnEgzeA7mWRCy/f1bK+IYaDH5i0Q5hgZkqPeMdwSIwMzHMBPM4Xae4czWnzjHGLR9Xg7DN+sb+MXKFgdXY4bcaOKzhImS05aqIjqBs4CHyKh1dTzSnHd76MAHgM1qjBQ2eIZJJ7s5WGkRkbvWzTxgC',
                     ),
                     TextPart(content=IsStr()),
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=42,
+                    response_tokens=302,
+                    total_tokens=344,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 42,
+                        'output_tokens': 302,
+                    },
+                ),
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
+                vendor_id='msg_01FWiSVNCRHvHUYU21BRandY',
             ),
         ]
     )
@@ -997,8 +995,21 @@ I'll keep my answer straightforward but comprehensive enough to cover the safety
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=42,
+                    response_tokens=302,
+                    total_tokens=344,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 42,
+                        'output_tokens': 302,
+                    },
+                ),
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
+                vendor_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1012,32 +1023,36 @@ I'll keep my answer straightforward but comprehensive enough to cover the safety
                 parts=[
                     ThinkingPart(
                         content="""\
-This question is asking me to apply similar principles for crossing a street to crossing a river, using analogy. Let me think about the comparable safety concerns and steps:
+This is an interesting analogy question. The person is asking how to cross a river by comparing it to crossing a street. I should outline the key principles of river crossing that parallel street crossing safety, while adapting for the unique challenges of a river environment.
 
-Street crossing safety elements:
-1. Finding the right place to cross (crosswalks, intersections)
-2. Checking for signals/traffic
-3. Looking both ways
-4. Being visible
-5. Crossing at a steady pace
-6. Staying alert
+For crossing a river, I should consider:
+1. Finding the right spot (like shallow areas, bridges, or ferry crossings)
+2. Assessing the conditions (river speed, depth, width, obstacles)
+3. Choosing the appropriate method based on the river conditions
+4. Safety precautions specific to water crossings
+5. The actual crossing technique
 
-For river crossing, I'll need to address:
-1. Finding the right place to cross (bridges, shallow areas, designated crossing points)
-2. Checking conditions (current, depth)
-3. Looking for hazards
-4. Safety equipment/visibility
-5. Crossing method and pace
-6. Staying alert for changing conditions
-
-I'll structure my answer similarly to the street crossing response, focusing on safety while acknowledging the different hazards and methods relevant to river crossing.\
+I'll structure this as a parallel to the street crossing guide, highlighting the similarities in approach while acknowledging the different hazards and considerations.\
 """,
-                        signature='ErUBCkYIAhgCIkB2BUY56TQbBYl46yDgVWTsaHGOGtJS3iTMiAnLZZUSqxqwSlIDAu7VINAVKPkt1rPdRmQbD/pnQXmHUWPtg3JMEgwX5++FVgV41/x9mtwaDJHFKMSNqLpHIsc3jSIwus0KQjezK3yrtzqekYfYulN1ZGKj9Jo5JmVIjLpvM4eXKq9E3K1YP7fWB/radhmbKh3pq4qSkEvr+QrxqVUlJoAdTB4LFRD6aWbtXGyzKhgC',
+                        signature='ErUBCkYIBBgCIkCNPEqIUXmAqiaqIqaHEmtiTi5sG6jBLYWmyfr9ELAh9dLAPPiq0Bnp2YQFJB2kz0aWYC8pJW9ylay8cJPFOGdIEgwcoJGGceEVCihog7MaDBZNwmI8LweQANgdvCIwvYrhAAqUDGHfQUYWuVB3ay4ySnmnROCDhtjOe6zTA2N2NC+BCePcZQBGQh/tnuoXKh37QqP3KRrKdVU5j1x4vAtUNtxQhbh4ip5qU5J12xgC',
                     ),
                     TextPart(content=IsStr()),
                 ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=303,
+                    response_tokens=486,
+                    total_tokens=789,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 303,
+                        'output_tokens': 486,
+                    },
+                ),
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
+                vendor_id=IsStr(),
             ),
         ]
     )
@@ -1058,7 +1073,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='')),
+            PartStartEvent(index=0, part=ThinkingPart(content='', signature='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
@@ -1069,27 +1084,80 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartStartEvent(index=1, part=IsInstance(TextPart)),
             PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='ErUBCkYIAhgCIkBae3G0d++H4kiUhcpgulrNH2UtKjeUX71wQ7N236PJ7eiWX0qBJjRPoCjmIXcax+Vikx6EQIabVzpoRW3IPrgiEgy2bMcGLce7+wzJBBoaDOE//A8Scwe+4aexWiIw5O8E22fvilfUPxe4t3HJl/+6zKSePdDr2SI5DAzjH8tecOlVH8TQ9axJ4yZg9+sGKh2s08YMFuwuRmro7qe9xH39ZjwnVb/c493it57aiBgC'
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+1. **Fin\
+"""
                 ),
             ),
-            PartStartEvent(index=1, part=IsInstance(TextPart)),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='d a designated crossing point** if')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ possible:
+   -\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Crosswalks')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+   - Pedestrian signals
+   -\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Pedestrian bridges')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+   - Inters\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ections
+
+2. **Before\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ crossing:**
+   - Stop\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' at the curb or edge of the road')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+   - Look left,\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' right, then left again (')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='or right, left, right again')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' in countries with left')),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
@@ -1208,7 +1276,6 @@ def test_usage(message_callback: Callable[[], BetaMessage | BetaRawMessageStream
     assert _map_usage(message_callback()) == usage
 
 
-@pytest.mark.vcr()
 async def test_anthropic_model_empty_message_on_history(allow_model_requests: None, anthropic_api_key: str):
     """The Anthropic API will error if you send an empty message on the history.
 

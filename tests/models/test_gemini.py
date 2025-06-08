@@ -1456,7 +1456,6 @@ Just as you wouldn't just run blindly into a busy street, you shouldn't just jum
     )
 
 
-@pytest.mark.vcr()
 async def test_gemini_no_finish_reason(get_gemini_client: GetGeminiClient):
     response = gemini_response(
         _content_model_response(ModelResponse(parts=[TextPart('Hello world')])), finish_reason=None

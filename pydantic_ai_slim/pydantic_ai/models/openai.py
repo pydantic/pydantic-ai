@@ -15,7 +15,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
+from .._utils import generate_thinking_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -613,7 +613,7 @@ class OpenAIResponsesModel(Model):
                 for summary in item.summary:
                     # NOTE: We use the same id for all summaries because we can merge them on the round trip.
                     # The providers don't force the signature to be unique.
-                    items.append(ThinkingPart(content=summary.text, signature=item.id))
+                    items.append(ThinkingPart(content=summary.text, id=item.id))
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
         return ModelResponse(items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp)
@@ -779,26 +779,22 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        assert item.signature is not None, 'If this is triggered, please create an issue.'
                         if last_thinking_part_idx is not None:
                             reasoning_item = cast(responses.ResponseReasoningItemParam, openai_messages[last_thinking_part_idx])  # fmt: skip
-                            if item.signature == reasoning_item['id']:
+                            if item.id == reasoning_item['id']:
                                 assert isinstance(reasoning_item['summary'], list)
                                 reasoning_item['summary'].append(Summary(text=item.content, type='summary_text'))
                                 continue
                         last_thinking_part_idx = len(openai_messages)
                         openai_messages.append(
                             responses.ResponseReasoningItemParam(
-                                id=item.signature,
+                                id=item.id or generate_thinking_id(),
                                 summary=[Summary(text=item.content, type='summary_text')],
                                 type='reasoning',
                             )
                         )
                     else:
                         assert_never(item)
-                from rich.pretty import pprint
-
-                pprint(openai_messages)
             else:
                 assert_never(message)
         instructions = self._get_instructions(messages) or NOT_GIVEN

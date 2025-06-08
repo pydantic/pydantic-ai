@@ -1983,10 +1983,10 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
             ModelResponse(
                 parts=[
                     TextPart(content=IsStr()),
-                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
                 ],
                 usage=Usage(
                     request_tokens=13,
@@ -2012,10 +2012,10 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
             ModelResponse(
                 parts=[
                     TextPart(content=IsStr()),
-                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), signature='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
                 ],
                 usage=Usage(
                     request_tokens=13,

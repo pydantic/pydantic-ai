@@ -26,6 +26,7 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -436,6 +437,8 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
         elif isinstance(item, TextPart):
             if item.content:  # pragma: no branch
                 parts.append({'text': item.content})
+        elif isinstance(item, ThinkingPart):
+            parts.append({'text': item.content, 'thought': True})
         else:
             assert_never(item)
     return ContentDict(role='model', parts=parts)
@@ -451,7 +454,10 @@ def _process_response_from_parts(
     items: list[ModelResponsePart] = []
     for part in parts:
         if part.text is not None:
-            items.append(TextPart(content=part.text))
+            if part.thought:
+                items.append(ThinkingPart(content=part.text))
+            else:
+                items.append(TextPart(content=part.text))
         elif part.function_call:
             assert part.function_call.name is not None
             tool_call_part = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)

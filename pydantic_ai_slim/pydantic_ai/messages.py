@@ -14,7 +14,10 @@ from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUs
 from typing_extensions import TypeAlias
 
 from . import _utils
-from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
+from ._utils import (
+    generate_tool_call_id as _generate_tool_call_id,
+    now_utc as _now_utc,
+)
 from .exceptions import UnexpectedModelBehavior
 from .usage import Usage
 
@@ -502,15 +505,21 @@ class TextPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass
+@dataclass(repr=False)
 class ThinkingPart:
     """A thinking response from a model."""
 
     content: str
     """The thinking content of the response."""
 
+    id: str | None = None
+    """The identifier of the thinking part."""
+
     signature: str | None = None
-    """The signature of the thinking."""
+    """The signature of the thinking.
+
+    The signature is only available on the Anthropic models.
+    """
 
     part_kind: Literal['thinking'] = 'thinking'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -518,6 +527,8 @@ class ThinkingPart:
     def has_content(self) -> bool:
         """Return `True` if the thinking content is non-empty."""
         return bool(self.content)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass(repr=False)
@@ -688,7 +699,7 @@ class TextPartDelta:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass
+@dataclass(repr=False)
 class ThinkingPartDelta:
     """A partial update (delta) for a `ThinkingPart` to append new thinking content."""
 
@@ -734,6 +745,8 @@ class ThinkingPartDelta:
         raise ValueError(
             f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
         )
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass(repr=False)

@@ -210,12 +210,16 @@ def guard_tool_call_id(t: _messages.ToolCallPart | _messages.ToolReturnPart | _m
     return t.tool_call_id or generate_tool_call_id()
 
 
-def generate_tool_call_id() -> str:
-    """Generate a tool call id.
+def _generate_id() -> str:
+    """Generate an ID.
 
-    Ensure that the tool call id is unique.
+    Ensure that the ID is unique.
     """
     return f'pyd_ai_{uuid.uuid4().hex}'
+
+
+generate_tool_call_id = _generate_id
+generate_thinking_id = _generate_id
 
 
 class PeekableAsyncStream(Generic[T]):
