@@ -228,7 +228,7 @@ class GeminiModel(Model):
 
         if gemini_labels := model_settings.get('gemini_labels'):
             if self._system == 'google-vertex':
-                request_data['labels'] = gemini_labels
+                request_data['labels'] = gemini_labels  # pragma: lax no cover
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
@@ -366,6 +366,8 @@ def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _Gemi
     config: _GeminiGenerationConfig = {}
     if (max_tokens := model_settings.get('max_tokens')) is not None:
         config['max_output_tokens'] = max_tokens
+    if (stop_sequences := model_settings.get('stop_sequences')) is not None:
+        config['stop_sequences'] = stop_sequences  # pragma: no cover
     if (temperature := model_settings.get('temperature')) is not None:
         config['temperature'] = temperature
     if (top_p := model_settings.get('top_p')) is not None:
@@ -431,7 +433,8 @@ class GeminiStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 else:
-                    assert 'function_response' in gemini_part, f'Unexpected part: {gemini_part}'  # pragma: no cover
+                    if not any([key in gemini_part for key in ['function_response', 'thought']]):
+                        raise AssertionError(f'Unexpected part: {gemini_part}')  # pragma: no cover
 
     async def _get_gemini_responses(self) -> AsyncIterator[_GeminiResponse]:
         # This method exists to ensure we only yield completed items, so we don't need to worry about
@@ -605,6 +608,11 @@ class _GeminiFileDataPart(TypedDict):
     file_data: Annotated[_GeminiFileData, pydantic.Field(alias='fileData')]
 
 
+class _GeminiThoughtPart(TypedDict):
+    thought: bool
+    thought_signature: Annotated[str, pydantic.Field(alias='thoughtSignature')]
+
+
 class _GeminiFunctionCallPart(TypedDict):
     function_call: Annotated[_GeminiFunctionCall, pydantic.Field(alias='functionCall')]
 
@@ -665,6 +673,8 @@ def _part_discriminator(v: Any) -> str:
             return 'inline_data'  # pragma: no cover
         elif 'fileData' in v:
             return 'file_data'  # pragma: no cover
+        elif 'thought' in v:
+            return 'thought'
         elif 'functionCall' in v or 'function_call' in v:
             return 'function_call'
         elif 'functionResponse' in v or 'function_response' in v:
@@ -682,6 +692,7 @@ _GeminiPartUnion = Annotated[
         Annotated[_GeminiFunctionResponsePart, pydantic.Tag('function_response')],
         Annotated[_GeminiInlineDataPart, pydantic.Tag('inline_data')],
         Annotated[_GeminiFileDataPart, pydantic.Tag('file_data')],
+        Annotated[_GeminiThoughtPart, pydantic.Tag('thought')],
     ],
     pydantic.Discriminator(_part_discriminator),
 ]

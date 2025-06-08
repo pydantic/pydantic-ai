@@ -260,6 +260,7 @@ class GoogleModel(Model):
             temperature=model_settings.get('temperature'),
             top_p=model_settings.get('top_p'),
             max_output_tokens=model_settings.get('max_tokens'),
+            stop_sequences=model_settings.get('stop_sequences'),
             presence_penalty=model_settings.get('presence_penalty'),
             frequency_penalty=model_settings.get('frequency_penalty'),
             safety_settings=model_settings.get('google_safety_settings'),
@@ -346,8 +347,10 @@ class GoogleModel(Model):
                     else:
                         assert_never(part)
 
-                if message_parts:  # pragma: no branch
-                    contents.append({'role': 'user', 'parts': message_parts})
+                # Google GenAI requires at least one part in the message.
+                if not message_parts:
+                    message_parts = [{'text': ''}]
+                contents.append({'role': 'user', 'parts': message_parts})
             elif isinstance(m, ModelResponse):
                 contents.append(_content_model_response(m))
             else:
@@ -399,7 +402,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 raise UnexpectedModelBehavior('Streamed response has no content field')  # pragma: no cover
             assert candidate.content.parts is not None
             for part in candidate.content.parts:
-                if part.text:
+                if part.text is not None:
                     yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -447,7 +450,7 @@ def _process_response_from_parts(
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
-        if part.text:
+        if part.text is not None:
             items.append(TextPart(content=part.text))
         elif part.function_call:
             assert part.function_call.name is not None

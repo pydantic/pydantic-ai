@@ -310,7 +310,7 @@ async def test_google_model_thinking_config(allow_model_requests: None, google_p
 @pytest.mark.skipif(
     not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
 )
-async def test_google_model_vertex_labels(allow_model_requests: None):
+async def test_google_model_vertex_labels(allow_model_requests: None):  # pragma: lax no cover
     provider = GoogleProvider(location='global', project='pydantic-ai')
     model = GoogleModel('gemini-2.0-flash', provider=provider)
     settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
@@ -581,3 +581,13 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
 
     with pytest.raises(UnexpectedModelBehavior, match='Safety settings triggered'):
         await agent.run('Tell me a joke about a Brazilians.')
+
+
+async def test_google_model_empty_user_prompt(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    agent = Agent(m, instructions='You are a helpful assistant.')
+
+    result = await agent.run()
+    assert result.output == snapshot(
+        'Please provide me with a question or task. I need some information to be able to help you.\n'
+    )

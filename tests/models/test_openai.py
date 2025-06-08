@@ -1710,3 +1710,42 @@ def test_model_profile_strict_not_supported():
             },
         }
     )
+
+
+@pytest.mark.vcr
+async def test_compatible_api_with_tool_calls_without_id(allow_model_requests: None, gemini_api_key: str):
+    provider = OpenAIProvider(
+        openai_client=AsyncOpenAI(
+            base_url='https://generativelanguage.googleapis.com/v1beta/openai/',
+            api_key=gemini_api_key,
+        )
+    )
+
+    model = OpenAIModel('gemini-2.5-pro-preview-05-06', provider=provider)
+
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_current_time() -> str:
+        """Get the current time."""
+        return 'Noon'
+
+    response = await agent.run('What is the current time?')
+    assert response.output == snapshot('The current time is Noon.')
+
+
+def test_openai_response_timestamp_milliseconds(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage(content='world', role='assistant'),
+    )
+    # Some models on OpenRouter return timestamps in milliseconds rather than seconds
+    # https://github.com/pydantic/pydantic-ai/issues/1877
+    c.created = 1748747268000
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = agent.run_sync('Hello')
+    response = cast(ModelResponse, result.all_messages()[-1])
+    assert response.timestamp == snapshot(datetime(2025, 6, 1, 3, 7, 48, tzinfo=timezone.utc))

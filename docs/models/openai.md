@@ -183,7 +183,7 @@ agent = Agent(model)
 ### DeepSeek
 
 To use the [DeepSeek](https://deepseek.com) provider, first create an API key by following the [Quick Start guide](https://api-docs.deepseek.com/).
-Once you have the API key, you can use it with the `DeepSeekProvider`:
+Once you have the API key, you can use it with the [`DeepSeekProvider`][pydantic_ai.providers.deepseek.DeepSeekProvider]:
 
 ```python
 from pydantic_ai import Agent
@@ -295,7 +295,8 @@ print(result.usage())
 
 ### Azure AI Foundry
 
-If you want to use [Azure AI Foundry](https://ai.azure.com/) as your provider, you can do so by using the `AzureProvider` class.
+If you want to use [Azure AI Foundry](https://ai.azure.com/) as your provider, you can do so by using the
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] class.
 
 ```python
 from pydantic_ai import Agent
@@ -318,7 +319,7 @@ agent = Agent(model)
 
 To use [OpenRouter](https://openrouter.ai), first create an API key at [openrouter.ai/keys](https://openrouter.ai/keys).
 
-Once you have the API key, you can use it with the `OpenRouterProvider`:
+Once you have the API key, you can use it with the [`OpenRouterProvider`][pydantic_ai.providers.openrouter.OpenRouterProvider]:
 
 ```python
 from pydantic_ai import Agent
@@ -336,7 +337,7 @@ agent = Agent(model)
 ### Grok (xAI)
 
 Go to [xAI API Console](https://console.x.ai/) and create an API key.
-Once you have the API key, you can use it with the `GrokProvider`:
+Once you have the API key, you can use it with the [`GrokProvider`][pydantic_ai.providers.grok.GrokProvider]:
 
 ```python
 from pydantic_ai import Agent
@@ -375,7 +376,7 @@ agent = Agent(model)
 ### Fireworks AI
 
 Go to [Fireworks.AI](https://fireworks.ai/) and create an API key in your account settings.
-Once you have the API key, you can use it with the `FireworksProvider`:
+Once you have the API key, you can use it with the [`FireworksProvider`][pydantic_ai.providers.fireworks.FireworksProvider]:
 
 ```python
 from pydantic_ai import Agent
@@ -393,7 +394,7 @@ agent = Agent(model)
 ### Together AI
 
 Go to [Together.ai](https://www.together.ai/) and create an API key in your account settings.
-Once you have the API key, you can use it with the `TogetherProvider`:
+Once you have the API key, you can use it with the [`TogetherProvider`][pydantic_ai.providers.together.TogetherProvider]:
 
 ```python
 from pydantic_ai import Agent
@@ -406,4 +407,28 @@ model = OpenAIModel(
 )
 agent = Agent(model)
 ...
+```
+
+### Heroku AI
+
+To use [Heroku AI](https://www.heroku.com/ai), you can use the [`HerokuProvider`][pydantic_ai.providers.heroku.HerokuProvider]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.heroku import HerokuProvider
+
+model = OpenAIModel(
+    'claude-3-7-sonnet',
+    provider=HerokuProvider(api_key='your-heroku-inference-key'),
+)
+agent = Agent(model)
+...
+```
+
+You can set the `HEROKU_INFERENCE_KEY` and `HEROKU_INFERENCE_URL` environment variables to set the API key and base URL, respectively:
+
+```bash
+export HEROKU_INFERENCE_KEY='your-heroku-inference-key'
+export HEROKU_INFERENCE_URL='https://us.inference.heroku.com'
 ```

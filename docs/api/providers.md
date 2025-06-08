@@ -18,10 +18,14 @@
 
 ::: pydantic_ai.providers.cohere
 
-::: pydantic_ai.providers.mistral
+::: pydantic_ai.providers.mistral.MistralProvider
 
-::: pydantic_ai.providers.fireworks
+::: pydantic_ai.providers.fireworks.FireworksProvider
 
-::: pydantic_ai.providers.grok
+::: pydantic_ai.providers.grok.GrokProvider
 
-::: pydantic_ai.providers.together
+::: pydantic_ai.providers.together.TogetherProvider
+
+::: pydantic_ai.providers.heroku.HerokuProvider
+
+::: pydantic_ai.providers.openrouter.OpenRouterProvider
