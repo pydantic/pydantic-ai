@@ -544,7 +544,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -560,15 +560,15 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
+                finish_reason='stop',
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='Hello world')],
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
+                finish_reason='stop',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -592,7 +592,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -655,7 +655,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -675,7 +675,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -698,7 +698,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_details={'finish_reason': 'STOP'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -1119,7 +1119,7 @@ I need to use the `get_image` tool to see the image first.
                 ),
                 model_name='gemini-2.5-pro-preview-03-25',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1149,7 +1149,7 @@ I need to use the `get_image` tool to see the image first.
                 ),
                 model_name='gemini-2.5-pro-preview-03-25',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -1277,8 +1277,8 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
                     details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8},
                 ),
                 model_name='gemini-1.5-flash',
+                finish_reason='stop',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
