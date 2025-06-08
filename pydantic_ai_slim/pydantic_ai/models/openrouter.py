@@ -45,8 +45,7 @@ class OpenRouterModel(OpenAIModel):
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         response = cast(OpenRouterChatCompletion, response)
-        if hasattr(response, 'error') and response.error is not None:
-            error = response.error
+        if error := getattr(response, 'error', None):
             raise ModelHTTPError(status_code=error['code'], model_name=self.model_name, body=error)
         else:
             model_response = super()._process_response(response=response)
