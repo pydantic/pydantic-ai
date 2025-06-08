@@ -1,14 +1,16 @@
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from openai.types import chat
-from typing_extensions import TypedDict
+from pydantic import BaseModel
 
 from .. import ModelHTTPError
 from ..messages import ModelResponse
-from .openai import OpenAIModel
+from ..profiles import ModelProfileSpec
+from ..providers.openrouter import OpenRouterProvider
+from .openai import OpenAIModel, OpenAIModelName, OpenAISystemPromptRole
 
 
-class OpenRouterErrorResponse(TypedDict):
+class OpenRouterErrorResponse(BaseModel):
     """Represents error responses from upstream LLM providers returned by OpenRouter.
 
     Attributes:
@@ -42,6 +44,16 @@ class OpenRouterChatCompletion(chat.ChatCompletion):
 
 class OpenRouterModel(OpenAIModel):
     """Extends OpenAIModel to capture extra metadata for Openrouter."""
+
+    def __init__(
+        self,
+        model_name: OpenAIModelName,
+        *,
+        provider: Literal['openrouter'] | OpenRouterProvider = 'openrouter',
+        profile: ModelProfileSpec | None = None,
+        system_prompt_role: OpenAISystemPromptRole | None = None,
+    ):
+        super().__init__(model_name, provider=provider, profile=profile, system_prompt_role=system_prompt_role)
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         response = cast(OpenRouterChatCompletion, response)
