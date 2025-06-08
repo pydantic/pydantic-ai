@@ -52,7 +52,7 @@ class OpenRouterModel(OpenAIModel):
             model_response = super()._process_response(response=response)
         openrouter_provider: str | None = response.provider if hasattr(response, 'provider') else None
         if openrouter_provider:
-            vendor_details: dict[str, Any] = getattr(model_response, 'vendor_details') or {}
+            vendor_details: dict[str, Any] = model_response.vendor_details or {}
             vendor_details['provider'] = openrouter_provider
             model_response.vendor_details = vendor_details
         return model_response
