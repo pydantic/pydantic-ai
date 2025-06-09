@@ -657,7 +657,7 @@ async def test_request_simple_success_with_vcr(allow_model_requests: None, huggi
     agent = Agent(m)
     result = await agent.run('hello')
     assert result.output == snapshot(
-        "Hello! It's great to meet you. How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help!"
+        'Hello! How can I assist you today? Feel free to ask me any questions or let me know if you need help with anything specific.'
     )
 
 
@@ -684,7 +684,7 @@ async def test_hf_model_instructions(allow_model_requests: None, huggingface_api
                 usage=Usage(requests=1, request_tokens=26, response_tokens=2, total_tokens=28),
                 model_name='Qwen/Qwen2.5-72B-Instruct-fast',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-54246cfb4fa046e88a984020c4efab20',
+                vendor_id='chatcmpl-6fa46f85f4f04beda9c936d5996b22a8',
             ),
         ]
     )

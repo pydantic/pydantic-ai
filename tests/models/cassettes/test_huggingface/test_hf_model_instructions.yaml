@@ -1,72 +1,6 @@
 interactions:
 - request:
     body: null
-    headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-    method: GET
-    uri: https://huggingface.co/api/models/Qwen/Qwen2.5-72B-Instruct?expand=inferenceProviderMapping
-  response:
-    headers:
-      access-control-allow-origin:
-      - https://huggingface.co
-      access-control-expose-headers:
-      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
-      connection:
-      - keep-alive
-      content-length:
-      - '800'
-      content-type:
-      - application/json; charset=utf-8
-      cross-origin-opener-policy:
-      - same-origin
-      etag:
-      - W/"320-IoLwHc4XKGzRoHW0ok1gY7tY/NI"
-      referrer-policy:
-      - strict-origin-when-cross-origin
-      vary:
-      - Origin
-    parsed_body:
-      _id: 66e81cefd1b1391042d0e47e
-      id: Qwen/Qwen2.5-72B-Instruct
-      inferenceProviderMapping:
-        featherless-ai:
-          providerId: Qwen/Qwen2.5-72B-Instruct
-          status: error
-          task: conversational
-        fireworks-ai:
-          providerId: accounts/fireworks/models/qwen2p5-72b-instruct
-          status: live
-          task: conversational
-        hf-inference:
-          providerId: Qwen/Qwen2.5-72B-Instruct
-          status: live
-          task: conversational
-        hyperbolic:
-          providerId: Qwen/Qwen2.5-72B-Instruct
-          status: live
-          task: conversational
-        nebius:
-          providerId: Qwen/Qwen2.5-72B-Instruct-fast
-          status: live
-          task: conversational
-        novita:
-          providerId: qwen/qwen-2.5-72b-instruct
-          status: live
-          task: conversational
-        together:
-          providerId: Qwen/Qwen2.5-72B-Instruct-Turbo
-          status: live
-          task: conversational
-    status:
-      code: 200
-      message: OK
-- request:
-    body: null
     headers: {}
     method: POST
     uri: https://router.huggingface.co/nebius/v1/chat/completions
@@ -106,8 +40,8 @@ interactions:
           role: assistant
           tool_calls: []
         stop_reason: null
-      created: 1749227878
-      id: chatcmpl-54246cfb4fa046e88a984020c4efab20
+      created: 1749475551
+      id: chatcmpl-6fa46f85f4f04beda9c936d5996b22a8
       model: Qwen/Qwen2.5-72B-Instruct-fast
       object: chat.completion
       prompt_logprobs: null
