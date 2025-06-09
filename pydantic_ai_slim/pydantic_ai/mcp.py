@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -11,31 +10,24 @@ from types import TracebackType
 from typing import Any
 
 import anyio
+import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from mcp.types import (
-    BlobResourceContents,
-    EmbeddedResource,
-    ImageContent,
-    JSONRPCMessage,
-    LoggingLevel,
-    TextContent,
-    TextResourceContents,
-)
 from typing_extensions import Self, assert_never
 
-from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import BinaryContent
-from pydantic_ai.tools import ToolDefinition
-
 try:
-    from mcp.client.session import ClientSession
+    from mcp import types as mcp_types
+    from mcp.client.session import ClientSession, LoggingFnT
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
+    from mcp.shared.context import RequestContext
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `mcp` package to use the MCP server, '
         'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
     ) from _import_error
+
+# after mcp imports so any import error maps to this file, not _mcp.py
+from . import _mcp, exceptions, messages, models, tools
 
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP'
 
@@ -46,19 +38,17 @@ class MCPServer(ABC):
     See <https://modelcontextprotocol.io> for more information.
     """
 
-    is_running: bool = False
+    # these two fields should be re-implemented by dataclass subclasses so they appear as fields
+    log_level: mcp_types.LoggingLevel | None = None
     tool_prefix: str | None = None
-    """A prefix to add to all tools that are registered with the server.
+    log_handler: LoggingFnT | None = None
 
-    If not empty, will include a trailing underscore(`_`).
-
-    e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
-    """
-
+    _running_count: int = 0
     _client: ClientSession
-    _read_stream: MemoryObjectReceiveStream[JSONRPCMessage | Exception]
-    _write_stream: MemoryObjectSendStream[JSONRPCMessage]
+    _read_stream: MemoryObjectReceiveStream[mcp_types.JSONRPCMessage | Exception]
+    _write_stream: MemoryObjectSendStream[mcp_types.JSONRPCMessage]
     _exit_stack: AsyncExitStack
+    sampling_model: models.Model | None = None
 
     @abstractmethod
     @asynccontextmanager
@@ -66,18 +56,13 @@ class MCPServer(ABC):
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
+            MemoryObjectReceiveStream[mcp_types.JSONRPCMessage | Exception],
+            MemoryObjectSendStream[mcp_types.JSONRPCMessage],
         ]
     ]:
         """Create the streams for the MCP server."""
         raise NotImplementedError('MCP Server subclasses must implement this method.')
         yield
-
-    @abstractmethod
-    def _get_log_level(self) -> LoggingLevel | None:
-        """Get the log level for the MCP server."""
-        raise NotImplementedError('MCP Server subclasses must implement this method.')
 
     def _get_client_initialize_timeout(self) -> float:
         return 5  # pragma: no cover
@@ -90,26 +75,37 @@ class MCPServer(ABC):
         """Get original tool name without prefix for calling tools."""
         return tool_name.removeprefix(f'{self.tool_prefix}_') if self.tool_prefix else tool_name
 
-    async def list_tools(self) -> list[ToolDefinition]:
+    @property
+    def is_running(self) -> bool:
+        """Check if the MCP server is running."""
+        return bool(self._running_count)
+
+    async def list_tools(self) -> list[tools.ToolDefinition]:
         """Retrieve tools that are currently active on the server.
 
         Note:
         - We don't cache tools as they might change.
         - We also don't subscribe to the server to avoid complexity.
         """
-        tools = await self._client.list_tools()
+        mcp_tools = await self._client.list_tools()
         return [
-            ToolDefinition(
+            tools.ToolDefinition(
                 name=self.get_prefixed_tool_name(tool.name),
                 description=tool.description or '',
                 parameters_json_schema=tool.inputSchema,
             )
-            for tool in tools.tools
+            for tool in mcp_tools.tools
         ]
 
     async def call_tool(
         self, tool_name: str, arguments: dict[str, Any]
-    ) -> str | BinaryContent | dict[str, Any] | list[Any] | Sequence[str | BinaryContent | dict[str, Any] | list[Any]]:
+    ) -> (
+        str
+        | messages.BinaryContent
+        | dict[str, Any]
+        | list[Any]
+        | Sequence[str | messages.BinaryContent | dict[str, Any] | list[Any]]
+    ):
         """Call a tool on the server.
 
         Args:
@@ -128,25 +124,31 @@ class MCPServer(ABC):
 
         if result.isError:
             text = '\n'.join(str(part) for part in content)
-            raise ModelRetry(text)
+            raise exceptions.ModelRetry(text)
 
         if len(content) == 1:
             return content[0]
         return content
 
     async def __aenter__(self) -> Self:
-        self._exit_stack = AsyncExitStack()
+        if self._running_count == 0:
+            self._exit_stack = AsyncExitStack()
 
-        self._read_stream, self._write_stream = await self._exit_stack.enter_async_context(self.client_streams())
-        client = ClientSession(read_stream=self._read_stream, write_stream=self._write_stream)
-        self._client = await self._exit_stack.enter_async_context(client)
+            self._read_stream, self._write_stream = await self._exit_stack.enter_async_context(self.client_streams())
+            client = ClientSession(
+                read_stream=self._read_stream,
+                write_stream=self._write_stream,
+                sampling_callback=self._sampling_callback,
+                logging_callback=self.log_handler,
+            )
+            self._client = await self._exit_stack.enter_async_context(client)
 
-        with anyio.fail_after(self._get_client_initialize_timeout()):
-            await self._client.initialize()
+            with anyio.fail_after(self._get_client_initialize_timeout()):
+                await self._client.initialize()
 
-        if log_level := self._get_log_level():
-            await self._client.set_logging_level(log_level)
-        self.is_running = True
+            if log_level := self.log_level:
+                await self._client.set_logging_level(log_level)
+        self._running_count += 1
         return self
 
     async def __aexit__(
@@ -155,30 +157,58 @@ class MCPServer(ABC):
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None:
-        await self._exit_stack.aclose()
-        self.is_running = False
+        self._running_count -= 1
+        if self._running_count == 0:
+            await self._exit_stack.aclose()
 
+    async def _sampling_callback(
+        self, context: RequestContext[ClientSession, Any], params: mcp_types.CreateMessageRequestParams
+    ) -> mcp_types.CreateMessageResult | mcp_types.ErrorData:
+        """MCP sampling callback."""
+        if self.sampling_model is None:
+            raise ValueError('Sampling model is not set')
+        pai_messages = _mcp.map_to_pai_messages(params)
+        model_settings = models.ModelSettings()
+        if max_tokens := params.maxTokens:
+            model_settings['max_tokens'] = max_tokens
+        if temperature := params.temperature:
+            model_settings['temperature'] = temperature
+        if stop_sequences := params.stopSequences:
+            model_settings['stop_sequences'] = stop_sequences
+
+        model_response = await self.sampling_model.request(
+            pai_messages,
+            model_settings,
+            models.ModelRequestParameters(),
+        )
+        return mcp_types.CreateMessageResult(
+            role='assistant',
+            content=_mcp.map_from_model_response(model_response),
+            model=self.sampling_model.model_name,
+        )
+
+    @staticmethod
     def _map_tool_result_part(
-        self, part: TextContent | ImageContent | EmbeddedResource
-    ) -> str | BinaryContent | dict[str, Any] | list[Any]:
+        part: mcp_types.TextContent | mcp_types.ImageContent | mcp_types.EmbeddedResource,
+    ) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
         # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
 
-        if isinstance(part, TextContent):
+        if isinstance(part, mcp_types.TextContent):
             text = part.text
             if text.startswith(('[', '{')):
                 try:
-                    return json.loads(text)
+                    return pydantic_core.from_json(text)
                 except ValueError:
                     pass
             return text
-        elif isinstance(part, ImageContent):
-            return BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
-        elif isinstance(part, EmbeddedResource):
+        elif isinstance(part, mcp_types.ImageContent):
+            return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
+        elif isinstance(part, mcp_types.EmbeddedResource):
             resource = part.resource
-            if isinstance(resource, TextResourceContents):
+            if isinstance(resource, mcp_types.TextResourceContents):
                 return resource.text
-            elif isinstance(resource, BlobResourceContents):
-                return BinaryContent(
+            elif isinstance(resource, mcp_types.BlobResourceContents):
+                return messages.BinaryContent(
                     data=base64.b64decode(resource.blob),
                     media_type=resource.mimeType or 'application/octet-stream',
                 )
@@ -239,7 +269,8 @@ class MCPServerStdio(MCPServer):
     By default the subprocess will not inherit any environment variables from the parent process.
     If you want to inherit the environment variables from the parent process, use `env=os.environ`.
     """
-    log_level: LoggingLevel | None = None
+
+    log_level: mcp_types.LoggingLevel | None = None
     """The log level to set when connecting to the server, if any.
 
     See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
@@ -257,6 +288,8 @@ class MCPServerStdio(MCPServer):
 
     e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
+    log_handler: LoggingFnT | None = None
+    """A handler for logging messages from the server."""
 
     timeout: float = 5
     """ The timeout in seconds to wait for the client to initialize."""
@@ -266,16 +299,13 @@ class MCPServerStdio(MCPServer):
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
+            MemoryObjectReceiveStream[mcp_types.JSONRPCMessage | Exception],
+            MemoryObjectSendStream[mcp_types.JSONRPCMessage],
         ]
     ]:
         server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
         async with stdio_client(server=server) as (read_stream, write_stream):
             yield read_stream, write_stream
-
-    def _get_log_level(self) -> LoggingLevel | None:
-        return self.log_level
 
     def __repr__(self) -> str:
         return f'MCPServerStdio(command={self.command!r}, args={self.args!r}, tool_prefix={self.tool_prefix!r})'
@@ -342,7 +372,7 @@ class MCPServerHTTP(MCPServer):
     If no new messages are received within this time, the connection will be considered stale
     and may be closed. Defaults to 5 minutes (300 seconds).
     """
-    log_level: LoggingLevel | None = None
+    log_level: mcp_types.LoggingLevel | None = None
     """The log level to set when connecting to the server, if any.
 
     See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
@@ -357,14 +387,16 @@ class MCPServerHTTP(MCPServer):
 
     For example, if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
+    log_handler: LoggingFnT | None = None
+    """A handler for logging messages from the server."""
 
     @asynccontextmanager
     async def client_streams(
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
+            MemoryObjectReceiveStream[mcp_types.JSONRPCMessage | Exception],
+            MemoryObjectSendStream[mcp_types.JSONRPCMessage],
         ]
     ]:  # pragma: no cover
         async with sse_client(
@@ -374,9 +406,6 @@ class MCPServerHTTP(MCPServer):
             sse_read_timeout=self.sse_read_timeout,
         ) as (read_stream, write_stream):
             yield read_stream, write_stream
-
-    def _get_log_level(self) -> LoggingLevel | None:
-        return self.log_level
 
     def __repr__(self) -> str:  # pragma: no cover
         return f'MCPServerHTTP(url={self.url!r}, tool_prefix={self.tool_prefix!r})'
