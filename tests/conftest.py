@@ -283,7 +283,7 @@ def openrouter_api_key() -> str:
 
 @pytest.fixture(scope='session')
 def huggingface_api_key() -> str:
-    return os.getenv('HF_TOKEN', 'mock-api-key') or os.getenv('HUGGINGFACE_API_KEY', 'mock-api-key')
+    return os.getenv('HF_TOKEN', 'hf_token') or os.getenv('HUGGINGFACE_API_KEY', 'hf_token')
 
 
 @pytest.fixture(scope='session')
