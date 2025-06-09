@@ -49,7 +49,7 @@ def test_huggingface_provider_pass_http_client() -> None:
 
 def test_huggingface_provider_pass_hf_client() -> None:
     hf_client = AsyncInferenceClient(api_key='api-key')
-    provider = HuggingFaceProvider(hf_client=hf_client)
+    provider = HuggingFaceProvider(hf_client=hf_client, api_key='api-key')
     assert provider.client == hf_client
 
 
