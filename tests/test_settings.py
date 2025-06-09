@@ -30,10 +30,14 @@ def test_specific_prefix_settings(settings: tuple[type[ModelSettings], str]):
     )
 
 
-@pytest.mark.parametrize('model', ['openai', 'anthropic', 'bedrock', 'mistral', 'groq', 'cohere'], indirect=True)
+@pytest.mark.parametrize(
+    'model', ['openai', 'anthropic', 'bedrock', 'mistral', 'groq', 'cohere', 'google'], indirect=True
+)
 async def test_stop_settings(allow_model_requests: None, model: Model) -> None:
     agent = Agent(model=model, model_settings=ModelSettings(stop_sequences=['Paris']))
-    result = await agent.run('What is the capital of France?')
+    result = await agent.run(
+        'What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.'
+    )
 
     # NOTE: Bedrock has a slightly different behavior. It will include the stop sequence in the response.
     if model.system == 'bedrock':

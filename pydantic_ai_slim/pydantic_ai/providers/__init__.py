@@ -8,6 +8,8 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
 
+from pydantic_ai.profiles import ModelProfile
+
 InterfaceClient = TypeVar('InterfaceClient')
 
 
@@ -41,8 +43,12 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The client for the provider."""
         raise NotImplementedError()
 
+    def model_profile(self, model_name: str) -> ModelProfile | None:
+        """The model profile for the named model, if available."""
+        return None  # pragma: no cover
 
-def infer_provider(provider: str) -> Provider[Any]:
+
+def infer_provider(provider: str) -> Provider[Any]:  # noqa: C901
     """Infer the provider from the provider name."""
     if provider == 'openai':
         from .openai import OpenAIProvider
@@ -89,6 +95,23 @@ def infer_provider(provider: str) -> Provider[Any]:
         from .cohere import CohereProvider
 
         return CohereProvider()
+
+    elif provider == 'grok':
+        from .grok import GrokProvider
+
+        return GrokProvider()
+    elif provider == 'fireworks':
+        from .fireworks import FireworksProvider
+
+        return FireworksProvider()
+    elif provider == 'together':
+        from .together import TogetherProvider
+
+        return TogetherProvider()
+    elif provider == 'heroku':
+        from .heroku import HerokuProvider
+
+        return HerokuProvider()
     elif provider == 'huggingface':
         from .huggingface import HuggingFaceProvider
 

@@ -138,7 +138,7 @@ class ToolOutput(Generic[OutputDataT]):
 T_co = TypeVar('T_co', covariant=True)
 # output_type=Type or output_type=function or output_type=object.method
 SimpleOutputType = TypeAliasType(
-    'SimpleOutputType', Union[type[T_co], Callable[..., T_co], Callable[..., Awaitable[T_co]]], type_params=(T_co,)
+    'SimpleOutputType', Union[type[T_co], Callable[..., Union[Awaitable[T_co], T_co]]], type_params=(T_co,)
 )
 # output_type=ToolOutput(<see above>) or <see above>
 SimpleOutputTypeOrMarker = TypeAliasType(
@@ -407,7 +407,7 @@ class OutputTool(Generic[OutputDataT]):
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
                     tool_name=tool_call.tool_name,
-                    content=e.errors(include_url=False),
+                    content=e.errors(include_url=False, include_context=False),
                     tool_call_id=tool_call.tool_call_id,
                 )
                 raise ToolRetryError(m) from e

@@ -9,16 +9,19 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
-from functools import cache
+from functools import cache, cached_property
 
 import httpx
 from typing_extensions import Literal, TypeAliasType
 
+from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
+
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent
+from ..profiles._json_schema import JsonSchemaTransformer
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import Usage
@@ -68,6 +71,10 @@ KnownModelName = TypeAliasType(
         'bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
         'bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
         'bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        'bedrock:anthropic.claude-opus-4-20250514-v1:0',
+        'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
+        'bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
+        'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
         'bedrock:cohere.command-text-v14',
         'bedrock:cohere.command-r-v1:0',
         'bedrock:cohere.command-r-plus-v1:0',
@@ -204,6 +211,11 @@ KnownModelName = TypeAliasType(
         'groq:llama-3.2-3b-preview',
         'groq:llama-3.2-11b-vision-preview',
         'groq:llama-3.2-90b-vision-preview',
+        'heroku:claude-3-5-haiku',
+        'heroku:claude-3-5-sonnet-latest',
+        'heroku:claude-3-7-sonnet',
+        'heroku:claude-4-sonnet',
+        'heroku:claude-3-haiku',
         'huggingface:Qwen/QwQ-32B',
         'huggingface:Qwen/Qwen2.5-72B-Instruct',
         'huggingface:Qwen/Qwen3-235B-A22B',
@@ -300,6 +312,8 @@ class ModelRequestParameters:
 class Model(ABC):
     """Abstract class for a model."""
 
+    _profile: ModelProfileSpec | None = None
+
     @abstractmethod
     async def request(
         self,
@@ -331,6 +345,13 @@ class Model(ABC):
         In particular, this method can be used to make modifications to the generated tool JSON schemas if necessary
         for vendor/model-specific reasons.
         """
+        if transformer := self.profile.json_schema_transformer:
+            model_request_parameters = replace(
+                model_request_parameters,
+                function_tools=[_customize_tool_def(transformer, t) for t in model_request_parameters.function_tools],
+                output_tools=[_customize_tool_def(transformer, t) for t in model_request_parameters.output_tools],
+            )
+
         return model_request_parameters
 
     @property
@@ -338,6 +359,18 @@ class Model(ABC):
     def model_name(self) -> str:
         """The model name."""
         raise NotImplementedError()
+
+    @cached_property
+    def profile(self) -> ModelProfile:
+        """The model profile."""
+        _profile = self._profile
+        if callable(_profile):
+            _profile = _profile(self.model_name)
+
+        if _profile is None:
+            return DEFAULT_PROFILE
+
+        return _profile
 
     @property
     @abstractmethod
@@ -523,7 +556,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
-    elif provider in ('deepseek', 'openai', 'azure', 'openrouter'):
+    elif provider in ('openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku'):
         from .openai import OpenAIModel
 
         return OpenAIModel(model_name, provider=provider)
@@ -596,3 +629,11 @@ def get_user_agent() -> str:
     from .. import __version__
 
     return f'pydantic-ai/{__version__}'
+
+
+def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinition):
+    schema_transformer = transformer(t.parameters_json_schema, strict=t.strict)
+    parameters_json_schema = schema_transformer.walk()
+    if t.strict is None:
+        t = replace(t, strict=schema_transformer.is_strict_compatible)
+    return replace(t, parameters_json_schema=parameters_json_schema)
