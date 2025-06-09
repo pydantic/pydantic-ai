@@ -14,6 +14,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.cohere import CohereModelName
     from pydantic_ai.models.gemini import GeminiModelName
     from pydantic_ai.models.groq import GroqModelName
+    from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import OpenAIModelName
 
@@ -44,6 +45,7 @@ def test_known_model_names():
     ]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(BedrockModelName)]
     deepseek_names = ['deepseek:deepseek-chat', 'deepseek:deepseek-reasoner']
+    huggingface_names = [f'huggingface:{n}' for n in get_model_names(HuggingFaceModelName)]
     extra_names = ['test']
 
     generated_names = sorted(
@@ -55,6 +57,7 @@ def test_known_model_names():
         + openai_names
         + bedrock_names
         + deepseek_names
+        + huggingface_names
         + extra_names
     )
 

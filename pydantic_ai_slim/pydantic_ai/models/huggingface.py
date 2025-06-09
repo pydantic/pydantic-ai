@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal, cast, overload
+from typing import Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
@@ -64,6 +64,25 @@ __all__ = (
 
 
 HFSystemPromptRole = Literal['system', 'user']
+
+LatestHuggingFaceModelNames = Literal[
+    'deepseek-ai/DeepSeek-R1',
+    'meta-llama/Llama-3.3-70B-Instruct',
+    'meta-llama/Llama-4-Maverick-17B-128E-Instruct',
+    'meta-llama/Llama-4-Scout-17B-16E-Instruct',
+    'Qwen/QwQ-32B',
+    'Qwen/Qwen2.5-72B-Instruct',
+    'Qwen/Qwen3-235B-A22B',
+    'Qwen/Qwen3-32B',
+]
+"""Latest Hugging Face models."""
+
+
+HuggingFaceModelName = Union[str, LatestHuggingFaceModelNames]
+"""Possible Hugging Face model names.
+
+You can browse available models [here](https://huggingface.co/models?pipeline_tag=text-generation&inference_provider=all&sort=trending).
+"""
 
 
 class HuggingFaceModelSettings(ModelSettings, total=False):
@@ -136,7 +155,7 @@ class HuggingFaceModel(Model):
         yield await self._process_streamed_response(response)
 
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> HuggingFaceModelName:
         """The model name."""
         return self._model_name
 

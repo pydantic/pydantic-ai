@@ -1,0 +1,84 @@
+# Hugging Face
+
+
+## Install
+
+To use `HuggingFace`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `huggingface` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[huggingface]"
+```
+
+## Configuration
+
+To use `HuggingFaceModel` through their main API, go to [Inference Providers documentation](https://huggingface.co/docs/inference-providers/pricing) for all the details, and you can generate a Hugging Face Token here: https://huggingface.co/settings/tokens.
+
+## Environment variable
+
+Once you have a HuggingFace Token, you can set it as an environment variable:
+
+```bash
+export HF_TOKEN='your-hf-token'
+```
+
+You can then use `HuggingFaceModel` by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('huggingface:Qwen/Qwen3-235B-A22B')
+...
+```
+
+Or initialise the model directly with just the model name:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.huggingface import HuggingFaceModel
+
+model = HuggingFaceModel('Qwen/Qwen3-235B-A22B')
+agent = Agent(model)
+...
+```
+
+By default, the `HuggingFaceModel` uses the `HuggingFaceProvider` that will select automatically the first of the inference providers (Cerebras, Together AI, Cohere..etc) available for the model, sorted by your preferred order in https://hf.co/settings/inference-providers.
+
+## Configure the provider
+
+If you want to pass parameters in code to the provider, you can programmatically instantiate the
+[HuggingFaceProvider][pydantic_ai.providers.huggingface.HuggingFaceProvider] and pass it to the model:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.huggingface import HuggingFaceModel
+from pydantic_ai.providers.huggingface import HuggingFaceProvider
+
+model = HuggingFaceModel('Qwen/Qwen3-235B-A22B', provider=HuggingFaceProvider(api_key='your-api-key', provider="nebius"))
+agent = Agent(model)
+...
+```
+
+## Custom Hugging Face Client
+
+`HuggingFaceProvider` also accepts a custom `AsyncInferenceClient` client via the `hf_client` parameter, so you can customise the `headers`, `bill_to` (billing to an HF organization you're a member of), `base_url` etc. as defined in the [Hugging Face Hub python library docs](https://huggingface.co/docs/huggingface_hub/package_reference/inference_client).
+
+```python
+from huggingface_hub import AsyncInferenceClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.huggingface import HuggingFaceModel
+from pydantic_ai.providers.huggingface import HuggingFaceProvider
+
+client = AsyncInferenceClient(
+    bill_to="openai",
+    api_key='your-api-key',
+    provider="fireworks-ai",
+)
+
+model = HuggingFaceModel(
+    'Qwen/Qwen3-235B-A22B',
+    provider=HuggingFaceProvider(hf_client=client),
+)
+agent = Agent(model)
+...
+```

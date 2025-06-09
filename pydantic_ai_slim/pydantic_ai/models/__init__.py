@@ -204,6 +204,14 @@ KnownModelName = TypeAliasType(
         'groq:llama-3.2-3b-preview',
         'groq:llama-3.2-11b-vision-preview',
         'groq:llama-3.2-90b-vision-preview',
+        'huggingface:Qwen/QwQ-32B',
+        'huggingface:Qwen/Qwen2.5-72B-Instruct',
+        'huggingface:Qwen/Qwen3-235B-A22B',
+        'huggingface:Qwen/Qwen3-32B',
+        'huggingface:deepseek-ai/DeepSeek-R1',
+        'huggingface:meta-llama/Llama-3.3-70B-Instruct',
+        'huggingface:meta-llama/Llama-4-Maverick-17B-128E-Instruct',
+        'huggingface:meta-llama/Llama-4-Scout-17B-16E-Instruct',
         'mistral:codestral-latest',
         'mistral:mistral-large-latest',
         'mistral:mistral-moderation-latest',
@@ -485,7 +493,7 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-def infer_model(model: Model | KnownModelName | str) -> Model:
+def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
     """Infer the model from the name."""
     if isinstance(model, Model):
         return model
@@ -539,6 +547,10 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
         from .bedrock import BedrockConverseModel
 
         return BedrockConverseModel(model_name, provider=provider)
+    elif provider == 'huggingface':
+        from .huggingface import HuggingFaceModel
+
+        return HuggingFaceModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
