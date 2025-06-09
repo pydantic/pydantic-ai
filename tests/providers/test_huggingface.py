@@ -56,6 +56,6 @@ def test_huggingface_provider_pass_hf_client() -> None:
 def test_hf_provider_with_base_url() -> None:
     # Test with environment variable for base_url
     provider = HuggingFaceProvider(
-        hf_client=AsyncInferenceClient(api_key='test-api-key', base_url='https://router.huggingface.co/nebius/v1'),
+        hf_client=AsyncInferenceClient(base_url='https://router.huggingface.co/nebius/v1'), api_key='test-api-key'
     )
     assert provider.base_url == 'https://router.huggingface.co/nebius/v1'

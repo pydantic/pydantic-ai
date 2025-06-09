@@ -389,7 +389,7 @@ def text_chunk(text: str, finish_reason: FinishReason | None = None) -> ChatComp
 async def test_stream_text(allow_model_requests: None):
     stream = [text_chunk('hello '), text_chunk('world'), chunk([])]
     mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client))
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -406,7 +406,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
         text_chunk('.', finish_reason='stop'),
     ]
     mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client))
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -491,7 +491,7 @@ async def test_stream_structured(allow_model_requests: None):
         chunk([]),
     ]
     mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client))
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m, output_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
@@ -520,7 +520,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
         struc_chunk(None, None, finish_reason='stop'),
     ]
     mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client))
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m, output_type=MyTypedDict)
 
     async with agent.run_stream('') as result:
@@ -543,7 +543,7 @@ async def test_no_content(allow_model_requests: None):
         chunk([ChatCompletionStreamOutputDelta(role='assistant')]),  # type: ignore
     ]
     mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client))
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m, output_type=MyTypedDict)
 
     with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
@@ -558,7 +558,7 @@ async def test_no_delta(allow_model_requests: None):
         text_chunk('world'),
     ]
     mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client))
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
@@ -571,7 +571,7 @@ async def test_no_delta(allow_model_requests: None):
 async def test_image_url_input(allow_model_requests: None):
     c = completion_message(ChatCompletionInputMessage(content='world', role='assistant'))  # type:ignore
     mock_client = MockHuggingFace.create_mock(c)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client))
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m)
 
     result = await agent.run(
@@ -609,7 +609,7 @@ async def test_image_url_input(allow_model_requests: None):
 async def test_image_as_binary_content_input(allow_model_requests: None):
     c = completion_message(ChatCompletionInputMessage(content='world', role='assistant'))  # type: ignore
     mock_client = MockHuggingFace.create_mock(c)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client))
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m)
 
     base64_content = (
@@ -642,7 +642,7 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
 def test_model_status_error(allow_model_requests: None) -> None:
     error = HfHubHTTPError(message='test_error', response=Mock(status_code=500, content={'error': 'test error'}))
     mock_client = MockHuggingFace.create_mock(error)
-    m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client))
+    m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
