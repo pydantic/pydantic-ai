@@ -2,7 +2,9 @@ from __future__ import annotations as _annotations
 
 import os
 
-from mistralai import httpx
+from httpx import AsyncClient
+
+from pydantic_ai.exceptions import UserError
 
 try:
     from huggingface_hub import AsyncInferenceClient
@@ -35,13 +37,13 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
         base_url: str | None = None,
         api_key: str | None = None,
         hf_client: AsyncInferenceClient | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: AsyncClient | None = None,
         provider: str | None = None,
     ) -> None:
         """Create a new Hugging Face provider.
 
         Args:
-            base_url: The base url for the Hugging Face requests. If not provided, it will default to the HF Inference API base url.
+            base_url: The base url for the Hugging Face requests.
             api_key: The API key to use for authentication, if not provided, the `HF_TOKEN` environment variable
                 will be used if available.
             hf_client: An existing
@@ -55,7 +57,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
         api_key = api_key or os.environ.get('HF_TOKEN')
 
         if api_key is None:
-            raise ValueError(
+            raise UserError(
                 'Set the `HF_TOKEN` environment variable or pass it via `HuggingFaceProvider(api_key=...)`'
                 'to use the HuggingFace provider.'
             )

@@ -49,6 +49,7 @@ try:
         ChatCompletionStreamOutput,
         InferenceTimeoutError,
     )
+    from huggingface_hub.errors import HfHubHTTPError
 
 except ImportError as _import_error:
     raise ImportError(
@@ -198,12 +199,18 @@ class HuggingFaceModel(Model):
                 top_logprobs=model_settings.get('top_logprobs', None),
                 extra_body=model_settings.get('extra_body'),  # type: ignore
             )
-        except (InferenceTimeoutError, aiohttp.ClientResponseError) as e:
+        except (InferenceTimeoutError, aiohttp.ClientResponseError, HfHubHTTPError) as e:
             if isinstance(e, aiohttp.ClientResponseError):
                 raise ModelHTTPError(
                     status_code=e.status,
                     model_name=self.model_name,
                     body=e.response_error_payload,  # type: ignore
+                ) from e
+            elif isinstance(e, HfHubHTTPError):
+                raise ModelHTTPError(
+                    status_code=e.response.status_code,
+                    model_name=self.model_name,
+                    body=e.response.content,
                 ) from e
             raise  # pragma: lax no cover
 
@@ -401,8 +408,8 @@ class HuggingFaceStreamedResponse(StreamedResponse):
             for dtc in choice.delta.tool_calls or []:
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=dtc.index,
-                    tool_name=dtc.function.name,
-                    args=dtc.function.arguments,
+                    tool_name=dtc.function and dtc.function.name,  # type: ignore
+                    args=dtc.function and dtc.function.arguments,
                     tool_call_id=dtc.id,
                 )
                 if maybe_event is not None:
