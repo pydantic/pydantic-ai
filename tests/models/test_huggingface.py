@@ -9,13 +9,6 @@ from typing import Any, Literal, Union, cast
 from unittest.mock import Mock
 
 import pytest
-from huggingface_hub import (
-    ChatCompletionStreamOutputChoice,
-    ChatCompletionStreamOutputDelta,
-    ChatCompletionStreamOutputDeltaToolCall,
-    ChatCompletionStreamOutputFunction,
-    ChatCompletionStreamOutputUsage,
-)
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
@@ -50,6 +43,11 @@ with try_import() as imports_successful:
         ChatCompletionOutputToolCall,
         ChatCompletionOutputUsage,
         ChatCompletionStreamOutput,
+        ChatCompletionStreamOutputChoice,
+        ChatCompletionStreamOutputDelta,
+        ChatCompletionStreamOutputDeltaToolCall,
+        ChatCompletionStreamOutputFunction,
+        ChatCompletionStreamOutputUsage,
     )
     from huggingface_hub.errors import HfHubHTTPError
 
