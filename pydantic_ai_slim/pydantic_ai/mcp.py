@@ -19,10 +19,15 @@ from mcp.shared.message import SessionMessage
 from mcp.types import (
     AudioContent,
     BlobResourceContents,
+    CallToolRequest,
+    CallToolRequestParams,
+    CallToolResult,
+    ClientRequest,
     Content,
     EmbeddedResource,
     ImageContent,
     LoggingLevel,
+    RequestParams,
     TextContent,
     TextResourceContents,
 )
@@ -113,13 +118,17 @@ class MCPServer(ABC):
         ]
 
     async def call_tool(
-        self, tool_name: str, arguments: dict[str, Any]
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        _meta: RequestParams.Meta | None = None,
     ) -> str | BinaryContent | dict[str, Any] | list[Any] | Sequence[str | BinaryContent | dict[str, Any] | list[Any]]:
         """Call a tool on the server.
 
         Args:
             tool_name: The name of the tool to call.
             arguments: The arguments to pass to the tool.
+            _meta: Request-level metadata (optional)
 
         Returns:
             The result of the tool call.
@@ -127,7 +136,25 @@ class MCPServer(ABC):
         Raises:
             ModelRetry: If the tool call fails.
         """
-        result = await self._client.call_tool(self.get_unprefixed_tool_name(tool_name), arguments)
+        unprefixed_tool_name = self.get_unprefixed_tool_name(tool_name)
+
+        tool_request = ClientRequest(
+            CallToolRequest(
+                method='tools/call',
+                params=CallToolRequestParams(
+                    name=unprefixed_tool_name,
+                    arguments=arguments,
+                    _meta=_meta,
+                ),
+            )
+        )
+
+        result = await self._client.send_request(
+            request=tool_request,
+            result_type=CallToolResult,
+            request_read_timeout_seconds=None,
+            progress_callback=None,
+        )
 
         content = [self._map_tool_result_part(part) for part in result.content]
 
