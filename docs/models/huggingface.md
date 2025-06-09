@@ -18,7 +18,7 @@ To use `HuggingFaceModel` through their main API, go to [Inference Providers doc
 Once you have a HuggingFace Token, you can set it as an environment variable:
 
 ```bash
-export HF_TOKEN='your-hf-token'
+export HF_TOKEN='hf_token'
 ```
 
 You can then use `HuggingFaceModel` by name:
@@ -53,7 +53,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.huggingface import HuggingFaceModel
 from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
-model = HuggingFaceModel('Qwen/Qwen3-235B-A22B', provider=HuggingFaceProvider(api_key='your-api-key', provider="nebius"))
+model = HuggingFaceModel('Qwen/Qwen3-235B-A22B', provider=HuggingFaceProvider(api_key='hf_token', provider='nebius'))
 agent = Agent(model)
 ...
 ```
@@ -70,9 +70,9 @@ from pydantic_ai.models.huggingface import HuggingFaceModel
 from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
 client = AsyncInferenceClient(
-    bill_to="openai",
-    api_key='your-api-key',
-    provider="fireworks-ai",
+    bill_to='openai',
+    api_key='hf_token',
+    provider='fireworks-ai',
 )
 
 model = HuggingFaceModel(
