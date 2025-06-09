@@ -17,7 +17,7 @@
     "@std/cli": "jsr:@std/cli@^1.0.15",
     "@std/path": "jsr:@std/path@^1.0.8",
     // do NOT upgrade above this version until there is a workaround for https://github.com/pyodide/pyodide/pull/5621
-    "pyodide": "npm:pyodide@0.27.6",
+    "pyodide": "npm:pyodide@0.27.7",
     "zod": "npm:zod@^3.24.2"
   },
   "fmt": {

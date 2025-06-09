@@ -9,7 +9,7 @@
     "npm:@types/node@*": "22.12.0",
     "npm:@types/node@22.12.0": "22.12.0",
     "npm:eslint@*": "9.23.0",
-    "npm:pyodide@0.27.6": "0.27.6",
+    "npm:pyodide@0.27.7": "0.27.7",
     "npm:zod@^3.24.2": "3.24.2"
   },
   "jsr": {
@@ -717,8 +717,8 @@
     "punycode@2.3.1": {
       "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg=="
     },
-    "pyodide@0.27.6": {
-      "integrity": "sha512-ahiSHHs6iFKl2f8aO1wALINAlMNDLAtb44xCI87GQyH2tLDk8F8VWip3u1ZNIyglGSCYAOSFzWKwS1f9gBFVdg==",
+    "pyodide@0.27.7": {
+      "integrity": "sha512-RUSVJlhQdfWfgO9hVHCiXoG+nVZQRS5D9FzgpLJ/VcgGBLSAKoPL8kTiOikxbHQm1kRISeWUBdulEgO26qpSRA==",
       "dependencies": [
         "ws"
       ]
@@ -911,7 +911,7 @@
       "jsr:@std/cli@^1.0.15",
       "jsr:@std/path@^1.0.8",
       "npm:@modelcontextprotocol/sdk@^1.8.0",
-      "npm:pyodide@0.27.6",
+      "npm:pyodide@0.27.7",
       "npm:zod@^3.24.2"
     ]
   }
