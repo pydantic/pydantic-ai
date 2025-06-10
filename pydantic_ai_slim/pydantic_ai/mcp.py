@@ -333,7 +333,7 @@ class MCPServerHTTP(MCPServer):
 
     http_client: httpx.AsyncClient | None = None
     """Optional http client to use with the SSE endpoint
-    
+
     This client may be configured to use customized connection parameters like self
     signed certificates. Since, `headers` can be passed into the custom `httpx.AsyncClient`,
     This argument cannot be used with the `headers` argument of this class.
