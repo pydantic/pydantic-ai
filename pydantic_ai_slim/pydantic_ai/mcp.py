@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import functools
 import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
@@ -327,12 +328,15 @@ class MCPServerHTTP(MCPServer):
 
     These headers will be passed directly to the underlying `httpx.AsyncClient`.
     Useful for authentication, custom headers, or other HTTP-specific configurations.
+    Cannot be used with `http_client`.
     """
 
-    extra_http_client_args: dict[str, Any] | None = None
-    """Optional extra arguments to pass to the HTTP client factory
-       the headers key-value pairs will be merged with `headers`.
-       those provided in the headers argument will take precedence.
+    http_client: httpx.AsyncClient | None = None
+    """Optional http client to use with the SSE endpoint 
+    
+    This client may be configured to use customized connection parameters like self
+    signed certificates. Since, `headers` can be passed into the custom `httpx.AsyncClient`,
+    This argument cannot be used with the `headers` argument of this class.
     """
 
     timeout: float = 5
@@ -374,41 +378,38 @@ class MCPServerHTTP(MCPServer):
             MemoryObjectSendStream[SessionMessage],
         ]
     ]:  # pragma: no cover
-        def httpx_client_factory(
-            headers: dict[str, str] | None = None,
-            timeout: httpx.Timeout | None = None,
-            auth: httpx.Auth | None = None,
-        ) -> httpx.AsyncClient:
-            extra_args = self.extra_http_client_args.copy() if self.extra_http_client_args else {}
 
-            if headers is not None:
-                current_config_headers = extra_args.get('headers')
-                filtered_config_headers: dict[str, str] = {}
-                if isinstance(current_config_headers, dict):
-                    typed_current_config_headers: dict[Any, Any] = current_config_headers
-                    filtered_config_headers = {
-                        k_typed: v_typed
-                        for k_typed, v_typed in typed_current_config_headers.items()
-                        if isinstance(k_typed, str) and isinstance(v_typed, str)
-                    }
-                extra_args['headers'] = {**filtered_config_headers, **headers}
+        if self.http_client and self.headers:
+            message = (
+                f"In {self.__name__}, only one of `headers` or `http_client` can be provided."
+            )
+            raise ValueError(message)
 
-            if timeout is not None:
-                extra_args['timeout'] = timeout
+        sse_client_partial = functools.partial(
+            sse_client,
+            url = self.url,
+            timeout = self.timeout,
+            sse_read_timeout = self.sse_read_timeout,
+        )
 
-            if auth is not None:
-                extra_args['auth'] = auth
+        if self.http_client is not None:
+            def httpx_client_factory(
+                headers: dict[str, str] | None = None,
+                timeout: httpx.Timeout | None = None,
+                auth: httpx.Auth | None = None,
+            ) -> httpx.AsyncClient:
 
-            return httpx.AsyncClient(**extra_args)
+                return self.http_client #  pyright: ignore
 
-        async with sse_client(
-            url=self.url,
-            timeout=self.timeout,
-            sse_read_timeout=self.sse_read_timeout,
-            headers=self.headers,
-            httpx_client_factory=httpx_client_factory,
-        ) as (read_stream, write_stream):
-            yield read_stream, write_stream
+            async with sse_client_partial(
+                httpx_client_factory=httpx_client_factory
+            ) as (read_stream, write_stream):
+                yield read_stream, write_stream
+        else:
+            async with sse_client_partial(
+                headers=self.headers
+            ) as (read_stream, write_stream):
+                yield read_stream, write_stream
 
     def _get_log_level(self) -> LoggingLevel | None:
         return self.log_level
