@@ -379,8 +379,7 @@ class MCPServerHTTP(MCPServer):
         ]
     ]:  # pragma: no cover
         if self.http_client and self.headers:
-            message = f'In {self.__name__}, only one of `headers` or `http_client` can be provided.'
-            raise ValueError(message)
+            raise ValueError(f'In {self.__name__}, only one of `headers` or `http_client` can be provided.')
 
         sse_client_partial = functools.partial(
             sse_client,
