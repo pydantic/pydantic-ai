@@ -35,7 +35,6 @@ class DatabaseConn:
             raise ValueError('Customer not found')
 
 
-
 @dataclass
 class SupportDependencies:
     customer_id: int
