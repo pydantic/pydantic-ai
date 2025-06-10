@@ -378,37 +378,30 @@ class MCPServerHTTP(MCPServer):
             MemoryObjectSendStream[SessionMessage],
         ]
     ]:  # pragma: no cover
-
         if self.http_client and self.headers:
-            message = (
-                f"In {self.__name__}, only one of `headers` or `http_client` can be provided."
-            )
+            message = f'In {self.__name__}, only one of `headers` or `http_client` can be provided.'
             raise ValueError(message)
 
         sse_client_partial = functools.partial(
             sse_client,
-            url = self.url,
-            timeout = self.timeout,
-            sse_read_timeout = self.sse_read_timeout,
+            url=self.url,
+            timeout=self.timeout,
+            sse_read_timeout=self.sse_read_timeout,
         )
 
         if self.http_client is not None:
+
             def httpx_client_factory(
                 headers: dict[str, str] | None = None,
                 timeout: httpx.Timeout | None = None,
                 auth: httpx.Auth | None = None,
             ) -> httpx.AsyncClient:
+                return self.http_client  #  pyright: ignore
 
-                return self.http_client #  pyright: ignore
-
-            async with sse_client_partial(
-                httpx_client_factory=httpx_client_factory
-            ) as (read_stream, write_stream):
+            async with sse_client_partial(httpx_client_factory=httpx_client_factory) as (read_stream, write_stream):
                 yield read_stream, write_stream
         else:
-            async with sse_client_partial(
-                headers=self.headers
-            ) as (read_stream, write_stream):
+            async with sse_client_partial(headers=self.headers) as (read_stream, write_stream):
                 yield read_stream, write_stream
 
     def _get_log_level(self) -> LoggingLevel | None:
