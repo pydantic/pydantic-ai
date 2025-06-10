@@ -677,7 +677,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             instructions = [self._instructions] if self._instructions else []
             for instructions_runner in self._instructions_functions:
                 instructions.append(await instructions_runner.run(run_context))
-            concatenated_instructions = '/n'.join(instruction for instruction in instructions if instruction)
+            concatenated_instructions = '\n'.join(instruction for instruction in instructions if instruction)
             return concatenated_instructions.strip() if concatenated_instructions else None
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
