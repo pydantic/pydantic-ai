@@ -5,6 +5,8 @@ from typing import Literal, overload
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import get_user_agent
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -31,6 +33,9 @@ class GoogleProvider(Provider[genai.Client]):
     @property
     def client(self) -> genai.Client:
         return self._client
+
+    def model_profile(self, model_name: str) -> ModelProfile | None:
+        return google_model_profile(model_name)
 
     @overload
     def __init__(self, *, api_key: str) -> None: ...

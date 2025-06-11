@@ -10,6 +10,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any
 
+import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp.types import (
     BlobResourceContents,
@@ -78,6 +79,9 @@ class MCPServer(ABC):
         """Get the log level for the MCP server."""
         raise NotImplementedError('MCP Server subclasses must implement this method.')
 
+    def _get_client_initialize_timeout(self) -> float:
+        return 5  # pragma: no cover
+
     def get_prefixed_tool_name(self, tool_name: str) -> str:
         """Get the tool name with prefix if `tool_prefix` is set."""
         return f'{self.tool_prefix}_{tool_name}' if self.tool_prefix else tool_name
@@ -137,7 +141,9 @@ class MCPServer(ABC):
         client = ClientSession(read_stream=self._read_stream, write_stream=self._write_stream)
         self._client = await self._exit_stack.enter_async_context(client)
 
-        await self._client.initialize()
+        with anyio.fail_after(self._get_client_initialize_timeout()):
+            await self._client.initialize()
+
         if log_level := self._get_log_level():
             await self._client.set_logging_level(log_level)
         self.is_running = True
@@ -252,6 +258,9 @@ class MCPServerStdio(MCPServer):
     e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
 
+    timeout: float = 5
+    """ The timeout in seconds to wait for the client to initialize."""
+
     @asynccontextmanager
     async def client_streams(
         self,
@@ -270,6 +279,9 @@ class MCPServerStdio(MCPServer):
 
     def __repr__(self) -> str:
         return f'MCPServerStdio(command={self.command!r}, args={self.args!r}, tool_prefix={self.tool_prefix!r})'
+
+    def _get_client_initialize_timeout(self) -> float:
+        return self.timeout
 
 
 @dataclass
@@ -317,13 +329,13 @@ class MCPServerHTTP(MCPServer):
     """
 
     timeout: float = 5
-    """Initial connection timeout in seconds for establishing the SSE connection.
+    """Initial connection timeout in seconds for establishing the connection.
 
     This timeout applies to the initial connection setup and handshake.
     If the connection cannot be established within this time, the operation will fail.
     """
 
-    sse_read_timeout: float = 60 * 5
+    sse_read_timeout: float = 5 * 60
     """Maximum time in seconds to wait for new SSE messages before timing out.
 
     This timeout applies to the long-lived SSE connection after it's established.
@@ -368,3 +380,6 @@ class MCPServerHTTP(MCPServer):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f'MCPServerHTTP(url={self.url!r}, tool_prefix={self.tool_prefix!r})'
+
+    def _get_client_initialize_timeout(self) -> float:  # pragma: no cover
+        return self.timeout

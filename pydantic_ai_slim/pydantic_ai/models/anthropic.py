@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, Union, cast, overload
 
-from anthropic import AsyncAnthropic
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -28,6 +27,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -41,7 +41,7 @@ from . import (
 )
 
 try:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncStream
+    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
     from anthropic.types.beta import (
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
@@ -68,6 +68,7 @@ try:
         BetaToolUseBlock,
         BetaToolUseBlockParam,
     )
+    from anthropic.types.model_param import ModelParam
 
 except ImportError as _import_error:
     raise ImportError(
@@ -75,12 +76,7 @@ except ImportError as _import_error:
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
-LatestAnthropicModelNames = Literal[
-    'claude-3-7-sonnet-latest',
-    'claude-3-5-haiku-latest',
-    'claude-3-5-sonnet-latest',
-    'claude-3-opus-latest',
-]
+LatestAnthropicModelNames = ModelParam
 """Latest Anthropic models."""
 
 AnthropicModelName = Union[str, LatestAnthropicModelNames]
@@ -123,6 +119,7 @@ class AnthropicModel(Model):
         model_name: AnthropicModelName,
         *,
         provider: Literal['anthropic'] | Provider[AsyncAnthropic] = 'anthropic',
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize an Anthropic model.
 
@@ -131,12 +128,14 @@ class AnthropicModel(Model):
                 [here](https://docs.anthropic.com/en/docs/about-claude/models).
             provider: The provider to use for the Anthropic API. Can be either the string 'anthropic' or an
                 instance of `Provider[AsyncAnthropic]`. If not provided, the other parameters will be used.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
+        self._profile = profile or provider.model_profile
 
     @property
     def base_url(self) -> str:
@@ -255,7 +254,7 @@ class AnthropicModel(Model):
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
             else:
-                assert isinstance(item, BetaToolUseBlock), 'unexpected item type'
+                assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 items.append(
                     ToolCallPart(
                         tool_name=item.name,
@@ -317,7 +316,8 @@ class AnthropicModel(Model):
                                 is_error=True,
                             )
                         user_content_params.append(retry_param)
-                anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
+                if len(user_content_params) > 0:
+                    anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
             elif isinstance(m, ModelResponse):
                 assistant_content_params: list[BetaTextBlockParam | BetaToolUseBlockParam] = []
                 for response_part in m.parts:
