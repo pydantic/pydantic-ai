@@ -982,3 +982,42 @@ async def test_unknown_tool_call_events():
             IsInstance(FunctionToolCallEvent),
         ]
     )
+
+
+async def test_output_tool_validation_failure_events():
+    """Test that output tools that fail validation emit events during streaming."""
+
+    def call_final_result_with_bad_data(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        """Mock function that calls final_result tool with invalid data."""
+        assert info.output_tools is not None
+        return ModelResponse(
+            parts=[
+                ToolCallPart('final_result', {'bad_value': 'invalid'}),  # Invalid field name
+                ToolCallPart('final_result', {'value': 'valid'}),  # Valid field name
+            ]
+        )
+
+    agent = Agent(FunctionModel(call_final_result_with_bad_data), output_type=OutputType)
+
+    event_parts: list[Any] = []
+    async with agent.iter('test') as agent_run:
+        async for node in agent_run:
+            if Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as event_stream:
+                    async for event in event_stream:
+                        event_parts.append(event)
+
+    assert event_parts == snapshot(
+        [
+            IsInstance(FunctionToolCallEvent),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='final_result',
+                    content='Output tool not used - result failed validation.',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                tool_call_id=IsStr(),
+            ),
+        ]
+    )
