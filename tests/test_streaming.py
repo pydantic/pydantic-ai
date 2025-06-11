@@ -6,15 +6,18 @@ import re
 from collections.abc import AsyncIterator
 from copy import deepcopy
 from datetime import timezone
-from typing import Union
+from typing import Any, Union
 
 import pytest
+from dirty_equals import IsInstance
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -921,3 +924,61 @@ async def test_stream_iter_structured_validator() -> None:
                     async for output in stream.stream_output(debounce_by=None):
                         outputs.append(output)
     assert outputs == [OutputType(value='a (validated)'), OutputType(value='a (validated)')]
+
+
+async def test_unknown_tool_call_events():
+    """Test that unknown tool calls emit both FunctionToolCallEvent and FunctionToolResultEvent during streaming."""
+
+    def call_mixed_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        """Mock function that calls both known and unknown tools."""
+        return ModelResponse(
+            parts=[
+                ToolCallPart('unknown_tool', {'arg': 'value'}),
+                ToolCallPart('known_tool', {'x': 5}),
+            ]
+        )
+
+    agent = Agent(FunctionModel(call_mixed_tools))
+
+    @agent.tool_plain
+    def known_tool(x: int) -> int:
+        return x * 2
+
+    event_parts: list[Any] = []
+
+    try:
+        async with agent.iter('test') as agent_run:
+            async for node in agent_run:
+                if Agent.is_call_tools_node(node):
+                    async with node.stream(agent_run.ctx) as event_stream:
+                        async for event in event_stream:
+                            event_parts.append(event)
+
+    except UnexpectedModelBehavior:
+        pass
+
+    assert event_parts == snapshot(
+        [
+            IsInstance(FunctionToolCallEvent),
+            FunctionToolResultEvent(
+                result=RetryPromptPart(
+                    content="Unknown tool name: 'unknown_tool'. Available tools: known_tool",
+                    tool_name='unknown_tool',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                tool_call_id=IsStr(),
+            ),
+            IsInstance(FunctionToolCallEvent),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='known_tool',
+                    content=10,
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                tool_call_id=IsStr(),
+            ),
+            IsInstance(FunctionToolCallEvent),
+        ]
+    )
