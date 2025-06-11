@@ -406,7 +406,7 @@ text_responses: dict[str, str | ToolCallPart] = {
         tool_call_id='pyd_ai_2e0e396768a14fe482df90a29a78dc7b',
     ),
     'Select the names and countries of all capitals': ToolCallPart(
-        tool_name='final_result_hand_off_to_sql_agent',
+        tool_name='hand_off_to_sql_agent',
         args={'query': 'SELECT name, country FROM capitals;'},
     ),
     'SELECT name, country FROM capitals;': ToolCallPart(
@@ -418,7 +418,7 @@ text_responses: dict[str, str | ToolCallPart] = {
         args={'query': 'SELECT * FROM capital_cities;'},
     ),
     'Select all pets': ToolCallPart(
-        tool_name='final_result_hand_off_to_sql_agent',
+        tool_name='hand_off_to_sql_agent',
         args={'query': 'SELECT * FROM pets;'},
     ),
     'SELECT * FROM pets;': ToolCallPart(
@@ -628,14 +628,14 @@ async def model_logic(  # noqa: C901
         )
     elif (
         isinstance(m, RetryPromptPart)
-        and m.tool_name == 'final_result_hand_off_to_sql_agent'
+        and m.tool_name == 'hand_off_to_sql_agent'
         and m.content
         == "SQL agent failed: Unknown table 'capitals' in query 'SELECT * FROM capitals;'. Available tables: capital_cities."
     ):
         return ModelResponse(
             parts=[
                 ToolCallPart(
-                    tool_name='final_result_hand_off_to_sql_agent',
+                    tool_name='hand_off_to_sql_agent',
                     args={'query': 'SELECT * FROM capital_cities;'},
                     tool_call_id='pyd_ai_tool_call_id',
                 )
@@ -660,7 +660,7 @@ async def model_logic(  # noqa: C901
     # SQL agent failed: The table 'pets' does not exist in the database. Only the table 'capital_cities' is available.
     elif (
         isinstance(m, RetryPromptPart)
-        and m.tool_name == 'final_result_hand_off_to_sql_agent'
+        and m.tool_name == 'hand_off_to_sql_agent'
         and m.content
         == "SQL agent failed: The table 'pets' does not exist in the database. Only the table 'capital_cities' is available."
     ):
