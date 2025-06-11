@@ -632,7 +632,7 @@ def test_output_type_function():
     assert output_tools == snapshot(
         [
             ToolDefinition(
-                name='final_result',
+                name='get_weather',
                 description='The final response which ends this conversation',
                 parameters_json_schema={
                     'additionalProperties': False,
@@ -671,7 +671,7 @@ def test_output_type_function_with_run_context():
     assert output_tools == snapshot(
         [
             ToolDefinition(
-                name='final_result',
+                name='get_weather',
                 description='The final response which ends this conversation',
                 parameters_json_schema={
                     'additionalProperties': False,
@@ -801,7 +801,7 @@ def test_output_type_function_with_retry():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result',
+                        tool_name='get_weather',
                         args='{"city": "New York City"}',
                         tool_call_id=IsStr(),
                     )
@@ -814,7 +814,7 @@ def test_output_type_function_with_retry():
                 parts=[
                     RetryPromptPart(
                         content='City not found, I only know Mexico City',
-                        tool_name='final_result',
+                        tool_name='get_weather',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -823,7 +823,7 @@ def test_output_type_function_with_retry():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result',
+                        tool_name='get_weather',
                         args='{"city": "Mexico City"}',
                         tool_call_id=IsStr(),
                     )
@@ -835,7 +835,7 @@ def test_output_type_function_with_retry():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result',
+                        tool_name='get_weather',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -871,7 +871,7 @@ def test_output_type_async_function():
     assert output_tools == snapshot(
         [
             ToolDefinition(
-                name='final_result',
+                name='get_weather',
                 description='The final response which ends this conversation',
                 parameters_json_schema={
                     'additionalProperties': False,
@@ -947,7 +947,7 @@ def test_output_type_function_or_model():
     assert output_tools == snapshot(
         [
             ToolDefinition(
-                name='final_result_get_weather',
+                name='get_weather',
                 description='get_weather: The final response which ends this conversation',
                 parameters_json_schema={
                     'additionalProperties': False,
@@ -1017,7 +1017,7 @@ def test_output_type_handoff_to_agent():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result',
+                        tool_name='handoff',
                         args='{"city": "Mexico City"}',
                         tool_call_id=IsStr(),
                     )
@@ -1029,7 +1029,7 @@ def test_output_type_handoff_to_agent():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result',
+                        tool_name='handoff',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -1052,7 +1052,7 @@ def test_output_type_handoff_to_agent():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result',
+                        tool_name='get_weather',
                         args='{"city": "Mexico City"}',
                         tool_call_id=IsStr(),
                     )
@@ -1064,7 +1064,7 @@ def test_output_type_handoff_to_agent():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='final_result',
+                        tool_name='get_weather',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
