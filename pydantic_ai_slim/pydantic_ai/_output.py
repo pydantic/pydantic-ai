@@ -211,9 +211,13 @@ class OutputSchema(Generic[OutputDataT]):
                 tool_output_type = output_type
 
             if tool_name is None:
-                tool_name = default_tool_name
-                if multiple:
-                    tool_name += f'_{tool_output_type.__name__}'
+                tool_name = (
+                    tool_output_type.__name__
+                    if inspect.isfunction(tool_output_type)
+                    else f'{default_tool_name}_{tool_output_type.__name__}'
+                    if multiple
+                    else default_tool_name
+                )
 
             i = 1
             original_tool_name = tool_name
