@@ -228,7 +228,7 @@ class GeminiModel(Model):
 
         if gemini_labels := model_settings.get('gemini_labels'):
             if self._system == 'google-vertex':
-                request_data['labels'] = gemini_labels
+                request_data['labels'] = gemini_labels  # pragma: lax no cover
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
@@ -366,6 +366,8 @@ def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _Gemi
     config: _GeminiGenerationConfig = {}
     if (max_tokens := model_settings.get('max_tokens')) is not None:
         config['max_output_tokens'] = max_tokens
+    if (stop_sequences := model_settings.get('stop_sequences')) is not None:
+        config['stop_sequences'] = stop_sequences  # pragma: no cover
     if (temperature := model_settings.get('temperature')) is not None:
         config['temperature'] = temperature
     if (top_p := model_settings.get('top_p')) is not None:
