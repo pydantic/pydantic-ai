@@ -151,10 +151,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.message_history = history
         run_context.messages = history
 
-        # TODO: We need to make it so that function_tools are not shared between runs
-        #   See comment on the current_retry field of `Tool` for more details.
-        for tool in ctx.deps.function_tools.values():
-            tool.current_retry = 0
         return next_message
 
     async def _prepare_messages(

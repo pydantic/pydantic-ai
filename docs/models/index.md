@@ -22,6 +22,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 * [Fireworks AI](openai.md#fireworks-ai)
 * [Together AI](openai.md#together-ai)
 * [Azure AI Foundry](openai.md#azure-ai-foundry)
+* [Heroku](openai.md#heroku-ai)
 
 PydanticAI also comes with [`TestModel`](../api/models/test.md) and [`FunctionModel`](../api/models/function.md)
 for testing and development.

@@ -5,7 +5,7 @@ import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
@@ -14,7 +14,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._utils import guard_tool_call_id as _guard_tool_call_id
+from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -116,6 +116,13 @@ class OpenAIModelSettings(ModelSettings, total=False):
     See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
     """
 
+    openai_service_tier: Literal['auto', 'default', 'flex']
+    """The service tier to use for the model request.
+
+    Currently supported values are `auto`, `default`, and `flex`.
+    For more information, see [OpenAI's service tiers documentation](https://platform.openai.com/docs/api-reference/chat/object#chat/object-service_tier).
+    """
+
 
 class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
     """Settings used for an OpenAI Responses model request.
@@ -170,7 +177,7 @@ class OpenAIModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together']
+        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku']
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
@@ -274,6 +281,12 @@ class OpenAIModel(Model):
 
         openai_messages = await self._map_messages(messages)
 
+        sampling_settings = (
+            model_settings
+            if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
+            else OpenAIModelSettings()
+        )
+
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
@@ -287,17 +300,18 @@ class OpenAIModel(Model):
                 stream_options={'include_usage': True} if stream else NOT_GIVEN,
                 stop=model_settings.get('stop_sequences', NOT_GIVEN),
                 max_completion_tokens=model_settings.get('max_tokens', NOT_GIVEN),
-                temperature=model_settings.get('temperature', NOT_GIVEN),
-                top_p=model_settings.get('top_p', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 seed=model_settings.get('seed', NOT_GIVEN),
-                presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
-                frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
-                logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
-                logprobs=model_settings.get('openai_logprobs', NOT_GIVEN),
-                top_logprobs=model_settings.get('openai_top_logprobs', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
+                service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
+                temperature=sampling_settings.get('temperature', NOT_GIVEN),
+                top_p=sampling_settings.get('top_p', NOT_GIVEN),
+                presence_penalty=sampling_settings.get('presence_penalty', NOT_GIVEN),
+                frequency_penalty=sampling_settings.get('frequency_penalty', NOT_GIVEN),
+                logit_bias=sampling_settings.get('logit_bias', NOT_GIVEN),
+                logprobs=sampling_settings.get('openai_logprobs', NOT_GIVEN),
+                top_logprobs=sampling_settings.get('openai_top_logprobs', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -308,7 +322,7 @@ class OpenAIModel(Model):
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
+        timestamp = number_to_datetime(response.created)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         vendor_details: dict[str, Any] | None = None
@@ -358,7 +372,7 @@ class OpenAIModel(Model):
         return OpenAIStreamedResponse(
             _model_name=self._model_name,
             _response=peekable_response,
-            _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+            _timestamp=number_to_datetime(first_chunk.created),
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -593,7 +607,7 @@ class OpenAIResponsesModel(Model):
 
     def _process_response(self, response: responses.Response) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = datetime.fromtimestamp(response.created_at, tz=timezone.utc)
+        timestamp = number_to_datetime(response.created_at)
         items: list[ModelResponsePart] = []
         items.append(TextPart(response.output_text))
         for item in response.output:
@@ -614,7 +628,7 @@ class OpenAIResponsesModel(Model):
         return OpenAIResponsesStreamedResponse(
             _model_name=self._model_name,
             _response=peekable_response,
-            _timestamp=datetime.fromtimestamp(first_chunk.response.created_at, tz=timezone.utc),
+            _timestamp=number_to_datetime(first_chunk.response.created_at),
         )
 
     @overload
@@ -656,6 +670,12 @@ class OpenAIResponsesModel(Model):
         instructions, openai_messages = await self._map_messages(messages)
         reasoning = self._get_reasoning(model_settings)
 
+        sampling_settings = (
+            model_settings
+            if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
+            else OpenAIResponsesModelSettings()
+        )
+
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
@@ -668,8 +688,8 @@ class OpenAIResponsesModel(Model):
                 tool_choice=tool_choice or NOT_GIVEN,
                 max_output_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 stream=stream,
-                temperature=model_settings.get('temperature', NOT_GIVEN),
-                top_p=model_settings.get('top_p', NOT_GIVEN),
+                temperature=sampling_settings.get('temperature', NOT_GIVEN),
+                top_p=sampling_settings.get('top_p', NOT_GIVEN),
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 reasoning=reasoning,

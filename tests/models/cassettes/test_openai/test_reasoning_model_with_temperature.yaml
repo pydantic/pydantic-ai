@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '202'
+      - '106'
       content-type:
       - application/json
       host:
@@ -16,11 +16,9 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
+      - content: What is the capital of Mexico?
         role: user
       model: o3-mini
-      stop:
-      - Paris
       stream: false
     uri: https://api.openai.com/v1/chat/completions
   response:
@@ -32,13 +30,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '808'
+      - '944'
       content-type:
       - application/json
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '3788'
+      - '5417'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -51,27 +49,28 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: 'The capital of France is '
+          content: The capital of Mexico is Mexico City. It is not only the seat of the federal government but also a major
+            cultural, political, and economic center in the country.
           refusal: null
           role: assistant
-      created: 1749229128
-      id: chatcmpl-BfUgyreG4fpnDXvHKXtRkevWb6i3p
+      created: 1749586227
+      id: chatcmpl-BgzadlOEkRTXYim8s2TzQfnSpaZ4u
       model: o3-mini-2025-01-31
       object: chat.completion
       service_tier: default
       system_fingerprint: fp_e20469f047
       usage:
-        completion_tokens: 467
+        completion_tokens: 238
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 448
+          reasoning_tokens: 192
           rejected_prediction_tokens: 0
-        prompt_tokens: 31
+        prompt_tokens: 13
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 498
+        total_tokens: 251
     status:
       code: 200
       message: OK

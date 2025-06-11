@@ -505,3 +505,13 @@ def test_model_profile_strict_not_supported():
             'strict': False,
         }
     )
+
+
+@pytest.mark.vcr()
+async def test_reasoning_model_with_temperature(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, model_settings=OpenAIResponsesModelSettings(temperature=0.5))
+    result = await agent.run('What is the capital of Mexico?')
+    assert result.output == snapshot(
+        'The capital of Mexico is Mexico City. It serves as the political, cultural, and economic heart of the country and is one of the largest metropolitan areas in the world.'
+    )

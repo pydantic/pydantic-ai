@@ -310,7 +310,7 @@ async def test_google_model_thinking_config(allow_model_requests: None, google_p
 @pytest.mark.skipif(
     not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
 )
-async def test_google_model_vertex_labels(allow_model_requests: None):
+async def test_google_model_vertex_labels(allow_model_requests: None):  # pragma: lax no cover
     provider = GoogleProvider(location='global', project='pydantic-ai')
     model = GoogleModel('gemini-2.0-flash', provider=provider)
     settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})

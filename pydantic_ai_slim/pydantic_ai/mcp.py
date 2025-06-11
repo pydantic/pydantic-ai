@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import functools
 import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
@@ -11,12 +12,13 @@ from types import TracebackType
 from typing import Any
 
 import anyio
+import httpx
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from mcp.shared.message import SessionMessage
 from mcp.types import (
     BlobResourceContents,
     EmbeddedResource,
     ImageContent,
-    JSONRPCMessage,
     LoggingLevel,
     TextContent,
     TextResourceContents,
@@ -56,8 +58,8 @@ class MCPServer(ABC):
     """
 
     _client: ClientSession
-    _read_stream: MemoryObjectReceiveStream[JSONRPCMessage | Exception]
-    _write_stream: MemoryObjectSendStream[JSONRPCMessage]
+    _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
+    _write_stream: MemoryObjectSendStream[SessionMessage]
     _exit_stack: AsyncExitStack
 
     @abstractmethod
@@ -66,8 +68,8 @@ class MCPServer(ABC):
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
         ]
     ]:
         """Create the streams for the MCP server."""
@@ -266,8 +268,8 @@ class MCPServerStdio(MCPServer):
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
         ]
     ]:
         server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
@@ -326,6 +328,31 @@ class MCPServerHTTP(MCPServer):
 
     These headers will be passed directly to the underlying `httpx.AsyncClient`.
     Useful for authentication, custom headers, or other HTTP-specific configurations.
+
+    !!! note
+        You can either pass `headers` or `http_client`, but not both.
+
+        See [`MCPServerHTTP.http_client`][pydantic_ai.mcp.MCPServerHTTP.http_client] for more information.
+    """
+
+    http_client: httpx.AsyncClient | None = None
+    """An `httpx.AsyncClient` to use with the SSE endpoint.
+
+    This client may be configured to use customized connection parameters like self-signed certificates.
+
+    !!! note
+        You can either pass `headers` or `http_client`, but not both.
+
+        If you want to use both, you can pass the headers to the `http_client` instead:
+
+        ```python {py="3.10"}
+        import httpx
+
+        from pydantic_ai.mcp import MCPServerHTTP
+
+        http_client = httpx.AsyncClient(headers={'Authorization': 'Bearer ...'})
+        server = MCPServerHTTP('http://localhost:3001/sse', http_client=http_client)
+        ```
     """
 
     timeout: float = 5
@@ -362,18 +389,33 @@ class MCPServerHTTP(MCPServer):
     async def client_streams(
         self,
     ) -> AsyncIterator[
-        tuple[
-            MemoryObjectReceiveStream[JSONRPCMessage | Exception],
-            MemoryObjectSendStream[JSONRPCMessage],
-        ]
+        tuple[MemoryObjectReceiveStream[SessionMessage | Exception], MemoryObjectSendStream[SessionMessage]]
     ]:  # pragma: no cover
-        async with sse_client(
+        if self.http_client and self.headers:
+            raise ValueError('`http_client` is mutually exclusive with `headers`.')
+
+        sse_client_partial = functools.partial(
+            sse_client,
             url=self.url,
-            headers=self.headers,
             timeout=self.timeout,
             sse_read_timeout=self.sse_read_timeout,
-        ) as (read_stream, write_stream):
-            yield read_stream, write_stream
+        )
+
+        if self.http_client is not None:
+
+            def httpx_client_factory(
+                headers: dict[str, str] | None = None,
+                timeout: httpx.Timeout | None = None,
+                auth: httpx.Auth | None = None,
+            ) -> httpx.AsyncClient:
+                assert self.http_client is not None
+                return self.http_client
+
+            async with sse_client_partial(httpx_client_factory=httpx_client_factory) as (read_stream, write_stream):
+                yield read_stream, write_stream
+        else:
+            async with sse_client_partial(headers=self.headers) as (read_stream, write_stream):
+                yield read_stream, write_stream
 
     def _get_log_level(self) -> LoggingLevel | None:
         return self.log_level

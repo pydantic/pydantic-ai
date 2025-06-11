@@ -260,6 +260,7 @@ class GoogleModel(Model):
             temperature=model_settings.get('temperature'),
             top_p=model_settings.get('top_p'),
             max_output_tokens=model_settings.get('max_tokens'),
+            stop_sequences=model_settings.get('stop_sequences'),
             presence_penalty=model_settings.get('presence_penalty'),
             frequency_penalty=model_settings.get('frequency_penalty'),
             safety_settings=model_settings.get('google_safety_settings'),
