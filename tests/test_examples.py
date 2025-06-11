@@ -410,11 +410,11 @@ text_responses: dict[str, str | ToolCallPart] = {
         args={'query': 'SELECT name, country FROM capitals;'},
     ),
     'SELECT name, country FROM capitals;': ToolCallPart(
-        tool_name='final_result_run_sql_query',
+        tool_name='run_sql_query',
         args={'query': 'SELECT name, country FROM capitals;'},
     ),
     'SELECT * FROM capital_cities;': ToolCallPart(
-        tool_name='final_result_run_sql_query',
+        tool_name='run_sql_query',
         args={'query': 'SELECT * FROM capital_cities;'},
     ),
     'Select all pets': ToolCallPart(
@@ -422,7 +422,7 @@ text_responses: dict[str, str | ToolCallPart] = {
         args={'query': 'SELECT * FROM pets;'},
     ),
     'SELECT * FROM pets;': ToolCallPart(
-        tool_name='final_result_run_sql_query',
+        tool_name='run_sql_query',
         args={'query': 'SELECT * FROM pets;'},
     ),
     'How do I fly from Amsterdam to Mexico City?': ToolCallPart(
@@ -614,13 +614,13 @@ async def model_logic(  # noqa: C901
         )
     elif (
         isinstance(m, RetryPromptPart)
-        and m.tool_name == 'final_result_run_sql_query'
+        and m.tool_name == 'run_sql_query'
         and m.content == "Only 'SELECT *' is supported, you'll have to do column filtering manually."
     ):
         return ModelResponse(
             parts=[
                 ToolCallPart(
-                    tool_name='final_result_run_sql_query',
+                    tool_name='run_sql_query',
                     args={'query': 'SELECT * FROM capitals;'},
                     tool_call_id='pyd_ai_tool_call_id',
                 )
@@ -643,7 +643,7 @@ async def model_logic(  # noqa: C901
         )
     elif (
         isinstance(m, RetryPromptPart)
-        and m.tool_name == 'final_result_run_sql_query'
+        and m.tool_name == 'run_sql_query'
         and m.content == "Unknown table 'pets' in query 'SELECT * FROM pets;'. Available tables: capital_cities."
     ):
         return ModelResponse(
