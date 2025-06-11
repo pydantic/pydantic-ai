@@ -328,15 +328,31 @@ class MCPServerHTTP(MCPServer):
 
     These headers will be passed directly to the underlying `httpx.AsyncClient`.
     Useful for authentication, custom headers, or other HTTP-specific configurations.
-    Cannot be used with `http_client`.
+
+    !!! note
+        You can either pass `headers` or `http_client`, but not both.
+
+        See [`MCPServerHTTP.http_client`][pydantic_ai.mcp.MCPServerHTTP.http_client] for more information.
     """
 
     http_client: httpx.AsyncClient | None = None
-    """Optional http client to use with the SSE endpoint
+    """An `httpx.AsyncClient` to use with the SSE endpoint.
 
-    This client may be configured to use customized connection parameters like self
-    signed certificates. Since, `headers` can be passed into the custom `httpx.AsyncClient`,
-    This argument cannot be used with the `headers` argument of this class.
+    This client may be configured to use customized connection parameters like self-signed certificates.
+
+    !!! note
+        You can either pass `headers` or `http_client`, but not both.
+
+        If you want to use both, you can pass the headers to the `http_client` instead:
+
+        ```python {py="3.10"}
+        import httpx
+
+        from pydantic_ai.mcp import MCPServerHTTP
+
+        http_client = httpx.AsyncClient(headers={'Authorization': 'Bearer ...'})
+        server = MCPServerHTTP('http://localhost:3001/sse', http_client=http_client)
+        ```
     """
 
     timeout: float = 5
@@ -373,13 +389,10 @@ class MCPServerHTTP(MCPServer):
     async def client_streams(
         self,
     ) -> AsyncIterator[
-        tuple[
-            MemoryObjectReceiveStream[SessionMessage | Exception],
-            MemoryObjectSendStream[SessionMessage],
-        ]
+        tuple[MemoryObjectReceiveStream[SessionMessage | Exception], MemoryObjectSendStream[SessionMessage]]
     ]:  # pragma: no cover
         if self.http_client and self.headers:
-            raise ValueError(f'In {self.__name__}, only one of `headers` or `http_client` can be provided.')
+            raise ValueError('`http_client` is mutually exclusive with `headers`.')
 
         sse_client_partial = functools.partial(
             sse_client,
@@ -395,7 +408,8 @@ class MCPServerHTTP(MCPServer):
                 timeout: httpx.Timeout | None = None,
                 auth: httpx.Auth | None = None,
             ) -> httpx.AsyncClient:
-                return self.http_client  #  pyright: ignore
+                assert self.http_client is not None
+                return self.http_client
 
             async with sse_client_partial(httpx_client_factory=httpx_client_factory) as (read_stream, write_stream):
                 yield read_stream, write_stream
