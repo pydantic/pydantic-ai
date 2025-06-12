@@ -42,7 +42,7 @@ except ImportError as _import_error:
         'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
     ) from _import_error
 
-__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP'
+__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
 
 
 class MCPServer(ABC):
