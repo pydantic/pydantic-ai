@@ -24,7 +24,9 @@ from .conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio
+    from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 
@@ -460,11 +462,12 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
 
 
 @pytest.mark.vcr()
-async def test_tool_returning_audio_resource(allow_model_requests: None, agent: Agent, audio_content: BinaryContent):
+async def test_tool_returning_audio_resource(
+    allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
+):
+    model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
     async with agent.run_mcp_servers():
-        result = await agent.run(
-            "What's the content of the audio resource?", model='google-gla:gemini-2.5-pro-preview-03-25'
-        )
+        result = await agent.run("What's the content of the audio resource?", model=model)
         assert result.output == snapshot('The audio resource contains a voice saying "Hello, my name is Marcelo."')
         assert result.all_messages() == snapshot(
             [
