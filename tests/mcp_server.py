@@ -4,6 +4,7 @@ from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP, Image
 from mcp.types import BlobResourceContents, EmbeddedResource, TextResourceContents
+from pydantic import AnyUrl
 
 mcp = FastMCP('PydanticAI MCP Server')
 log_level = 'unset'
@@ -44,6 +45,19 @@ async def get_image_resource() -> EmbeddedResource:
             uri='resource://kiwi.png',  # type: ignore
             blob=base64.b64encode(data).decode('utf-8'),
             mimeType='image/png',
+        ),
+    )
+
+
+@mcp.tool()
+async def get_audio_resource() -> EmbeddedResource:
+    data = Path(__file__).parent.joinpath('assets/marcelo.mp3').read_bytes()
+    return EmbeddedResource(
+        type='resource',
+        resource=BlobResourceContents(
+            uri=AnyUrl('resource://marcelo.mp3'),
+            blob=base64.b64encode(data).decode('utf-8'),
+            mimeType='audio/mpeg',
         ),
     )
 

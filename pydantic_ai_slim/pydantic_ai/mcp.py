@@ -454,7 +454,7 @@ class MCPServerSSE(_MCPServerHTTP):
 
     @property
     def _transport_client(self):
-        return sse_client
+        return sse_client  # pragma: no cover
 
 
 @deprecated('The `MCPServerHTTP` class is deprecated, use `MCPServerSSE` instead.')
@@ -514,4 +514,4 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
 
     @property
     def _transport_client(self):
-        return streamablehttp_client
+        return streamablehttp_client  # pragma: no cover
