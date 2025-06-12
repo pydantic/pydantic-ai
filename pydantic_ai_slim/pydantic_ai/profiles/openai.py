@@ -15,13 +15,20 @@ class OpenAIModelProfile(ModelProfile):
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    # This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions
     openai_supports_strict_tool_definition: bool = True
+    """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions."""
+
+    openai_supports_sampling_settings: bool = True
+    """Turn off to don't send sampling settings like `temperature` and `top_p` to models that don't support them, like OpenAI's o-series reasoning models."""
 
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
-    return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
+    is_reasoning_model = model_name.startswith('o')
+    return OpenAIModelProfile(
+        json_schema_transformer=OpenAIJsonSchemaTransformer,
+        openai_supports_sampling_settings=not is_reasoning_model,
+    )
 
 
 _STRICT_INCOMPATIBLE_KEYS = [
