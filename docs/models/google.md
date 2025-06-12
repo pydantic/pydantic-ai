@@ -121,8 +121,8 @@ from pydantic_ai.providers.google import GoogleProvider
 
 client = genai.Client(
     api_key='gemini-custom-api-key',
-    http_options=HttpOptions(base_url='gemini-custom-base-url')
-    )
+    http_options=HttpOptions(base_url='gemini-custom-base-url'),
+)
 provider = GoogleProvider(client=client)
 model = GoogleModel('gemini-1.5-flash', provider=provider)
 agent = Agent(model)
