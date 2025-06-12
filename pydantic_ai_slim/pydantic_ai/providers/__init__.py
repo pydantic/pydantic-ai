@@ -115,15 +115,7 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         raise ValueError(f'Unknown provider: {provider}')
 
 
-def infer_provider(provider: str, **kwargs: Any) -> Provider[Any]:
-    """Infer the provider from the provider name.
-
-    Args:
-        provider: The name of the provider to create.
-        **kwargs: Additional keyword arguments to pass to the provider constructor.
-
-    Returns:
-        An instance of the requested provider.
-    """
+def infer_provider(provider: str) -> Provider[Any]:
+    """Infer the provider from the provider name."""
     provider_class = infer_provider_class(provider)
-    return provider_class(**kwargs)
+    return provider_class()
