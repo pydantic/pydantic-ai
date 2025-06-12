@@ -116,9 +116,7 @@ The situation is different for certain models:
     See the [Gemini API docs for Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata) to learn more about supported URLs, formats and limitations:
 
     - Cloud Storage bucket URIs (with protocol `gs://`)
-
     - Public HTTP(S) URLs
-
     - Public YouTube video URL (maximum one URL per request)
 
     However, because of crawling restrictions, it may happen that Gemini can't access certain URLs. In that case, you can instruct PydanticAI to download the file content and send that instead of the URL by setting the boolean flag `force_download` to `True`. This attribute is available on all objects that inherit from [`FileUrl`][pydantic_ai.messages.FileUrl].
