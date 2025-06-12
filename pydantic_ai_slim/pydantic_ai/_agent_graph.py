@@ -664,9 +664,9 @@ async def process_function_tools(  # noqa C901
         else:
             yield _messages.FunctionToolCallEvent(call)
 
-            result = _unknown_tool(call.tool_name, call.tool_call_id, ctx)
-            yield _messages.FunctionToolResultEvent(result, tool_call_id=call.tool_call_id)
-            output_parts.append(result)
+            part = _unknown_tool(call.tool_name, call.tool_call_id, ctx)
+            yield _messages.FunctionToolResultEvent(part, tool_call_id=call.tool_call_id)
+            output_parts.append(part)
 
     if not calls_to_run:
         return
