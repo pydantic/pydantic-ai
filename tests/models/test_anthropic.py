@@ -1068,10 +1068,6 @@ What specifically would you like to know about potatoes?\
 async def test_anthropic_empty_content_filtering(env: TestEnv):
     """Test the empty content filtering logic directly."""
 
-    from typing import cast
-
-    from anthropic.types.beta import BetaContentBlockParam
-
     from pydantic_ai.messages import (
         ModelMessage,
         ModelRequest,
@@ -1081,23 +1077,27 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
         UserPromptPart,
     )
 
-    # Test _map_user_prompt with empty string
-    parts: list[BetaContentBlockParam] = []
-    async for part in AnthropicModel._map_user_prompt(UserPromptPart(content='')):  # type: ignore[attr-defined]
-        parts.append(part)
-    assert len(parts) == 0
-
-    # Test _map_user_prompt with list containing empty strings
-    parts = []
-    async for part in AnthropicModel._map_user_prompt(UserPromptPart(content=['', 'Hello', '', 'World'])):  # type: ignore[attr-defined]
-        parts.append(part)
-    assert len(parts) == 2
-    assert cast(dict[str, str], parts[0])['text'] == 'Hello'
-    assert cast(dict[str, str], parts[1])['text'] == 'World'
-
-    # Test _map_message with empty assistant response
+    # Initialize model for all tests
     env.set('ANTHROPIC_API_KEY', 'test-key')
     model = AnthropicModel('claude-3-5-sonnet-latest', provider='anthropic')
+
+    # Test _map_message with empty string in user prompt
+    messages_empty_string: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='')], kind='request'),
+    ]
+    _, anthropic_messages = await model._map_message(messages_empty_string)  # type: ignore[attr-defined]
+    assert anthropic_messages == snapshot([])  # Empty content should be filtered out
+
+    # Test _map_message with list containing empty strings in user prompt
+    messages_mixed_content: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['', 'Hello', '', 'World'])], kind='request'),
+    ]
+    _, anthropic_messages = await model._map_message(messages_mixed_content)  # type: ignore[attr-defined]
+    assert anthropic_messages == snapshot(
+        [{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}, {'text': 'World', 'type': 'text'}]}]
+    )
+
+    # Test _map_message with empty assistant response
     messages: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart(content='You are helpful')], kind='request'),
         ModelResponse(parts=[TextPart(content='')], kind='response'),  # Empty response
