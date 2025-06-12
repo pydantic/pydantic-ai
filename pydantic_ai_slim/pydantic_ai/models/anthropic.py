@@ -31,14 +31,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    cached_async_http_client,
-    check_allow_model_requests,
-    get_user_agent,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
@@ -372,11 +365,10 @@ class AnthropicModel(Model):
                     if item.media_type == 'application/pdf':
                         yield BetaBase64PDFBlockParam(source={'url': item.url, 'type': 'url'}, type='document')
                     elif item.media_type == 'text/plain':
-                        response = await cached_async_http_client().get(item.url)
-                        response.raise_for_status()
+                        downloaded_item = await download_item(item, data_format='text')
                         yield BetaBase64PDFBlockParam(
                             source=BetaPlainTextSourceParam(
-                                data=response.text, media_type=item.media_type, type='text'
+                                data=downloaded_item['data'], media_type=item.media_type, type='text'
                             ),
                             type='document',
                         )

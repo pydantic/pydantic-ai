@@ -161,13 +161,6 @@ See the [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings)
 
 `GoogleModel` supports multi-modal input, including documents, images, audio, and video. See the [input documentation](../input.md) for details and examples.
 
-!!! warning
-    When using Gemini models, document content is always sent as binary data, regardless of whether you use `DocumentUrl` or `BinaryContent`.
-    This is due to differences in how Vertex AI and Google AI handle document inputs.
-
-    See [this discussion](https://discuss.ai.google.dev/t/i-am-using-google-generative-ai-model-gemini-1-5-pro-for-image-analysis-but-getting-error/34866/4)
-    for more details.
-
 ## Model settings
 
 You can use the [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings] class to customize the model request.
