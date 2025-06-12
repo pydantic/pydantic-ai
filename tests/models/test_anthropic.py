@@ -1105,8 +1105,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     ]
     _, anthropic_messages = await model._map_message(messages)  # type: ignore[attr-defined]
     # The empty assistant message should be filtered out
-    assert len(anthropic_messages) == 1
-    assert anthropic_messages[0]['role'] == 'user'
+    assert anthropic_messages == snapshot([{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}]}])
 
     # Test with only empty assistant parts
     messages_resp: list[ModelMessage] = [
