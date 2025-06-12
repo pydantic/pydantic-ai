@@ -486,7 +486,6 @@ async def test_tool_returning_audio_resource(
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
                     vendor_details={'finish_reason': 'STOP'},
-                    vendor_id='NtBKaNyJNuzRvdIPls2XuQc',
                 ),
                 ModelRequest(
                     parts=[
@@ -511,7 +510,6 @@ async def test_tool_returning_audio_resource(
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
                     vendor_details={'finish_reason': 'STOP'},
-                    vendor_id='ONBKaP3rKvqP28oPqLnEkAQ',
                 ),
             ]
         )
