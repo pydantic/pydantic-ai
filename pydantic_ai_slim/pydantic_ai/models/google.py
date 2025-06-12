@@ -374,8 +374,9 @@ class GoogleModel(Model):
                     content.append({'file_data': {'file_uri': item.url, 'mime_type': item.media_type}})
                 elif isinstance(item, FileUrl):
                     if self.system == 'google-gla' or item.force_download:
-                        base64_data, media_type = await download_item(item, data_format='base64')
-                        content.append({'inline_data': {'data': base64_data, 'mime_type': media_type}})  # type: ignore
+                        downloaded_item = await download_item(item, data_format='base64')
+                        inline_data = {'data': downloaded_item['data'], 'mime_type': downloaded_item['data_type']}
+                        content.append({'inline_data': inline_data})  # type: ignore
                     else:
                         content.append({'file_data': {'file_uri': item.url, 'mime_type': item.media_type}})
                 else:

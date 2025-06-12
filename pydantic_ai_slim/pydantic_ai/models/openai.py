@@ -499,13 +499,21 @@ class OpenAIModel(Model):
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):
-                    base64_data, format = await download_item(item, data_format='base64', type_format='extension')
-                    assert format in ('wav', 'mp3'), f'Unsupported audio format: {format}'
-                    audio = InputAudio(data=base64_data, format=format)
+                    downloaded_item = await download_item(item, data_format='base64', type_format='extension')
+                    assert downloaded_item['data_type'] in (
+                        'wav',
+                        'mp3',
+                    ), f'Unsupported audio format: {downloaded_item["data_type"]}'
+                    audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
-                    base64_uri, format = await download_item(item, data_format='base64_uri', type_format='extension')
-                    file = File(file=FileFile(file_data=base64_uri, filename=f'filename.{format}'), type='file')
+                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
+                    file = File(
+                        file=FileFile(
+                            file_data=downloaded_item['data'], filename=f'filename.{downloaded_item["data_type"]}'
+                        ),
+                        type='file',
+                    )
                     content.append(file)
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
@@ -817,19 +825,21 @@ class OpenAIResponsesModel(Model):
                         responses.ResponseInputImageParam(image_url=item.url, type='input_image', detail='auto')
                     )
                 elif isinstance(item, AudioUrl):  # pragma: no cover
-                    base64_uri, format = await download_item(item, data_format='base64_uri', type_format='extension')
-                    content.append(
-                        responses.ResponseInputFileParam(
-                            type='input_file', file_data=base64_uri, filename=f'filename.{format}'
-                        )
-                    )
-                elif isinstance(item, DocumentUrl):
-                    base64_uri, format = await download_item(item, data_format='base64_uri', type_format='extension')
+                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                     content.append(
                         responses.ResponseInputFileParam(
                             type='input_file',
-                            file_data=base64_uri,
-                            filename=f'filename.{format}',
+                            file_data=downloaded_item['data'],
+                            filename=f'filename.{downloaded_item["data_type"]}',
+                        )
+                    )
+                elif isinstance(item, DocumentUrl):
+                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
+                    content.append(
+                        responses.ResponseInputFileParam(
+                            type='input_file',
+                            file_data=downloaded_item['data'],
+                            filename=f'filename.{downloaded_item["data_type"]}',
                         )
                     )
                 elif isinstance(item, VideoUrl):  # pragma: no cover

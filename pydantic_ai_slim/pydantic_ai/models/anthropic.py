@@ -365,9 +365,11 @@ class AnthropicModel(Model):
                     if item.media_type == 'application/pdf':
                         yield BetaBase64PDFBlockParam(source={'url': item.url, 'type': 'url'}, type='document')
                     elif item.media_type == 'text/plain':
-                        text, _ = await download_item(item, data_format='text')
+                        downloaded_item = await download_item(item, data_format='text')
                         yield BetaBase64PDFBlockParam(
-                            source=BetaPlainTextSourceParam(data=text, media_type=item.media_type, type='text'),
+                            source=BetaPlainTextSourceParam(
+                                data=downloaded_item['data'], media_type=item.media_type, type='text'
+                            ),
                             type='document',
                         )
                     else:  # pragma: no cover

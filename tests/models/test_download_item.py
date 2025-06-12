@@ -33,21 +33,21 @@ async def test_download_item_raises_user_error_with_youtube_url() -> None:
 
 @pytest.mark.vcr()
 async def test_download_item_application_octet_stream() -> None:
-    result, media_type = await download_item(
+    downloaded_item = await download_item(
         VideoUrl(
             url='https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/tests/assets/small_video.mp4'
         ),
         data_format='bytes',
     )
-    assert media_type == 'video/mp4'
-    assert result == IsInstance(bytes)
+    assert downloaded_item['data_type'] == 'video/mp4'
+    assert downloaded_item['data'] == IsInstance(bytes)
 
 
 @pytest.mark.vcr()
 async def test_download_item_no_content_type() -> None:
-    result, media_type = await download_item(
+    downloaded_item = await download_item(
         DocumentUrl(url='https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.md'),
         data_format='text',
     )
-    assert media_type == 'text/markdown'
-    assert result == IsStr()
+    assert downloaded_item['data_type'] == 'text/markdown'
+    assert downloaded_item['data'] == IsStr()
