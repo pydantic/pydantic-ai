@@ -23,7 +23,7 @@ from pydantic_ai.usage import Usage
 from .conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.mcp import MCPServerHTTP, MCPServerStdio
+    from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -71,13 +71,13 @@ async def test_stdio_server_with_cwd():
 
 
 def test_sse_server():
-    sse_server = MCPServerHTTP(url='http://localhost:8000/sse')
+    sse_server = MCPServerSSE(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
     assert sse_server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_sse_server_with_header_and_timeout():
-    sse_server = MCPServerHTTP(
+    sse_server = MCPServerSSE(
         url='http://localhost:8000/sse',
         headers={'my-custom-header': 'my-header-value'},
         timeout=10,
