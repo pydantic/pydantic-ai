@@ -95,6 +95,7 @@ def infer_provider(provider: str) -> Provider[Any]:  # noqa: C901
         from .cohere import CohereProvider
 
         return CohereProvider()
+
     elif provider == 'grok':
         from .grok import GrokProvider
 
@@ -111,5 +112,9 @@ def infer_provider(provider: str) -> Provider[Any]:  # noqa: C901
         from .heroku import HerokuProvider
 
         return HerokuProvider()
+    elif provider == 'huggingface':
+        from .huggingface import HuggingFaceProvider
+
+        return HuggingFaceProvider()
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
