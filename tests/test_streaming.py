@@ -9,7 +9,6 @@ from datetime import timezone
 from typing import Any, Union
 
 import pytest
-from dirty_equals import IsInstance
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
@@ -959,7 +958,13 @@ async def test_unknown_tool_call_events():
 
     assert event_parts == snapshot(
         [
-            IsInstance(FunctionToolCallEvent),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='unknown_tool',
+                    args={'arg': 'value'},
+                    tool_call_id=IsStr(),
+                ),
+            ),
             FunctionToolResultEvent(
                 result=RetryPromptPart(
                     content="Unknown tool name: 'unknown_tool'. Available tools: known_tool",
@@ -969,7 +974,9 @@ async def test_unknown_tool_call_events():
                 ),
                 tool_call_id=IsStr(),
             ),
-            IsInstance(FunctionToolCallEvent),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='known_tool', args={'x': 5}, tool_call_id=IsStr()),
+            ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='known_tool',
@@ -979,7 +986,13 @@ async def test_unknown_tool_call_events():
                 ),
                 tool_call_id=IsStr(),
             ),
-            IsInstance(FunctionToolCallEvent),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='unknown_tool',
+                    args={'arg': 'value'},
+                    tool_call_id=IsStr(),
+                ),
+            ),
         ]
     )
 
@@ -1009,7 +1022,13 @@ async def test_output_tool_validation_failure_events():
 
     assert event_parts == snapshot(
         [
-            IsInstance(FunctionToolCallEvent),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args={'bad_value': 'invalid'},
+                    tool_call_id=IsStr(),
+                ),
+            ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='final_result',
