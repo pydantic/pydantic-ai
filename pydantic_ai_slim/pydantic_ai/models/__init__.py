@@ -6,21 +6,23 @@ specific LLM being used.
 
 from __future__ import annotations as _annotations
 
+import base64
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
+from typing import Generic, TypeVar, overload
 
 import httpx
-from typing_extensions import Literal, TypeAliasType
+from typing_extensions import Literal, TypeAliasType, TypedDict
 
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
-from ..messages import ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent
+from ..messages import FileUrl, ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent, VideoUrl
 from ..profiles._json_schema import JsonSchemaTransformer
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -609,6 +611,91 @@ def _cached_async_http_client(provider: str | None, timeout: int = 600, connect:
 @cache
 def _cached_async_http_transport() -> httpx.AsyncHTTPTransport:
     return httpx.AsyncHTTPTransport()
+
+
+DataT = TypeVar('DataT', str, bytes)
+
+
+class DownloadedItem(TypedDict, Generic[DataT]):
+    """The downloaded data and its type."""
+
+    data: DataT
+    """The downloaded data."""
+
+    data_type: str
+    """The type of data that was downloaded.
+
+    Extracted from header "content-type", but defaults to the media type inferred from the file URL if content-type is "application/octet-stream".
+    """
+
+
+@overload
+async def download_item(
+    item: FileUrl,
+    data_format: Literal['bytes'],
+    type_format: Literal['mime', 'extension'] = 'mime',
+) -> DownloadedItem[bytes]: ...
+
+
+@overload
+async def download_item(
+    item: FileUrl,
+    data_format: Literal['base64', 'base64_uri', 'text'],
+    type_format: Literal['mime', 'extension'] = 'mime',
+) -> DownloadedItem[str]: ...
+
+
+async def download_item(
+    item: FileUrl,
+    data_format: Literal['bytes', 'base64', 'base64_uri', 'text'] = 'bytes',
+    type_format: Literal['mime', 'extension'] = 'mime',
+) -> DownloadedItem[str] | DownloadedItem[bytes]:
+    """Download an item by URL and return the content as a bytes object or a (base64-encoded) string.
+
+    Args:
+        item: The item to download.
+        data_format: The format to return the content in:
+            - `bytes`: The raw bytes of the content.
+            - `base64`: The base64-encoded content.
+            - `base64_uri`: The base64-encoded content as a data URI.
+            - `text`: The content as a string.
+        type_format: The format to return the media type in:
+            - `mime`: The media type as a MIME type.
+            - `extension`: The media type as an extension.
+
+    Raises:
+        UserError: If the URL points to a YouTube video or its protocol is gs://.
+    """
+    if item.url.startswith('gs://'):
+        raise UserError('Downloading from protocol "gs://" is not supported.')
+    elif isinstance(item, VideoUrl) and item.is_youtube:
+        raise UserError('Downloading YouTube videos is not supported.')
+
+    client = cached_async_http_client()
+    response = await client.get(item.url, follow_redirects=True)
+    response.raise_for_status()
+
+    if content_type := response.headers.get('content-type'):
+        content_type = content_type.split(';')[0]
+        if content_type == 'application/octet-stream':
+            content_type = None
+
+    media_type = content_type or item.media_type
+
+    data_type = media_type
+    if type_format == 'extension':
+        data_type = data_type.split('/')[1]
+
+    data = response.content
+    if data_format in ('base64', 'base64_uri'):
+        data = base64.b64encode(data).decode('utf-8')
+        if data_format == 'base64_uri':
+            data = f'data:{media_type};base64,{data}'
+        return DownloadedItem[str](data=data, data_type=data_type)
+    elif data_format == 'text':
+        return DownloadedItem[str](data=data.decode('utf-8'), data_type=data_type)
+    else:
+        return DownloadedItem[bytes](data=data, data_type=data_type)
 
 
 @cache

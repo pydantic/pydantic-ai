@@ -24,15 +24,19 @@ import pydantic_ai.models
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
 
-__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsInstance', 'IsStr', 'IsInt', 'TestEnv', 'ClientWithHandler', 'try_import'
+__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'IsInstance', 'TestEnv', 'ClientWithHandler', 'try_import'
 
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 if TYPE_CHECKING:
+    from typing import TypeVar
+
     from pydantic_ai.providers.bedrock import BedrockProvider
 
-    def IsInstance(*args: Any, **kwargs: Any) -> Any: ...
+    T = TypeVar('T')
+
+    def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
     def IsInt(*args: Any, **kwargs: Any) -> int: ...

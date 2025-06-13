@@ -18,17 +18,18 @@ pip/uv-add "pydantic-ai-slim[mcp]"
 
 PydanticAI comes with two ways to connect to MCP servers:
 
-- [`MCPServerHTTP`][pydantic_ai.mcp.MCPServerHTTP] which connects to an MCP server using the [HTTP SSE](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport
+- [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] which connects to an MCP server using the [HTTP SSE](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport
+- [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] which connects to an MCP server using the [Streamable HTTP](https://modelcontextprotocol.io/introduction#streamable-http) transport
 - [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] which runs the server as a subprocess and connects to it using the [stdio](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) transport
 
 Examples of both are shown below; [mcp-run-python](run-python.md) is used as the MCP server in both examples.
 
 ### SSE Client
 
-[`MCPServerHTTP`][pydantic_ai.mcp.MCPServerHTTP] connects over HTTP using the [HTTP + Server Sent Events transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) to a server.
+[`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] connects over HTTP using the [HTTP + Server Sent Events transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) to a server.
 
 !!! note
-    [`MCPServerHTTP`][pydantic_ai.mcp.MCPServerHTTP] requires an MCP server to be running and accepting HTTP connections before calling [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers]. Running the server is not managed by PydanticAI.
+    [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] requires an MCP server to be running and accepting HTTP connections before calling [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers]. Running the server is not managed by PydanticAI.
 
 The name "HTTP" is used since this implemented will be adapted in future to use the new
 [Streamable HTTP](https://github.com/modelcontextprotocol/specification/pull/206) currently in development.
@@ -43,9 +44,9 @@ deno run \
 
 ```python {title="mcp_sse_client.py" py="3.10"}
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerHTTP
+from pydantic_ai.mcp import MCPServerSSE
 
-server = MCPServerHTTP(url='http://localhost:3001/sse')  # (1)!
+server = MCPServerSSE(url='http://localhost:3001/sse')  # (1)!
 agent = Agent('openai:gpt-4o', mcp_servers=[server])  # (2)!
 
 
@@ -83,6 +84,52 @@ logfire.instrument_pydantic_ai()
 Will display as follows:
 
 ![Logfire run python code](../img/logfire-run-python-code.png)
+
+### Streamable HTTP Client
+
+[`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] connects over HTTP using the
+[Streamable HTTP](https://modelcontextprotocol.io/introduction#streamable-http) transport to a server.
+
+!!! note
+    [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] requires an MCP server to be
+    running and accepting HTTP connections before calling
+    [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers]. Running the server is not
+    managed by PydanticAI.
+
+Before creating the Streamable HTTP client, we need to run a server that supports the Streamable HTTP transport.
+
+```python {title="streamable_http_server.py" py="3.10" test="skip"}
+from mcp.server.fastmcp import FastMCP
+
+app = FastMCP()
+
+@app.tool()
+def add(a: int, b: int) -> int:
+    return a + b
+
+app.run(transport='streamable-http')
+```
+
+Then we can create the client:
+
+```python {title="mcp_streamable_http_client.py" py="3.10"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStreamableHTTP
+
+server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
+agent = Agent('openai:gpt-4o', mcp_servers=[server])
+
+async def main():
+    async with agent.run_mcp_servers():  # (3)!
+        result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
+    print(result.output)
+    #> There are 9,208 days between January 1, 2000, and March 18, 2025.
+```
+
+1. Create an agent with the MCP server attached.
+2. Create a client session to connect to the server.
+
+_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ### MCP "stdio" Server
 
@@ -135,15 +182,15 @@ This allows you to use multiple servers that might have overlapping tool names w
 
 ```python {title="mcp_tool_prefix_http_client.py" py="3.10"}
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerHTTP
+from pydantic_ai.mcp import MCPServerSSE
 
 # Create two servers with different prefixes
-weather_server = MCPServerHTTP(
+weather_server = MCPServerSSE(
     url='http://localhost:3001/sse',
     tool_prefix='weather'  # Tools will be prefixed with 'weather_'
 )
 
-calculator_server = MCPServerHTTP(
+calculator_server = MCPServerSSE(
     url='http://localhost:3002/sse',
     tool_prefix='calc'  # Tools will be prefixed with 'calc_'
 )

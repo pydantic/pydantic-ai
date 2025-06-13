@@ -183,6 +183,16 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         if user_prompt is not None:
             parts.append(_messages.UserPromptPart(user_prompt))
+        elif (
+            len(parts) == 0
+            and message_history
+            and (last_message := message_history[-1])
+            and isinstance(last_message, _messages.ModelRequest)
+        ):
+            # Drop last message that came from history and reuse its parts
+            messages.pop()
+            parts.extend(last_message.parts)
+
         return messages, _messages.ModelRequest(parts, instructions=instructions)
 
     async def _reevaluate_dynamic_prompts(
