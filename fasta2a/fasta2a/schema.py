@@ -1,55 +1,34 @@
 """
-This module re-exports the core A2A schema types from the `google-a2a` SDK.
-The types are based on Pydantic `BaseModel` and align with the official A2A JSON specification.
+This module re-exports the core schema types from the Google A2A SDK.
+
+By using the SDK's types, FastA2A ensures compliance with the A2A specification
+and leverages the robust Pydantic models provided by the SDK.
 """
+
+from __future__ import annotations as _annotations
 
 from a2a.types import (
     AgentCard,
     AgentProvider,
-    AgentSkill as Skill,
+    AgentSkill,
     Artifact,
-    CancelTaskRequest,
-    CancelTaskResponse,
-    DataPart,
-    FilePart,
-    GetTaskRequest,
-    GetTaskResponse,
     Message,
-    MessageSendParams,
     Part,
-    PushNotificationConfig,
-    Role,
-    SendMessageRequest,
-    SendMessageResponse,
     Task,
     TaskState,
-    TextPart,
 )
 
+# Alias for backward compatibility
+Skill = AgentSkill
+Provider = AgentProvider
+
 __all__ = [
-    # Core Models
     "AgentCard",
-    "AgentProvider",
+    "Provider",
+    "Skill",
     "Artifact",
     "Message",
     "Part",
-    "Skill",
     "Task",
-    # Enums
-    "Role",
     "TaskState",
-    # Part Types
-    "TextPart",
-    "FilePart",
-    "DataPart",
-    # Request/Response models
-    "SendMessageRequest",
-    "SendMessageResponse",
-    "GetTaskRequest",
-    "GetTaskResponse",
-    "CancelTaskRequest",
-    "CancelTaskResponse",
-    # Parameter Models
-    "MessageSendParams",
-    "PushNotificationConfig",
 ]

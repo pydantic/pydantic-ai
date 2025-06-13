@@ -1,12 +1,33 @@
-"""
-This module provides an alias for the TaskStore abstraction from the `google-a2a` SDK.
-A TaskStore is responsible for persisting and retrieving task state.
-"""
+"""This module defines the Storage class, which is responsible for storing and retrieving tasks."""
 
-from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
-from a2a.server.tasks.task_store import TaskStore
+from __future__ import annotations as _annotations
 
-Storage = TaskStore
-"""Alias for `a2a.server.tasks.task_store.TaskStore`."""
+from a2a.server.tasks import TaskStore
+from a2a.types import Task
 
-__all__ = ["Storage", "TaskStore", "InMemoryTaskStore"]
+
+class InMemoryStorage(TaskStore):
+    """A storage to retrieve and save tasks in memory."""
+
+    def __init__(self):
+        self.tasks: dict[str, Task] = {}
+
+    async def get(self, task_id: str) -> Task | None:
+        """Load a task from memory.
+
+        Args:
+            task_id: The id of the task to load.
+
+        Returns:
+            The task.
+        """
+        return self.tasks.get(task_id)
+
+    async def save(self, task: Task) -> None:
+        """Saves or updates a task in the in-memory store."""
+        self.tasks[task.id] = task
+
+    async def delete(self, task_id: str) -> None:
+        """Deletes a task from the in-memory store by ID."""
+        if task_id in self.tasks:
+            del self.tasks[task_id]

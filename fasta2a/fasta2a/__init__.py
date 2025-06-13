@@ -1,17 +1,17 @@
 from .applications import FastA2A
-from .client import A2AClient
-from .schema import Message, Part, Role, Skill, TextPart
-from .storage import Storage
-from .worker import Worker
+from .schema import Artifact, Message, Part, Skill, Task, TaskState
+from .storage import InMemoryStorage
+from .worker import TaskStore, Worker
 
 __all__ = [
     "FastA2A",
-    "A2AClient",
-    "Worker",
-    "Storage",
     "Skill",
+    "TaskStore",
+    "InMemoryStorage",
+    "Worker",
+    "Task",
     "Message",
+    "Artifact",
     "Part",
-    "Role",
-    "TextPart",
+    "TaskState",
 ]
