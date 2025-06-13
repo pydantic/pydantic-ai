@@ -1,3 +1,5 @@
+from collections.abc import AsyncIterator
+
 import pytest
 from inline_snapshot import snapshot
 
@@ -24,7 +26,12 @@ def function_model(received_messages: list[ModelMessage]) -> FunctionModel:
         received_messages.extend(messages)
         return ModelResponse(parts=[TextPart(content='Provider response')])
 
-    return FunctionModel(capture_model_function)
+    async def capture_model_stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        received_messages.clear()
+        received_messages.extend(messages)
+        yield 'hello'
+
+    return FunctionModel(capture_model_function, stream_function=capture_model_stream_function)
 
 
 async def test_history_processor_no_op(function_model: FunctionModel, received_messages: list[ModelMessage]):
@@ -47,7 +54,7 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
                 usage=Usage(requests=1, request_tokens=54, response_tokens=4, total_tokens=58),
-                model_name='function:capture_model_function:',
+                model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
             ),
         ]
@@ -86,7 +93,7 @@ async def test_history_processor_messages_sent_to_provider(
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
                 usage=Usage(requests=1, request_tokens=54, response_tokens=2, total_tokens=56),
-                model_name='function:capture_model_function:',
+                model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
             ),
         ]
@@ -161,6 +168,33 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
     ]
 
     await agent.run('Question 2', message_history=message_history)
+    assert received_messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Question 1', timestamp=IsDatetime())]),
+            ModelRequest(parts=[UserPromptPart(content='Question 2', timestamp=IsDatetime())]),
+        ]
+    )
+
+
+async def test_history_processor_on_streamed_run(function_model: FunctionModel, received_messages: list[ModelMessage]):
+    """Test that history processors work on streamed runs."""
+
+    async def async_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Question 1')]),
+        ModelResponse(parts=[TextPart(content='Answer 1')]),
+    ]
+
+    agent = Agent(function_model, history_processors=[async_processor])
+    async with agent.iter('Question 2', message_history=message_history) as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for _ in stream.stream_responses(debounce_by=None):
+                        ...
+
     assert received_messages == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Question 1', timestamp=IsDatetime())]),
