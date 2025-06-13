@@ -138,28 +138,23 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
 
     message_history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Question')]),
+        ModelResponse(parts=[TextPart(content='Answer')]),
     ]
 
     await agent.run('New question', message_history=message_history)
-
-    # Check that both processors were applied in sequence
-    assert len(received_messages) == 2
-    first_part = received_messages[0].parts[0]
-    assert isinstance(first_part, UserPromptPart)
-    assert first_part.content == '[SECOND] [FIRST] Question'
-    second_part = received_messages[1].parts[0]
-    assert isinstance(second_part, UserPromptPart)
-    assert second_part.content == '[SECOND] [FIRST] New question'
+    assert received_messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='[SECOND] [FIRST] Question', timestamp=IsDatetime())]),
+            ModelResponse(parts=[TextPart(content='Answer')], timestamp=IsDatetime()),
+            ModelRequest(parts=[UserPromptPart(content='[SECOND] [FIRST] New question', timestamp=IsDatetime())]),
+        ]
+    )
 
 
 async def test_async_history_processor(function_model: FunctionModel, received_messages: list[ModelMessage]):
     """Test that async processors work."""
-    import asyncio
 
     async def async_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
-        # Simulate async work
-        await asyncio.sleep(0.001)
-        # Filter out responses
         return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
     agent = Agent(function_model, history_processors=[async_processor])
@@ -170,13 +165,9 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
     ]
 
     await agent.run('Question 2', message_history=message_history)
-
-    # Should only have the two requests, response filtered out
-    assert len(received_messages) == 2
-    assert all(isinstance(msg, ModelRequest) for msg in received_messages)
-    first_part = received_messages[0].parts[0]
-    assert isinstance(first_part, UserPromptPart)
-    assert first_part.content == 'Question 1'
-    second_part = received_messages[1].parts[0]
-    assert isinstance(second_part, UserPromptPart)
-    assert second_part.content == 'Question 2'
+    assert received_messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Question 1', timestamp=IsDatetime())]),
+            ModelRequest(parts=[UserPromptPart(content='Question 2', timestamp=IsDatetime())]),
+        ]
+    )

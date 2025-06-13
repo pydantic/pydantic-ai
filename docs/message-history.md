@@ -493,3 +493,7 @@ agent = Agent('openai:gpt-4o', history_processors=[filter_responses, summarize_o
 
 In this case, the `filter_responses` processor will be applied first, and the
 `summarize_old_messages` processor will be applied second.
+
+## Examples
+
+For a more complete example of using messages in conversations, see the [chat app](examples/chat-app.md) example.
