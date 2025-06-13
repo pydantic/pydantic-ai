@@ -1600,6 +1600,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
+                vendor_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
             ),
         ]
     )
@@ -1627,6 +1628,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
+                vendor_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
             ),
             ModelRequest(
                 parts=[
@@ -1651,6 +1653,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
+                vendor_id='resp_6803484f19a88191b9ea975d7cfbbe8408c845d2be9bcdd8',
             ),
         ]
     )
@@ -1683,6 +1686,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
+                vendor_id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
             ),
         ]
     )
@@ -1711,6 +1715,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
+                vendor_id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
             ),
             ModelRequest(
                 parts=[
