@@ -385,7 +385,7 @@ result = agent.run_sync('What did we discuss?', message_history=long_conversatio
 
 #### Summarize Old Messages
 
-Use an LLM to summarize older messages to preserve context while reducing tokens. Note that since `history_processor` is called synchronously, this approach works best when you pre-compute summaries:
+Use an LLM to summarize older messages to preserve context while reducing tokens. Note that `history_processors` support both sync and async functions, but this approach works best when you pre-compute summaries:
 
 ```python
 from pydantic_ai import Agent
