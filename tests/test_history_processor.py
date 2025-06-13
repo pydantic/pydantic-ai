@@ -111,8 +111,6 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
                 for part in msg.parts:
                     if isinstance(part, UserPromptPart):
                         new_parts.append(UserPromptPart(content=f'[FIRST] {part.content}'))
-                    else:
-                        new_parts.append(part)
                 processed.append(ModelRequest(parts=new_parts))
             else:
                 processed.append(msg)
@@ -127,8 +125,6 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
                 for part in msg.parts:
                     if isinstance(part, UserPromptPart):
                         new_parts.append(UserPromptPart(content=f'[SECOND] {part.content}'))
-                    else:
-                        new_parts.append(part)
                 processed.append(ModelRequest(parts=new_parts))
             else:
                 processed.append(msg)
