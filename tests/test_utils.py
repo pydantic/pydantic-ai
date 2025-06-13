@@ -164,16 +164,16 @@ async def test_run_in_executor_with_contextvars() -> None:
 
 
 def test_is_async_callable():
-    def sync_func(): ...
+    def sync_func(): ...  # pragma: no branch
 
     assert is_async_callable(sync_func) is False
 
-    async def async_func(): ...
+    async def async_func(): ...  # pragma: no branch
 
     assert is_async_callable(async_func) is True
 
     class AsyncCallable:
-        async def __call__(self): ...
+        async def __call__(self): ...  # pragma: no branch
 
     partial_async_callable = functools.partial(AsyncCallable())
     assert is_async_callable(partial_async_callable) is True
