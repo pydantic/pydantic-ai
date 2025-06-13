@@ -669,10 +669,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             if self._instructions is None and not self._instructions_functions:
                 return None
 
-            instructions = self._instructions or ''
+            instructions = [self._instructions] if self._instructions else []
             for instructions_runner in self._instructions_functions:
-                instructions += '\n' + await instructions_runner.run(run_context)
-            return instructions.strip()
+                instructions.append(await instructions_runner.run(run_context))
+            concatenated_instructions = '\n'.join(instruction for instruction in instructions if instruction)
+            return concatenated_instructions.strip() if concatenated_instructions else None
 
         # Copy the function tools so that retry state is agent-run-specific
         # Note that the retry count is reset to 0 when this happens due to the `default=0` and `init=False`.

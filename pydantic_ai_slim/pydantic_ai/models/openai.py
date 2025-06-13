@@ -40,8 +40,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    cached_async_http_client,
     check_allow_model_requests,
+    download_item,
     get_user_agent,
 )
 
@@ -281,6 +281,12 @@ class OpenAIModel(Model):
 
         openai_messages = await self._map_messages(messages)
 
+        sampling_settings = (
+            model_settings
+            if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
+            else OpenAIModelSettings()
+        )
+
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
@@ -294,18 +300,18 @@ class OpenAIModel(Model):
                 stream_options={'include_usage': True} if stream else NOT_GIVEN,
                 stop=model_settings.get('stop_sequences', NOT_GIVEN),
                 max_completion_tokens=model_settings.get('max_tokens', NOT_GIVEN),
-                temperature=model_settings.get('temperature', NOT_GIVEN),
-                top_p=model_settings.get('top_p', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 seed=model_settings.get('seed', NOT_GIVEN),
-                presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
-                frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
-                logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
-                logprobs=model_settings.get('openai_logprobs', NOT_GIVEN),
-                top_logprobs=model_settings.get('openai_top_logprobs', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
+                temperature=sampling_settings.get('temperature', NOT_GIVEN),
+                top_p=sampling_settings.get('top_p', NOT_GIVEN),
+                presence_penalty=sampling_settings.get('presence_penalty', NOT_GIVEN),
+                frequency_penalty=sampling_settings.get('frequency_penalty', NOT_GIVEN),
+                logit_bias=sampling_settings.get('logit_bias', NOT_GIVEN),
+                logprobs=sampling_settings.get('openai_logprobs', NOT_GIVEN),
+                top_logprobs=sampling_settings.get('openai_top_logprobs', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -493,21 +499,21 @@ class OpenAIModel(Model):
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):
-                    client = cached_async_http_client()
-                    response = await client.get(item.url)
-                    response.raise_for_status()
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    audio_format: Any = response.headers['content-type'].removeprefix('audio/')
-                    audio = InputAudio(data=base64_encoded, format=audio_format)
+                    downloaded_item = await download_item(item, data_format='base64', type_format='extension')
+                    assert downloaded_item['data_type'] in (
+                        'wav',
+                        'mp3',
+                    ), f'Unsupported audio format: {downloaded_item["data_type"]}'
+                    audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
-                    client = cached_async_http_client()
-                    response = await client.get(item.url)
-                    response.raise_for_status()
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    media_type = response.headers.get('content-type').split(';')[0]
-                    file_data = f'data:{media_type};base64,{base64_encoded}'
-                    file = File(file=FileFile(file_data=file_data, filename=f'filename.{item.format}'), type='file')
+                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
+                    file = File(
+                        file=FileFile(
+                            file_data=downloaded_item['data'], filename=f'filename.{downloaded_item["data_type"]}'
+                        ),
+                        type='file',
+                    )
                     content.append(file)
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
@@ -607,7 +613,13 @@ class OpenAIResponsesModel(Model):
         for item in response.output:
             if item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
-        return ModelResponse(items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp)
+        return ModelResponse(
+            items,
+            usage=_map_usage(response),
+            model_name=response.model,
+            vendor_id=response.id,
+            timestamp=timestamp,
+        )
 
     async def _process_streamed_response(
         self, response: AsyncStream[responses.ResponseStreamEvent]
@@ -664,6 +676,12 @@ class OpenAIResponsesModel(Model):
         instructions, openai_messages = await self._map_messages(messages)
         reasoning = self._get_reasoning(model_settings)
 
+        sampling_settings = (
+            model_settings
+            if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
+            else OpenAIResponsesModelSettings()
+        )
+
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
@@ -676,8 +694,8 @@ class OpenAIResponsesModel(Model):
                 tool_choice=tool_choice or NOT_GIVEN,
                 max_output_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 stream=stream,
-                temperature=model_settings.get('temperature', NOT_GIVEN),
-                top_p=model_settings.get('top_p', NOT_GIVEN),
+                temperature=sampling_settings.get('temperature', NOT_GIVEN),
+                top_p=sampling_settings.get('top_p', NOT_GIVEN),
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 reasoning=reasoning,
@@ -813,27 +831,21 @@ class OpenAIResponsesModel(Model):
                         responses.ResponseInputImageParam(image_url=item.url, type='input_image', detail='auto')
                     )
                 elif isinstance(item, AudioUrl):  # pragma: no cover
-                    client = cached_async_http_client()
-                    response = await client.get(item.url)
-                    response.raise_for_status()
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                     content.append(
                         responses.ResponseInputFileParam(
                             type='input_file',
-                            file_data=f'data:{item.media_type};base64,{base64_encoded}',
+                            file_data=downloaded_item['data'],
+                            filename=f'filename.{downloaded_item["data_type"]}',
                         )
                     )
                 elif isinstance(item, DocumentUrl):
-                    client = cached_async_http_client()
-                    response = await client.get(item.url)
-                    response.raise_for_status()
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    media_type = response.headers.get('content-type').split(';')[0]
+                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                     content.append(
                         responses.ResponseInputFileParam(
                             type='input_file',
-                            file_data=f'data:{media_type};base64,{base64_encoded}',
-                            filename=f'filename.{item.format}',
+                            file_data=downloaded_item['data'],
+                            filename=f'filename.{downloaded_item["data_type"]}',
                         )
                     )
                 elif isinstance(item, VideoUrl):  # pragma: no cover

@@ -701,6 +701,8 @@ _(This example is complete, it can be run "as is")_
 
 You can also dynamically change the instructions for an agent by using the `@agent.instructions` decorator.
 
+Note that returning an empty string will result in no instruction message added.
+
 ```python {title="dynamic_instructions.py"}
 from datetime import date
 
