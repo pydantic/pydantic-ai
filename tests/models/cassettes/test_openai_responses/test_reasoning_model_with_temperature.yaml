@@ -1,0 +1,96 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '103'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the capital of Mexico?
+        role: user
+      model: o3-mini
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1502'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '5769'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1749586308
+      error: null
+      id: resp_684891844d0481a28f2d4ed6ea21aa8a0a1b41b457712f86
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      metadata: {}
+      model: o3-mini-2025-01-31
+      object: response
+      output:
+      - id: rs_68489188081c81a29dea5b85122ad5ed0a1b41b457712f86
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          text: The capital of Mexico is Mexico City. It serves as the political, cultural, and economic heart of the country
+            and is one of the largest metropolitan areas in the world.
+          type: output_text
+        id: msg_684891892e2481a2a1a8ae81c0541d800a1b41b457712f86
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: medium
+        summary: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools: []
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 13
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 227
+        output_tokens_details:
+          reasoning_tokens: 192
+        total_tokens: 240
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
