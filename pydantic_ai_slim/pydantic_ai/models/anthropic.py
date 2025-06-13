@@ -28,6 +28,7 @@ from ..messages import (
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
+from ..profiles.anthropic import AnthropicModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -216,11 +217,14 @@ class AnthropicModel(Model):
 
         system_prompt, anthropic_messages = await self._map_message(messages)
 
+        max_tokens_limit = AnthropicModelProfile.from_profile(self.profile).anthropic_max_tokens_limit
+        max_tokens = min(model_settings.get('max_tokens', max_tokens_limit), max_tokens_limit)
+
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.beta.messages.create(
-                max_tokens=model_settings.get('max_tokens', 1024),
+                max_tokens=max_tokens,
                 system=system_prompt or NOT_GIVEN,
                 messages=anthropic_messages,
                 model=self._model_name,
