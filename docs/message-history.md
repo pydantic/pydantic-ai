@@ -335,7 +335,8 @@ the message history before each model request.
 
 The `history_processors` is a list of callables that take a list of
 [`ModelMessage`][pydantic_ai.messages.ModelMessage] and return a modified list of the same type.
-Each processor is applied in sequence, and processors can be either synchronous or asynchronous:
+
+Each processor is applied in sequence, and processors can be either synchronous or asynchronous.
 
 ```python {title="simple_history_processor.py"}
 from pydantic_ai import Agent
@@ -369,12 +370,12 @@ message_history = [
 
 You can use the `history_processor` to only keep the recent messages:
 
-```python
+```python {title="keep_recent_messages.py"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 
 
-def keep_recent_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+async def keep_recent_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Keep only the last 5 messages to manage token usage."""
     return messages[-5:] if len(messages) > 5 else messages
 
@@ -387,142 +388,44 @@ long_conversation_history: list[ModelMessage] = []  # Your long conversation his
 
 #### Summarize Old Messages
 
-Use an LLM to summarize older messages to preserve context while reducing tokens. Note that `history_processors` support both sync and async functions, but this approach works best when you pre-compute summaries:
+Use an LLM to summarize older messages to preserve context while reducing tokens.
 
-```python
+```python {title="summarize_old_messages.py"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    SystemPromptPart,
-    TextPart,
-    UserPromptPart,
+from pydantic_ai.messages import ModelMessage
+
+# Use a cheaper model to summarize old messages.
+summarize_agent = Agent(
+    'openai:gpt-4o-mini',
+    instructions="""
+Summarize this conversation, omitting small talk and unrelated topics.
+Focus on the technical discussion and next steps.
+""",
 )
 
 
-class MessageSummarizer:
-    def __init__(self):
-        self.summary_agent = Agent('openai:gpt-4o-mini')  # Use a cheaper model for summarization
-        self._summary_cache = {}
+async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    # Summarize the oldest 3 messages
+    if len(messages) > 10:
+        oldest_messages = messages[:10]
+        summary = await summarize_agent.run(message_history=oldest_messages)
+        # Return the last message and the summary
+        return summary.new_messages() + messages[-1:]
 
-    def get_summary_key(self, messages: list[ModelMessage]) -> str:
-        """Create a simple key based on message count and last message content."""
-        if not messages:
-            return 'empty'
-        last_content = ''
-        if isinstance(messages[-1], ModelRequest) and messages[-1].parts:
-            part = messages[-1].parts[-1]
-            if isinstance(part, (UserPromptPart, TextPart)):
-                last_content = part.content[:50]  # First 50 chars
-        return f'{len(messages)}_{hash(last_content)}'
+    return messages
 
-    def summarize_messages(self, messages: list[ModelMessage]) -> str:
-        """Synchronously get a summary, using cache when possible."""
-        cache_key = self.get_summary_key(messages)
-        if cache_key in self._summary_cache:
-            return self._summary_cache[cache_key]
-
-        # Extract text content from messages for summarization
-        message_texts = []
-        for i, msg in enumerate(messages):
-            if isinstance(msg, ModelRequest):
-                for part in msg.parts:
-                    if isinstance(part, UserPromptPart):
-                        message_texts.append(f'User: {part.content}')
-                    elif isinstance(part, SystemPromptPart):
-                        message_texts.append(f'System: {part.content}')
-            elif isinstance(msg, ModelResponse):
-                for part in msg.parts:
-                    if isinstance(part, TextPart):
-                        message_texts.append(f'Assistant: {part.content}')
-
-        if not message_texts:
-            return 'No messages to summarize'
-
-        conversation_text = '\n'.join(message_texts)
-        summary_prompt = f'''Provide a concise summary of this conversation:
-
-{conversation_text}
-
-Summary:'''
-
-        # This would need to be run beforehand or you'd need to implement async handling
-        summary = self.summary_agent.run_sync(summary_prompt).output
-        self._summary_cache[cache_key] = summary
-        return summary
-
-# Create a summarizer instance
-summarizer = MessageSummarizer()
-
-def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Keep recent messages and summarize older ones."""
-    if len(messages) <= 5:
-        return messages  # Keep all messages if we have 5 or fewer
-
-    # Keep the most recent 3 messages as-is
-    recent_messages = messages[-3:]
-    old_messages = messages[:-3]
-
-    # Get summary of old messages
-    summary_text = summarizer.summarize_messages(old_messages)
-
-    # Create a summary message
-    summary_message = ModelRequest(parts=[
-        SystemPromptPart(content=f'Previous conversation summary: {summary_text}')
-    ])
-
-    # Return summary + recent messages
-    return [summary_message] + recent_messages
 
 agent = Agent('openai:gpt-4o', history_processors=[summarize_old_messages])
 ```
 
-!!! tip "Simpler Alternative: Pre-process Message History"
-    For many use cases, it's simpler to summarize messages before passing them to the agent rather than using `history_processor`:
-
-    ```python
-    # Pre-process approach (simpler)
-    from pydantic_ai import Agent
-    from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
-
-
-    def format_messages_for_summary(messages: list[ModelMessage]) -> str:
-        """Helper function to format messages for summarization."""
-        return f'Conversation with {len(messages)} messages'
-
-    # Create agents
-    summary_agent = Agent('openai:gpt-4o-mini')
-    agent = Agent('openai:gpt-4o')
-
-    # Example message history (your existing conversation)
-    message_history: list[ModelMessage] = []  # Your conversation history here
-
-    # Summarize old messages beforehand
-    if len(message_history) > 10:
-        old_messages_text = format_messages_for_summary(message_history[:-5])
-        # summary = summary_agent.run_sync(f'Summarize this conversation: {old_messages_text}')
-        # For demonstration, use a placeholder
-        summary_text = 'Previous conversation summary'
-
-        summary_message = ModelRequest(parts=[
-            SystemPromptPart(content=f'Previous conversation: {summary_text}')
-        ])
-        processed_history = [summary_message] + message_history[-5:]
-    else:
-        processed_history = message_history
-
-    # Use the pre-processed history
-    # result = agent.run_sync('Continue the conversation', message_history=processed_history)
-    ```
-
-    Use `history_processors` when you need automatic processing for every request, or when the processing logic is simple and fast.
-
 ### Testing History Processors
 
-You can test what messages are actually sent to the model provider using `FunctionModel`:
+You can test what messages are actually sent to the model provider using
+[`FunctionModel`][pydantic_ai.models.function.FunctionModel]:
 
-```python {title="Testing history processor behavior"}
+```python {title="test_history_processor.py"}
+import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelMessage,
@@ -534,21 +437,27 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 
-def test_history_processor():
-    received_messages = []
+@pytest.fixture
+def received_messages() -> list[ModelMessage]:
+    return []
 
-    def capture_messages(messages: list[ModelMessage], info: AgentInfo):
+
+@pytest.fixture
+def function_model(received_messages: list[ModelMessage]) -> FunctionModel:
+    def capture_model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Capture the messages that the provider actually receives
         received_messages.clear()
         received_messages.extend(messages)
-        return ModelResponse(parts=[TextPart(content='Test response')])
+        return ModelResponse(parts=[TextPart(content='Provider response')])
 
+    return FunctionModel(capture_model_function)
+
+
+def test_history_processor(function_model: FunctionModel, received_messages: list[ModelMessage]):
     def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
         return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
-    agent = Agent(
-        FunctionModel(capture_messages),
-        history_processors=[filter_responses]
-    )
+    agent = Agent(function_model, history_processors=[filter_responses])
 
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Question 1')]),
@@ -556,72 +465,31 @@ def test_history_processor():
     ]
 
     agent.run_sync('Question 2', message_history=message_history)
-
-    # received_messages now contains only the filtered messages
-    assert len(received_messages) == 2  # Only the two ModelRequest messages
-    assert all(isinstance(msg, ModelRequest) for msg in received_messages)
+    assert received_messages == [
+        ModelRequest(parts=[UserPromptPart(content='Question 1')]),
+        ModelRequest(parts=[UserPromptPart(content='Question 2')]),
+    ]
 ```
 
-### Multiple Processors and Async Support
+### Multiple Processors
 
-You can provide multiple processors that will be applied in sequence:
+You can also use multiple processors:
 
-```python
+```python {title="multiple_history_processors.py"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest
 
 
-def add_context(messages: list[ModelMessage]) -> list[ModelMessage]:
-    # Add context prefix to user prompts
-    processed = []
-    for msg in messages:
-        if isinstance(msg, ModelRequest):
-            new_parts = []
-            for part in msg.parts:
-                if isinstance(part, UserPromptPart):
-                    new_parts.append(UserPromptPart(content=f'[CONTEXT] {part.content}'))
-                else:
-                    new_parts.append(part)
-            processed.append(ModelRequest(parts=new_parts))
-        else:
-            processed.append(msg)
-    return processed
+def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
-def keep_recent(messages: list[ModelMessage]) -> list[ModelMessage]:
-    # Keep only recent messages
+
+def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages[-5:]
 
-# Processors are applied in order: first add_context, then keep_recent
-agent = Agent('openai:gpt-4o', history_processors=[add_context, keep_recent])
+
+agent = Agent('openai:gpt-4o', history_processors=[filter_responses, summarize_old_messages])
 ```
 
-You can also use async processors for operations that require async calls:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
-
-
-async def async_summarizer(messages: list[ModelMessage]) -> list[ModelMessage]:
-    if len(messages) > 10:
-        # Example: Use an async summarization service
-        # summary = await your_async_summarization_service(messages[:-5])
-        summary = 'Previous conversation summary'  # Placeholder
-        summary_msg = ModelRequest(parts=[SystemPromptPart(content=summary)])
-        return [summary_msg] + messages[-5:]
-    return messages
-
-agent = Agent('openai:gpt-4o', history_processors=[async_summarizer])
-```
-
-### Important Notes
-
-- **Sync and Async Support**: History processors can be either synchronous or asynchronous functions. Async processors are awaited automatically.
-- **Message Immutability**: The original message history passed to the agent is not modified. The processor receives a copy and should return a new list.
-- **Performance**: History processors are called on every model request, so keep them efficient for large message histories.
-- **Error Handling**: If the history processor raises an exception, the agent run will fail. Ensure proper error handling in your processor.
-- **Type Safety**: The processor must return a list of `ModelMessage` objects. Invalid return types will cause runtime errors.
-
-## Examples
-
-For a more complete example of using messages in conversations, see the [chat app](examples/chat-app.md) example.
+In this case, the `filter_responses` processor will be applied first, and the
+`summarize_old_messages` processor will be applied second.
