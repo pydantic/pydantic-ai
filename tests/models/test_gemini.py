@@ -1361,6 +1361,7 @@ async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
+                vendor_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
             ),
         ]
     )
@@ -1391,6 +1392,7 @@ async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
+                vendor_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
             ),
             ModelRequest(
                 parts=[
@@ -1399,49 +1401,6 @@ async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api
                         timestamp=IsDatetime(),
                     )
                 ]
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(
-                        content='The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several patterns, including the most common endpoints with 404 errors, request patterns (such as all requests being GET requests), timeline-related issues, and configuration/authentication problems. The analysis also provides recommendations for addressing the 404 errors.'
-                    ),
-                ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=9,
-                    response_tokens=72,
-                    total_tokens=81,
-                    details={
-                        'text_prompt_tokens': 9,
-                        'video_prompt_tokens': 0,
-                        'audio_prompt_tokens': 0,
-                        'text_candidates_tokens': 72,
-                    },
-                ),
-                model_name='gemini-2.0-flash',
-                timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-            ),
-        ]
-    )
-
-
-async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
-    url = VideoUrl(url='https://youtu.be/lCdaVNyHtjU')
-
-    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
-    agent = Agent(m)
-    result = await agent.run(['What is the main content of this URL?', url])
-
-    assert result.output == snapshot(
-        'The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several patterns, including the most common endpoints with 404 errors, request patterns (such as all requests being GET requests), timeline-related issues, and configuration/authentication problems. The analysis also provides recommendations for addressing the 404 errors.'
-    )
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content=['What is the main content of this URL?', url], timestamp=IsDatetime()),
-                ],
             ),
             ModelResponse(
                 parts=[
@@ -1482,7 +1441,7 @@ Here's the analogous guide for crossing a river:
 
 Just as you wouldn't just run blindly into a busy street, you shouldn't just jump into a river without understanding its conditions and choosing the safest method and location to cross. Be cautious, assess the "traffic" (current, depth, obstacles), and use the available "infrastructure" (bridges, ferries, established crossing points) whenever possible.\
 """
-                    )
+                    ),
                 ],
                 usage=Usage(
                     requests=1,
@@ -1492,6 +1451,50 @@ Just as you wouldn't just run blindly into a busy street, you shouldn't just jum
                     details={'thoughts_tokens': 794, 'text_prompt_tokens': 801},
                 ),
                 model_name='gemini-2.5-flash-preview-04-17',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    url = VideoUrl(url='https://youtu.be/lCdaVNyHtjU')
+
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+    result = await agent.run(['What is the main content of this URL?', url])
+
+    assert result.output == snapshot(
+        'The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several patterns, including the most common endpoints with 404 errors, request patterns (such as all requests being GET requests), timeline-related issues, and configuration/authentication problems. The analysis also provides recommendations for addressing the 404 errors.'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content=['What is the main content of this URL?', url], timestamp=IsDatetime()),
+                ],
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several patterns, including the most common endpoints with 404 errors, request patterns (such as all requests being GET requests), timeline-related issues, and configuration/authentication problems. The analysis also provides recommendations for addressing the 404 errors.'
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=9,
+                    response_tokens=72,
+                    total_tokens=81,
+                    details={
+                        'text_prompt_tokens': 9,
+                        'video_prompt_tokens': 0,
+                        'audio_prompt_tokens': 0,
+                        'text_candidates_tokens': 72,
+                    },
+                ),
+                model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
             ),

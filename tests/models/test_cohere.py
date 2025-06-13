@@ -455,6 +455,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
+                vendor_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
             ),
         ]
     )
@@ -483,6 +484,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
+                vendor_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
             ),
             ModelRequest(
                 parts=[
