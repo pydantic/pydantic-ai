@@ -1,57 +1,100 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
 from typing import Any
 
-from starlette.applications import Starlette
+import httpx
+from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
+from a2a.server.request_handlers.default_request_handler import DefaultRequestHandler
+from a2a.server.tasks.inmemory_push_notifier import InMemoryPushNotifier
+from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
+from a2a.types import AgentCapabilities, AgentCard, AgentProvider
 from starlette.middleware import Middleware
-from starlette.requests import Request
-from starlette.responses import Response
 from starlette.routing import Route
 from starlette.types import ExceptionHandler, Lifespan, Receive, Scope, Send
 
-from .broker import Broker
-from .schema import (
-    AgentCard,
-    Authentication,
-    Capabilities,
-    Provider,
-    Skill,
-    a2a_request_ta,
-    a2a_response_ta,
-    agent_card_ta,
-)
+from .schema import Skill
 from .storage import Storage
-from .task_manager import TaskManager
+from .worker import Worker
 
 
-class FastA2A(Starlette):
-    """The main class for the FastA2A library."""
+class FastA2A:
+    """
+    The main class for the FastA2A library. It provides a simple way to create
+    an A2A server by wrapping the Google A2A SDK.
+    """
 
     def __init__(
         self,
         *,
-        storage: Storage,
-        broker: Broker,
+        worker: Worker,
+        storage: Storage | None = None,
         # Agent card
-        name: str | None = None,
-        url: str = 'http://localhost:8000',
-        version: str = '1.0.0',
+        name: str = "Agent",
+        url: str = "http://localhost:8000",
+        version: str = "1.0.0",
         description: str | None = None,
-        provider: Provider | None = None,
+        provider: AgentProvider | None = None,
         skills: list[Skill] | None = None,
         # Starlette
         debug: bool = False,
-        routes: Sequence[Route] | None = None,
-        middleware: Sequence[Middleware] | None = None,
+        routes: list[Route] | None = None,
+        middleware: list[Middleware] | None = None,
         exception_handlers: dict[Any, ExceptionHandler] | None = None,
-        lifespan: Lifespan[FastA2A] | None = None,
+        lifespan: Lifespan | None = None,
     ):
-        if lifespan is None:
-            lifespan = _default_lifespan
+        """
+        Initializes the FastA2A application.
 
-        super().__init__(
+        Args:
+            worker: An implementation of `fasta2a.Worker` (which is an `a2a.server.agent_execution.AgentExecutor`).
+            storage: An implementation of `fasta2a.Storage` (which is an `a2a.server.tasks.TaskStore`).
+                Defaults to `InMemoryTaskStore`.
+            name: The human-readable name of the agent.
+            url: The URL where the agent is hosted.
+            version: The version of the agent.
+            description: A human-readable description of the agent.
+            provider: The service provider of the agent.
+            skills: A list of skills the agent can perform.
+            debug: Starlette's debug flag.
+            routes: A list of additional Starlette routes.
+            middleware: A list of Starlette middleware.
+            exception_handlers: A dictionary of Starlette exception handlers.
+            lifespan: A Starlette lifespan context manager.
+        """
+        self.agent_card = AgentCard(
+            name=name,
+            url=url,
+            version=version,
+            description=description or "A FastA2A Agent",
+            provider=provider,
+            skills=skills or [],
+            capabilities=AgentCapabilities(
+                streaming=True, pushNotifications=True, stateTransitionHistory=True
+            ),
+            defaultInputModes=["application/json"],
+            defaultOutputModes=["application/json"],
+            securitySchemes={},
+        )
+
+        self.storage = storage or InMemoryTaskStore()
+        self.worker = worker
+
+        # The SDK's DefaultRequestHandler uses httpx to send push notifications
+        http_client = httpx.AsyncClient()
+        push_notifier = InMemoryPushNotifier(httpx_client)
+
+        request_handler = DefaultRequestHandler(
+            agent_executor=self.worker,
+            task_store=self.storage,
+            push_notifier=push_notifier,
+        )
+
+        a2a_app = A2AStarletteApplication(
+            agent_card=self.agent_card,
+            http_handler=request_handler,
+        )
+
+        self.app = a2a_app.build(
             debug=debug,
             routes=routes,
             middleware=middleware,
@@ -59,77 +102,5 @@ class FastA2A(Starlette):
             lifespan=lifespan,
         )
 
-        self.name = name or 'Agent'
-        self.url = url
-        self.version = version
-        self.description = description
-        self.provider = provider
-        self.skills = skills or []
-        # NOTE: For now, I don't think there's any reason to support any other input/output modes.
-        self.default_input_modes = ['application/json']
-        self.default_output_modes = ['application/json']
-
-        self.task_manager = TaskManager(broker=broker, storage=storage)
-
-        # Setup
-        self._agent_card_json_schema: bytes | None = None
-        self.router.add_route('/.well-known/agent.json', self._agent_card_endpoint, methods=['HEAD', 'GET', 'OPTIONS'])
-        self.router.add_route('/', self._agent_run_endpoint, methods=['POST'])
-
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope['type'] == 'http' and not self.task_manager.is_running:
-            raise RuntimeError('TaskManager was not properly initialized.')
-        await super().__call__(scope, receive, send)
-
-    async def _agent_card_endpoint(self, request: Request) -> Response:
-        if self._agent_card_json_schema is None:
-            agent_card = AgentCard(
-                name=self.name,
-                url=self.url,
-                version=self.version,
-                skills=self.skills,
-                default_input_modes=self.default_input_modes,
-                default_output_modes=self.default_output_modes,
-                capabilities=Capabilities(streaming=False, push_notifications=False, state_transition_history=False),
-                authentication=Authentication(schemes=[]),
-            )
-            if self.description is not None:
-                agent_card['description'] = self.description
-            if self.provider is not None:
-                agent_card['provider'] = self.provider
-            self._agent_card_json_schema = agent_card_ta.dump_json(agent_card, by_alias=True)
-        return Response(content=self._agent_card_json_schema, media_type='application/json')
-
-    async def _agent_run_endpoint(self, request: Request) -> Response:
-        """This is the main endpoint for the A2A server.
-
-        Although the specification allows freedom of choice and implementation, I'm pretty sure about some decisions.
-
-        1. The server will always either send a "submitted" or a "failed" on `tasks/send`.
-            Never a "completed" on the first message.
-        2. There are three possible ends for the task:
-            2.1. The task was "completed" successfully.
-            2.2. The task was "canceled".
-            2.3. The task "failed".
-        3. The server will send a "working" on the first chunk on `tasks/pushNotification/get`.
-        """
-        data = await request.body()
-        a2a_request = a2a_request_ta.validate_json(data)
-
-        if a2a_request['method'] == 'tasks/send':
-            jsonrpc_response = await self.task_manager.send_task(a2a_request)
-        elif a2a_request['method'] == 'tasks/get':
-            jsonrpc_response = await self.task_manager.get_task(a2a_request)
-        elif a2a_request['method'] == 'tasks/cancel':
-            jsonrpc_response = await self.task_manager.cancel_task(a2a_request)
-        else:
-            raise NotImplementedError(f'Method {a2a_request["method"]} not implemented.')
-        return Response(
-            content=a2a_response_ta.dump_json(jsonrpc_response, by_alias=True), media_type='application/json'
-        )
-
-
-@asynccontextmanager
-async def _default_lifespan(app: FastA2A) -> AsyncIterator[None]:
-    async with app.task_manager:
-        yield
+        await self.app(scope, receive, send)
