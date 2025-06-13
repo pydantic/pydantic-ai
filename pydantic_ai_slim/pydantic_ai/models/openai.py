@@ -613,7 +613,13 @@ class OpenAIResponsesModel(Model):
         for item in response.output:
             if item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
-        return ModelResponse(items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp)
+        return ModelResponse(
+            items,
+            usage=_map_usage(response),
+            model_name=response.model,
+            vendor_id=response.id,
+            timestamp=timestamp,
+        )
 
     async def _process_streamed_response(
         self, response: AsyncStream[responses.ResponseStreamEvent]

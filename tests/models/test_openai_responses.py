@@ -197,6 +197,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='resp_67e547c48c9481918c5c4394464ce0c60ae6111e84dd5c08',
             ),
             ModelRequest(
                 parts=[
@@ -232,6 +233,7 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='resp_67e547c5a2f08191802a1f43620f348503a2086afed73b47',
             ),
         ]
     )
@@ -272,6 +274,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='resp_681134d3aa3481919ca581a267db1e510fe7a5a4e2123dc3',
             ),
             ModelRequest(
                 parts=[
@@ -300,6 +303,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='resp_681134d53c48819198ce7b89db78dffd02cbfeaababb040c',
             ),
         ]
     )
@@ -435,6 +439,7 @@ In the past 24 hours, OpenAI announced plans to release its first open-weight la
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='resp_67ebcbb93728819197f923ff16e98bce04f5055a2a33abc3',
             ),
         ]
     )
@@ -462,6 +467,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
+                vendor_id='resp_67f3fdfd9fa08191a3d5825db81b8df6003bc73febb56d77',
             ),
         ]
     )
