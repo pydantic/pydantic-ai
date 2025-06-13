@@ -116,7 +116,7 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
             if isinstance(msg, ModelRequest):
                 new_parts: list[ModelRequestPart] = []
                 for part in msg.parts:
-                    if isinstance(part, UserPromptPart):
+                    if isinstance(part, UserPromptPart):  # pragma: no branch
                         new_parts.append(UserPromptPart(content=f'[FIRST] {part.content}'))
                 processed.append(ModelRequest(parts=new_parts))
             else:
@@ -130,7 +130,7 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
             if isinstance(msg, ModelRequest):
                 new_parts: list[ModelRequestPart] = []
                 for part in msg.parts:
-                    if isinstance(part, UserPromptPart):
+                    if isinstance(part, UserPromptPart):  # pragma: no branch
                         new_parts.append(UserPromptPart(content=f'[SECOND] {part.content}'))
                 processed.append(ModelRequest(parts=new_parts))
             else:
