@@ -17,10 +17,8 @@ from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from ..messages import (
-    AudioUrl,
     BinaryContent,
-    DocumentUrl,
-    ImageUrl,
+    FileUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -41,8 +39,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    cached_async_http_client,
     check_allow_model_requests,
+    download_item,
     get_user_agent,
 )
 
@@ -228,7 +226,7 @@ class GeminiModel(Model):
 
         if gemini_labels := model_settings.get('gemini_labels'):
             if self._system == 'google-vertex':
-                request_data['labels'] = gemini_labels
+                request_data['labels'] = gemini_labels  # pragma: lax no cover
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
@@ -348,15 +346,19 @@ class GeminiModel(Model):
                     content.append(
                         _GeminiInlineDataPart(inline_data={'data': base64_encoded, 'mime_type': item.media_type})
                     )
-                elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl, VideoUrl)):
-                    client = cached_async_http_client()
-                    response = await client.get(item.url, follow_redirects=True)
-                    response.raise_for_status()
-                    mime_type = response.headers['Content-Type'].split(';')[0]
-                    inline_data = _GeminiInlineDataPart(
-                        inline_data={'data': base64.b64encode(response.content).decode('utf-8'), 'mime_type': mime_type}
-                    )
-                    content.append(inline_data)
+                elif isinstance(item, VideoUrl) and item.is_youtube:
+                    file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
+                    content.append(file_data)
+                elif isinstance(item, FileUrl):
+                    if self.system == 'google-gla' or item.force_download:
+                        downloaded_item = await download_item(item, data_format='base64')
+                        inline_data = _GeminiInlineDataPart(
+                            inline_data={'data': downloaded_item['data'], 'mime_type': downloaded_item['data_type']}
+                        )
+                        content.append(inline_data)
+                    else:
+                        file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
+                        content.append(file_data)
                 else:
                     assert_never(item)
         return content
@@ -366,6 +368,8 @@ def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _Gemi
     config: _GeminiGenerationConfig = {}
     if (max_tokens := model_settings.get('max_tokens')) is not None:
         config['max_output_tokens'] = max_tokens
+    if (stop_sequences := model_settings.get('stop_sequences')) is not None:
+        config['stop_sequences'] = stop_sequences  # pragma: no cover
     if (temperature := model_settings.get('temperature')) is not None:
         config['temperature'] = temperature
     if (top_p := model_settings.get('top_p')) is not None:
@@ -431,7 +435,8 @@ class GeminiStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 else:
-                    assert 'function_response' in gemini_part, f'Unexpected part: {gemini_part}'  # pragma: no cover
+                    if not any([key in gemini_part for key in ['function_response', 'thought']]):
+                        raise AssertionError(f'Unexpected part: {gemini_part}')  # pragma: no cover
 
     async def _get_gemini_responses(self) -> AsyncIterator[_GeminiResponse]:
         # This method exists to ensure we only yield completed items, so we don't need to worry about
@@ -605,6 +610,11 @@ class _GeminiFileDataPart(TypedDict):
     file_data: Annotated[_GeminiFileData, pydantic.Field(alias='fileData')]
 
 
+class _GeminiThoughtPart(TypedDict):
+    thought: bool
+    thought_signature: Annotated[str, pydantic.Field(alias='thoughtSignature')]
+
+
 class _GeminiFunctionCallPart(TypedDict):
     function_call: Annotated[_GeminiFunctionCall, pydantic.Field(alias='functionCall')]
 
@@ -665,6 +675,8 @@ def _part_discriminator(v: Any) -> str:
             return 'inline_data'  # pragma: no cover
         elif 'fileData' in v:
             return 'file_data'  # pragma: no cover
+        elif 'thought' in v:
+            return 'thought'
         elif 'functionCall' in v or 'function_call' in v:
             return 'function_call'
         elif 'functionResponse' in v or 'function_response' in v:
@@ -682,6 +694,7 @@ _GeminiPartUnion = Annotated[
         Annotated[_GeminiFunctionResponsePart, pydantic.Tag('function_response')],
         Annotated[_GeminiInlineDataPart, pydantic.Tag('inline_data')],
         Annotated[_GeminiFileDataPart, pydantic.Tag('file_data')],
+        Annotated[_GeminiThoughtPart, pydantic.Tag('thought')],
     ],
     pydantic.Discriminator(_part_discriminator),
 ]

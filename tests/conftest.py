@@ -24,13 +24,19 @@ import pydantic_ai.models
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
 
-__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'TestEnv', 'ClientWithHandler', 'try_import'
+__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'IsInstance', 'TestEnv', 'ClientWithHandler', 'try_import'
 
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 if TYPE_CHECKING:
+    from typing import TypeVar
+
     from pydantic_ai.providers.bedrock import BedrockProvider
+
+    T = TypeVar('T')
+
+    def IsInstance(arg: type[T]) -> T: ...
 
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
@@ -38,7 +44,7 @@ if TYPE_CHECKING:
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
 else:
-    from dirty_equals import IsDatetime, IsFloat, IsInt, IsNow as _IsNow, IsStr
+    from dirty_equals import IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
@@ -282,6 +288,11 @@ def openrouter_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def heroku_inference_key() -> str:
+    return os.getenv('HEROKU_INFERENCE_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def bedrock_provider():
     try:
         import boto3
@@ -342,6 +353,11 @@ def model(
             from pydantic_ai.providers.google_gla import GoogleGLAProvider
 
             return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+        elif request.param == 'google':
+            from pydantic_ai.models.google import GoogleModel
+            from pydantic_ai.providers.google import GoogleProvider
+
+            return GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
         elif request.param == 'bedrock':
             from pydantic_ai.models.bedrock import BedrockConverseModel
 

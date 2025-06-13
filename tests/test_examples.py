@@ -127,7 +127,8 @@ def test_docs_examples(  # noqa: C901
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
 
     if sys.version_info >= (3, 10):  # pragma: lax no cover
-        mocker.patch('pydantic_ai.mcp.MCPServerHTTP', return_value=MockMCPServer())
+        mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
+        mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
         mocker.patch('mcp.server.fastmcp.FastMCP')
 
     env.set('OPENAI_API_KEY', 'testing')
