@@ -82,6 +82,10 @@ class HerokuModel(TypedDict):
 
 def get_heroku_model_names():
     response = httpx.get('https://us.inference.heroku.com/available-models')
+
+    if response.status_code != 200:
+        pytest.skip('Heroku AI returned status code {response.status_code}')
+
     heroku_models: list[HerokuModel] = response.json()
 
     models: list[str] = []
