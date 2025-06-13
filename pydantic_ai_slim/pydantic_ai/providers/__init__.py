@@ -48,68 +48,74 @@ class Provider(ABC, Generic[InterfaceClient]):
         return None  # pragma: no cover
 
 
-def infer_provider(provider: str) -> Provider[Any]:  # noqa: C901
-    """Infer the provider from the provider name."""
+def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
+    """Infers the provider class from the provider name."""
     if provider == 'openai':
         from .openai import OpenAIProvider
 
-        return OpenAIProvider()
+        return OpenAIProvider
     elif provider == 'deepseek':
         from .deepseek import DeepSeekProvider
 
-        return DeepSeekProvider()
+        return DeepSeekProvider
     elif provider == 'openrouter':
         from .openrouter import OpenRouterProvider
 
-        return OpenRouterProvider()
+        return OpenRouterProvider
     elif provider == 'azure':
         from .azure import AzureProvider
 
-        return AzureProvider()
+        return AzureProvider
     elif provider == 'google-vertex':
         from .google_vertex import GoogleVertexProvider
 
-        return GoogleVertexProvider()
+        return GoogleVertexProvider
     elif provider == 'google-gla':
         from .google_gla import GoogleGLAProvider
 
-        return GoogleGLAProvider()
+        return GoogleGLAProvider
     # NOTE: We don't test because there are many ways the `boto3.client` can retrieve the credentials.
     elif provider == 'bedrock':
         from .bedrock import BedrockProvider
 
-        return BedrockProvider()
+        return BedrockProvider
     elif provider == 'groq':
         from .groq import GroqProvider
 
-        return GroqProvider()
+        return GroqProvider
     elif provider == 'anthropic':
         from .anthropic import AnthropicProvider
 
-        return AnthropicProvider()
+        return AnthropicProvider
     elif provider == 'mistral':
         from .mistral import MistralProvider
 
-        return MistralProvider()
+        return MistralProvider
     elif provider == 'cohere':
         from .cohere import CohereProvider
 
-        return CohereProvider()
+        return CohereProvider
     elif provider == 'grok':
         from .grok import GrokProvider
 
-        return GrokProvider()
+        return GrokProvider
     elif provider == 'fireworks':
         from .fireworks import FireworksProvider
 
-        return FireworksProvider()
+        return FireworksProvider
     elif provider == 'together':
         from .together import TogetherProvider
 
-        return TogetherProvider()
+        return TogetherProvider
     elif provider == 'heroku':
         from .heroku import HerokuProvider
 
-        return HerokuProvider()
+        return HerokuProvider
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
+
+
+def infer_provider(provider: str) -> Provider[Any]:
+    """Infer the provider from the provider name."""
+    provider_class = infer_provider_class(provider)
+    return provider_class()

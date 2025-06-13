@@ -1,20 +1,22 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import functools
+import inspect
 import time
 import uuid
-from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, overload
 
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import ParamSpec, TypeAlias, TypeGuard, is_typeddict
+from typing_extensions import ParamSpec, TypeAlias, TypeGuard, TypeIs, is_typeddict
 
 from pydantic_graph._utils import AbstractSpan
 
@@ -302,3 +304,26 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
 
 def number_to_datetime(x: int | float) -> datetime:
     return TypeAdapter(datetime).validate_python(x)
+
+
+AwaitableCallable = Callable[..., Awaitable[T]]
+
+
+@overload
+def is_async_callable(obj: AwaitableCallable[T]) -> TypeIs[AwaitableCallable[T]]: ...
+
+
+@overload
+def is_async_callable(obj: Any) -> TypeIs[AwaitableCallable[Any]]: ...
+
+
+def is_async_callable(obj: Any) -> Any:
+    """Correctly check if a callable is async.
+
+    This function was copied from Starlette:
+    https://github.com/encode/starlette/blob/78da9b9e218ab289117df7d62aee200ed4c59617/starlette/_utils.py#L36-L40
+    """
+    while isinstance(obj, functools.partial):
+        obj = obj.func
+
+    return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))  # type: ignore

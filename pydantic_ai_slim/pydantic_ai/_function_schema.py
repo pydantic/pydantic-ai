@@ -5,7 +5,6 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
-import inspect
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from inspect import Parameter, signature
@@ -23,7 +22,7 @@ from typing_extensions import get_origin
 from pydantic_ai.tools import RunContext
 
 from ._griffe import doc_descriptions
-from ._utils import check_object_json_schema, is_model_like, run_in_executor
+from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat, ObjectJsonSchema
@@ -214,7 +213,7 @@ def function_schema(  # noqa: C901
         positional_fields=positional_fields,
         var_positional_field=var_positional_field,
         takes_ctx=takes_ctx,
-        is_async=inspect.iscoroutinefunction(function),
+        is_async=is_async_callable(function),
         function=function,
     )
 

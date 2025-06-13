@@ -2,6 +2,7 @@
 
 Some LLMs are now capable of understanding audio, video, image and document content.
 
+
 ## Image Input
 
 !!! info
@@ -64,14 +65,6 @@ You can provide video input using either [`VideoUrl`][pydantic_ai.VideoUrl] or [
 !!! info
     Some models do not support document input. Please check the model's documentation to confirm whether it supports document input.
 
-!!! warning
-    When using Gemini models, the document content will always be sent as binary data, regardless of whether you use `DocumentUrl` or `BinaryContent`. This is due to differences in how Vertex AI and Google AI handle document inputs.
-
-    For more details, see [this discussion](https://discuss.ai.google.dev/t/i-am-using-google-generative-ai-model-gemini-1-5-pro-for-image-analysis-but-getting-error/34866/4).
-
-    If you are unsatisfied with this behavior, please let us know by opening an issue on
-    [GitHub](https://github.com/pydantic/pydantic-ai/issues).
-
 You can provide document input using either [`DocumentUrl`][pydantic_ai.DocumentUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is similar to the examples above.
 
 If you have a direct URL for the document, you can use [`DocumentUrl`][pydantic_ai.DocumentUrl]:
@@ -109,3 +102,23 @@ result = agent.run_sync(
 print(result.output)
 # > The document discusses...
 ```
+
+## User-side download vs. direct file URL
+
+As a general rule, when you provide a URL using any of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, PydanticAI downloads the file content and then sends it as part of the API request.
+
+The situation is different for certain models:
+
+- [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]: if you provide a PDF document via `DocumentUrl`, the URL is sent directly in the API request, so no download happens on the user side.
+
+- [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] and [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI: any URL provided using `ImageUrl`, `AudioUrl`, `VideoUrl`, or `DocumentUrl` is sent as-is in the API request and no data is downloaded beforehand.
+
+    See the [Gemini API docs for Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata) to learn more about supported URLs, formats and limitations:
+
+    - Cloud Storage bucket URIs (with protocol `gs://`)
+    - Public HTTP(S) URLs
+    - Public YouTube video URL (maximum one URL per request)
+
+    However, because of crawling restrictions, it may happen that Gemini can't access certain URLs. In that case, you can instruct PydanticAI to download the file content and send that instead of the URL by setting the boolean flag `force_download` to `True`. This attribute is available on all objects that inherit from [`FileUrl`][pydantic_ai.messages.FileUrl].
+
+- [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] and [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on GLA: YouTube video URLs are sent directly in the request to the model.

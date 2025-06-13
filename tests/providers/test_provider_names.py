@@ -65,3 +65,10 @@ def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], except
             infer_provider(provider)
     else:
         assert isinstance(infer_provider(provider), provider_cls)
+
+
+@pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
+def test_infer_provider_class(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
+    from pydantic_ai.providers import infer_provider_class
+
+    assert infer_provider_class(provider) == provider_cls

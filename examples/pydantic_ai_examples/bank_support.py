@@ -26,8 +26,11 @@ class DatabaseConn:
 
     @classmethod
     async def customer_balance(cls, *, id: int, include_pending: bool) -> float:
-        if id == 123 and include_pending:
-            return 123.45
+        if id == 123:
+            if include_pending:
+                return 123.45
+            else:
+                return 100.00
         else:
             raise ValueError('Customer not found')
 

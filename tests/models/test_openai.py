@@ -1617,6 +1617,16 @@ async def test_openai_instructions_with_logprobs(allow_model_requests: None):
     ]
 
 
+@pytest.mark.vcr()
+async def test_reasoning_model_with_temperature(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, model_settings=OpenAIModelSettings(temperature=0.5))
+    result = await agent.run('What is the capital of Mexico?')
+    assert result.output == snapshot(
+        'The capital of Mexico is Mexico City. It is not only the seat of the federal government but also a major cultural, political, and economic center in the country.'
+    )
+
+
 def test_openai_model_profile():
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
     assert isinstance(m.profile, OpenAIModelProfile)

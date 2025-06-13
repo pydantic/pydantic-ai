@@ -14,10 +14,8 @@ from pydantic_ai.providers import Provider
 
 from .. import UnexpectedModelBehavior, _utils, usage
 from ..messages import (
-    AudioUrl,
     BinaryContent,
-    DocumentUrl,
-    ImageUrl,
+    FileUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -38,8 +36,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    cached_async_http_client,
     check_allow_model_requests,
+    download_item,
     get_user_agent,
 )
 
@@ -372,13 +370,15 @@ class GoogleModel(Model):
                     # NOTE: The type from Google GenAI is incorrect, it should be `str`, not `bytes`.
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     content.append({'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}})  # type: ignore
-                elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl, VideoUrl)):
-                    client = cached_async_http_client()
-                    response = await client.get(item.url, follow_redirects=True)
-                    response.raise_for_status()
-                    # NOTE: The type from Google GenAI is incorrect, it should be `str`, not `bytes`.
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    content.append({'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}})  # type: ignore
+                elif isinstance(item, VideoUrl) and item.is_youtube:
+                    content.append({'file_data': {'file_uri': item.url, 'mime_type': item.media_type}})
+                elif isinstance(item, FileUrl):
+                    if self.system == 'google-gla' or item.force_download:
+                        downloaded_item = await download_item(item, data_format='base64')
+                        inline_data = {'data': downloaded_item['data'], 'mime_type': downloaded_item['data_type']}
+                        content.append({'inline_data': inline_data})  # type: ignore
+                    else:
+                        content.append({'file_data': {'file_uri': item.url, 'mime_type': item.media_type}})
                 else:
                     assert_never(item)
         return content

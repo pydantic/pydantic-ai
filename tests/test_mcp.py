@@ -20,11 +20,13 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import Usage
 
-from .conftest import IsDatetime, try_import
+from .conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.mcp import MCPServerHTTP, MCPServerStdio
+    from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio
+    from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 
@@ -46,7 +48,7 @@ async def test_stdio_server():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == 10
+        assert len(tools) == 11
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
@@ -67,17 +69,17 @@ async def test_stdio_server_with_cwd():
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == 10
+        assert len(tools) == snapshot(11)
 
 
 def test_sse_server():
-    sse_server = MCPServerHTTP(url='http://localhost:8000/sse')
+    sse_server = MCPServerSSE(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
     assert sse_server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_sse_server_with_header_and_timeout():
-    sse_server = MCPServerHTTP(
+    sse_server = MCPServerSSE(
         url='http://localhost:8000/sse',
         headers={'my-custom-header': 'my-header-value'},
         timeout=10,
@@ -212,8 +214,8 @@ async def test_log_level_unset():
     assert server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == 10
-        assert tools[9].name == 'get_log_level'
+        assert len(tools) == snapshot(11)
+        assert tools[10].name == 'get_log_level'
 
         result = await server.call_tool('get_log_level', {})
         assert result == snapshot('unset')
@@ -429,13 +431,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                             tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                             timestamp=IsDatetime(),
                         ),
-                        UserPromptPart(
-                            content=[
-                                'This is file 1c8566:',
-                                image_content,
-                            ],
-                            timestamp=IsDatetime(),
-                        ),
+                        UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
                     ]
                 ),
                 ModelResponse(
@@ -460,6 +456,60 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     vendor_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
+                ),
+            ]
+        )
+
+
+@pytest.mark.vcr()
+async def test_tool_returning_audio_resource(
+    allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
+):
+    model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
+    async with agent.run_mcp_servers():
+        result = await agent.run("What's the content of the audio resource?", model=model)
+        assert result.output == snapshot('The audio resource contains a voice saying "Hello, my name is Marcelo."')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content="What's the content of the audio resource?", timestamp=IsDatetime())]
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='get_audio_resource', args={}, tool_call_id=IsStr())],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=383,
+                        response_tokens=12,
+                        total_tokens=520,
+                        details={'thoughts_tokens': 125, 'text_prompt_tokens': 383},
+                    ),
+                    model_name='models/gemini-2.5-pro-preview-05-06',
+                    timestamp=IsDatetime(),
+                    vendor_details={'finish_reason': 'STOP'},
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_audio_resource',
+                            content='See file 2d36ae',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                        UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
+                    ]
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The audio resource contains a voice saying "Hello, my name is Marcelo."')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=575,
+                        response_tokens=15,
+                        total_tokens=590,
+                        details={'text_prompt_tokens': 431, 'audio_prompt_tokens': 144},
+                    ),
+                    model_name='models/gemini-2.5-pro-preview-05-06',
+                    timestamp=IsDatetime(),
+                    vendor_details={'finish_reason': 'STOP'},
                 ),
             ]
         )

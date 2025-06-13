@@ -241,6 +241,8 @@ plugins:
           - models/*.md
         Graphs:
           - graph.md
+        API Reference:
+          - api/*.md
         Evals:
           - evals.md
         MCP:

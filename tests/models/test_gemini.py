@@ -1321,6 +1321,50 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
         )
 
 
+@pytest.mark.vcr()
+async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    url = VideoUrl(url='https://youtu.be/lCdaVNyHtjU')
+
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+    result = await agent.run(['What is the main content of this URL?', url])
+
+    assert result.output == snapshot(
+        'The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several patterns, including the most common endpoints with 404 errors, request patterns (such as all requests being GET requests), timeline-related issues, and configuration/authentication problems. The analysis also provides recommendations for addressing the 404 errors.'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content=['What is the main content of this URL?', url], timestamp=IsDatetime()),
+                ],
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several patterns, including the most common endpoints with 404 errors, request patterns (such as all requests being GET requests), timeline-related issues, and configuration/authentication problems. The analysis also provides recommendations for addressing the 404 errors.'
+                    ),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=9,
+                    response_tokens=72,
+                    total_tokens=81,
+                    details={
+                        'text_prompt_tokens': 9,
+                        'video_prompt_tokens': 0,
+                        'audio_prompt_tokens': 0,
+                        'text_candidates_tokens': 72,
+                    },
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+        ]
+    )
+
+
 async def test_gemini_no_finish_reason(get_gemini_client: GetGeminiClient):
     response = gemini_response(
         _content_model_response(ModelResponse(parts=[TextPart('Hello world')])), finish_reason=None
