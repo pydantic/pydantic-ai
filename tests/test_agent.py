@@ -1542,7 +1542,7 @@ def test_model_requests_blocked(env: TestEnv):
 
         with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
             agent.run_sync('Hello')
-    except ImportError:  # pragma: no cover
+    except ImportError:  # pragma: lax no cover
         pytest.skip('google-genai not installed')
 
 

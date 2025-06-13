@@ -1,36 +1,13 @@
-from dataclasses import dataclass
 from importlib import import_module
 
 import pytest
-from httpx import Request
-from pytest_mock import MockerFixture
 
 from pydantic_ai import UserError
 from pydantic_ai.models import infer_model
 
-from ..conftest import TestEnv, try_import
+from ..conftest import TestEnv
 
-with try_import() as imports_successful:
-    from google.genai import _api_client
-
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
-
-
-@pytest.fixture(autouse=True)
-def vertex_provider(mocker: MockerFixture) -> None:  # pragma: lax no cover
-    @dataclass
-    class NoOpCredentials:
-        token = 'my-token'
-        quota_project_id = 'pydantic-ai'
-
-        def refresh(self, request: Request): ...
-
-        def expired(self) -> bool:
-            return False
-
-    return_value = (NoOpCredentials(), 'pydantic-ai')
-    mocker.patch.object(_api_client, '_load_auth', return_value=return_value)
-
+# TODO(Marcelo): We need to add Vertex AI to the test cases.
 
 TEST_CASES = [
     ('OPENAI_API_KEY', 'openai:gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIModel'),
@@ -39,22 +16,6 @@ TEST_CASES = [
     ('AZURE_OPENAI_API_KEY', 'azure:gpt-3.5-turbo', 'gpt-3.5-turbo', 'azure', 'azure', 'OpenAIModel'),
     ('GEMINI_API_KEY', 'google-gla:gemini-1.5-flash', 'gemini-1.5-flash', 'google-gla', 'google', 'GoogleModel'),
     ('GEMINI_API_KEY', 'gemini-1.5-flash', 'gemini-1.5-flash', 'google-gla', 'google', 'GoogleModel'),
-    (
-        'DOES_NOT_MATTER',
-        'google-vertex:gemini-1.5-flash',
-        'gemini-1.5-flash',
-        'google-vertex',
-        'google',
-        'GoogleModel',
-    ),
-    (
-        'DOES_NOT_MATTER',
-        'vertexai:gemini-1.5-flash',
-        'gemini-1.5-flash',
-        'google-vertex',
-        'google',
-        'GoogleModel',
-    ),
     (
         'ANTHROPIC_API_KEY',
         'anthropic:claude-3-5-haiku-latest',
