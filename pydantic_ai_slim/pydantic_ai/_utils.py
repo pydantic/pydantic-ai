@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, overlo
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import ParamSpec, TypeAlias, TypeGuard, is_typeddict
+from typing_extensions import ParamSpec, TypeAlias, TypeGuard, TypeIs, is_typeddict
 
 from pydantic_graph._utils import AbstractSpan
 
@@ -310,11 +310,11 @@ AwaitableCallable = Callable[..., Awaitable[T]]
 
 
 @overload
-def is_async_callable(obj: AwaitableCallable[T]) -> TypeGuard[AwaitableCallable[T]]: ...
+def is_async_callable(obj: AwaitableCallable[T]) -> TypeIs[AwaitableCallable[T]]: ...
 
 
 @overload
-def is_async_callable(obj: Any) -> TypeGuard[AwaitableCallable[Any]]: ...
+def is_async_callable(obj: Any) -> TypeIs[AwaitableCallable[Any]]: ...
 
 
 def is_async_callable(obj: Any) -> Any:
