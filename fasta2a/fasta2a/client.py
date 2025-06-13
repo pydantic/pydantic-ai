@@ -3,39 +3,44 @@ from __future__ import annotations as _annotations
 import uuid
 from typing import Any
 
-import pydantic
-
-from .schema import (
+from a2a.client.client import A2AClient as BaseA2AClient
+from a2a.client.errors import A2AClientHTTPError, A2AClientJSONError
+from a2a.types import (
     GetTaskRequest,
     GetTaskResponse,
     Message,
+    MessageSendParams,
     PushNotificationConfig,
-    SendTaskRequest,
-    SendTaskResponse,
-    TaskSendParams,
-    a2a_request_ta,
+    SendMessageRequest,
+    SendMessageResponse,
 )
-
-send_task_response_ta = pydantic.TypeAdapter(SendTaskResponse)
-get_task_response_ta = pydantic.TypeAdapter(GetTaskResponse)
 
 try:
     import httpx
 except ImportError as _import_error:
     raise ImportError(
-        'httpx is required to use the A2AClient. Please install it with `pip install httpx`.',
+        "httpx is required to use the A2AClient. Please install it with `pip install httpx`.",
     ) from _import_error
+
+UnexpectedResponseError = A2AClientHTTPError
 
 
 class A2AClient:
-    """A client for the A2A protocol."""
+    """A client for the A2A protocol, built on the Google A2A SDK."""
 
-    def __init__(self, base_url: str = 'http://localhost:8000', http_client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8000",
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
         if http_client is None:
-            self.http_client = httpx.AsyncClient(base_url=base_url)
+            self.http_client = httpx.AsyncClient()
         else:
             self.http_client = http_client
-            self.http_client.base_url = base_url
+
+        # The SDK client requires a URL on the agent card, but we can initialize it with a dummy
+        # and then set the URL directly for the internal calls.
+        self._sdk_client = BaseA2AClient(httpx_client=self.http_client, url=base_url)
 
     async def send_task(
         self,
@@ -43,36 +48,36 @@ class A2AClient:
         history_length: int | None = None,
         push_notification: PushNotificationConfig | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> SendTaskResponse:
-        task = TaskSendParams(message=message, id=str(uuid.uuid4()))
-        if history_length is not None:
-            task['history_length'] = history_length
-        if push_notification is not None:
-            task['push_notification'] = push_notification
-        if metadata is not None:
-            task['metadata'] = metadata
+    ) -> SendMessageResponse:
+        """Sends a task to the A2A server."""
+        if not message.taskId:
+            message.taskId = str(uuid.uuid4())
 
-        payload = SendTaskRequest(jsonrpc='2.0', id=None, method='tasks/send', params=task)
-        content = a2a_request_ta.dump_json(payload, by_alias=True)
-        response = await self.http_client.post('/', content=content, headers={'Content-Type': 'application/json'})
-        self._raise_for_status(response)
-        return send_task_response_ta.validate_json(response.content)
+        params = MessageSendParams(
+            message=message,
+            configuration={
+                "historyLength": history_length,
+                "pushNotificationConfig": push_notification,
+            },
+            metadata=metadata,
+        )
+        payload = SendMessageRequest(
+            id=str(uuid.uuid4()), method="message/send", params=params
+        )
+
+        try:
+            response = await self._sdk_client.send_message(payload)
+            return response
+        except (A2AClientHTTPError, A2AClientJSONError) as e:
+            raise UnexpectedResponseError(getattr(e, "status_code", 500), str(e)) from e
 
     async def get_task(self, task_id: str) -> GetTaskResponse:
-        payload = GetTaskRequest(jsonrpc='2.0', id=None, method='tasks/get', params={'id': task_id})
-        content = a2a_request_ta.dump_json(payload, by_alias=True)
-        response = await self.http_client.post('/', content=content, headers={'Content-Type': 'application/json'})
-        self._raise_for_status(response)
-        return get_task_response_ta.validate_json(response.content)
-
-    def _raise_for_status(self, response: httpx.Response) -> None:
-        if response.status_code >= 400:
-            raise UnexpectedResponseError(response.status_code, response.text)
-
-
-class UnexpectedResponseError(Exception):
-    """An error raised when an unexpected response is received from the server."""
-
-    def __init__(self, status_code: int, content: str) -> None:
-        self.status_code = status_code
-        self.content = content
+        """Retrieves a task from the A2A server."""
+        payload = GetTaskRequest(
+            id=str(uuid.uuid4()), method="tasks/get", params={"id": task_id}
+        )
+        try:
+            response = await self._sdk_client.get_task(payload)
+            return response
+        except (A2AClientHTTPError, A2AClientJSONError) as e:
+            raise UnexpectedResponseError(getattr(e, "status_code", 500), str(e)) from e

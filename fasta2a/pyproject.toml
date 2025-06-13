@@ -47,6 +47,7 @@ dependencies = [
     "starlette>0.29.0",
     "pydantic>=2.10",
     "opentelemetry-api>=1.28.0",
+    "a2a-sdk>=0.2.8",
 ]
 
 [project.optional-dependencies]
