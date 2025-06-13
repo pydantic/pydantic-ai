@@ -352,16 +352,17 @@ def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Remove all ModelResponse messages, keeping only ModelRequest messages."""
     return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
+# Create agent with history processor
 agent = Agent('openai:gpt-4o', history_processors=[filter_responses])
 
-# Create some conversation history
+# Example: Create some conversation history
 message_history = [
     ModelRequest(parts=[UserPromptPart(content='What is 2+2?')]),
-    ModelResponse(parts=[TextPart(content='2+2 equals 4')]),
+    ModelResponse(parts=[TextPart(content='2+2 equals 4')]),  # This will be filtered out
 ]
 
-# The history processor will filter out the ModelResponse before sending to the model
-result = agent.run_sync('What about 3+3?', message_history=message_history)
+# When you run the agent, the history processor will filter out ModelResponse messages
+# result = agent.run_sync('What about 3+3?', message_history=message_history)
 ```
 
 #### Keep Only Recent Messages
@@ -379,8 +380,9 @@ def keep_recent_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
 
 agent = Agent('openai:gpt-4o', history_processors=[keep_recent_messages])
 
-# Even with a long conversation history, only the last 5 messages are sent to the model
-result = agent.run_sync('What did we discuss?', message_history=long_conversation_history)
+# Example: Even with a long conversation history, only the last 5 messages are sent to the model
+long_conversation_history: list[ModelMessage] = []  # Your long conversation history here
+# result = agent.run_sync('What did we discuss?', message_history=long_conversation_history)
 ```
 
 #### Summarize Old Messages
@@ -407,13 +409,13 @@ class MessageSummarizer:
     def get_summary_key(self, messages: list[ModelMessage]) -> str:
         """Create a simple key based on message count and last message content."""
         if not messages:
-            return "empty"
-        last_content = ""
+            return 'empty'
+        last_content = ''
         if isinstance(messages[-1], ModelRequest) and messages[-1].parts:
             part = messages[-1].parts[-1]
             if isinstance(part, (UserPromptPart, TextPart)):
                 last_content = part.content[:50]  # First 50 chars
-        return f"{len(messages)}_{hash(last_content)}"
+        return f'{len(messages)}_{hash(last_content)}'
 
     def summarize_messages(self, messages: list[ModelMessage]) -> str:
         """Synchronously get a summary, using cache when possible."""
@@ -427,23 +429,23 @@ class MessageSummarizer:
             if isinstance(msg, ModelRequest):
                 for part in msg.parts:
                     if isinstance(part, UserPromptPart):
-                        message_texts.append(f"User: {part.content}")
+                        message_texts.append(f'User: {part.content}')
                     elif isinstance(part, SystemPromptPart):
-                        message_texts.append(f"System: {part.content}")
+                        message_texts.append(f'System: {part.content}')
             elif isinstance(msg, ModelResponse):
                 for part in msg.parts:
                     if isinstance(part, TextPart):
-                        message_texts.append(f"Assistant: {part.content}")
+                        message_texts.append(f'Assistant: {part.content}')
 
         if not message_texts:
-            return "No messages to summarize"
+            return 'No messages to summarize'
 
-        conversation_text = "\n".join(message_texts)
-        summary_prompt = f"""Provide a concise summary of this conversation:
+        conversation_text = '\n'.join(message_texts)
+        summary_prompt = f'''Provide a concise summary of this conversation:
 
 {conversation_text}
 
-Summary:"""
+Summary:'''
 
         # This would need to be run beforehand or you'd need to implement async handling
         summary = self.summary_agent.run_sync(summary_prompt).output
@@ -467,7 +469,7 @@ def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
 
     # Create a summary message
     summary_message = ModelRequest(parts=[
-        SystemPromptPart(content=f"Previous conversation summary: {summary_text}")
+        SystemPromptPart(content=f'Previous conversation summary: {summary_text}')
     ])
 
     # Return summary + recent messages
@@ -482,28 +484,36 @@ agent = Agent('openai:gpt-4o', history_processors=[summarize_old_messages])
     ```python
     # Pre-process approach (simpler)
     from pydantic_ai import Agent
-    from pydantic_ai.messages import ModelRequest, SystemPromptPart
+    from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 
+
+    def format_messages_for_summary(messages: list[ModelMessage]) -> str:
+        """Helper function to format messages for summarization."""
+        return f'Conversation with {len(messages)} messages'
+
+    # Create agents
     summary_agent = Agent('openai:gpt-4o-mini')
     agent = Agent('openai:gpt-4o')
 
-    # Assume message_history is your existing conversation history
-    # and format_messages_for_summary is your helper function
+    # Example message history (your existing conversation)
+    message_history: list[ModelMessage] = []  # Your conversation history here
 
     # Summarize old messages beforehand
     if len(message_history) > 10:
         old_messages_text = format_messages_for_summary(message_history[:-5])
-        summary = summary_agent.run_sync(f'Summarize this conversation: {old_messages_text}')
+        # summary = summary_agent.run_sync(f'Summarize this conversation: {old_messages_text}')
+        # For demonstration, use a placeholder
+        summary_text = 'Previous conversation summary'
 
         summary_message = ModelRequest(parts=[
-            SystemPromptPart(content=f'Previous conversation: {summary.output}')
+            SystemPromptPart(content=f'Previous conversation: {summary_text}')
         ])
         processed_history = [summary_message] + message_history[-5:]
     else:
         processed_history = message_history
 
     # Use the pre-processed history
-    result = agent.run_sync('Continue the conversation', message_history=processed_history)
+    # result = agent.run_sync('Continue the conversation', message_history=processed_history)
     ```
 
     Use `history_processors` when you need automatic processing for every request, or when the processing logic is simple and fast.
