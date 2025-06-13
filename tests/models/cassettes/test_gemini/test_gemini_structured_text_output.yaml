@@ -1,0 +1,79 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '305'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in Mexico?
+        role: user
+      generationConfig:
+        response_mime_type: application/json
+        response_schema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          title: CityLocation
+          type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '710'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=819
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.00018302639946341515
+        content:
+          parts:
+          - text: |-
+              {
+                "city": "Mexico City",
+                "country": "Mexico"
+              }
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: SEVIaJvJHICK7dcP3OzRiQQ
+      usageMetadata:
+        candidatesTokenCount: 20
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 20
+        promptTokenCount: 17
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 17
+        totalTokenCount: 37
+    status:
+      code: 200
+      message: OK
+version: 1

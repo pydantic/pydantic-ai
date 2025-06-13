@@ -6,3 +6,6 @@
         members:
             - OutputDataT
             - StreamedRunResult
+            - ToolOutput
+            - StructuredTextOutput
+            - TextOutput

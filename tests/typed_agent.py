@@ -1,13 +1,15 @@
 """This file is used to test static typing, it's analyzed with pyright and mypy."""
 
+import re
 from collections.abc import Awaitable
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Callable, TypeAlias, Union
 
 from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
-from pydantic_ai._output import ToolOutput
+from pydantic_ai._output import TextOutput, ToolOutput
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.tools import ToolDefinition
 
@@ -169,12 +171,16 @@ union_agent2: Agent[None, MyUnion] = Agent(output_type=MyUnion)  # type: ignore[
 assert_type(union_agent2, Agent[None, MyUnion])
 
 
-def foobar_ctx(ctx: RunContext[int], x: str, y: int) -> str:
-    return f'{x} {y}'
+def foobar_ctx(ctx: RunContext[int], x: str, y: int) -> Decimal:
+    return Decimal(x) + y
 
 
 async def foobar_plain(x: int, y: int) -> int:
     return x * y
+
+
+def str_to_regex(text: str) -> re.Pattern[str]:
+    return re.compile(text)
 
 
 class MyClass:
@@ -182,8 +188,8 @@ class MyClass:
         return True
 
 
-str_function_agent = Agent(output_type=foobar_ctx)
-assert_type(str_function_agent, Agent[None, str])
+decimal_function_agent = Agent(output_type=foobar_ctx)
+assert_type(decimal_function_agent, Agent[None, Decimal])
 
 bool_method_agent = Agent(output_type=MyClass().my_method)
 assert_type(bool_method_agent, Agent[None, bool])
@@ -200,10 +206,12 @@ if MYPY:
     assert_type(two_scalars_output_agent, Agent[None, int | str])
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
-    complex_output_agent = Agent[None, Foo | Bar | str | int | bool | tuple[str, int]](
-        output_type=[Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker]
+    complex_output_agent = Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]](
+        output_type=[str, Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker, TextOutput(str_to_regex)]
     )
-    assert_type(complex_output_agent, Agent[None, Foo | Bar | str | int | bool | tuple[str, int]])
+    assert_type(
+        complex_output_agent, Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]]
+    )
 else:
     # pyright is able to correctly infer the type here
     async_int_function_agent = Agent(output_type=foobar_plain)
@@ -216,8 +224,12 @@ else:
     assert_type(two_scalars_output_agent, Agent[None, int | str])
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
-    complex_output_agent = Agent(output_type=[Foo, Bar, foobar_ctx, ToolOutput(foobar_plain), marker])
-    assert_type(complex_output_agent, Agent[None, Foo | Bar | str | int | bool | tuple[str, int]])
+    complex_output_agent = Agent(
+        output_type=[str, Foo, Bar, foobar_ctx, ToolOutput(foobar_plain), marker, TextOutput(str_to_regex)]
+    )
+    assert_type(
+        complex_output_agent, Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]]
+    )
 
 
 Tool(foobar_ctx, takes_ctx=True)

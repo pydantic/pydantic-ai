@@ -14,6 +14,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..messages import (
     AudioUrl,
@@ -270,8 +271,6 @@ class OpenAIModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
-
-        # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
         elif not model_request_parameters.allow_text_output:
@@ -280,6 +279,13 @@ class OpenAIModel(Model):
             tool_choice = 'auto'
 
         openai_messages = await self._map_messages(messages)
+
+        response_format: chat.completion_create_params.ResponseFormat | None = None
+        if model_request_parameters.output_mode == 'structured_text':
+            if output_object := model_request_parameters.output_object:
+                response_format = self._map_json_schema(output_object)
+            elif self.profile.supports_json_object_response_format:  # pragma: no branch
+                response_format = {'type': 'json_object'}
 
         sampling_settings = (
             model_settings
@@ -301,6 +307,7 @@ class OpenAIModel(Model):
                 stop=model_settings.get('stop_sequences', NOT_GIVEN),
                 max_completion_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
+                response_format=response_format or NOT_GIVEN,
                 seed=model_settings.get('seed', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
@@ -419,6 +426,17 @@ class OpenAIModel(Model):
             type='function',
             function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
         )
+
+    def _map_json_schema(self, o: OutputObjectDefinition) -> chat.completion_create_params.ResponseFormat:
+        response_format_param: chat.completion_create_params.ResponseFormatJSONSchema = {  # pyright: ignore[reportPrivateImportUsage]
+            'type': 'json_schema',
+            'json_schema': {'name': o.name or DEFAULT_OUTPUT_TOOL_NAME, 'schema': o.json_schema, 'strict': True},
+        }
+        if o.description:
+            response_format_param['json_schema']['description'] = o.description
+        if OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition:  # pragma: no branch
+            response_format_param['json_schema']['strict'] = o.strict
+        return response_format_param
 
     def _map_tool_definition(self, f: ToolDefinition) -> chat.ChatCompletionToolParam:
         tool_param: chat.ChatCompletionToolParam = {
@@ -665,7 +683,6 @@ class OpenAIResponsesModel(Model):
         tools = self._get_tools(model_request_parameters)
         tools = list(model_settings.get('openai_builtin_tools', [])) + tools
 
-        # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
         elif not model_request_parameters.allow_text_output:
@@ -675,6 +692,20 @@ class OpenAIResponsesModel(Model):
 
         instructions, openai_messages = await self._map_messages(messages)
         reasoning = self._get_reasoning(model_settings)
+
+        text: responses.ResponseTextConfigParam | None = None
+        if model_request_parameters.output_mode == 'structured_text':
+            if output_object := model_request_parameters.output_object:
+                text = {'format': self._map_json_schema(output_object)}
+            elif self.profile.supports_json_object_response_format:  # pragma: no branch
+                text = {'format': {'type': 'json_object'}}
+
+                # Without this trick, we'd hit this error:
+                # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
+                # Apparently they're only checking input messages for "JSON", not instructions.
+                assert isinstance(instructions, str)
+                openai_messages.insert(0, responses.EasyInputMessageParam(role='system', content=instructions))
+                instructions = NOT_GIVEN
 
         sampling_settings = (
             model_settings
@@ -700,6 +731,7 @@ class OpenAIResponsesModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
+                text=text or NOT_GIVEN,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -790,6 +822,18 @@ class OpenAIResponsesModel(Model):
             name=t.tool_name,
             type='function_call',
         )
+
+    def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:
+        response_format_param: responses.ResponseFormatTextJSONSchemaConfigParam = {
+            'type': 'json_schema',
+            'name': o.name or DEFAULT_OUTPUT_TOOL_NAME,
+            'schema': o.json_schema,
+        }
+        if o.description:
+            response_format_param['description'] = o.description
+        if OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition:  # pragma: no branch
+            response_format_param['strict'] = o.strict
+        return response_format_param
 
     @staticmethod
     async def _map_user_prompt(part: UserPromptPart) -> responses.EasyInputMessageParam:

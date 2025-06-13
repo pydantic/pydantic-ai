@@ -4,7 +4,7 @@ The output is wrapped in [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] or
 
 Both `AgentRunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
 
-A run ends when a plain text response is received (assuming no output type is specified or `str` is one of the allowed options), or when the model responds with one of the structured output types by calling a special output tool. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agents.md#usage-limits).
+A run ends when a plain text response is received (assuming no output type is specified or `str` is one of the allowed options), or when the model responds with one of the structured output types. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agents.md#usage-limits).
 
 Here's an example using a Pydantic model as the `output_type`, forcing the model to respond with data matching our specification:
 
@@ -31,12 +31,12 @@ _(This example is complete, it can be run "as is")_
 
 ## Output data {#structured-output}
 
-The [`Agent`][pydantic_ai.Agent] class constructor takes an `output_type` argument that takes one or more types or [output functions](#output-functions). It supports both type unions and lists of types and functions.
+The [`Agent`][pydantic_ai.Agent] class constructor takes an `output_type` argument that takes one or more types or [output functions](#output-functions). It supports simple scalar types, list and dict types, dataclasses and Pydantic models, as well as type unions -- generally everything supported as type hints in a Pydantic model. Multiple types and functions can also be provided in a list.
 
-When no output type is specified, or when the output type is `str` or a union or list of types including `str`, the model is allowed to respond with plain text, and this text is used as the output data.
-If `str` is not among the allowed output types, the model is not allowed to respond with plain text and is forced to return structured data (or arguments to an output function).
+By default, Pydantic AI leverages the model's tool calling capability to make it return structured data. When multiple output types are specified (in a union or list), each member is registered with the model as a separate output tool in order to reduce the complexity of the schema and maximise the chances a model will respond correctly. This has been shown to work well across a wide range of models. If you'd like to change the names of the output tools, use a model's native structured output feature, or pass the output schema to the model in its [instructions](agents.md#instructions), you can use an [output mode](#output-modes) marker class.
 
-If the output type is a union or list with multiple members, each member (except for `str`, if it is a member) is registered with the model as a separate output tool in order to reduce the complexity of the tool schemas and maximise the chances a model will respond correctly.
+When no output type is specified, or when `str` is among the output types, the model is allowed to respond with plain text, and this text is used as the output data.
+If `str` is not among the output types, the model is forced to return structured data (or arguments to an output function).
 
 If the output type schema is not of type `"object"` (e.g. it's `int` or `list[int]`), the output type is wrapped in a single element object, so the schema of all tools registered with the model are object schemas.
 
@@ -48,6 +48,7 @@ Structured outputs (like tools) use Pydantic to build the JSON schema used for t
     Static type checkers like pyright and mypy will do their best the infer the agent's output type from the `output_type` you've specified, but they're not always able to do so correctly when you provide functions or multiple types in a union or list, even though PydanticAI will behave correctly. When this happens, your type checker will complain even when you're confident you've passed a valid `output_type`, and you'll need to help the type checker by explicitly specifying the generic parameters on the `Agent` constructor. This is shown in the second example below and the output functions example further down.
 
     Specifically, there are three valid uses of `output_type` where you'll need to do this:
+
     1. When using a union of types, e.g. `output_type=Foo | Bar` or in older Python, `output_type=Union[Foo, Bar]`. Until [PEP-747](https://peps.python.org/pep-0747/) "Annotating Type Forms" lands in Python 3.15, type checkers do not consider these a valid value for `output_type`. In addition to the generic parameters on the `Agent` constructor, you'll need to add `# type: ignore` to the line that passes the union to `output_type`.
     2. With mypy: When using a list, as a functionally equivalent alternative to a union, or because you're passing in [output functions](#output-functions). Pyright does handle this correctly, and we've filed [an issue](https://github.com/python/mypy/issues/19142) with mypy to try and get this fixed.
     3. With mypy: when using an async output function. Pyright does handle this correctly, and we've filed [an issue](https://github.com/python/mypy/issues/19143) with mypy to try and get this fixed.
@@ -88,7 +89,7 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-Here's an example of using a union return type, for which PydanticAI will register multiple tools and wraps non-object schemas in an object:
+Here's an example of using a union return type, which will register multiple output tools and wrap non-object schemas in an object:
 
 ```python {title="colors_or_sizes.py"}
 from typing import Union
@@ -235,11 +236,92 @@ explanation = 'I am not equipped to provide travel information, such as flights 
 """
 ```
 
+### Output modes
+
+Pydantic AI implements three different methods to get a model to output structured data:
+
+1. **Tool output**, where the output JSON schema is provided to the model as the arguments schema of a special output tool. This is the default as it's supported by virtually all models and has been shown to work very well.
+2. **Structured text output** using a model API's native **"forced JSON Schema"** feature (aka "JSON Schema response format" or Structured Output), where the model is forced to only output text matching the provided JSON schema. This is not supported by all models (most notably Claude) and sometimes comes with restrictions (for example, Gemini cannot use tools at the same time as JSON output).
+3. **Structured text output** using [**instructions**](agents.md#instructions), where the model is prompted to output text matching the provided JSON schema and it's up to the model to interpret those instructions correctly. If the model API supports the "JSON Mode" (aka "JSON Object response format") feature to force the model to output valid JSON, this is enabled, but it's still up to the model to abide by the schema. This is supported by all models, but is the least reliable approach as the model is not forced to match the schema. Pydantic AI will validate the returned structured data and tell the model to try again if validation fails, but if the model is not intelligent enough this may not be sufficient.
+
+By default, Pydantic AI will use the tool output mode and register a separate output tool for each output type (or function). If you'd like to change the name of the output tool, pass a custom description to aid the model, or turn on or off strict mode, you can wrap the type(s) in the [`ToolOutput`][pydantic_ai.result.ToolOutput] marker class and provide the appropriate arguments. Note that by default, the description is taken from the docstring specified on a Pydantic model or output function, so specifying it using the marker class is typically not necessary.
+
+If you'd like to use the structured text output mode, you can wrap the type(s) in the [`StructuredTextOutput`][pydantic_ai.result.StructuredTextOutput] marker class that also lets you specify a name and description if the name and docstring of the type or function are not sufficient. Additionally, it supports an `instructions` argument that is `None` by default, indicating that Pydantic AI should choose the best strategy supported by the model: forced JSON schema or instructions. You can set it to `False` to never use instructions (which will result in an error if the forced JSON schema feature is not supported by the model) or `True` to always use instructions. If you'd like to use a custom instructions template instead of the [default][pydantic_ai.profiles.ModelProfile.structured_output_instructions_template], you can pass a string with a `{schema}` placeholder that will be replaced with the actual JSON schema.
+
+Finally, if you provide an [output function](#output-functions) that takes a string, Pydantic AI will by default create an output tool like for any other output function. If instead you'd like to the model to provide the string using plain text output, you can wrap the function in the [`TextOutput`][pydantic_ai.result.TextOutput] marker class. If desired, this marker class can be used alongside one or more `ToolOutput` marker classes (or unmarked types or functions) in a list provided to `output_type`.
+
+Here's an example of these 3 output mode marker classes in action:
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai.result import StructuredTextOutput, TextOutput, ToolOutput
+
+
+class Fruit(BaseModel):
+    name: str
+    color: str
+
+
+class Vehicle(BaseModel):
+    name: str
+    wheels: int
+
+
+class Device(BaseModel):
+    name: str
+    kind: str
+
+
+agent = Agent(
+    'openai:gpt-4o',
+    output_type=[
+        ToolOutput(Fruit, name='return_fruit'),
+        ToolOutput(Vehicle, name='return_vehicle'),
+        ToolOutput(Device, name='return_device'),
+    ],
+)
+result = agent.run_sync('What is a banana?')
+print(result.output)
+#> name='banana' color='yellow'
+
+agent = Agent(
+    'openai:gpt-4o',
+    output_type=StructuredTextOutput([Fruit, Vehicle, Device]),
+)
+result = agent.run_sync('What is a Ford Explorer?')
+print(result.output)
+#> name='Ford Explorer' wheels=4
+
+agent = Agent(
+    'openai:gpt-4o',
+    output_type=StructuredTextOutput([Fruit, Vehicle, Device], instructions=True),
+)
+result = agent.run_sync('What is a MacBook?')
+print(result.output)
+#> name='MacBook' kind='laptop'
+
+
+def split_into_words(text: str) -> list[str]:
+    return text.split()
+
+
+agent = Agent(
+    'openai:gpt-4o',
+    output_type=TextOutput(split_into_words),
+)
+result = agent.run_sync('Who was Albert Einstein?')
+print(result.output)
+#> ['Albert', 'Einstein', 'was', 'a', 'German-born', 'theoretical', 'physicist.']
+```
+
 ### Output validators {#output-validator-functions}
 
 Some validation is inconvenient or impossible to do in Pydantic validators, in particular when the validation requires IO and is asynchronous. PydanticAI provides a way to add validation functions via the [`agent.output_validator`][pydantic_ai.Agent.output_validator] decorator.
 
 If you want to implement separate validation logic for different output types, it's recommended to use [output functions](#output-functions) instead, to save you from having to do `isinstance` checks inside the output validator.
+If you want the model to output plain text, do your own processing or validation, and then have the agent's final output be the result of your function, it's recommended to use an [output function](#output-functions) with the `TextOutput` [output mode](#output-modes) marker class.
 
 Here's a simplified variant of the [SQL Generation example](examples/sql-gen.md):
 
