@@ -4,7 +4,7 @@ import base64
 import functools
 import json
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,7 +36,7 @@ from typing_extensions import Self, assert_never, deprecated
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import BinaryContent
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import RunContext, ToolDefinition
 
 try:
     from mcp.client.session import ClientSession
@@ -65,6 +65,9 @@ class MCPServer(ABC):
 
     e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
+
+    process_tool_call: ProcessToolCallback | None = None
+    """ Hook to customize tool calling and optionally pass extra metadata."""
 
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
@@ -122,14 +125,14 @@ class MCPServer(ABC):
         self,
         tool_name: str,
         arguments: dict[str, Any],
-        _meta: RequestParams.Meta | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str | BinaryContent | dict[str, Any] | list[Any] | Sequence[str | BinaryContent | dict[str, Any] | list[Any]]:
         """Call a tool on the server.
 
         Args:
             tool_name: The name of the tool to call.
             arguments: The arguments to pass to the tool.
-            _meta: Request-level metadata (optional)
+            metadata: Request-level metadata (optional)
 
         Returns:
             The result of the tool call.
@@ -146,7 +149,7 @@ class MCPServer(ABC):
                     params=CallToolRequestParams(
                         name=unprefixed_tool_name,
                         arguments=arguments,
-                        _meta=_meta,
+                        _meta=RequestParams.Meta(**metadata) if metadata else None,
                     ),
                 )
             )
@@ -296,6 +299,9 @@ class MCPServerStdio(MCPServer):
     e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
 
+    process_tool_call: ProcessToolCallback | None = None
+    """ Hook to customize tool calling and optionally pass extra metadata."""
+
     timeout: float = 5
     """ The timeout in seconds to wait for the client to initialize."""
 
@@ -389,6 +395,9 @@ class _MCPServerHTTP(MCPServer):
 
     For example, if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
+
+    process_tool_call: ProcessToolCallback | None = None
+    """ Hook to customize tool calling and optionally pass extra metadata."""
 
     @property
     @abstractmethod
@@ -548,3 +557,17 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     @property
     def _transport_client(self):
         return streamablehttp_client  # pragma: no cover
+
+
+# Callback that accepts a run context, a tool call function, a tool name, and arguments.
+# Allows wrapping an MCP server tool call to customize it, including adding extra request
+# metadata.
+ProcessToolCallback = Callable[
+    [
+        RunContext[Any],
+        Callable[[str, dict[str, Any], dict[str, Any] | None], Awaitable[CallToolResult]],
+        str,
+        dict[str, Any],
+    ],
+    Awaitable[CallToolResult],
+]

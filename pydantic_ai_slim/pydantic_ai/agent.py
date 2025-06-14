@@ -10,7 +10,6 @@ from copy import deepcopy
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
 
-from mcp.types import RequestParams
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
@@ -493,7 +492,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-        request_meta: RequestParams.Meta | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -510,7 +508,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-        request_meta: RequestParams.Meta | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -528,7 +525,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-        request_meta: RequestParams.Meta | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, Any]]: ...
 
     @asynccontextmanager
@@ -544,7 +540,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
-        request_meta: RequestParams.Meta | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -619,7 +614,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            request_meta: Extra request metadata to pass to MCP tool calls
 
         Returns:
             The result of the run.
@@ -711,7 +705,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             tracer=tracer,
             prepare_tools=self._prepare_tools,
             get_instructions=get_instructions,
-            request_meta=request_meta,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
