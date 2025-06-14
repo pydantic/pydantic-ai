@@ -1,8 +1,10 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import re
 import subprocess
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -161,3 +163,43 @@ async def test_run_python_code(mcp_session: ClientSession, code: list[str], expe
     content = result.content[0]
     assert isinstance(content, types.TextContent)
     assert content.text == expected_output
+
+
+async def test_install_run_python_code() -> None:
+    node_modules = Path(__file__).parent / 'node_modules'
+    if node_modules.exists():
+        # shutil.rmtree can't delete node_modules :-(
+        subprocess.run(['rm', '-r', node_modules], check=True)
+
+    logs: list[str] = []
+
+    async def logging_callback(params: types.LoggingMessageNotificationParams) -> None:
+        logs.append(f'{params.level}: {params.data}')
+
+    server_params = StdioServerParameters(command='deno', args=[*DENO_ARGS, 'stdio'])
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write, logging_callback=logging_callback) as mcp_session:
+            await mcp_session.initialize()
+            await mcp_session.set_logging_level('debug')
+            result = await mcp_session.call_tool(
+                'run_python_code', {'python_code': 'import numpy\nnumpy.array([1, 2, 3])'}
+            )
+            assert len(result.content) == 1
+            content = result.content[0]
+            assert isinstance(content, types.TextContent)
+            expected_output = """\
+<status>success</status>
+<dependencies>["numpy"]</dependencies>
+<return_value>
+[
+  1,
+  2,
+  3
+]
+</return_value>\
+"""
+            assert content.text == expected_output
+            assert len(logs) >= 18
+            assert re.search(
+                r"debug: Didn't find package numpy\S+?\.whl locally, attempting to load from", '\n'.join(logs)
+            )
