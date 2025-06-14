@@ -74,6 +74,7 @@ __all__ = (
     'OpenAIModelSettings',
     'OpenAIResponsesModelSettings',
     'OpenAIModelName',
+    'OpenAISystemPromptRole',
 )
 
 OpenAIModelName = Union[str, ChatModel]
