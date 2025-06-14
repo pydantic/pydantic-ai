@@ -9,7 +9,6 @@ from contextvars import ContextVar
 from dataclasses import field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
-from mcp.types import RequestParams
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
@@ -101,9 +100,6 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     tracer: Tracer
 
     prepare_tools: ToolsPrepareFunc[DepsT] | None = None
-
-    # Extra metadata headers to pass to MCP tool calls
-    request_meta: RequestParams.Meta | None = None
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -753,18 +749,18 @@ async def _tool_from_mcp_server(
     Returns:
         The tool with the given name, or `None` if no tool with the given name is found.
     """
-    deps: GraphAgentDeps[DepsT, NodeRunEndT] = ctx.deps
 
     async def run_tool(ctx: RunContext[DepsT], **args: Any) -> Any:
         # There's no normal situation where the server will not be running at this point, we check just in case
         # some weird edge case occurs.
         if not server.is_running:  # pragma: no cover
             raise exceptions.UserError(f'MCP server is not running: {server}')
-        result = await server.call_tool(
-            tool_name=tool_name,
-            arguments=args,
-            _meta=deps.request_meta,
-        )
+
+        if server.process_tool_call is not None:
+            result = await server.process_tool_call(ctx, server.call_tool, tool_name, args)
+        else:
+            result = await server.call_tool(tool_name, args)
+
         return result
 
     for server in ctx.deps.mcp_servers:
