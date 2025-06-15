@@ -12,9 +12,11 @@ with try_import() as imports_successful:
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext
     from pydantic_evals.reporting import (
         EvaluationReport,
+        EvaluationReportAdapter,
         RenderNumberConfig,
         RenderValueConfig,
         ReportCase,
+        ReportCaseAdapter,
         ReportCaseAggregate,
     )
 
@@ -157,7 +159,7 @@ async def test_report_case_aggregate():
 async def test_report_serialization(sample_report: EvaluationReport):
     """Test serializing a report to dict."""
     # Serialize the report
-    serialized = sample_report.model_dump()
+    serialized = EvaluationReportAdapter.dump_python(sample_report)
 
     # Check the serialized structure
     assert 'cases' in serialized
@@ -202,7 +204,7 @@ async def test_report_with_error(mock_evaluator: Evaluator[TaskInput, TaskOutput
         name='error_report',
     )
 
-    assert report.cases[0].model_dump() == snapshot(
+    assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
         {
             'assertions': {
                 'error_evaluator': {
