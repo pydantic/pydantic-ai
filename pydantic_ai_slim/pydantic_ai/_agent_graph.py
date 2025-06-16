@@ -648,6 +648,7 @@ async def process_function_tools(  # noqa C901
             # if tool_name is in output_schema, it means we found a output tool but an error occurred in
             # validation, we don't add another part here
             if output_tool_name is not None:
+                yield _messages.FunctionToolCallEvent(call)
                 if found_used_output_tool:
                     content = 'Output tool not used - a final result was already processed.'
                 else:
@@ -658,9 +659,14 @@ async def process_function_tools(  # noqa C901
                     content=content,
                     tool_call_id=call.tool_call_id,
                 )
+                yield _messages.FunctionToolResultEvent(part, tool_call_id=call.tool_call_id)
                 output_parts.append(part)
         else:
-            output_parts.append(_unknown_tool(call.tool_name, call.tool_call_id, ctx))
+            yield _messages.FunctionToolCallEvent(call)
+
+            part = _unknown_tool(call.tool_name, call.tool_call_id, ctx)
+            yield _messages.FunctionToolResultEvent(part, tool_call_id=call.tool_call_id)
+            output_parts.append(part)
 
     if not calls_to_run:
         return

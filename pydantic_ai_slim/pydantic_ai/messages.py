@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import base64
-import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
@@ -888,13 +887,13 @@ class FunctionToolCallEvent:
 
     part: ToolCallPart
     """The (function) tool call to make."""
-    call_id: str = field(init=False)
-    """An ID used for matching details about the call to its result. If present, defaults to the part's tool_call_id."""
     event_kind: Literal['function_tool_call'] = 'function_tool_call'
     """Event type identifier, used as a discriminator."""
 
-    def __post_init__(self):
-        self.call_id = self.part.tool_call_id or str(uuid.uuid4())
+    @property
+    def call_id(self) -> str:
+        """An ID used for matching details about the call to its result. If present, defaults to the part's tool_call_id."""
+        return self.part.tool_call_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
