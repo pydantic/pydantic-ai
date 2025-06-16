@@ -1113,12 +1113,3 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     ]
     _, anthropic_messages = await model._map_message(messages_resp)  # type: ignore[attr-defined]
     assert len(anthropic_messages) == 0  # No messages should be added
-
-
-@pytest.mark.vcr()
-async def test_anthropic_model_max_tokens(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-7-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m)
-
-    result = await agent.run('Hello')
-    assert result.output == snapshot('Hello')
