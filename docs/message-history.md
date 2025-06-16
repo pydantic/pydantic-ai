@@ -405,7 +405,7 @@ Focus on the technical discussion and next steps.
 
 
 async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
-    # Summarize the oldest 3 messages
+    # Summarize the oldest 10 messages
     if len(messages) > 10:
         oldest_messages = messages[:10]
         summary = await summarize_agent.run(message_history=oldest_messages)
