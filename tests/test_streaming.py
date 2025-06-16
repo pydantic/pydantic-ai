@@ -947,7 +947,7 @@ async def test_unknown_tool_call_events():
 
     try:
         async with agent.iter('test') as agent_run:
-            async for node in agent_run:
+            async for node in agent_run:  # pragma: no branch
                 if Agent.is_call_tools_node(node):
                     async with node.stream(agent_run.ctx) as event_stream:
                         async for event in event_stream:
