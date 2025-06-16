@@ -322,6 +322,178 @@ print(result2.all_messages())
 """
 ```
 
+## Processing Message History
+
+Sometimes you may want to modify the message history before it's sent to the model. This could be for privacy
+reasons (filtering out sensitive information), to save costs on tokens, to give less context to the LLM, or
+custom processing logic.
+
+PydanticAI provides a `history_processors` parameter on `Agent` that allows you to intercept and modify
+the message history before each model request.
+
+### Usage
+
+The `history_processors` is a list of callables that take a list of
+[`ModelMessage`][pydantic_ai.messages.ModelMessage] and return a modified list of the same type.
+
+Each processor is applied in sequence, and processors can be either synchronous or asynchronous.
+
+```python {title="simple_history_processor.py"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
+
+
+def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Remove all ModelResponse messages, keeping only ModelRequest messages."""
+    return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+# Create agent with history processor
+agent = Agent('openai:gpt-4o', history_processors=[filter_responses])
+
+# Example: Create some conversation history
+message_history = [
+    ModelRequest(parts=[UserPromptPart(content='What is 2+2?')]),
+    ModelResponse(parts=[TextPart(content='2+2 equals 4')]),  # This will be filtered out
+]
+
+# When you run the agent, the history processor will filter out ModelResponse messages
+# result = agent.run_sync('What about 3+3?', message_history=message_history)
+```
+
+#### Keep Only Recent Messages
+
+You can use the `history_processor` to only keep the recent messages:
+
+```python {title="keep_recent_messages.py"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage
+
+
+async def keep_recent_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Keep only the last 5 messages to manage token usage."""
+    return messages[-5:] if len(messages) > 5 else messages
+
+agent = Agent('openai:gpt-4o', history_processors=[keep_recent_messages])
+
+# Example: Even with a long conversation history, only the last 5 messages are sent to the model
+long_conversation_history: list[ModelMessage] = []  # Your long conversation history here
+# result = agent.run_sync('What did we discuss?', message_history=long_conversation_history)
+```
+
+#### Summarize Old Messages
+
+Use an LLM to summarize older messages to preserve context while reducing tokens.
+
+```python {title="summarize_old_messages.py"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage
+
+# Use a cheaper model to summarize old messages.
+summarize_agent = Agent(
+    'openai:gpt-4o-mini',
+    instructions="""
+Summarize this conversation, omitting small talk and unrelated topics.
+Focus on the technical discussion and next steps.
+""",
+)
+
+
+async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    # Summarize the oldest 10 messages
+    if len(messages) > 10:
+        oldest_messages = messages[:10]
+        summary = await summarize_agent.run(message_history=oldest_messages)
+        # Return the last message and the summary
+        return summary.new_messages() + messages[-1:]
+
+    return messages
+
+
+agent = Agent('openai:gpt-4o', history_processors=[summarize_old_messages])
+```
+
+### Testing History Processors
+
+You can test what messages are actually sent to the model provider using
+[`FunctionModel`][pydantic_ai.models.function.FunctionModel]:
+
+```python {title="test_history_processor.py"}
+import pytest
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+@pytest.fixture
+def received_messages() -> list[ModelMessage]:
+    return []
+
+
+@pytest.fixture
+def function_model(received_messages: list[ModelMessage]) -> FunctionModel:
+    def capture_model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Capture the messages that the provider actually receives
+        received_messages.clear()
+        received_messages.extend(messages)
+        return ModelResponse(parts=[TextPart(content='Provider response')])
+
+    return FunctionModel(capture_model_function)
+
+
+def test_history_processor(function_model: FunctionModel, received_messages: list[ModelMessage]):
+    def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+    agent = Agent(function_model, history_processors=[filter_responses])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Question 1')]),
+        ModelResponse(parts=[TextPart(content='Answer 1')]),
+    ]
+
+    agent.run_sync('Question 2', message_history=message_history)
+    assert received_messages == [
+        ModelRequest(parts=[UserPromptPart(content='Question 1')]),
+        ModelRequest(parts=[UserPromptPart(content='Question 2')]),
+    ]
+```
+
+### Multiple Processors
+
+You can also use multiple processors:
+
+```python {title="multiple_history_processors.py"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelRequest
+
+
+def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+
+def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return messages[-5:]
+
+
+agent = Agent('openai:gpt-4o', history_processors=[filter_responses, summarize_old_messages])
+```
+
+In this case, the `filter_responses` processor will be applied first, and the
+`summarize_old_messages` processor will be applied second.
+
 ## Examples
 
 For a more complete example of using messages in conversations, see the [chat app](examples/chat-app.md) example.
