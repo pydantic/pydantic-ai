@@ -1,25 +1,29 @@
 from __future__ import annotations
 
 import base64
+import functools
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, Callable
 
 import anyio
+import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from typing_extensions import Self, assert_never
+from typing_extensions import Self, assert_never, deprecated
 
 try:
     from mcp import types as mcp_types
     from mcp.client.session import ClientSession, LoggingFnT
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
+    from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
     from mcp.shared.context import RequestContext
+    from mcp.shared.message import SessionMessage
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `mcp` package to use the MCP server, '
@@ -29,7 +33,7 @@ except ImportError as _import_error:
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, exceptions, messages, models, tools
 
-__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP'
+__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
 
 
 class MCPServer(ABC):
@@ -45,8 +49,8 @@ class MCPServer(ABC):
 
     _running_count: int = 0
     _client: ClientSession
-    _read_stream: MemoryObjectReceiveStream[mcp_types.JSONRPCMessage | Exception]
-    _write_stream: MemoryObjectSendStream[mcp_types.JSONRPCMessage]
+    _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
+    _write_stream: MemoryObjectSendStream[SessionMessage]
     _exit_stack: AsyncExitStack
     sampling_model: models.Model | None = None
 
@@ -56,8 +60,8 @@ class MCPServer(ABC):
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[mcp_types.JSONRPCMessage | Exception],
-            MemoryObjectSendStream[mcp_types.JSONRPCMessage],
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
         ]
     ]:
         """Create the streams for the MCP server."""
@@ -187,9 +191,8 @@ class MCPServer(ABC):
             model=self.sampling_model.model_name,
         )
 
-    @staticmethod
     def _map_tool_result_part(
-        part: mcp_types.TextContent | mcp_types.ImageContent | mcp_types.EmbeddedResource,
+        self, part: mcp_types.Content
     ) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
         # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
 
@@ -203,6 +206,12 @@ class MCPServer(ABC):
             return text
         elif isinstance(part, mcp_types.ImageContent):
             return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
+        elif isinstance(part, mcp_types.AudioContent):
+            # NOTE: The FastMCP server doesn't support audio content.
+            # See <https://github.com/modelcontextprotocol/python-sdk/issues/952> for more details.
+            return messages.BinaryContent(
+                data=base64.b64decode(part.data), media_type=part.mimeType
+            )  # pragma: no cover
         elif isinstance(part, mcp_types.EmbeddedResource):
             resource = part.resource
             if isinstance(resource, mcp_types.TextResourceContents):
@@ -299,8 +308,8 @@ class MCPServerStdio(MCPServer):
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[mcp_types.JSONRPCMessage | Exception],
-            MemoryObjectSendStream[mcp_types.JSONRPCMessage],
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
         ]
     ]:
         server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
@@ -315,47 +324,40 @@ class MCPServerStdio(MCPServer):
 
 
 @dataclass
-class MCPServerHTTP(MCPServer):
-    """An MCP server that connects over streamable HTTP connections.
-
-    This class implements the SSE transport from the MCP specification.
-    See <https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse> for more information.
-
-    The name "HTTP" is used since this implemented will be adapted in future to use the new
-    [Streamable HTTP](https://github.com/modelcontextprotocol/specification/pull/206) currently in development.
-
-    !!! note
-        Using this class as an async context manager will create a new pool of HTTP connections to connect
-        to a server which should already be running.
-
-    Example:
-    ```python {py="3.10"}
-    from pydantic_ai import Agent
-    from pydantic_ai.mcp import MCPServerHTTP
-
-    server = MCPServerHTTP('http://localhost:3001/sse')  # (1)!
-    agent = Agent('openai:gpt-4o', mcp_servers=[server])
-
-    async def main():
-        async with agent.run_mcp_servers():  # (2)!
-            ...
-    ```
-
-    1. E.g. you might be connecting to a server run with [`mcp-run-python`](../mcp/run-python.md).
-    2. This will connect to a server running on `localhost:3001`.
-    """
-
+class _MCPServerHTTP(MCPServer):
     url: str
-    """The URL of the SSE endpoint on the MCP server.
-
-    For example for a server running locally, this might be `http://localhost:3001/sse`.
-    """
+    """The URL of the endpoint on the MCP server."""
 
     headers: dict[str, Any] | None = None
-    """Optional HTTP headers to be sent with each request to the SSE endpoint.
+    """Optional HTTP headers to be sent with each request to the endpoint.
 
     These headers will be passed directly to the underlying `httpx.AsyncClient`.
     Useful for authentication, custom headers, or other HTTP-specific configurations.
+
+    !!! note
+        You can either pass `headers` or `http_client`, but not both.
+
+        See [`MCPServerHTTP.http_client`][pydantic_ai.mcp.MCPServerHTTP.http_client] for more information.
+    """
+
+    http_client: httpx.AsyncClient | None = None
+    """An `httpx.AsyncClient` to use with the endpoint.
+
+    This client may be configured to use customized connection parameters like self-signed certificates.
+
+    !!! note
+        You can either pass `headers` or `http_client`, but not both.
+
+        If you want to use both, you can pass the headers to the `http_client` instead.
+
+        ```python {py="3.10" test="skip"}
+        import httpx
+
+        from pydantic_ai.mcp import MCPServerSSE
+
+        http_client = httpx.AsyncClient(headers={'Authorization': 'Bearer ...'})
+        server = MCPServerSSE('http://localhost:3001/sse', http_client=http_client)
+        ```
     """
 
     timeout: float = 5
@@ -375,7 +377,7 @@ class MCPServerHTTP(MCPServer):
     log_level: mcp_types.LoggingLevel | None = None
     """The log level to set when connecting to the server, if any.
 
-    See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
+    See <https://modelcontextprotocol.io/introduction#logging> for more details.
 
     If `None`, no log level will be set.
     """
@@ -390,25 +392,161 @@ class MCPServerHTTP(MCPServer):
     log_handler: LoggingFnT | None = None
     """A handler for logging messages from the server."""
 
+    @property
+    @abstractmethod
+    def _transport_client(
+        self,
+    ) -> Callable[
+        ...,
+        AbstractAsyncContextManager[
+            tuple[
+                MemoryObjectReceiveStream[SessionMessage | Exception],
+                MemoryObjectSendStream[SessionMessage],
+                GetSessionIdCallback,
+            ],
+        ]
+        | AbstractAsyncContextManager[
+            tuple[
+                MemoryObjectReceiveStream[SessionMessage | Exception],
+                MemoryObjectSendStream[SessionMessage],
+            ]
+        ],
+    ]: ...
+
     @asynccontextmanager
     async def client_streams(
         self,
     ) -> AsyncIterator[
         tuple[
-            MemoryObjectReceiveStream[mcp_types.JSONRPCMessage | Exception],
-            MemoryObjectSendStream[mcp_types.JSONRPCMessage],
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
         ]
     ]:  # pragma: no cover
-        async with sse_client(
+        if self.http_client and self.headers:
+            raise ValueError('`http_client` is mutually exclusive with `headers`.')
+
+        transport_client_partial = functools.partial(
+            self._transport_client,
             url=self.url,
-            headers=self.headers,
             timeout=self.timeout,
             sse_read_timeout=self.sse_read_timeout,
-        ) as (read_stream, write_stream):
-            yield read_stream, write_stream
+        )
+
+        if self.http_client is not None:
+
+            def httpx_client_factory(
+                headers: dict[str, str] | None = None,
+                timeout: httpx.Timeout | None = None,
+                auth: httpx.Auth | None = None,
+            ) -> httpx.AsyncClient:
+                assert self.http_client is not None
+                return self.http_client
+
+            async with transport_client_partial(httpx_client_factory=httpx_client_factory) as (
+                read_stream,
+                write_stream,
+                *_,
+            ):
+                yield read_stream, write_stream
+        else:
+            async with transport_client_partial(headers=self.headers) as (read_stream, write_stream, *_):
+                yield read_stream, write_stream
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f'MCPServerHTTP(url={self.url!r}, tool_prefix={self.tool_prefix!r})'
+        return f'{self.__class__.__name__}(url={self.url!r}, tool_prefix={self.tool_prefix!r})'
 
     def _get_client_initialize_timeout(self) -> float:  # pragma: no cover
         return self.timeout
+
+
+@dataclass
+class MCPServerSSE(_MCPServerHTTP):
+    """An MCP server that connects over streamable HTTP connections.
+
+    This class implements the SSE transport from the MCP specification.
+    See <https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse> for more information.
+
+    !!! note
+        Using this class as an async context manager will create a new pool of HTTP connections to connect
+        to a server which should already be running.
+
+    Example:
+    ```python {py="3.10"}
+    from pydantic_ai import Agent
+    from pydantic_ai.mcp import MCPServerSSE
+
+    server = MCPServerSSE('http://localhost:3001/sse')  # (1)!
+    agent = Agent('openai:gpt-4o', mcp_servers=[server])
+
+    async def main():
+        async with agent.run_mcp_servers():  # (2)!
+            ...
+    ```
+
+    1. E.g. you might be connecting to a server run with [`mcp-run-python`](../mcp/run-python.md).
+    2. This will connect to a server running on `localhost:3001`.
+    """
+
+    @property
+    def _transport_client(self):
+        return sse_client  # pragma: no cover
+
+
+@deprecated('The `MCPServerHTTP` class is deprecated, use `MCPServerSSE` instead.')
+@dataclass
+class MCPServerHTTP(MCPServerSSE):
+    """An MCP server that connects over HTTP using the old SSE transport.
+
+    This class implements the SSE transport from the MCP specification.
+    See <https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse> for more information.
+
+    !!! note
+        Using this class as an async context manager will create a new pool of HTTP connections to connect
+        to a server which should already be running.
+
+    Example:
+    ```python {py="3.10" test="skip"}
+    from pydantic_ai import Agent
+    from pydantic_ai.mcp import MCPServerHTTP
+
+    server = MCPServerHTTP('http://localhost:3001/sse')  # (1)!
+    agent = Agent('openai:gpt-4o', mcp_servers=[server])
+
+    async def main():
+        async with agent.run_mcp_servers():  # (2)!
+            ...
+    ```
+
+    1. E.g. you might be connecting to a server run with [`mcp-run-python`](../mcp/run-python.md).
+    2. This will connect to a server running on `localhost:3001`.
+    """
+
+
+@dataclass
+class MCPServerStreamableHTTP(_MCPServerHTTP):
+    """An MCP server that connects over HTTP using the Streamable HTTP transport.
+
+    This class implements the Streamable HTTP transport from the MCP specification.
+    See <https://modelcontextprotocol.io/introduction#streamable-http> for more information.
+
+    !!! note
+        Using this class as an async context manager will create a new pool of HTTP connections to connect
+        to a server which should already be running.
+
+    Example:
+    ```python {py="3.10"}
+    from pydantic_ai import Agent
+    from pydantic_ai.mcp import MCPServerStreamableHTTP
+
+    server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
+    agent = Agent('openai:gpt-4o', mcp_servers=[server])
+
+    async def main():
+        async with agent.run_mcp_servers():  # (2)!
+            ...
+    ```
+    """
+
+    @property
+    def _transport_client(self):
+        return streamablehttp_client  # pragma: no cover

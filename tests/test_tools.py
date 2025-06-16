@@ -1048,3 +1048,74 @@ def test_dynamic_tools_agent_wide():
 
     result = agent.run_sync('', deps=1)
     assert result.output == snapshot('{"foobar":"1 0 a"}')
+
+
+def test_function_tool_consistent_with_schema():
+    def function(*args: Any, **kwargs: Any) -> str:
+        assert len(args) == 0
+        assert set(kwargs) == {'one', 'two'}
+        return 'I like being called like this'
+
+    json_schema = {
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'one': {'description': 'first argument', 'type': 'string'},
+            'two': {'description': 'second argument', 'type': 'object'},
+        },
+        'required': ['one', 'two'],
+    }
+    pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
+
+    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot('{"foobar":"I like being called like this"}')
+    assert agent._function_tools['foobar'].takes_ctx is False
+    assert agent._function_tools['foobar'].max_retries == 0
+
+
+def test_function_tool_inconsistent_with_schema():
+    def function(three: str, four: int) -> str:
+        return 'Coverage made me call this'
+
+    json_schema = {
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'one': {'description': 'first argument', 'type': 'string'},
+            'two': {'description': 'second argument', 'type': 'object'},
+        },
+        'required': ['one', 'two'],
+    }
+    pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
+
+    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    with pytest.raises(TypeError, match=".* got an unexpected keyword argument 'one'"):
+        agent.run_sync('foobar')
+
+    result = function('three', 4)
+    assert result == 'Coverage made me call this'
+
+
+def test_async_function_tool_consistent_with_schema():
+    async def function(*args: Any, **kwargs: Any) -> str:
+        assert len(args) == 0
+        assert set(kwargs) == {'one', 'two'}
+        return 'I like being called like this'
+
+    json_schema = {
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'one': {'description': 'first argument', 'type': 'string'},
+            'two': {'description': 'second argument', 'type': 'object'},
+        },
+        'required': ['one', 'two'],
+    }
+    pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
+
+    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot('{"foobar":"I like being called like this"}')
+    assert agent._function_tools['foobar'].takes_ctx is False
+    assert agent._function_tools['foobar'].max_retries == 0

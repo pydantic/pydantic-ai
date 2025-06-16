@@ -50,7 +50,7 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        return google_model_profile(model_name)
+        return google_model_profile(model_name)  # pragma: lax no cover
 
     @overload
     def __init__(

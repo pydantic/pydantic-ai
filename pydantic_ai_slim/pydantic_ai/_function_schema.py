@@ -5,9 +5,8 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
-import inspect
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any, Callable, cast
 
@@ -23,7 +22,7 @@ from typing_extensions import get_origin
 from pydantic_ai.tools import RunContext
 
 from ._griffe import doc_descriptions
-from ._utils import check_object_json_schema, is_model_like, run_in_executor
+from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat, ObjectJsonSchema
@@ -43,9 +42,9 @@ class FunctionSchema:
     # if not None, the function takes a single by that name (besides potentially `info`)
     takes_ctx: bool
     is_async: bool
-    single_arg_name: str | None
-    positional_fields: list[str]
-    var_positional_field: str | None
+    single_arg_name: str | None = None
+    positional_fields: list[str] = field(default_factory=list)
+    var_positional_field: str | None = None
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -214,7 +213,7 @@ def function_schema(  # noqa: C901
         positional_fields=positional_fields,
         var_positional_field=var_positional_field,
         takes_ctx=takes_ctx,
-        is_async=inspect.iscoroutinefunction(function),
+        is_async=is_async_callable(function),
         function=function,
     )
 

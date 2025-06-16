@@ -151,10 +151,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.message_history = history
         run_context.messages = history
 
-        # TODO: We need to make it so that function_tools are not shared between runs
-        #   See comment on the current_retry field of `Tool` for more details.
-        for tool in ctx.deps.function_tools.values():
-            tool.current_retry = 0
         return next_message
 
     async def _prepare_messages(
@@ -187,6 +183,16 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         if user_prompt is not None:
             parts.append(_messages.UserPromptPart(user_prompt))
+        elif (
+            len(parts) == 0
+            and message_history
+            and (last_message := message_history[-1])
+            and isinstance(last_message, _messages.ModelRequest)
+        ):
+            # Drop last message that came from history and reuse its parts
+            messages.pop()
+            parts.extend(last_message.parts)
+
         return messages, _messages.ModelRequest(parts, instructions=instructions)
 
     async def _reevaluate_dynamic_prompts(

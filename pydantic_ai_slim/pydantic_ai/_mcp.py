@@ -107,9 +107,11 @@ def map_from_model_response(model_response: messages.ModelResponse) -> mcp_types
     return mcp_types.TextContent(type='text', text=''.join(text_parts))
 
 
-def map_from_sampling_content(content: mcp_types.TextContent | mcp_types.ImageContent) -> messages.TextPart:
+def map_from_sampling_content(
+    content: mcp_types.TextContent | mcp_types.ImageContent | mcp_types.AudioContent,
+) -> messages.TextPart:
     """Convert from sampling content to a pydantic-ai text part."""
     if isinstance(content, mcp_types.TextContent):
         return messages.TextPart(content=content.text)
     else:
-        raise NotImplementedError('Image responses in sampling are not yet supported')
+        raise NotImplementedError('Image and Audio responses in sampling are not yet supported')

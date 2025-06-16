@@ -60,7 +60,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
 
     def __post_init__(self):
         self._takes_ctx = len(inspect.signature(self.function).parameters) > 1
-        self._is_async = inspect.iscoroutinefunction(self.function)
+        self._is_async = _utils.is_async_callable(self.function)
 
     async def validate(
         self,
@@ -138,7 +138,7 @@ class ToolOutput(Generic[OutputDataT]):
 T_co = TypeVar('T_co', covariant=True)
 # output_type=Type or output_type=function or output_type=object.method
 SimpleOutputType = TypeAliasType(
-    'SimpleOutputType', Union[type[T_co], Callable[..., T_co], Callable[..., Awaitable[T_co]]], type_params=(T_co,)
+    'SimpleOutputType', Union[type[T_co], Callable[..., Union[Awaitable[T_co], T_co]]], type_params=(T_co,)
 )
 # output_type=ToolOutput(<see above>) or <see above>
 SimpleOutputTypeOrMarker = TypeAliasType(
