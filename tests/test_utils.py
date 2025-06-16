@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import contextvars
+import functools
 import os
 from collections.abc import AsyncIterator
 from importlib.metadata import distributions
@@ -10,7 +11,14 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import UserError
-from pydantic_ai._utils import UNSET, PeekableAsyncStream, check_object_json_schema, group_by_temporal, run_in_executor
+from pydantic_ai._utils import (
+    UNSET,
+    PeekableAsyncStream,
+    check_object_json_schema,
+    group_by_temporal,
+    is_async_callable,
+    run_in_executor,
+)
 
 from .models.mock_async_stream import MockAsyncStream
 
@@ -153,3 +161,19 @@ async def test_run_in_executor_with_contextvars() -> None:
     # show that the old version did not work
     old_result = asyncio.get_running_loop().run_in_executor(None, ctx_var.get)
     assert old_result != ctx_var.get()
+
+
+def test_is_async_callable():
+    def sync_func(): ...  # pragma: no branch
+
+    assert is_async_callable(sync_func) is False
+
+    async def async_func(): ...  # pragma: no branch
+
+    assert is_async_callable(async_func) is True
+
+    class AsyncCallable:
+        async def __call__(self): ...  # pragma: no branch
+
+    partial_async_callable = functools.partial(AsyncCallable())
+    assert is_async_callable(partial_async_callable) is True

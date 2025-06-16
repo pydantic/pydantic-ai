@@ -1536,11 +1536,14 @@ def test_unknown_tool_fix():
 
 
 def test_model_requests_blocked(env: TestEnv):
-    env.set('GEMINI_API_KEY', 'foobar')
-    agent = Agent('google-gla:gemini-1.5-flash', output_type=tuple[str, str], defer_model_check=True)
+    try:
+        env.set('GEMINI_API_KEY', 'foobar')
+        agent = Agent('google-gla:gemini-1.5-flash', output_type=tuple[str, str], defer_model_check=True)
 
-    with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
-        agent.run_sync('Hello')
+        with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
+            agent.run_sync('Hello')
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('google-genai not installed')
 
 
 def test_override_model(env: TestEnv):
@@ -2422,6 +2425,10 @@ def test_instructions_raise_error_when_instructions_is_set():
     def instructions() -> str:
         return 'An instructions!'
 
+    @agent.instructions
+    def empty_instructions() -> str:
+        return ''
+
     result = agent.run_sync('Hello')
     assert result.all_messages()[0] == snapshot(
         ModelRequest(
@@ -2509,7 +2516,10 @@ def test_instructions_parameter_with_sequence():
     def instructions() -> str:
         return 'You are a potato.'
 
-    agent = Agent('test', instructions=('You are a helpful assistant.', instructions))
+    def empty_instructions() -> str:
+        return ''
+
+    agent = Agent('test', instructions=('You are a helpful assistant.', empty_instructions, instructions))
     result = agent.run_sync('Hello')
     assert result.all_messages()[0] == snapshot(
         ModelRequest(

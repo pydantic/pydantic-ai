@@ -40,7 +40,7 @@ agent = Agent(
 
 
 @agent.tool_plain  # (3)!
-def roll_die() -> str:
+def roll_dice() -> str:
     """Roll a six-sided die and return the result."""
     return str(random.randint(1, 6))
 
@@ -87,7 +87,7 @@ print(dice_result.all_messages())
     ModelResponse(
         parts=[
             ToolCallPart(
-                tool_name='roll_die', args={}, tool_call_id='pyd_ai_tool_call_id'
+                tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
         usage=Usage(requests=1, request_tokens=90, response_tokens=2, total_tokens=92),
@@ -97,7 +97,7 @@ print(dice_result.all_messages())
     ModelRequest(
         parts=[
             ToolReturnPart(
-                tool_name='roll_die',
+                tool_name='roll_dice',
                 content='4',
                 tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
@@ -152,7 +152,7 @@ sequenceDiagram
     activate LLM
     Note over LLM: LLM decides to use<br>a tool
 
-    LLM ->> Agent: Call tool<br>roll_die()
+    LLM ->> Agent: Call tool<br>roll_dice()
     deactivate LLM
     activate Agent
     Note over Agent: Rolls a six-sided die
@@ -192,7 +192,7 @@ Use the player's name in the response.
 """
 
 
-def roll_die() -> str:
+def roll_dice() -> str:
     """Roll a six-sided die and return the result."""
     return str(random.randint(1, 6))
 
@@ -205,14 +205,14 @@ def get_player_name(ctx: RunContext[str]) -> str:
 agent_a = Agent(
     'google-gla:gemini-1.5-flash',
     deps_type=str,
-    tools=[roll_die, get_player_name],  # (1)!
+    tools=[roll_dice, get_player_name],  # (1)!
     system_prompt=system_prompt,
 )
 agent_b = Agent(
     'google-gla:gemini-1.5-flash',
     deps_type=str,
     tools=[  # (2)!
-        Tool(roll_die, takes_ctx=False),
+        Tool(roll_dice, takes_ctx=False),
         Tool(get_player_name, takes_ctx=True),
     ],
     system_prompt=system_prompt,

@@ -308,18 +308,6 @@ async def test_google_model_thinking_config(allow_model_requests: None, google_p
     assert result.output == snapshot('The capital of France is **Paris**.')
 
 
-@pytest.mark.skipif(
-    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
-)
-async def test_google_model_vertex_labels(allow_model_requests: None):  # pragma: lax no cover
-    provider = GoogleProvider(location='global', project='pydantic-ai')
-    model = GoogleModel('gemini-2.0-flash', provider=provider)
-    settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=settings)
-    result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('The capital of France is Paris.\n')
-
-
 async def test_google_model_gla_labels_raises_value_error(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash', provider=google_provider)
     settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
@@ -357,6 +345,18 @@ async def test_google_model_vertex_provider(allow_model_requests: None):
     provider = GoogleProvider(location='global')
     model = GoogleModel('gemini-2.0-flash', provider=provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.')
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('The capital of France is Paris.\n')
+
+
+@pytest.mark.skipif(
+    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+)
+async def test_google_model_vertex_labels(allow_model_requests: None):  # pragma: lax no cover
+    provider = GoogleProvider(location='global', project='pydantic-ai')
+    model = GoogleModel('gemini-2.0-flash', provider=provider)
+    settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.\n')
 

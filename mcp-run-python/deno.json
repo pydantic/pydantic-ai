@@ -1,6 +1,6 @@
 {
   "name": "@pydantic/mcp-run-python",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "license": "MIT",
   "nodeModulesDir": "auto",
   "exports": {
@@ -16,7 +16,8 @@
     "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@^1.8.0",
     "@std/cli": "jsr:@std/cli@^1.0.15",
     "@std/path": "jsr:@std/path@^1.0.8",
-    "pyodide": "npm:pyodide@0.27.3",
+    // do NOT upgrade above this version until there is a workaround for https://github.com/pyodide/pyodide/pull/5621
+    "pyodide": "npm:pyodide@0.27.6",
     "zod": "npm:zod@^3.24.2"
   },
   "fmt": {

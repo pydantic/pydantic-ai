@@ -555,9 +555,9 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
 
         return OpenAIModel(model_name, provider=provider)
     elif provider in ('google-gla', 'google-vertex'):
-        from .gemini import GeminiModel
+        from .google import GoogleModel
 
-        return GeminiModel(model_name, provider=provider)
+        return GoogleModel(model_name, provider=provider)
     elif provider == 'groq':
         from .groq import GroqModel
 
