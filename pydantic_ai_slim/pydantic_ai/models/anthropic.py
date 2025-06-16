@@ -220,7 +220,7 @@ class AnthropicModel(Model):
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.beta.messages.create(
-                max_tokens=model_settings.get('max_tokens', 1024),
+                max_tokens=model_settings.get('max_tokens', 4096),
                 system=system_prompt or NOT_GIVEN,
                 messages=anthropic_messages,
                 model=self._model_name,
