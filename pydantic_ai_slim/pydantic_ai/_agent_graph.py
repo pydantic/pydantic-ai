@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import hashlib
-import inspect
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -13,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
-from pydantic_ai._utils import run_in_executor
+from pydantic_ai._utils import is_async_callable, run_in_executor
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
@@ -329,9 +328,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = ctx.state.message_history
-        if ctx.deps.history_processors:
-            message_history = await _process_message_history(message_history, ctx.deps.history_processors)
+        message_history = await _process_message_history(ctx.state.message_history, ctx.deps.history_processors)
         async with ctx.deps.model.request_stream(
             message_history, model_settings, model_request_parameters
         ) as streamed_response:
@@ -355,9 +352,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = ctx.state.message_history
-        if ctx.deps.history_processors:
-            message_history = await _process_message_history(message_history, ctx.deps.history_processors)
+        message_history = await _process_message_history(ctx.state.message_history, ctx.deps.history_processors)
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.incr(_usage.Usage())
 
@@ -878,14 +873,9 @@ async def _process_message_history(
     processors: Sequence[HistoryProcessor],
 ) -> list[_messages.ModelMessage]:
     """Process message history through a sequence of processors."""
-    processed_messages = messages
     for processor in processors:
-        if inspect.iscoroutinefunction(processor):
-            async_processor = cast(
-                Callable[[list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]], processor
-            )
-            processed_messages = await async_processor(processed_messages)
+        if is_async_callable(processor):
+            messages = await processor(messages)
         else:
-            sync_processor = cast(Callable[[list[_messages.ModelMessage]], list[_messages.ModelMessage]], processor)
-            processed_messages = await run_in_executor(sync_processor, processed_messages)
-    return processed_messages
+            messages = await run_in_executor(processor, messages)
+    return messages
