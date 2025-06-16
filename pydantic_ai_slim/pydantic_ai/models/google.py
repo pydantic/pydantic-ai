@@ -469,9 +469,11 @@ def _process_response_from_parts(
 
 def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclarationDict:
     json_schema = tool.parameters_json_schema
-    f = FunctionDeclarationDict(name=tool.name, description=tool.description)
-    if json_schema.get('properties'):  # pragma: no branch
-        f['parameters'] = json_schema  # type: ignore
+    f = FunctionDeclarationDict(
+        name=tool.name,
+        description=tool.description,
+        parameters=json_schema,  # type: ignore
+    )
     return f
 
 
