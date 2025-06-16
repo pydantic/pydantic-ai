@@ -2,7 +2,7 @@
 
 Thinking or reasoning is the process of using a model's capabilities to reason about a task.
 
-This capability is usually not enabled by default. It depends on the model.
+This capability is usually not enabled by default, and how to enable it depends on the model.
 
 ## OpenAI
 
@@ -11,7 +11,7 @@ but it's able to receive messages from other models that do. In this case, it wi
 [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] into [`TextPart`][pydantic_ai.messages.TextPart]s using the
 `"<think>"` tag.
 
-If you want to proper emit thinking parts, you'd need to use the
+If you want to properly emit thinking parts, you'd need to use the
 [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
 
 ```python {title="openai_thinking_part.py"}
