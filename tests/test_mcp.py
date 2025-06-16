@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import Usage
 
 from .conftest import IsDatetime, IsStr, try_import
@@ -48,7 +49,7 @@ async def test_stdio_server():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == 11
+        assert len(tools) == snapshot(12)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
@@ -69,7 +70,7 @@ async def test_stdio_server_with_cwd():
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == snapshot(11)
+        assert len(tools) == snapshot(12)
 
 
 def test_sse_server():
@@ -214,7 +215,7 @@ async def test_log_level_unset():
     assert server.log_level is None
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == snapshot(11)
+        assert len(tools) == snapshot(12)
         assert tools[10].name == 'get_log_level'
 
         result = await server.call_tool('get_log_level', {})
@@ -931,4 +932,21 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     vendor_id='chatcmpl-BRloepWR5NJpTgSqFBGTSPeM1SWm8',
                 ),
             ]
+        )
+
+
+async def test_client_sampling():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
+    server.sampling_model = TestModel(custom_output_text='sampling model response')
+    assert server.log_level == 'info'
+    async with server:
+        result = await server.call_tool('use_sampling', {'foo': 'bar'})
+        assert result == snapshot(
+            {
+                'meta': None,
+                'role': 'assistant',
+                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None},
+                'model': 'test',
+                'stopReason': None,
+            }
         )

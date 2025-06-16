@@ -13,7 +13,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-def map_to_pai_messages(params: mcp_types.CreateMessageRequestParams) -> list[messages.ModelMessage]:
+def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[messages.ModelMessage]:
     """Convert from MCP create message request parameters to pydantic-ai messages."""
     pai_messages: list[messages.ModelMessage] = []
     request_parts: list[messages.ModelRequestPart] = []

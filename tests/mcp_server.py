@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP, Image
-from mcp.types import BlobResourceContents, EmbeddedResource, TextResourceContents
+from mcp.types import BlobResourceContents, EmbeddedResource, SamplingMessage, TextContent, TextResourceContents
 from pydantic import AnyUrl
 
 mcp = FastMCP('PydanticAI MCP Server')
@@ -116,6 +116,21 @@ async def get_log_level(ctx: Context) -> str:  # type: ignore
     """
     await ctx.info('this is a log message')
     return log_level
+
+
+@mcp.tool()
+async def use_sampling(ctx: Context, foo: str) -> str:  # type: ignore
+    """Use sampling callback."""
+
+    result = await ctx.session.create_message(
+        [
+            SamplingMessage(role='assistant', content=TextContent(type='text', text='')),
+            SamplingMessage(role='user', content=TextContent(type='text', text=foo)),
+        ],
+        max_tokens=1_024,
+        system_prompt='this is a test of MCP sampling',
+    )
+    return result.model_dump_json(indent=2)
 
 
 @mcp._mcp_server.set_logging_level()  # pyright: ignore[reportPrivateUsage]

@@ -42,10 +42,11 @@ class MCPServer(ABC):
     See <https://modelcontextprotocol.io> for more information.
     """
 
-    # these two fields should be re-implemented by dataclass subclasses so they appear as fields
-    log_level: mcp_types.LoggingLevel | None = None
+    # these three fields should be re-defined by dataclass subclasses so they appear as fields
     tool_prefix: str | None = None
+    log_level: mcp_types.LoggingLevel | None = None
     log_handler: LoggingFnT | None = None
+    init_timeout: float = 5
 
     _running_count: int = 0
     _client: ClientSession
@@ -67,9 +68,6 @@ class MCPServer(ABC):
         """Create the streams for the MCP server."""
         raise NotImplementedError('MCP Server subclasses must implement this method.')
         yield
-
-    def _get_client_initialize_timeout(self) -> float:
-        return 5  # pragma: no cover
 
     def get_prefixed_tool_name(self, tool_name: str) -> str:
         """Get the tool name with prefix if `tool_prefix` is set."""
@@ -129,10 +127,8 @@ class MCPServer(ABC):
         if result.isError:
             text = '\n'.join(str(part) for part in content)
             raise exceptions.ModelRetry(text)
-
-        if len(content) == 1:
-            return content[0]
-        return content
+        else:
+            return content[0] if len(content) == 1 else content
 
     async def __aenter__(self) -> Self:
         if self._running_count == 0:
@@ -147,11 +143,11 @@ class MCPServer(ABC):
             )
             self._client = await self._exit_stack.enter_async_context(client)
 
-            with anyio.fail_after(self._get_client_initialize_timeout()):
+            with anyio.fail_after(self.init_timeout):
                 await self._client.initialize()
 
-            if log_level := self.log_level:
-                await self._client.set_logging_level(log_level)
+                if log_level := self.log_level:
+                    await self._client.set_logging_level(log_level)
         self._running_count += 1
         return self
 
@@ -162,7 +158,7 @@ class MCPServer(ABC):
         traceback: TracebackType | None,
     ) -> bool | None:
         self._running_count -= 1
-        if self._running_count == 0:
+        if self._running_count <= 0:
             await self._exit_stack.aclose()
 
     async def _sampling_callback(
@@ -171,7 +167,8 @@ class MCPServer(ABC):
         """MCP sampling callback."""
         if self.sampling_model is None:
             raise ValueError('Sampling model is not set')
-        pai_messages = _mcp.map_to_pai_messages(params)
+
+        pai_messages = _mcp.map_from_mcp_params(params)
         model_settings = models.ModelSettings()
         if max_tokens := params.maxTokens:
             model_settings['max_tokens'] = max_tokens
@@ -279,17 +276,10 @@ class MCPServerStdio(MCPServer):
     If you want to inherit the environment variables from the parent process, use `env=os.environ`.
     """
 
-    log_level: mcp_types.LoggingLevel | None = None
-    """The log level to set when connecting to the server, if any.
-
-    See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
-
-    If `None`, no log level will be set.
-    """
-
     cwd: str | Path | None = None
     """The working directory to use when spawning the process."""
 
+    # last fields are re-defined from the parent class so they appear as fields
     tool_prefix: str | None = None
     """A prefix to add to all tools that are registered with the server.
 
@@ -297,11 +287,19 @@ class MCPServerStdio(MCPServer):
 
     e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
+
+    log_level: mcp_types.LoggingLevel | None = None
+    """The log level to set when connecting to the server, if any.
+
+    See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
+
+    If `None`, no log level will be set.
+    """
     log_handler: LoggingFnT | None = None
     """A handler for logging messages from the server."""
 
-    timeout: float = 5
-    """ The timeout in seconds to wait for the client to initialize."""
+    init_timeout: float = 5
+    """The timeout in seconds to wait for the client to initialize."""
 
     @asynccontextmanager
     async def client_streams(
@@ -318,9 +316,6 @@ class MCPServerStdio(MCPServer):
 
     def __repr__(self) -> str:
         return f'MCPServerStdio(command={self.command!r}, args={self.args!r}, tool_prefix={self.tool_prefix!r})'
-
-    def _get_client_initialize_timeout(self) -> float:
-        return self.timeout
 
 
 @dataclass
@@ -374,14 +369,8 @@ class _MCPServerHTTP(MCPServer):
     If no new messages are received within this time, the connection will be considered stale
     and may be closed. Defaults to 5 minutes (300 seconds).
     """
-    log_level: mcp_types.LoggingLevel | None = None
-    """The log level to set when connecting to the server, if any.
 
-    See <https://modelcontextprotocol.io/introduction#logging> for more details.
-
-    If `None`, no log level will be set.
-    """
-
+    # last fields are re-defined from the parent class so they appear as fields
     tool_prefix: str | None = None
     """A prefix to add to all tools that are registered with the server.
 
@@ -389,8 +378,19 @@ class _MCPServerHTTP(MCPServer):
 
     For example, if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
+
+    log_level: mcp_types.LoggingLevel | None = None
+    """The log level to set when connecting to the server, if any.
+
+    See <https://modelcontextprotocol.io/introduction#logging> for more details.
+
+    If `None`, no log level will be set.
+    """
     log_handler: LoggingFnT | None = None
     """A handler for logging messages from the server."""
+
+    init_timeout: float = 5
+    """The timeout in seconds to wait for the client to initialize."""
 
     @property
     @abstractmethod
@@ -454,9 +454,6 @@ class _MCPServerHTTP(MCPServer):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f'{self.__class__.__name__}(url={self.url!r}, tool_prefix={self.tool_prefix!r})'
-
-    def _get_client_initialize_timeout(self) -> float:  # pragma: no cover
-        return self.timeout
 
 
 @dataclass
