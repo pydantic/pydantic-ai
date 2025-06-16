@@ -1,15 +1,28 @@
 from __future__ import annotations as _annotations
 
-from a2a.server.agent_execution import AgentExecutor
-from a2a.server.tasks import TaskStore
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any
 
-Worker = AgentExecutor
-"""
-The `Worker` is the core component where you implement your agent's logic.
+if TYPE_CHECKING:
+    from a2a.server.tasks import TaskUpdater
 
-It is an alias for the `a2a.server.agent_execution.AgentExecutor` class from the 
-Google A2A SDK. You should create a class that inherits from `Worker` and
-implement the `execute` and `cancel` methods.
-"""
+    from .schema import Artifact, Message, TaskIdParams, TaskSendParams
+    from .storage import Storage
 
-__all__ = ["Worker", "TaskStore"]
+
+class Worker(ABC):
+    """A worker is responsible for executing tasks."""
+
+    storage: Storage
+
+    @abstractmethod
+    async def run_task(self, params: TaskSendParams, updater: TaskUpdater) -> None: ...
+
+    @abstractmethod
+    async def cancel_task(self, params: TaskIdParams, updater: TaskUpdater) -> None: ...
+
+    @abstractmethod
+    def build_message_history(self, task_history: list[Message]) -> list[Any]: ...
+
+    @abstractmethod
+    def build_artifacts(self, result: Any) -> list[Artifact]: ...
