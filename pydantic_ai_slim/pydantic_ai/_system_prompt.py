@@ -18,7 +18,7 @@ class SystemPromptRunner(Generic[AgentDepsT]):
 
     def __post_init__(self):
         self._takes_ctx = len(inspect.signature(self.function).parameters) > 0
-        self._is_async = inspect.iscoroutinefunction(self.function)
+        self._is_async = _utils.is_async_callable(self.function)
 
     async def run(self, run_context: RunContext[AgentDepsT]) -> str:
         if self._takes_ctx:

@@ -28,17 +28,11 @@ from ..messages import (
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
+from ..profiles.anthropic import AnthropicModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    cached_async_http_client,
-    check_allow_model_requests,
-    get_user_agent,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
@@ -223,11 +217,14 @@ class AnthropicModel(Model):
 
         system_prompt, anthropic_messages = await self._map_message(messages)
 
+        max_tokens_limit = AnthropicModelProfile.from_profile(self.profile).anthropic_max_tokens_limit
+        max_tokens = min(model_settings.get('max_tokens', max_tokens_limit), max_tokens_limit)
+
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.beta.messages.create(
-                max_tokens=model_settings.get('max_tokens', 1024),
+                max_tokens=max_tokens,
                 system=system_prompt or NOT_GIVEN,
                 messages=anthropic_messages,
                 model=self._model_name,
@@ -283,7 +280,7 @@ class AnthropicModel(Model):
             tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
-    async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:
+    async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:  # noqa: C901
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
@@ -322,7 +319,8 @@ class AnthropicModel(Model):
                 assistant_content_params: list[BetaTextBlockParam | BetaToolUseBlockParam] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
-                        assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
+                        if response_part.content:  # Only add non-empty text
+                            assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
                     else:
                         tool_use_block_param = BetaToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),
@@ -331,7 +329,8 @@ class AnthropicModel(Model):
                             input=response_part.args_as_dict(),
                         )
                         assistant_content_params.append(tool_use_block_param)
-                anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
+                if len(assistant_content_params) > 0:
+                    anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
         system_prompt = '\n\n'.join(system_prompt_parts)
@@ -344,11 +343,13 @@ class AnthropicModel(Model):
         part: UserPromptPart,
     ) -> AsyncGenerator[BetaContentBlockParam]:
         if isinstance(part.content, str):
-            yield BetaTextBlockParam(text=part.content, type='text')
+            if part.content:  # Only yield non-empty text
+                yield BetaTextBlockParam(text=part.content, type='text')
         else:
             for item in part.content:
                 if isinstance(item, str):
-                    yield BetaTextBlockParam(text=item, type='text')
+                    if item:  # Only yield non-empty text
+                        yield BetaTextBlockParam(text=item, type='text')
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         yield BetaImageBlockParam(
@@ -372,11 +373,10 @@ class AnthropicModel(Model):
                     if item.media_type == 'application/pdf':
                         yield BetaBase64PDFBlockParam(source={'url': item.url, 'type': 'url'}, type='document')
                     elif item.media_type == 'text/plain':
-                        response = await cached_async_http_client().get(item.url)
-                        response.raise_for_status()
+                        downloaded_item = await download_item(item, data_format='text')
                         yield BetaBase64PDFBlockParam(
                             source=BetaPlainTextSourceParam(
-                                data=response.text, media_type=item.media_type, type='text'
+                                data=downloaded_item['data'], media_type=item.media_type, type='text'
                             ),
                             type='document',
                         )
