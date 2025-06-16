@@ -290,8 +290,8 @@ text_responses: dict[str, str | ToolCallPart] = {
     'I bet five is the winner': ToolCallPart(
         tool_name='roulette_wheel', args={'square': 5}, tool_call_id='pyd_ai_tool_call_id'
     ),
-    'My guess is 6': ToolCallPart(tool_name='roll_die', args={}, tool_call_id='pyd_ai_tool_call_id'),
-    'My guess is 4': ToolCallPart(tool_name='roll_die', args={}, tool_call_id='pyd_ai_tool_call_id'),
+    'My guess is 6': ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'),
+    'My guess is 4': ToolCallPart(tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'),
     'Send a message to John Doe asking for coffee next week': ToolCallPart(
         tool_name='get_user_by_name', args={'name': 'John'}
     ),
@@ -545,7 +545,7 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[ToolCallPart(tool_name='final_result', args={'response': win}, tool_call_id='pyd_ai_tool_call_id')],
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'roll_die':
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'roll_dice':
         return ModelResponse(
             parts=[ToolCallPart(tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )

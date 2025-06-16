@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import dataclasses
 import json
 from collections.abc import Awaitable, Sequence
@@ -337,7 +336,7 @@ class Tool(Generic[AgentDepsT]):
             validator=SchemaValidator(schema=core_schema.any_schema()),
             json_schema=json_schema,
             takes_ctx=False,
-            is_async=asyncio.iscoroutinefunction(function),
+            is_async=_utils.is_async_callable(function),
         )
 
         return cls(
