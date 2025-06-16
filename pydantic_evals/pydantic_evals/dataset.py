@@ -278,20 +278,19 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         name = name or get_unwrapped_function_name(task)
         total_cases = len(self.cases)
+        progress_bar = tqdm(total=total_cases, desc=f'Evaluating {name}') if progress else None
+        progress_lock = asyncio.Lock() if progress else None
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
-        if progress:  # pragma: no branch
-            progress_bar = tqdm(total=total_cases, desc=f'Evaluating {name}')
-            lock = asyncio.Lock()
 
         with _logfire.span('evaluate {name}', name=name) as eval_span:
 
             async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
                 async with limiter:
                     result = await _run_task_and_evaluators(task, case, report_case_name, self.evaluators)
-                    if progress:  # pragma: no branch
-                        async with lock:  # pyright: ignore[reportPossiblyUnboundVariable, reportGeneralTypeIssues]
-                            progress_bar.update(1)  # pyright: ignore[reportPossiblyUnboundVariable]
+                    if progress_bar and progress_lock:  # pragma: no branch
+                        async with progress_lock:
+                            progress_bar.update(1)
                     return result
 
             report = EvaluationReport(
@@ -307,8 +306,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             eval_span.set_attribute('cases', report.cases)
             # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
             eval_span.set_attribute('averages', report.averages())
-        if progress:  # pragma: no branch
-            progress_bar.close()  # pyright: ignore[reportPossiblyUnboundVariable]
+        if progress_bar:  # pragma: no branch
+            progress_bar.close()
         return report
 
     def evaluate_sync(
