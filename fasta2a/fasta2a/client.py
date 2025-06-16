@@ -43,6 +43,7 @@ class A2AClient:
         history_length: int | None = None,
         push_notification: PushNotificationConfig | None = None,
         metadata: dict[str, Any] | None = None,
+        method: str = 'tasks/send',
     ) -> SendTaskResponse:
         task = TaskSendParams(message=message, id=str(uuid.uuid4()))
         if history_length is not None:
@@ -52,7 +53,7 @@ class A2AClient:
         if metadata is not None:
             task['metadata'] = metadata
 
-        payload = SendTaskRequest(jsonrpc='2.0', id=None, method='tasks/send', params=task)
+        payload = SendTaskRequest(jsonrpc='2.0', id=None, method=method, params=task)
         content = a2a_request_ta.dump_json(payload, by_alias=True)
         response = await self.http_client.post('/', content=content, headers={'Content-Type': 'application/json'})
         self._raise_for_status(response)
