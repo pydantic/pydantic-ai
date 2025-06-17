@@ -269,7 +269,7 @@ class BedrockConverseModel(Model):
             for item in message['content']:
                 if reasoning_content := item.get('reasoningContent'):
                     reasoning_text = reasoning_content.get('reasoningText')
-                    if reasoning_text:
+                    if reasoning_text:  # pragma: no branch
                         thinking_part = ThinkingPart(content=reasoning_text['text'])
                         if reasoning_signature := reasoning_text.get('signature'):
                             thinking_part.signature = reasoning_signature

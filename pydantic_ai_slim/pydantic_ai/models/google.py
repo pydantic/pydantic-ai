@@ -440,11 +440,11 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
         elif isinstance(item, TextPart):
             if item.content:  # pragma: no branch
                 parts.append({'text': item.content})
-        elif isinstance(item, ThinkingPart):
+        elif isinstance(item, ThinkingPart):  # pragma: no cover
             # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
             # please open an issue. The below code is the code to send thinking to the provider.
             # parts.append({'text': item.content, 'thought': True})
-            pass  # pragma: no cover
+            pass
         else:
             assert_never(item)
     return ContentDict(role='model', parts=parts)

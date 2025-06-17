@@ -1009,7 +1009,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk.item, responses.ResponseOutputMessage):
                     pass
                 else:
-                    raise RuntimeError(f'Unexpected item type: {type(chunk.item)}')
+                    warnings.warn(  # pragma: no cover
+                        f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
+                        UserWarning,
+                    )
 
             elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
                 # NOTE: We only need this if the tool call deltas don't include the final info.

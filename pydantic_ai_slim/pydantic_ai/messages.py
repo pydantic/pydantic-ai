@@ -771,7 +771,7 @@ class ThinkingPartDelta:
                 return replace(part, signature_delta=self.signature_delta)
             if self.content_delta is not None:
                 return replace(part, content_delta=self.content_delta)
-        raise ValueError(
+        raise ValueError(  # pragma: no cover
             f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
         )
 
