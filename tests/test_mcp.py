@@ -971,7 +971,7 @@ async def test_mcp_server_raises_mcp_error(allow_model_requests: None, agent: Ag
     async with agent.run_mcp_servers():
         with patch.object(
             server._client,  # pyright: ignore[reportPrivateUsage]
-            'call_tool',
+            'send_request',
             new=AsyncMock(side_effect=mcp_error),
         ):
             with pytest.raises(ModelRetry, match='Test MCP error conversion'):
