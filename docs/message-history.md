@@ -386,9 +386,10 @@ long_conversation_history: list[ModelMessage] = []  # Your long conversation his
 # result = agent.run_sync('What did we discuss?', message_history=long_conversation_history)
 ```
 
-#### Using RunContext in History Processors
+#### `RunContext` parameter
 
-History processors can optionally accept a `RunContext` parameter to access additional information about the current run, such as dependencies, model information, and usage statistics:
+History processors can optionally accept a [`RunContext`][pydantic_ai.tools.RunContext] parameter to access
+additional information about the current run, such as dependencies, model information, and usage statistics:
 
 ```python {title="context_aware_processor.py"}
 from pydantic_ai import Agent

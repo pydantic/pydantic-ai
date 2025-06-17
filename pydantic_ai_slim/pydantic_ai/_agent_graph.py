@@ -49,22 +49,22 @@ EndStrategy = Literal['early', 'exhaustive']
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
-# Current signatures (for backward compatibility)
 _HistoryProcessorSync = Callable[[list[_messages.ModelMessage]], list[_messages.ModelMessage]]
 _HistoryProcessorAsync = Callable[[list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]]
-
-# New signatures with RunContext
-_HistoryProcessorSyncWithCtx = Callable[[RunContext[Any], list[_messages.ModelMessage]], list[_messages.ModelMessage]]
+_HistoryProcessorSyncWithCtx = Callable[[RunContext[DepsT], list[_messages.ModelMessage]], list[_messages.ModelMessage]]
 _HistoryProcessorAsyncWithCtx = Callable[
-    [RunContext[Any], list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]
+    [RunContext[DepsT], list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]
 ]
-
-# Union type supporting all variants
 HistoryProcessor = Union[
-    _HistoryProcessorSync, _HistoryProcessorAsync, _HistoryProcessorSyncWithCtx, _HistoryProcessorAsyncWithCtx
+    _HistoryProcessorSync,
+    _HistoryProcessorAsync,
+    _HistoryProcessorSyncWithCtx[DepsT],
+    _HistoryProcessorAsyncWithCtx[DepsT],
 ]
 """A function that processes a list of model messages and returns a list of model messages.
-Can optionally accept a RunContext as a second parameter."""
+
+Can optionally accept a `RunContext` as a parameter.
+"""
 
 
 @dataclasses.dataclass
@@ -105,7 +105,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     output_schema: _output.OutputSchema[OutputDataT] | None
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
 
-    history_processors: Sequence[HistoryProcessor]
+    history_processors: Sequence[HistoryProcessor[DepsT]]
 
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
     mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
@@ -893,8 +893,8 @@ def build_agent_graph(
 
 async def _process_message_history(
     messages: list[_messages.ModelMessage],
-    processors: Sequence[HistoryProcessor],
-    run_context: RunContext[Any] | None = None,
+    processors: Sequence[HistoryProcessor[DepsT]],
+    run_context: RunContext[DepsT],
 ) -> list[_messages.ModelMessage]:
     """Process message history through a sequence of processors."""
     for processor in processors:
@@ -902,18 +902,13 @@ async def _process_message_history(
 
         if is_async_callable(processor):
             if takes_ctx:
-                if run_context is None:
-                    raise ValueError('RunContext required for processor that takes context')  # pragma: no cover
-                async_processor_with_ctx = cast(_HistoryProcessorAsyncWithCtx, processor)
-                messages = await async_processor_with_ctx(run_context, messages)
+                messages = await processor(run_context, messages)
             else:
                 async_processor = cast(_HistoryProcessorAsync, processor)
                 messages = await async_processor(messages)
         else:
             if takes_ctx:
-                if run_context is None:
-                    raise ValueError('RunContext required for processor that takes context')  # pragma: no cover
-                sync_processor_with_ctx = cast(_HistoryProcessorSyncWithCtx, processor)
+                sync_processor_with_ctx = cast(_HistoryProcessorSyncWithCtx[DepsT], processor)
                 messages = await run_in_executor(sync_processor_with_ctx, run_context, messages)
             else:
                 sync_processor = cast(_HistoryProcessorSync, processor)
