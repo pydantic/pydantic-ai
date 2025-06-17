@@ -208,7 +208,7 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
 async def test_history_processor_with_context(function_model: FunctionModel, received_messages: list[ModelMessage]):
     """Test history processor that takes RunContext."""
 
-    def context_processor(ctx: RunContext[str], messages: list[ModelMessage]) -> list[ModelMessage]:  # pragma: no cover
+    def context_processor(ctx: RunContext[str], messages: list[ModelMessage]) -> list[ModelMessage]:
         # Access deps from context
         prefix = ctx.deps
         processed: list[ModelMessage] = []
