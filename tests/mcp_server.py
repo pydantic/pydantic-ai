@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP, Image
+from mcp.server.session import ServerSessionT
+from mcp.shared.context import LifespanContextT, RequestT
 from mcp.types import BlobResourceContents, EmbeddedResource, TextResourceContents
 from pydantic import AnyUrl
 
@@ -116,6 +118,22 @@ async def get_log_level(ctx: Context) -> str:  # type: ignore
     """
     await ctx.info('this is a log message')
     return log_level
+
+
+@mcp.tool()
+async def echo_deps(ctx: Context[ServerSessionT, LifespanContextT, RequestT]) -> dict[str, Any]:
+    """Echo the run context.
+
+    Args:
+        ctx: Context object containing request and session information.
+
+    Returns:
+        Dictionary with an echo message and the deps.
+    """
+    await ctx.info('This is an info message')
+
+    deps: Any = getattr(ctx.request_context.meta, 'deps')
+    return {'echo': 'This is an echo message', 'deps': deps}
 
 
 @mcp._mcp_server.set_logging_level()  # pyright: ignore[reportPrivateUsage]
