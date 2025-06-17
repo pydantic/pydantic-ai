@@ -84,14 +84,14 @@ async def test_process_tool_call() -> None:
 
     async def process_tool_call(
         ctx: RunContext[int],
-        tool_call: CallToolFunc,
+        call_tool: CallToolFunc,
         tool_name: str,
         args: dict[str, Any],
     ) -> ToolResult:
         """A process_tool_call that just sets a flag and sends the context."""
         nonlocal called
         called = True
-        return await tool_call(tool_name, args, {'run_context': ctx.deps})
+        return await call_tool(tool_name, args, {'deps': ctx.deps})
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
     async with server:

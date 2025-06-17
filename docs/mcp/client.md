@@ -185,12 +185,12 @@ from pydantic_ai.tools import RunContext
 
 async def process_tool_call(
     ctx: RunContext[int],
-    tool_call: CallToolFunc,
+    call_tool: CallToolFunc,
     tool_name: str,
     args: dict[str, Any],
 ) -> ToolResult:
-    """A noop process_tool_call that just sets a flag."""
-    return await tool_call(tool_name, args, metadata={'run_context': ctx.deps})
+    """A tool call processor that passes along the deps."""
+    return await call_tool(tool_name, args, metadata={'deps': ctx.deps})
 
 
 server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)

@@ -132,7 +132,7 @@ async def context_echo(ctx: Context[ServerSessionT, LifespanContextT, RequestT])
     """
     await ctx.info('This is an info message')
 
-    deps: Any = getattr(ctx.request_context.meta, 'run_context')
+    deps: Any = getattr(ctx.request_context.meta, 'deps')
     return {'echo': 'This is an echo message', 'deps': deps}
 
 
