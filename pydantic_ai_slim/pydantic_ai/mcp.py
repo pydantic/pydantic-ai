@@ -34,7 +34,7 @@ from mcp.types import (
 )
 from typing_extensions import Self, assert_never, deprecated
 
-from pydantic_ai.exceptions import McpServerNotInitializedError, ModelRetry
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import RunContext, ToolDefinition
 
@@ -51,7 +51,6 @@ except ImportError as _import_error:
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
 
 
-@dataclass(kw_only=True)
 class MCPServer(ABC):
     """Base class for attaching agents to MCP servers.
 
@@ -70,10 +69,10 @@ class MCPServer(ABC):
     process_tool_call: ProcessToolCallback | None = None
     """Hook to customize tool calling and optionally pass extra metadata."""
 
-    _client: ClientSession | None = None
-    _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception] | None = None
-    _write_stream: MemoryObjectSendStream[SessionMessage] | None = None
-    _exit_stack: AsyncExitStack | None = None
+    _client: ClientSession
+    _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
+    _write_stream: MemoryObjectSendStream[SessionMessage]
+    _exit_stack: AsyncExitStack
 
     @abstractmethod
     @asynccontextmanager
@@ -111,13 +110,7 @@ class MCPServer(ABC):
         Note:
         - We don't cache tools as they might change.
         - We also don't subscribe to the server to avoid complexity.
-
-        Raises:
-            McpServerNotInitializedError: If the MCP server is not initialized.
         """
-        if self._client is None:
-            raise McpServerNotInitializedError
-
         tools = await self._client.list_tools()
         return [
             ToolDefinition(
@@ -146,11 +139,7 @@ class MCPServer(ABC):
 
         Raises:
             ModelRetry: If the tool call fails.
-            McpServerNotInitializedError: If the MCP server is not initialized.
         """
-        if self._client is None:
-            raise McpServerNotInitializedError
-
         try:
             # meta param is not provided by session yet, so build and can send_request directly.
             result = await self._client.send_request(
@@ -200,8 +189,7 @@ class MCPServer(ABC):
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None:
-        if self._exit_stack is not None:
-            await self._exit_stack.aclose()
+        await self._exit_stack.aclose()
         self.is_running = False
 
     def _map_tool_result_part(self, part: Content) -> str | BinaryContent | dict[str, Any] | list[Any]:
@@ -236,7 +224,7 @@ class MCPServer(ABC):
             assert_never(part)
 
 
-@dataclass(kw_only=True)
+@dataclass
 class MCPServerStdio(MCPServer):
     """Runs an MCP server in a subprocess and communicates with it over stdin/stdout.
 
@@ -253,7 +241,7 @@ class MCPServerStdio(MCPServer):
     from pydantic_ai.mcp import MCPServerStdio
 
     server = MCPServerStdio(  # (1)!
-        command='deno',
+        'deno',
         args=[
             'run',
             '-N',
@@ -306,6 +294,9 @@ class MCPServerStdio(MCPServer):
     e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
 
+    process_tool_call: ProcessToolCallback | None = None
+    """Hook to customize tool calling and optionally pass extra metadata."""
+
     timeout: float = 5
     """ The timeout in seconds to wait for the client to initialize."""
 
@@ -332,7 +323,7 @@ class MCPServerStdio(MCPServer):
         return self.timeout
 
 
-@dataclass(kw_only=True)
+@dataclass
 class _MCPServerHTTP(MCPServer):
     url: str
     """The URL of the endpoint on the MCP server."""
@@ -365,7 +356,7 @@ class _MCPServerHTTP(MCPServer):
         from pydantic_ai.mcp import MCPServerSSE
 
         http_client = httpx.AsyncClient(headers={'Authorization': 'Bearer ...'})
-        server = MCPServerSSE(url='http://localhost:3001/sse', http_client=http_client)
+        server = MCPServerSSE('http://localhost:3001/sse', http_client=http_client)
         ```
     """
 
@@ -399,6 +390,9 @@ class _MCPServerHTTP(MCPServer):
 
     For example, if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
+
+    process_tool_call: ProcessToolCallback | None = None
+    """Hook to customize tool calling and optionally pass extra metadata."""
 
     @property
     @abstractmethod
@@ -467,7 +461,7 @@ class _MCPServerHTTP(MCPServer):
         return self.timeout
 
 
-@dataclass(kw_only=True)
+@dataclass
 class MCPServerSSE(_MCPServerHTTP):
     """An MCP server that connects over streamable HTTP connections.
 
@@ -483,7 +477,7 @@ class MCPServerSSE(_MCPServerHTTP):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerSSE
 
-    server = MCPServerSSE(url='http://localhost:3001/sse')  # (1)!
+    server = MCPServerSSE('http://localhost:3001/sse')  # (1)!
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
@@ -501,7 +495,7 @@ class MCPServerSSE(_MCPServerHTTP):
 
 
 @deprecated('The `MCPServerHTTP` class is deprecated, use `MCPServerSSE` instead.')
-@dataclass(kw_only=True)
+@dataclass
 class MCPServerHTTP(MCPServerSSE):
     """An MCP server that connects over HTTP using the old SSE transport.
 
@@ -517,7 +511,7 @@ class MCPServerHTTP(MCPServerSSE):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerHTTP
 
-    server = MCPServerHTTP(url='http://localhost:3001/sse')  # (1)!
+    server = MCPServerHTTP('http://localhost:3001/sse')  # (1)!
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
@@ -530,7 +524,7 @@ class MCPServerHTTP(MCPServerSSE):
     """
 
 
-@dataclass(kw_only=True)
+@dataclass
 class MCPServerStreamableHTTP(_MCPServerHTTP):
     """An MCP server that connects over HTTP using the Streamable HTTP transport.
 
@@ -546,7 +540,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-    server = MCPServerStreamableHTTP(url='http://localhost:8000/mcp')  # (1)!
+    server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():

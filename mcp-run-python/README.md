@@ -42,18 +42,16 @@ logfire.configure()
 logfire.instrument_mcp()
 logfire.instrument_pydantic_ai()
 
-server = MCPServerStdio(
-  command='deno',
-  args=[
-      'run',
-      '-N',
-      '-R=node_modules',
-      '-W=node_modules',
-      '--node-modules-dir=auto',
-      'jsr:@pydantic/mcp-run-python',
-      'stdio',
-  ],
-)
+server = MCPServerStdio('deno',
+    args=[
+        'run',
+        '-N',
+        '-R=node_modules',
+        '-W=node_modules',
+        '--node-modules-dir=auto',
+        'jsr:@pydantic/mcp-run-python',
+        'stdio',
+    ])
 agent = Agent('claude-3-5-haiku-latest', mcp_servers=[server])
 
 

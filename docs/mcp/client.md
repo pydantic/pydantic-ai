@@ -116,7 +116,7 @@ Then we can create the client:
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-server = MCPServerStreamableHTTP(url='http://localhost:8000/mcp')
+server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
 agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
 async def main():
@@ -143,7 +143,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio(  # (1)!
-    command='deno',
+    'deno',
     args=[
         'run',
         '-N',
@@ -189,11 +189,11 @@ async def process_tool_call(
     tool_name: str,
     args: dict[str, Any],
 ) -> ToolResult:
-    """A process_tool_call that sets metadata for the tool from deps."""
+    """A noop process_tool_call that just sets a flag."""
     return await tool_call(tool_name, args, metadata={'run_context': ctx.deps})
 
 
-server = MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
+server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
 agent = Agent(deps_type=int, model=TestModel(call_tools=['context_echo']), mcp_servers=[server])
 
 
@@ -246,7 +246,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 python_server = MCPServerStdio(
-    command='deno',
+    'deno',
     args=[
         'run',
         '-N',
@@ -257,7 +257,7 @@ python_server = MCPServerStdio(
 )
 
 js_server = MCPServerStdio(
-    command='node',
+    'node',
     args=[
         'run',
         'mcp-js-server.js',
