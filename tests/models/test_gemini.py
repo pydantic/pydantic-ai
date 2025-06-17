@@ -1398,3 +1398,84 @@ async def test_response_with_thought_part(get_gemini_client: GetGeminiClient):
 
     assert result.output == 'Hello from thought test'
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
+
+
+@pytest.mark.vcr()
+async def test_gemini_tool_config_any_with_tool_without_args(allow_model_requests: None, gemini_api_key: str):
+    class Foo(BaseModel):
+        bar: str
+
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m, output_type=Foo)
+
+    @agent.tool_plain
+    async def bar() -> str:
+        return 'hello'
+
+    result = await agent.run('run bar for me please')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='run bar for me please',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='bar', args={}, tool_call_id=IsStr())],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=21,
+                    response_tokens=1,
+                    total_tokens=22,
+                    details={'text_candidates_tokens': 1, 'text_prompt_tokens': 21},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='bar',
+                        content='hello',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'bar': 'hello'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=27,
+                    response_tokens=5,
+                    total_tokens=32,
+                    details={'text_candidates_tokens': 5, 'text_prompt_tokens': 27},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )

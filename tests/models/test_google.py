@@ -726,3 +726,83 @@ async def test_google_gs_url_force_download_raises_user_error(allow_model_reques
     url = ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png', force_download=True)
     with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported.'):
         _ = await agent.run(['What is the main content of this URL?', url])
+
+
+async def test_google_tool_config_any_with_tool_without_args(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    class Foo(TypedDict):
+        bar: str
+
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(m, output_type=Foo)
+
+    @agent.tool_plain
+    async def bar() -> str:
+        return 'hello'
+
+    result = await agent.run('run bar for me please')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='run bar for me please',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='bar', args={}, tool_call_id=IsStr())],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=21,
+                    response_tokens=1,
+                    total_tokens=22,
+                    details={'text_candidates_tokens': 1, 'text_prompt_tokens': 21},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='bar',
+                        content='hello',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'bar': 'hello'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=27,
+                    response_tokens=5,
+                    total_tokens=32,
+                    details={'text_candidates_tokens': 5, 'text_prompt_tokens': 27},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
