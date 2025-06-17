@@ -1,0 +1,1500 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '148'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: How do I cross the street?
+        role: user
+      model: o3-mini
+      reasoning:
+        effort: low
+        summary: detailed
+      stream: true
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_6851100bb71481a28d55d85e4095432d0fa6d0c888ffaed5","object":"response","created_at":1750142987,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"o3-mini-2025-01-31","output":[],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":"low","summary":"detailed"},"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_6851100bb71481a28d55d85e4095432d0fa6d0c888ffaed5","object":"response","created_at":1750142987,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"o3-mini-2025-01-31","output":[],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":"low","summary":"detailed"},"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","type":"reasoning","summary":[]}}
+
+        event: response.reasoning_summary_part.added
+        data: {"type":"response.reasoning_summary_part.added","sequence_number":3,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":4,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":"**Providing"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":5,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" street"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":6,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" crossing"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":7,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" instructions"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":8,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":"**\n\nThe"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":9,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" user"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":10,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" is"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":11,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" asking"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":12,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" about"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":13,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" how"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":14,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" to"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":15,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" cross"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":16,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" the"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":17,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" street"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":18,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" safely"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":19,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":","}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":20,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" which"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":21,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" seems"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":22,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" like"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":23,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" a"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":24,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" common"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":25,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" and"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":26,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" important"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":27,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" question"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":28,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":"."}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":29,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" I"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":30,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" want"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":31,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" to"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":32,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" make"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":33,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" sure"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":34,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" my"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":35,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" response"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":36,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" is"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":37,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" clear"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":38,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" and"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":39,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" offers"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":40,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" useful"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":41,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" guidelines"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":42,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":"."}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":43,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" I"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":44,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":"’ll"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":45,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" mention"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":46,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" checking"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":47,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" for"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":48,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" pedestrian"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":49,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" cross"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":50,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":"walk"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":51,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":"s"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":52,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":","}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":53,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" looking"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":54,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" both"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":55,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" ways"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":56,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":","}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":57,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" and"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":58,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" obey"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":59,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":"ing"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":60,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" traffic"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":61,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" signals"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":62,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":"."}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":63,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" It"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":64,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":"’s"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":65,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" essential"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":66,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" to"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":67,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" cross"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":68,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" at"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":69,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" designated"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":70,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" areas"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":71,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" and"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":72,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" stay"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":73,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" aware"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":74,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" of"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":75,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" vehicles"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":76,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":"."}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":77,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" I'll"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":78,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" summarize"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":79,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" these"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":80,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" instructions"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":81,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" effectively"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":82,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" to"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":83,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" ensure"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":84,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" the"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":85,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" user"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":86,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" has"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":87,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" a"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":88,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" thorough"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":89,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" understanding"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":90,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" without"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":91,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":" ambiguity"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":92,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"delta":"."}
+
+        event: response.reasoning_summary_text.done
+        data: {"type":"response.reasoning_summary_text.done","sequence_number":93,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"text":"**Providing street crossing instructions**\n\nThe user is asking about how to cross the street safely, which seems like a common and important question. I want to make sure my response is clear and offers useful guidelines. I’ll mention checking for pedestrian crosswalks, looking both ways, and obeying traffic signals. It’s essential to cross at designated areas and stay aware of vehicles. I'll summarize these instructions effectively to ensure the user has a thorough understanding without ambiguity."}
+
+        event: response.reasoning_summary_part.done
+        data: {"type":"response.reasoning_summary_part.done","sequence_number":94,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":"**Providing street crossing instructions**\n\nThe user is asking about how to cross the street safely, which seems like a common and important question. I want to make sure my response is clear and offers useful guidelines. I’ll mention checking for pedestrian crosswalks, looking both ways, and obeying traffic signals. It’s essential to cross at designated areas and stay aware of vehicles. I'll summarize these instructions effectively to ensure the user has a thorough understanding without ambiguity."}}
+
+        event: response.reasoning_summary_part.added
+        data: {"type":"response.reasoning_summary_part.added","sequence_number":95,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"part":{"type":"summary_text","text":""}}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":96,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":"**Providing"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":97,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" crossing"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":98,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" instructions"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":99,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":"**\n\nI"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":100,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" need"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":101,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" to"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":102,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" ensure"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":103,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" I"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":104,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" include"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":105,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" appropriate"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":106,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" disclaim"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":107,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":"ers"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":108,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":","}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":109,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" like"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":110,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" stating"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":111,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" that"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":112,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" this"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":113,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" information"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":114,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" is"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":115,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" for"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":116,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" general"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":117,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" guidance"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":118,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" and"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":119,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" not"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":120,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" a"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":121,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" substitute"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":122,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" for"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":123,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" personal"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":124,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" judgment"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":125,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":"."}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":126,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" I'll"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":127,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" summarize"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":128,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" with"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":129,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" essential"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":130,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" safety"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":131,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" instructions"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":132,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" to"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":133,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" cross"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":134,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" the"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":135,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" street"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":136,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":"."}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":137,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" First"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":138,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":","}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":139,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" find"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":140,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" a"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":141,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" safe"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":142,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" crossing"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":143,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" point"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":144,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" and"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":145,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" wait"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":146,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" for"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":147,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" traffic"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":148,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" to"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":149,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" stop"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":150,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" or"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":151,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" the"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":152,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" light"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":153,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" to"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":154,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" turn"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":155,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" red"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":156,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":"."}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":157,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" Use"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":158,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" cross"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":159,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":"walk"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":160,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":"s"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":161,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" when"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":162,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" available"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":163,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" and"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":164,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" look"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":165,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" both"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":166,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" ways"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":167,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" for"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":168,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" turning"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":169,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" vehicles"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":170,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":"."}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":171,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" It"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":172,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":"’s"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":173,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" important"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":174,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" to"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":175,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" ensure"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":176,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" cars"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":177,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" yield"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":178,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" before"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":179,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" stepping"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":180,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" into"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":181,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" the"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":182,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" street"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":183,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":"."}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":184,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" If"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":185,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" there"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":186,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" are"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":187,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" special"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":188,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" circumstances"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":189,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":","}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":190,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" I"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":191,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":"’ll"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":192,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" remind"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":193,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" them"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":194,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" to"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":195,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" seek"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":196,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" further"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":197,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":" guidance"}
+
+        event: response.reasoning_summary_text.delta
+        data: {"type":"response.reasoning_summary_text.delta","sequence_number":198,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"delta":"."}
+
+        event: response.reasoning_summary_text.done
+        data: {"type":"response.reasoning_summary_text.done","sequence_number":199,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"text":"**Providing crossing instructions**\n\nI need to ensure I include appropriate disclaimers, like stating that this information is for general guidance and not a substitute for personal judgment. I'll summarize with essential safety instructions to cross the street. First, find a safe crossing point and wait for traffic to stop or the light to turn red. Use crosswalks when available and look both ways for turning vehicles. It’s important to ensure cars yield before stepping into the street. If there are special circumstances, I’ll remind them to seek further guidance."}
+
+        event: response.reasoning_summary_part.done
+        data: {"type":"response.reasoning_summary_part.done","sequence_number":200,"item_id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","output_index":0,"summary_index":1,"part":{"type":"summary_text","text":"**Providing crossing instructions**\n\nI need to ensure I include appropriate disclaimers, like stating that this information is for general guidance and not a substitute for personal judgment. I'll summarize with essential safety instructions to cross the street. First, find a safe crossing point and wait for traffic to stop or the light to turn red. Use crosswalks when available and look both ways for turning vehicles. It’s important to ensure cars yield before stepping into the street. If there are special circumstances, I’ll remind them to seek further guidance."}}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":201,"output_index":0,"item":{"id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","type":"reasoning","summary":[{"type":"summary_text","text":"**Providing street crossing instructions**\n\nThe user is asking about how to cross the street safely, which seems like a common and important question. I want to make sure my response is clear and offers useful guidelines. I’ll mention checking for pedestrian crosswalks, looking both ways, and obeying traffic signals. It’s essential to cross at designated areas and stay aware of vehicles. I'll summarize these instructions effectively to ensure the user has a thorough understanding without ambiguity."},{"type":"summary_text","text":"**Providing crossing instructions**\n\nI need to ensure I include appropriate disclaimers, like stating that this information is for general guidance and not a substitute for personal judgment. I'll summarize with essential safety instructions to cross the street. First, find a safe crossing point and wait for traffic to stop or the light to turn red. Use crosswalks when available and look both ways for turning vehicles. It’s important to ensure cars yield before stepping into the street. If there are special circumstances, I’ll remind them to seek further guidance."}]}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":202,"output_index":1,"item":{"id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","type":"message","status":"in_progress","content":[],"role":"assistant"}}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","sequence_number":203,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"part":{"type":"output_text","annotations":[],"text":""}}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":204,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"Here"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":205,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" are"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":206,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" some"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":207,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" general"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":208,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" guidelines"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":209,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" to"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":210,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" help"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":211,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" you"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":212,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" cross"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":213,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" the"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":214,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" street"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":215,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" safely"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":216,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":":\n\n"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":217,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"1"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":218,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":219,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" Use"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":220,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" a"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":221,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" designated"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":222,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" cross"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":223,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"walk"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":224,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" or"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":225,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" intersection"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":226,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" whenever"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":227,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" possible"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":228,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":229,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" These"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":230,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" areas"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":231,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" are"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":232,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" designed"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":233,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" for"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":234,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" pedestrian"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":235,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" safety"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":236,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":".\n\n"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":237,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"2"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":238,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":239,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" Ob"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":240,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"ey"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":241,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" all"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":242,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" traffic"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":243,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" signals"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":244,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" and"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":245,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" pedestrian"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":246,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" crossing"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":247,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" signs"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":248,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":249,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" Wait"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":250,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" for"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":251,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" the"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":252,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" “"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":253,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"Walk"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":254,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"”"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":255,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" signal"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":256,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" ("}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":257,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"or"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":258,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" green"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":259,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" light"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":260,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":")"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":261,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" before"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":262,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" stepping"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":263,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" off"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":264,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" the"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":265,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" curb"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":266,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":".\n\n"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":267,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"3"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":268,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":269,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" Before"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":270,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" crossing"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":271,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":","}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":272,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" stop"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":273,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" at"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":274,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" the"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":275,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" curb"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":276,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" and"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":277,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" look"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":278,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" both"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":279,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" ways"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":280,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"—"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":281,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"left"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":282,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":","}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":283,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" right"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":284,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":","}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":285,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" and"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":286,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" left"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":287,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" again"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":288,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"—to"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":289,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" make"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":290,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" sure"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":291,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" no"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":292,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" vehicles"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":293,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" are"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":294,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" coming"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":295,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":296,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" Even"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":297,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" if"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":298,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" you"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":299,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" have"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":300,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" a"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":301,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" signal"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":302,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":","}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":303,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" always"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":304,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" remain"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":305,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" vigilant"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":306,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":".\n\n"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":307,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"4"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":308,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":309,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" Make"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":310,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" eye"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":311,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" contact"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":312,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" with"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":313,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" drivers"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":314,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" where"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":315,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" possible"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":316,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":317,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" This"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":318,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" can"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":319,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" help"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":320,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" ensure"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":321,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" that"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":322,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" drivers"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":323,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" have"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":324,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" seen"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":325,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" you"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":326,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" and"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":327,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" are"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":328,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" yielding"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":329,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":".\n\n"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":330,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"5"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":331,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":332,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" Avoid"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":333,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" distractions"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":334,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":335,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" Put"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":336,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" away"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":337,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" electronic"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":338,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" devices"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":339,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" or"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":340,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" anything"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":341,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" that"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":342,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" might"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":343,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" distract"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":344,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" you"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":345,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" from"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":346,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" observing"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":347,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" your"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":348,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" surroundings"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":349,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":".\n\n"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":350,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"6"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":351,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":352,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" Walk"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":353,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":","}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":354,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" don"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":355,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"’t"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":356,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" run"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":357,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":358,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" Walking"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":359,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" makes"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":360,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" it"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":361,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" easier"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":362,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" to"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":363,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" maintain"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":364,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" control"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":365,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" and"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":366,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" react"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":367,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" to"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":368,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" unexpected"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":369,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" situations"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":370,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":".\n\n"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":371,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"7"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":372,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":373,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" If"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":374,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" you"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":375,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" are"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":376,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" crossing"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":377,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" in"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":378,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" low"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":379,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"-"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":380,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"visibility"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":381,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" conditions"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":382,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" ("}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":383,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"d"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":384,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"usk"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":385,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":","}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":386,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" nighttime"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":387,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":","}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":388,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" or"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":389,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" bad"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":390,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" weather"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":391,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"),"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":392,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" consider"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":393,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" wearing"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":394,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" bright"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":395,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" or"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":396,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" reflective"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":397,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" clothing"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":398,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" so"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":399,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" drivers"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":400,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" can"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":401,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" see"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":402,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" you"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":403,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" more"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":404,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" easily"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":405,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":".\n\n"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":406,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"8"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":407,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":408,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" If"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":409,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" there"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":410,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" is"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":411,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" no"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":412,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" marked"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":413,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" cross"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":414,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"walk"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":415,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" and"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":416,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" you"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":417,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" must"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":418,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" cross"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":419,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" on"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":420,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" a"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":421,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" road"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":422,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":","}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":423,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" choose"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":424,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" a"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":425,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" spot"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":426,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" where"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":427,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" you"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":428,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" have"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":429,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" clear"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":430,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" visibility"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":431,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":","}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":432,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" and"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":433,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" where"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":434,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" drivers"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":435,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" are"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":436,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" most"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":437,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" likely"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":438,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" to"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":439,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" expect"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":440,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" a"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":441,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" pedestrian"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":442,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":".\n\n"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":443,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"These"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":444,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" steps"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":445,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" offer"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":446,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" a"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":447,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" general"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":448,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" approach"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":449,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" to"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":450,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" crossing"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":451,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" the"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":452,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" street"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":453,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" safely"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":454,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":455,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" However"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":456,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":","}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":457,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" it"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":458,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"’s"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":459,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" always"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":460,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" important"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":461,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" to"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":462,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" adjust"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":463,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" your"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":464,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" actions"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":465,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" based"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":466,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" on"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":467,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" the"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":468,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" specific"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":469,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" environment"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":470,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" and"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":471,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" traffic"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":472,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" conditions"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":473,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" you"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":474,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" encounter"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":475,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"."}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":476,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" Stay"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":477,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":" safe"}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","sequence_number":478,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"delta":"!"}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","sequence_number":479,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"text":"Here are some general guidelines to help you cross the street safely:\n\n1. Use a designated crosswalk or intersection whenever possible. These areas are designed for pedestrian safety.\n\n2. Obey all traffic signals and pedestrian crossing signs. Wait for the “Walk” signal (or green light) before stepping off the curb.\n\n3. Before crossing, stop at the curb and look both ways—left, right, and left again—to make sure no vehicles are coming. Even if you have a signal, always remain vigilant.\n\n4. Make eye contact with drivers where possible. This can help ensure that drivers have seen you and are yielding.\n\n5. Avoid distractions. Put away electronic devices or anything that might distract you from observing your surroundings.\n\n6. Walk, don’t run. Walking makes it easier to maintain control and react to unexpected situations.\n\n7. If you are crossing in low-visibility conditions (dusk, nighttime, or bad weather), consider wearing bright or reflective clothing so drivers can see you more easily.\n\n8. If there is no marked crosswalk and you must cross on a road, choose a spot where you have clear visibility, and where drivers are most likely to expect a pedestrian.\n\nThese steps offer a general approach to crossing the street safely. However, it’s always important to adjust your actions based on the specific environment and traffic conditions you encounter. Stay safe!"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","sequence_number":480,"item_id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","output_index":1,"content_index":0,"part":{"type":"output_text","annotations":[],"text":"Here are some general guidelines to help you cross the street safely:\n\n1. Use a designated crosswalk or intersection whenever possible. These areas are designed for pedestrian safety.\n\n2. Obey all traffic signals and pedestrian crossing signs. Wait for the “Walk” signal (or green light) before stepping off the curb.\n\n3. Before crossing, stop at the curb and look both ways—left, right, and left again—to make sure no vehicles are coming. Even if you have a signal, always remain vigilant.\n\n4. Make eye contact with drivers where possible. This can help ensure that drivers have seen you and are yielding.\n\n5. Avoid distractions. Put away electronic devices or anything that might distract you from observing your surroundings.\n\n6. Walk, don’t run. Walking makes it easier to maintain control and react to unexpected situations.\n\n7. If you are crossing in low-visibility conditions (dusk, nighttime, or bad weather), consider wearing bright or reflective clothing so drivers can see you more easily.\n\n8. If there is no marked crosswalk and you must cross on a road, choose a spot where you have clear visibility, and where drivers are most likely to expect a pedestrian.\n\nThese steps offer a general approach to crossing the street safely. However, it’s always important to adjust your actions based on the specific environment and traffic conditions you encounter. Stay safe!"}}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":481,"output_index":1,"item":{"id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"text":"Here are some general guidelines to help you cross the street safely:\n\n1. Use a designated crosswalk or intersection whenever possible. These areas are designed for pedestrian safety.\n\n2. Obey all traffic signals and pedestrian crossing signs. Wait for the “Walk” signal (or green light) before stepping off the curb.\n\n3. Before crossing, stop at the curb and look both ways—left, right, and left again—to make sure no vehicles are coming. Even if you have a signal, always remain vigilant.\n\n4. Make eye contact with drivers where possible. This can help ensure that drivers have seen you and are yielding.\n\n5. Avoid distractions. Put away electronic devices or anything that might distract you from observing your surroundings.\n\n6. Walk, don’t run. Walking makes it easier to maintain control and react to unexpected situations.\n\n7. If you are crossing in low-visibility conditions (dusk, nighttime, or bad weather), consider wearing bright or reflective clothing so drivers can see you more easily.\n\n8. If there is no marked crosswalk and you must cross on a road, choose a spot where you have clear visibility, and where drivers are most likely to expect a pedestrian.\n\nThese steps offer a general approach to crossing the street safely. However, it’s always important to adjust your actions based on the specific environment and traffic conditions you encounter. Stay safe!"}],"role":"assistant"}}
+
+        event: response.completed
+        data: {"type":"response.completed","sequence_number":482,"response":{"id":"resp_6851100bb71481a28d55d85e4095432d0fa6d0c888ffaed5","object":"response","created_at":1750142987,"status":"completed","background":false,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"o3-mini-2025-01-31","output":[{"id":"rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5","type":"reasoning","summary":[{"type":"summary_text","text":"**Providing street crossing instructions**\n\nThe user is asking about how to cross the street safely, which seems like a common and important question. I want to make sure my response is clear and offers useful guidelines. I’ll mention checking for pedestrian crosswalks, looking both ways, and obeying traffic signals. It’s essential to cross at designated areas and stay aware of vehicles. I'll summarize these instructions effectively to ensure the user has a thorough understanding without ambiguity."},{"type":"summary_text","text":"**Providing crossing instructions**\n\nI need to ensure I include appropriate disclaimers, like stating that this information is for general guidance and not a substitute for personal judgment. I'll summarize with essential safety instructions to cross the street. First, find a safe crossing point and wait for traffic to stop or the light to turn red. Use crosswalks when available and look both ways for turning vehicles. It’s important to ensure cars yield before stepping into the street. If there are special circumstances, I’ll remind them to seek further guidance."}]},{"id":"msg_6851101d32e881a28dfff6c080f9acb30fa6d0c888ffaed5","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"text":"Here are some general guidelines to help you cross the street safely:\n\n1. Use a designated crosswalk or intersection whenever possible. These areas are designed for pedestrian safety.\n\n2. Obey all traffic signals and pedestrian crossing signs. Wait for the “Walk” signal (or green light) before stepping off the curb.\n\n3. Before crossing, stop at the curb and look both ways—left, right, and left again—to make sure no vehicles are coming. Even if you have a signal, always remain vigilant.\n\n4. Make eye contact with drivers where possible. This can help ensure that drivers have seen you and are yielding.\n\n5. Avoid distractions. Put away electronic devices or anything that might distract you from observing your surroundings.\n\n6. Walk, don’t run. Walking makes it easier to maintain control and react to unexpected situations.\n\n7. If you are crossing in low-visibility conditions (dusk, nighttime, or bad weather), consider wearing bright or reflective clothing so drivers can see you more easily.\n\n8. If there is no marked crosswalk and you must cross on a road, choose a spot where you have clear visibility, and where drivers are most likely to expect a pedestrian.\n\nThese steps offer a general approach to crossing the street safely. However, it’s always important to adjust your actions based on the specific environment and traffic conditions you encounter. Stay safe!"}],"role":"assistant"}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":"low","summary":"detailed"},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":13,"input_tokens_details":{"cached_tokens":0},"output_tokens":532,"output_tokens_details":{"reasoning_tokens":256},"total_tokens":545},"user":null,"metadata":{}}}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '44'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

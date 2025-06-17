@@ -511,7 +511,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                     current_block
                     and event.delta.type == 'input_json_delta'
                     and isinstance(current_block, BetaToolUseBlock)
-                ):
+                ):  # pragma: no branch
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=current_block.id,
                         tool_name='',

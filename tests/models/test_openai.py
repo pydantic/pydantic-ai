@@ -10,6 +10,7 @@ from typing import Annotated, Any, Callable, Literal, Union, cast
 
 import httpx
 import pytest
+from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Discriminator, Field, Tag
 from typing_extensions import TypedDict
@@ -19,13 +20,17 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     DocumentUrl,
+    FinalResultEvent,
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -1745,6 +1750,33 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 vendor_id='chatcmpl-BP7ocN6qxho4C1UzUJWnU5tPJno55',
             ),
         ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_openai_model_thinking_part_iter(allow_model_requests: None, openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    responses_model = OpenAIResponsesModel('o3-mini', provider=provider)
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='low', openai_reasoning_summary='detailed')
+    agent = Agent(responses_model, model_settings=settings)
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert event_parts == snapshot(
+        IsListOrTuple(
+            PartStartEvent(
+                index=0, part=ThinkingPart(content='', signature='rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5')
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            length=(3, ...),
+        )
     )
 
 

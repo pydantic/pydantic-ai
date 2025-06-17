@@ -556,7 +556,7 @@ class ThinkingPart:
 
     def has_content(self) -> bool:
         """Return `True` if the thinking content is non-empty."""
-        return bool(self.content)
+        return bool(self.content)  # pragma: no cover
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

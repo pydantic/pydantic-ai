@@ -404,7 +404,10 @@ class GeminiStreamedResponse(StreamedResponse):
             assert candidate.content.parts is not None
             for part in candidate.content.parts:
                 if part.text is not None:
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
+                    if part.thought:
+                        yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
+                    else:
+                        yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=uuid4(),
@@ -441,7 +444,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
             # please open an issue. The below code is the code to send thinking to the provider.
             # parts.append({'text': item.content, 'thought': True})
-            pass
+            pass  # pragma: no cover
         else:
             assert_never(item)
     return ContentDict(role='model', parts=parts)
