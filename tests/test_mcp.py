@@ -95,9 +95,9 @@ async def test_process_tool_call() -> None:
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
     async with server:
-        agent = Agent(deps_type=int, model=TestModel(call_tools=['context_echo']), mcp_servers=[server])
-        result = await agent.run('Echo the run context with deps set to 42', deps=42)
-        assert result.output == '{"context_echo":{"echo":"This is an echo message","deps":42}}'
+        agent = Agent(deps_type=int, model=TestModel(call_tools=['echo_deps']), mcp_servers=[server])
+        result = await agent.run('Echo with deps set to 42', deps=42)
+        assert result.output == snapshot('{"echo_deps":{"echo":"This is an echo message","deps":42}}')
         assert called, 'process_tool_call should have been called'
 
 

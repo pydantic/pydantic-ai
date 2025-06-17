@@ -194,14 +194,18 @@ async def process_tool_call(
 
 
 server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
-agent = Agent(deps_type=int, model=TestModel(call_tools=['context_echo']), mcp_servers=[server])
+agent = Agent(
+    model=TestModel(call_tools=['echo_deps']),
+    deps_type=int,
+    mcp_servers=[server]
+)
 
 
 async def main():
     async with agent.run_mcp_servers():
-        result = await agent.run('Echo the run context with deps set to 42', deps=42)
+        result = await agent.run('Echo with deps set to 42', deps=42)
     print(result.output)
-    #> {"context_echo":{"echo":"This is an echo message","deps":42}}
+    #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
 ```
 
 ## Using Tool Prefixes to Avoid Naming Conflicts

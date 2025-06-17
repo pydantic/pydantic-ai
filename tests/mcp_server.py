@@ -121,14 +121,14 @@ async def get_log_level(ctx: Context) -> str:  # type: ignore
 
 
 @mcp.tool()
-async def context_echo(ctx: Context[ServerSessionT, LifespanContextT, RequestT]) -> dict[str, Any]:
+async def echo_deps(ctx: Context[ServerSessionT, LifespanContextT, RequestT]) -> dict[str, Any]:
     """Echo the run context.
 
     Args:
         ctx: Context object containing request and session information.
 
     Returns:
-        Dictionary with an echo message and the run context.
+        Dictionary with an echo message and the deps.
     """
     await ctx.info('This is an info message')
 
