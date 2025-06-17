@@ -10,9 +10,8 @@ from uuid import uuid4
 
 from typing_extensions import assert_never
 
-from pydantic_ai.providers import Provider
-
 from .. import UnexpectedModelBehavior, _utils, usage
+from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
     FileUrl,
@@ -30,6 +29,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
+from ..providers import Provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -257,10 +257,10 @@ class GoogleModel(Model):
             'headers': {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         }
         if timeout := model_settings.get('timeout'):
-            if isinstance(timeout, float):
+            if isinstance(timeout, (int, float)):
                 http_options['timeout'] = int(1000 * timeout)
             else:
-                raise ValueError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
+                raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
 
         config = GenerateContentConfigDict(
             http_options=http_options,

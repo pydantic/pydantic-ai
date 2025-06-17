@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Union
 
 import pytest
-from httpx import Request
+from httpx import Request, Timeout
 from inline_snapshot import Is, snapshot
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
@@ -806,3 +806,14 @@ async def test_google_tool_config_any_with_tool_without_args(
             ),
         ]
     )
+
+
+async def test_google_timeout(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    agent = Agent(model=model)
+
+    result = await agent.run('Hello!', model_settings={'timeout': 10})
+    assert result.output == snapshot('Hello there! How can I help you today?\n')
+
+    with pytest.raises(UserError, match='Google does not support setting ModelSettings.timeout to a httpx.Timeout'):
+        await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
