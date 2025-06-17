@@ -46,13 +46,13 @@ pytestmark = [
 
 @pytest.fixture
 def agent(openai_api_key: str):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server = MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'])
     model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     return Agent(model, mcp_servers=[server])
 
 
 async def test_stdio_server():
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server = MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'])
     async with server:
         tools = await server.list_tools()
         assert len(tools) == TOOL_COUNT
@@ -65,7 +65,7 @@ async def test_stdio_server():
 
 
 async def test_stdio_server_with_tool_prefix():
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
+    server = MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'], tool_prefix='foo')
     async with server:
         tools = await server.list_tools()
         assert all(tool.name.startswith('foo_') for tool in tools)
@@ -73,7 +73,7 @@ async def test_stdio_server_with_tool_prefix():
 
 async def test_stdio_server_with_cwd():
     test_dir = Path(__file__).parent
-    server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
+    server = MCPServerStdio(command='python', args=['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.list_tools()
         assert len(tools) == TOOL_COUNT
@@ -88,12 +88,12 @@ async def test_process_tool_call() -> None:
         tool_name: str,
         args: dict[str, Any],
     ) -> ToolResult:
-        """A process_tool_call that just sets a flag and sends the context."""
+        """A process_tool_call that sets a flag and sends the context."""
         nonlocal called
         called = True
         return await tool_call(tool_name, args, {'run_context': ctx.deps})
 
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
+    server = MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
     async with server:
         agent = Agent(deps_type=int, model=TestModel(call_tools=['context_echo']), mcp_servers=[server])
         result = await agent.run('Echo the run context with deps set to 42', deps=42)
@@ -212,7 +212,7 @@ async def test_agent_with_conflict_tool_name(agent: Agent):
 
 
 async def test_agent_with_prefix_tool_name(openai_api_key: str):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
+    server = MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'], tool_prefix='foo')
     model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
         model,
@@ -231,7 +231,7 @@ async def test_agent_with_prefix_tool_name(openai_api_key: str):
 
 
 async def test_agent_with_server_not_running(openai_api_key: str):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server = MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'])
     model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model, mcp_servers=[server])
     with pytest.raises(UserError, match='MCP server is not running'):
@@ -239,7 +239,7 @@ async def test_agent_with_server_not_running(openai_api_key: str):
 
 
 async def test_log_level_unset():
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server = MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'])
     assert server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
     async with server:
         tools = await server.list_tools()
@@ -251,7 +251,7 @@ async def test_log_level_unset():
 
 
 async def test_log_level_set():
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
+    server = MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'], log_level='info')
     assert server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
     async with server:
         result = await server.call_tool('get_log_level', {})

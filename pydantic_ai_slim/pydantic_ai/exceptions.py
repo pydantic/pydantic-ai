@@ -19,6 +19,14 @@ __all__ = (
 )
 
 
+class McpServerNotInitializedError(Exception):
+    """Exception type raised when an MCP server is not initialized."""
+
+    def __init__(self):
+        """Initialize McpServerNotInitializedError."""
+        super().__init__('MCPServer is not initialized. Please use it as an async context manager.')
+
+
 class ModelRetry(Exception):
     """Exception raised when a tool function should be retried.
 
