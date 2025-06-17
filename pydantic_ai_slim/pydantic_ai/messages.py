@@ -423,6 +423,9 @@ class ToolReturnPart:
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
+DEFAULT_MODEL_RESPONSE_TEMPLATE = '{description}\n\nFix the errors and try again.'
+
+
 @dataclass(repr=False)
 class RetryPromptPart:
     """A message back to a model asking it to try again.
@@ -461,6 +464,10 @@ class RetryPromptPart:
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    model_response_template: str = field(
+        default=DEFAULT_MODEL_RESPONSE_TEMPLATE,
+    )
+
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
         if isinstance(self.content, str):
@@ -468,7 +475,7 @@ class RetryPromptPart:
         else:
             json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
             description = f'{len(self.content)} validation errors: {json_errors.decode()}'
-        return f'{description}\n\nFix the errors and try again.'
+        return self.model_response_template.format(description=description)
 
     def otel_event(self, _settings: InstrumentationSettings) -> Event:
         if self.tool_name is None:
