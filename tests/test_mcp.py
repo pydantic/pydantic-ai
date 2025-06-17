@@ -2,6 +2,7 @@
 
 import re
 from pathlib import Path
+from typing import Any, Final
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -19,6 +20,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import Usage
 
 from .conftest import IsDatetime, IsStr, try_import
@@ -26,12 +29,13 @@ from .conftest import IsDatetime, IsStr, try_import
 with try_import() as imports_successful:
     from mcp import ErrorData, McpError
 
-    from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio
+    from pydantic_ai.mcp import CallToolFn, MCPServerSSE, MCPServerStdio, ToolResult
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
+TOOL_COUNT: Final[int] = 12
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mcp and openai not installed'),
@@ -51,7 +55,7 @@ async def test_stdio_server():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == 11
+        assert len(tools) == TOOL_COUNT
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
@@ -72,7 +76,29 @@ async def test_stdio_server_with_cwd():
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == snapshot(11)
+        assert len(tools) == TOOL_COUNT
+
+
+async def test_process_tool_call() -> None:
+    called: bool = False
+
+    async def process_tool_call(
+        ctx: RunContext[int],
+        tool_call: CallToolFn,
+        tool_name: str,
+        args: dict[str, Any],
+    ) -> ToolResult:
+        """A process_tool_call that just sets a flag and sends the context."""
+        nonlocal called
+        called = True
+        return await tool_call(tool_name, args, {'run_context': ctx.deps})
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
+    async with server:
+        agent = Agent(deps_type=int, model=TestModel(call_tools=['context_echo']), mcp_servers=[server])
+        result = await agent.run('Echo the run context with deps set to 42', deps=42)
+        assert result.output == '{"context_echo":{"echo":"This is an echo message","deps":42}}'
+        assert called, 'process_tool_call should have been called'
 
 
 def test_sse_server():
@@ -217,7 +243,7 @@ async def test_log_level_unset():
     assert server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == snapshot(11)
+        assert len(tools) == TOOL_COUNT
         assert tools[10].name == 'get_log_level'
 
         result = await server.call_tool('get_log_level', {})

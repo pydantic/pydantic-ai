@@ -126,7 +126,7 @@ class MCPServer(ABC):
         tool_name: str,
         arguments: dict[str, Any],
         metadata: dict[str, Any] | None = None,
-    ) -> str | BinaryContent | dict[str, Any] | list[Any] | Sequence[str | BinaryContent | dict[str, Any] | list[Any]]:
+    ) -> ToolResult:
         """Call a tool on the server.
 
         Args:
@@ -141,24 +141,19 @@ class MCPServer(ABC):
             ModelRetry: If the tool call fails.
         """
         try:
-            unprefixed_tool_name = self.get_unprefixed_tool_name(tool_name)
-
-            tool_request = ClientRequest(
-                CallToolRequest(
-                    method='tools/call',
-                    params=CallToolRequestParams(
-                        name=unprefixed_tool_name,
-                        arguments=arguments,
-                        _meta=RequestParams.Meta(**metadata) if metadata else None,
-                    ),
-                )
-            )
-
+            # meta param is not provided by session yet, so build and can send_request directly.
             result = await self._client.send_request(
-                request=tool_request,
-                result_type=CallToolResult,
-                request_read_timeout_seconds=None,
-                progress_callback=None,
+                ClientRequest(
+                    CallToolRequest(
+                        method='tools/call',
+                        params=CallToolRequestParams(
+                            name=self.get_unprefixed_tool_name(tool_name),
+                            arguments=arguments,
+                            _meta=RequestParams.Meta(**metadata) if metadata else None,
+                        ),
+                    )
+                ),
+                CallToolResult,
             )
         except McpError as e:
             raise ModelRetry(e.error.message)
@@ -559,15 +554,27 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
         return streamablehttp_client  # pragma: no cover
 
 
-# Callback that accepts a run context, a tool call function, a tool name, and arguments.
-# Allows wrapping an MCP server tool call to customize it, including adding extra request
-# metadata.
+ToolResult = (
+    str | BinaryContent | dict[str, Any] | list[Any] | Sequence[str | BinaryContent | dict[str, Any] | list[Any]]
+)
+"""The result type of a tool call."""
+
+CallToolFn = Callable[[str, dict[str, Any], dict[str, Any] | None], Awaitable[ToolResult]]
+"""A function type that represents a tool call."""
+
 ProcessToolCallback = Callable[
     [
         RunContext[Any],
-        Callable[[str, dict[str, Any], dict[str, Any] | None], Awaitable[CallToolResult]],
+        CallToolFn,
         str,
         dict[str, Any],
     ],
-    Awaitable[CallToolResult],
+    Awaitable[ToolResult],
 ]
+"""A process tool callback.
+
+It accepts a run context, the original tool call function, a tool name, and arguments.
+
+Allows wrapping an MCP server tool call to customize it, including adding extra request
+metadata.
+"""

@@ -166,6 +166,44 @@ async def main():
 
 1. See [MCP Run Python](run-python.md) for more information.
 
+## Tool call customisation
+
+The MCP servers provide the ability to set a `process_tool_call` which allows
+the customisation of tool call requests and their responses.
+
+A common use cas for this is to inject metadata to the requests which the server
+call needs.
+
+```python {title="mcp_process_tool_call.py" py="3.10"}
+from typing import Any
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import CallToolFn, MCPServerStdio, ToolResult
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext
+
+
+async def process_tool_call(
+    ctx: RunContext[int],
+    tool_call: CallToolFn,
+    tool_name: str,
+    args: dict[str, Any],
+) -> ToolResult:
+    """A noop process_tool_call that just sets a flag."""
+    return await tool_call(tool_name, args, {'run_context': ctx.deps})
+
+
+server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
+agent = Agent(deps_type=int, model=TestModel(call_tools=['context_echo']), mcp_servers=[server])
+
+
+async def main():
+    async with agent.run_mcp_servers():
+        result = await agent.run('Echo the run context with deps set to 42', deps=42)
+    print(result.output)
+    #> {"context_echo":{"echo":"This is an echo message","deps":42}}
+```
+
 ## Using Tool Prefixes to Avoid Naming Conflicts
 
 When connecting to multiple MCP servers that might provide tools with the same name, you can use the `tool_prefix` parameter to avoid naming conflicts. This parameter adds a prefix to all tool names from a specific server.
