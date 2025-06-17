@@ -13,9 +13,11 @@ repos:
     rev: 0.6.8
     hooks:
       - id: fix-smartquotes
+        exclude: 'cassettes/'
       - id: fix-spaces
+        exclude: 'cassettes/'
       - id: fix-ligatures
-    exclude: 'cassettes/'
+        exclude: 'cassettes/'
 
   - repo: local
     hooks:
