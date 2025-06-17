@@ -394,15 +394,11 @@ History processors can optionally accept a `RunContext` parameter to access addi
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import RunContext
-from typing import Any
 
 def context_aware_processor(
-    ctx: RunContext[Any],
+    ctx: RunContext[None],
     messages: list[ModelMessage],
 ) -> list[ModelMessage]:
-    # Access dependencies
-    user_id = ctx.deps.user_id if hasattr(ctx.deps, 'user_id') else None
-
     # Access current usage
     current_tokens = ctx.usage.total_tokens
 
