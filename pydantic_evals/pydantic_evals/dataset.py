@@ -16,7 +16,7 @@ import sys
 import time
 import warnings
 from collections.abc import Awaitable, Mapping, Sequence
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError,
 from pydantic._internal import _typing_extra
 from pydantic_core import to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
-from tqdm import tqdm
+from rich.progress import Progress
 from typing_extensions import NotRequired, Self, TypedDict, TypeVar
 
 from pydantic_evals._utils import get_event_loop
@@ -278,19 +278,20 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         name = name or get_unwrapped_function_name(task)
         total_cases = len(self.cases)
-        progress_bar = tqdm(total=total_cases, desc=f'Evaluating {name}') if progress else None
+        progress_bar = Progress() if progress else None
         progress_lock = asyncio.Lock() if progress else None
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
 
-        with _logfire.span('evaluate {name}', name=name) as eval_span:
+        with _logfire.span('evaluate {name}', name=name) as eval_span, progress_bar or nullcontext():
+            task_id = progress_bar.add_task(f'Evaluating {name}', total=total_cases) if progress_bar else None
 
             async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
                 async with limiter:
                     result = await _run_task_and_evaluators(task, case, report_case_name, self.evaluators)
-                    if progress_bar and progress_lock:  # pragma: no branch
+                    if progress_bar and progress_lock and task_id is not None:  # pragma: no branch
                         async with progress_lock:
-                            progress_bar.update(1)
+                            progress_bar.update(task_id, advance=1)
                     return result
 
             report = EvaluationReport(
@@ -306,8 +307,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             eval_span.set_attribute('cases', report.cases)
             # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
             eval_span.set_attribute('averages', report.averages())
-        if progress_bar:  # pragma: no branch
-            progress_bar.close()
         return report
 
     def evaluate_sync(
