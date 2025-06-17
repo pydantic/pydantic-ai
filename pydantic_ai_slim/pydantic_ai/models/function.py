@@ -267,8 +267,12 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
                     assert_never(part)
         elif isinstance(message, ModelResponse):
             for part in message.parts:
-                if isinstance(part, (TextPart, ThinkingPart)):
+                if isinstance(part, TextPart):
                     response_tokens += _estimate_string_tokens(part.content)
+                elif isinstance(part, ThinkingPart):
+                    # NOTE: We don't send ThinkingPart to the providers yet.
+                    # If you are unsatisfied with this, please open an issue.
+                    pass
                 elif isinstance(part, ToolCallPart):
                     call = part
                     response_tokens += 1 + _estimate_string_tokens(call.args_as_json_str())

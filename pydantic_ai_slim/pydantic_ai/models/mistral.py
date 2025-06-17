@@ -488,7 +488,10 @@ class MistralModel(Model):
                     if isinstance(part, TextPart):
                         content_chunks.append(MistralTextChunk(text=part.content))
                     elif isinstance(part, ThinkingPart):
-                        content_chunks.append(MistralTextChunk(text=f'<think>{part.content}</think>'))
+                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
+                        # please open an issue. The below code is the code to send thinking to the provider.
+                        # content_chunks.append(MistralTextChunk(text=f'<think>{part.content}</think>'))
+                        pass
                     elif isinstance(part, ToolCallPart):
                         tool_calls.append(self._map_tool_call(part))
                     else:

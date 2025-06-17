@@ -15,7 +15,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._utils import generate_thinking_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
+from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -62,7 +62,6 @@ try:
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
-    from openai.types.responses.response_reasoning_item_param import Summary
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 except ImportError as _import_error:
@@ -405,7 +404,10 @@ class OpenAIModel(Model):
                     if isinstance(item, TextPart):
                         texts.append(item.content)
                     elif isinstance(item, ThinkingPart):
-                        texts.append(f'<think>\n{item.content}\n</think>')
+                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
+                        # please open an issue. The below code is the code to send thinking to the provider.
+                        # texts.append(f'<think>\n{item.content}\n</think>')
+                        pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     else:
@@ -761,7 +763,7 @@ class OpenAIResponsesModel(Model):
             ),
         }
 
-    async def _map_messages(  # noqa: C901
+    async def _map_messages(
         self, messages: list[ModelMessage]
     ) -> tuple[str | NotGiven, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
@@ -798,27 +800,30 @@ class OpenAIResponsesModel(Model):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
-                last_thinking_part_idx: int | None = None
+                # last_thinking_part_idx: int | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        if last_thinking_part_idx is not None:
-                            reasoning_item = cast(responses.ResponseReasoningItemParam, openai_messages[last_thinking_part_idx])  # fmt: skip
-                            if item.id == reasoning_item['id']:
-                                assert isinstance(reasoning_item['summary'], list)
-                                reasoning_item['summary'].append(Summary(text=item.content, type='summary_text'))
-                                continue
-                        last_thinking_part_idx = len(openai_messages)
-                        openai_messages.append(
-                            responses.ResponseReasoningItemParam(
-                                id=item.id or generate_thinking_id(),
-                                summary=[Summary(text=item.content, type='summary_text')],
-                                type='reasoning',
-                            )
-                        )
+                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
+                        # please open an issue. The below code is the code to send thinking to the provider.
+                        # if last_thinking_part_idx is not None:
+                        #     reasoning_item = cast(responses.ResponseReasoningItemParam, openai_messages[last_thinking_part_idx])  # fmt: skip
+                        #     if item.id == reasoning_item['id']:
+                        #         assert isinstance(reasoning_item['summary'], list)
+                        #         reasoning_item['summary'].append(Summary(text=item.content, type='summary_text'))
+                        #         continue
+                        # last_thinking_part_idx = len(openai_messages)
+                        # openai_messages.append(
+                        #     responses.ResponseReasoningItemParam(
+                        #         id=item.id or generate_thinking_id(),
+                        #         summary=[Summary(text=item.content, type='summary_text')],
+                        #         type='reasoning',
+                        #     )
+                        # )
+                        pass
                     else:
                         assert_never(item)
             else:

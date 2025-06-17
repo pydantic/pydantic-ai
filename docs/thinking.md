@@ -1,17 +1,18 @@
 # Thinking
 
-Thinking or reasoning is the process of using a model's capabilities to reason about a task.
+Thinking (or reasoning) is the process by which a model works through a problem step-by-step before
+providing its final answer.
 
-This capability is usually not enabled by default, and how to enable it depends on the model.
+This capability is typically disabled by default and depends on the specific model being used.
 
 ## OpenAI
 
-The [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] doesn't emit thinking (reasoning) parts,
-but it's able to receive messages from other models that do. In this case, it will convert the
-[`ThinkingPart`][pydantic_ai.messages.ThinkingPart] into [`TextPart`][pydantic_ai.messages.TextPart]s using the
-`"<think>"` tag.
+The [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] doesn't generate thinking (reasoning) parts,
+but it can receive messages from other models that do. When this happens, it converts
+[`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects into [`TextPart`][pydantic_ai.messages.TextPart]s
+using the `"<think>"` tag.
 
-If you want to properly emit thinking parts, you'd need to use the
+To properly generate thinking parts, you need to use the
 [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
 
 ```python {title="openai_thinking_part.py"}
@@ -26,10 +27,10 @@ agent = Agent(model, model_settings=settings)
 
 ## Anthropic
 
-Differently than other providers, Anthropic sends back a signature in the thinking part. This signature
-is used to make sure that the thinking part was not tampered with.
+Unlike other providers, Anthropic includes a signature in the thinking part. This signature
+is used to ensure that the thinking part hasn't been tampered with.
 
-To enable the thinking part, use the `anthropic_thinking` field on the
+To enable thinking, use the `anthropic_thinking` field in the
 [`AnthropicModelSettings`][pydantic_ai.models.anthropic.AnthropicModelSettings]
 
 ```python {title="anthropic_thinking_part.py"}
@@ -50,7 +51,7 @@ Groq supports different formats to receive thinking parts:
 - `"hidden"`: The thinking part is not included in the text content.
 - `"parsed"`: The thinking part has its own [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] object.
 
-To enable the thinking part, use the `groq_reasoning_format` field on the
+To enable thinking, use the `groq_reasoning_format` field in the
 [`GroqModelSettings`][pydantic_ai.models.groq.GroqModelSettings]:
 
 ```python {title="groq_thinking_part.py"}
@@ -65,7 +66,7 @@ agent = Agent(model, model_settings=settings)
 
 ## Google
 
-To enable the thinking part, use the `google_thinking_config` field on the
+To enable thinking, use the `google_thinking_config` field in the
 [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings]
 
 ```python {title="google_thinking_part.py"}
@@ -80,6 +81,6 @@ agent = Agent(model, model_settings=settings)
 
 ## Mistral / Cohere
 
-Both Mistral and Cohere don't emit thinking parts, but when the model receives it in the history, it will convert the
-[`ThinkingPart`][pydantic_ai.messages.ThinkingPart] into [`TextPart`][pydantic_ai.messages.TextPart]s using the
-`"<think>"` tag.
+Neither Mistral nor Cohere generate thinking parts, but when they receive thinking parts in the
+conversation history, they convert [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects into
+[`TextPart`][pydantic_ai.messages.TextPart]s using the `"<think>"` tag.

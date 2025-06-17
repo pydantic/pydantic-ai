@@ -84,7 +84,7 @@ def get_heroku_model_names():
     response = httpx.get('https://us.inference.heroku.com/available-models')
 
     if response.status_code != 200:
-        pytest.skip('Heroku AI returned status code {response.status_code}')
+        pytest.skip(f'Heroku AI returned status code {response.status_code}')  # pragma: lax no cover
 
     heroku_models: list[HerokuModel] = response.json()
 

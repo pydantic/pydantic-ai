@@ -215,7 +215,10 @@ class CohereModel(Model):
                     if isinstance(item, TextPart):
                         texts.append(item.content)
                     elif isinstance(item, ThinkingPart):
-                        texts.append(f'<think>\n{item.content}\n</think>')
+                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
+                        # please open an issue. The below code is the code to send thinking to the provider.
+                        # texts.append(f'<think>\n{item.content}\n</think>')
+                        pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     else:
