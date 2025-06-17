@@ -15,6 +15,7 @@ repos:
       - id: fix-smartquotes
       - id: fix-spaces
       - id: fix-ligatures
+    exclude: 'cassettes/'
 
   - repo: local
     hooks:
