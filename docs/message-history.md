@@ -395,6 +395,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import RunContext
 
+
 def context_aware_processor(
     ctx: RunContext[None],
     messages: list[ModelMessage],
