@@ -180,7 +180,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
-        history_processors: Sequence[HistoryProcessor] | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
     ) -> None: ...
 
     @overload
@@ -210,7 +210,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
-        history_processors: Sequence[HistoryProcessor] | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
     ) -> None: ...
 
     def __init__(
@@ -235,7 +235,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
-        history_processors: Sequence[HistoryProcessor] | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.

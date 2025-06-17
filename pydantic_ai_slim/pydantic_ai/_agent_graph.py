@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
+from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._utils import is_async_callable, run_in_executor
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
@@ -50,8 +51,20 @@ OutputT = TypeVar('OutputT')
 
 _HistoryProcessorSync = Callable[[list[_messages.ModelMessage]], list[_messages.ModelMessage]]
 _HistoryProcessorAsync = Callable[[list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]]
-HistoryProcessor = Union[_HistoryProcessorSync, _HistoryProcessorAsync]
-"""A function that processes a list of model messages and returns a list of model messages."""
+_HistoryProcessorSyncWithCtx = Callable[[RunContext[DepsT], list[_messages.ModelMessage]], list[_messages.ModelMessage]]
+_HistoryProcessorAsyncWithCtx = Callable[
+    [RunContext[DepsT], list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]
+]
+HistoryProcessor = Union[
+    _HistoryProcessorSync,
+    _HistoryProcessorAsync,
+    _HistoryProcessorSyncWithCtx[DepsT],
+    _HistoryProcessorAsyncWithCtx[DepsT],
+]
+"""A function that processes a list of model messages and returns a list of model messages.
+
+Can optionally accept a `RunContext` as a parameter.
+"""
 
 
 @dataclasses.dataclass
@@ -92,7 +105,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     output_schema: _output.OutputSchema[OutputDataT] | None
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
 
-    history_processors: Sequence[HistoryProcessor]
+    history_processors: Sequence[HistoryProcessor[DepsT]]
 
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
     mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
@@ -328,7 +341,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = await _process_message_history(ctx.state.message_history, ctx.deps.history_processors)
+        message_history = await _process_message_history(
+            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
+        )
         async with ctx.deps.model.request_stream(
             message_history, model_settings, model_request_parameters
         ) as streamed_response:
@@ -352,7 +367,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = await _process_message_history(ctx.state.message_history, ctx.deps.history_processors)
+        message_history = await _process_message_history(
+            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
+        )
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.incr(_usage.Usage())
 
@@ -881,12 +898,24 @@ def build_agent_graph(
 
 async def _process_message_history(
     messages: list[_messages.ModelMessage],
-    processors: Sequence[HistoryProcessor],
+    processors: Sequence[HistoryProcessor[DepsT]],
+    run_context: RunContext[DepsT],
 ) -> list[_messages.ModelMessage]:
     """Process message history through a sequence of processors."""
     for processor in processors:
+        takes_ctx = is_takes_ctx(processor)
+
         if is_async_callable(processor):
-            messages = await processor(messages)
+            if takes_ctx:
+                messages = await processor(run_context, messages)
+            else:
+                async_processor = cast(_HistoryProcessorAsync, processor)
+                messages = await async_processor(messages)
         else:
-            messages = await run_in_executor(processor, messages)
+            if takes_ctx:
+                sync_processor_with_ctx = cast(_HistoryProcessorSyncWithCtx[DepsT], processor)
+                messages = await run_in_executor(sync_processor_with_ctx, run_context, messages)
+            else:
+                sync_processor = cast(_HistoryProcessorSync, processor)
+                messages = await run_in_executor(sync_processor, messages)
     return messages
