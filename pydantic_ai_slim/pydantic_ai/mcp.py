@@ -15,6 +15,7 @@ import anyio
 import httpx
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
+from mcp.shared.exceptions import McpError
 from mcp.shared.message import SessionMessage
 from mcp.types import (
     AudioContent,
@@ -127,7 +128,10 @@ class MCPServer(ABC):
         Raises:
             ModelRetry: If the tool call fails.
         """
-        result = await self._client.call_tool(self.get_unprefixed_tool_name(tool_name), arguments)
+        try:
+            result = await self._client.call_tool(self.get_unprefixed_tool_name(tool_name), arguments)
+        except McpError as e:
+            raise ModelRetry(e.error.message)
 
         content = [self._map_tool_result_part(part) for part in result.content]
 
