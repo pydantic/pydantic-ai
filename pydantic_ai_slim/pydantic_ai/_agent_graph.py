@@ -762,7 +762,12 @@ async def _tool_from_mcp_server(
         # some weird edge case occurs.
         if not server.is_running:  # pragma: no cover
             raise exceptions.UserError(f'MCP server is not running: {server}')
-        result = await server.call_tool(tool_name, args)
+
+        if server.process_tool_call is not None:
+            result = await server.process_tool_call(ctx, server.call_tool, tool_name, args)
+        else:
+            result = await server.call_tool(tool_name, args)
+
         return result
 
     for server in ctx.deps.mcp_servers:
