@@ -178,14 +178,14 @@ call needs.
 from typing import Any
 
 from pydantic_ai import Agent
-from pydantic_ai.mcp import CallToolFn, MCPServerStdio, ToolResult
+from pydantic_ai.mcp import CallToolFunc, MCPServerStdio, ToolResult
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 
 
 async def process_tool_call(
     ctx: RunContext[int],
-    tool_call: CallToolFn,
+    tool_call: CallToolFunc,
     tool_name: str,
     args: dict[str, Any],
 ) -> ToolResult:

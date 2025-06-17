@@ -565,7 +565,7 @@ CallToolFunc = Callable[[str, dict[str, Any], dict[str, Any] | None], Awaitable[
 ProcessToolCallback = Callable[
     [
         RunContext[Any],
-        CallToolFn,
+        CallToolFunc,
         str,
         dict[str, Any],
     ],

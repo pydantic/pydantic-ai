@@ -29,7 +29,7 @@ from .conftest import IsDatetime, IsStr, try_import
 with try_import() as imports_successful:
     from mcp import ErrorData, McpError
 
-    from pydantic_ai.mcp import CallToolFn, MCPServerSSE, MCPServerStdio, ToolResult
+    from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.google import GoogleProvider
@@ -84,7 +84,7 @@ async def test_process_tool_call() -> None:
 
     async def process_tool_call(
         ctx: RunContext[int],
-        tool_call: CallToolFn,
+        tool_call: CallToolFunc,
         tool_name: str,
         args: dict[str, Any],
     ) -> ToolResult:
