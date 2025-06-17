@@ -1770,9 +1770,7 @@ async def test_openai_model_thinking_part_iter(allow_model_requests: None, opena
 
     assert event_parts == snapshot(
         IsListOrTuple(
-            PartStartEvent(
-                index=0, part=ThinkingPart(content='', signature='rs_6851100e4cb481a283b43ffbd764ecdb0fa6d0c888ffaed5')
-            ),
+            PartStartEvent(index=0, part=ThinkingPart(content='', signature=IsStr())),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             length=(3, ...),

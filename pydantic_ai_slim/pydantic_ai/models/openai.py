@@ -957,9 +957,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
-            from rich.pretty import pprint
-
-            pprint(chunk)
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
 

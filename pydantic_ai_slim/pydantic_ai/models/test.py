@@ -27,11 +27,7 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import Usage
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-)
+from . import Model, ModelRequestParameters, StreamedResponse
 from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
 
@@ -262,7 +258,7 @@ class TestStreamedResponse(StreamedResponse):
                 )
             elif isinstance(part, ThinkingPart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate ThinkingPart on TestModel.
-                pass  # pragma: no cover
+                assert False, "This should be unreachable — we don't generate ThinkingPart on TestModel."
             else:
                 assert_never(part)
 
