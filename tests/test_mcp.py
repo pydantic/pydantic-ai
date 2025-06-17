@@ -88,7 +88,7 @@ async def test_process_tool_call() -> None:
         tool_name: str,
         args: dict[str, Any],
     ) -> ToolResult:
-        """A process_tool_call that just sets a flag and sends the context."""
+        """A process_tool_call that sets a flag and sends deps as metadata."""
         nonlocal called
         called = True
         return await call_tool(tool_name, args, {'deps': ctx.deps})
