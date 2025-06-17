@@ -219,10 +219,10 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                     if isinstance(part, UserPromptPart):
                         new_parts.append(UserPromptPart(content=f'{prefix}: {part.content}'))
                     else:
-                        new_parts.append(part)
+                        new_parts.append(part)  # pragma: no cover
                 processed.append(ModelRequest(parts=new_parts))
             else:
-                processed.append(msg)
+                processed.append(msg)  # pragma: no cover
         return processed
 
     agent = Agent(function_model, history_processors=[context_processor], deps_type=str)
@@ -265,7 +265,7 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
         # Filter out responses
         return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
-    def context_processor(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:  # pragma: no cover
+    def context_processor(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
         # Add prefix based on deps
         prefix = getattr(ctx.deps, 'prefix', 'DEFAULT')
         processed: list[ModelMessage] = []
@@ -276,10 +276,10 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
                     if isinstance(part, UserPromptPart):
                         new_parts.append(UserPromptPart(content=f'{prefix}: {part.content}'))
                     else:
-                        new_parts.append(part)
+                        new_parts.append(part)  # pragma: no cover
                 processed.append(ModelRequest(parts=new_parts))
             else:
-                processed.append(msg)
+                processed.append(msg)  # pragma: no cover
         return processed
 
     message_history = [
