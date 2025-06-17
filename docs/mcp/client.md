@@ -171,7 +171,7 @@ async def main():
 The MCP servers provide the ability to set a `process_tool_call` which allows
 the customisation of tool call requests and their responses.
 
-A common use cas for this is to inject metadata to the requests which the server
+A common use case for this is to inject metadata to the requests which the server
 call needs.
 
 ```python {title="mcp_process_tool_call.py" py="3.10"}
@@ -190,7 +190,7 @@ async def process_tool_call(
     args: dict[str, Any],
 ) -> ToolResult:
     """A noop process_tool_call that just sets a flag."""
-    return await tool_call(tool_name, args, {'run_context': ctx.deps})
+    return await tool_call(tool_name, args, metadata={'run_context': ctx.deps})
 
 
 server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)

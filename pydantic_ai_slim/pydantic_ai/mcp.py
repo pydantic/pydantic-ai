@@ -67,7 +67,7 @@ class MCPServer(ABC):
     """
 
     process_tool_call: ProcessToolCallback | None = None
-    """ Hook to customize tool calling and optionally pass extra metadata."""
+    """Hook to customize tool calling and optionally pass extra metadata."""
 
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
@@ -295,7 +295,7 @@ class MCPServerStdio(MCPServer):
     """
 
     process_tool_call: ProcessToolCallback | None = None
-    """ Hook to customize tool calling and optionally pass extra metadata."""
+    """Hook to customize tool calling and optionally pass extra metadata."""
 
     timeout: float = 5
     """ The timeout in seconds to wait for the client to initialize."""
@@ -392,7 +392,7 @@ class _MCPServerHTTP(MCPServer):
     """
 
     process_tool_call: ProcessToolCallback | None = None
-    """ Hook to customize tool calling and optionally pass extra metadata."""
+    """Hook to customize tool calling and optionally pass extra metadata."""
 
     @property
     @abstractmethod
@@ -559,7 +559,7 @@ ToolResult = (
 )
 """The result type of a tool call."""
 
-CallToolFn = Callable[[str, dict[str, Any], dict[str, Any] | None], Awaitable[ToolResult]]
+CallToolFunc = Callable[[str, dict[str, Any], dict[str, Any] | None], Awaitable[ToolResult]]
 """A function type that represents a tool call."""
 
 ProcessToolCallback = Callable[
