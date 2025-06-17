@@ -208,7 +208,7 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
 async def test_history_processor_with_context(function_model: FunctionModel, received_messages: list[ModelMessage]):
     """Test history processor that takes RunContext."""
 
-    def context_processor(ctx: RunContext[str], messages: list[ModelMessage]) -> list[ModelMessage]:
+    def context_processor(ctx: RunContext[str], messages: list[ModelMessage]) -> list[ModelMessage]:  # pragma: no cover
         # Access deps from context
         prefix = ctx.deps
         processed: list[ModelMessage] = []
@@ -265,7 +265,7 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
         # Filter out responses
         return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
-    def context_processor(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
+    def context_processor(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:  # pragma: no cover
         # Add prefix based on deps
         prefix = getattr(ctx.deps, 'prefix', 'DEFAULT')
         processed: list[ModelMessage] = []

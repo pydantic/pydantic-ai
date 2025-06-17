@@ -903,7 +903,7 @@ async def _process_message_history(
         if is_async_callable(processor):
             if takes_ctx:
                 if run_context is None:
-                    raise ValueError('RunContext required for processor that takes context')
+                    raise ValueError('RunContext required for processor that takes context')  # pragma: no cover
                 async_processor_with_ctx = cast(_HistoryProcessorAsyncWithCtx, processor)
                 messages = await async_processor_with_ctx(run_context, messages)
             else:
@@ -912,7 +912,7 @@ async def _process_message_history(
         else:
             if takes_ctx:
                 if run_context is None:
-                    raise ValueError('RunContext required for processor that takes context')
+                    raise ValueError('RunContext required for processor that takes context')  # pragma: no cover
                 sync_processor_with_ctx = cast(_HistoryProcessorSyncWithCtx, processor)
                 messages = await run_in_executor(sync_processor_with_ctx, run_context, messages)
             else:
