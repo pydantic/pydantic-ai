@@ -2,12 +2,13 @@
 
 import re
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     ModelRequest,
@@ -23,6 +24,8 @@ from pydantic_ai.usage import Usage
 from .conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
+    from mcp import ErrorData, McpError
+
     from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIModel
@@ -932,3 +935,18 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                 ),
             ]
         )
+
+
+async def test_mcp_server_raises_mcp_error(allow_model_requests: None, agent: Agent) -> None:
+    server = agent._mcp_servers[0]  # pyright: ignore[reportPrivateUsage]
+
+    mcp_error = McpError(error=ErrorData(code=400, message='Test MCP error conversion'))
+
+    async with agent.run_mcp_servers():
+        with patch.object(
+            server._client,  # pyright: ignore[reportPrivateUsage]
+            'call_tool',
+            new=AsyncMock(side_effect=mcp_error),
+        ):
+            with pytest.raises(ModelRetry, match='Test MCP error conversion'):
+                await server.call_tool('test_tool', {})
