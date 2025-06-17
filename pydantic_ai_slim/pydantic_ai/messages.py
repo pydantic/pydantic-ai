@@ -423,7 +423,7 @@ class ToolReturnPart:
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
-DEFAULT_MODEL_RESPONSE_TEMPLATE = '{description}\n\nFix the errors and try again.'
+DEFAULT_MODEL_RESPONSE_TEMPLATE = 'Validator response:\n{description}\n\nFix the errors and try again.'
 
 
 @dataclass(repr=False)
