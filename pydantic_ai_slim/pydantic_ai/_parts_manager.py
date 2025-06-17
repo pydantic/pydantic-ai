@@ -156,7 +156,7 @@ class ModelResponsePartsManager:
             if self._parts:
                 part_index = len(self._parts) - 1
                 latest_part = self._parts[part_index]
-                if isinstance(latest_part, ThinkingPart):
+                if isinstance(latest_part, ThinkingPart):  # pragma: no branch
                     existing_thinking_part_and_index = latest_part, part_index
         else:
             # Otherwise, attempt to look up an existing ThinkingPart by vendor_part_id
@@ -172,7 +172,7 @@ class ModelResponsePartsManager:
                 # There is no existing thinking part that should be updated, so create a new one
                 new_part_index = len(self._parts)
                 part = ThinkingPart(content=content, signature=signature)
-                if vendor_part_id is not None:
+                if vendor_part_id is not None:  # pragma: no branch
                     self._vendor_id_to_part_index[vendor_part_id] = new_part_index
                 self._parts.append(part)
                 return PartStartEvent(index=new_part_index, part=part)

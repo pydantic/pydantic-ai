@@ -171,7 +171,7 @@ def test_logfire(
     )
     chat_span_attributes = summary.attributes[1]
     if instrument is True or instrument.event_mode == 'attributes':
-        if hasattr(capfire, 'get_collected_metrics'):
+        if hasattr(capfire, 'get_collected_metrics'):  # pragma: no branch
             assert capfire.get_collected_metrics() == snapshot(
                 [
                     {
