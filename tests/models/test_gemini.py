@@ -1328,7 +1328,7 @@ async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api
         from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
         from pydantic_ai.providers.openai import OpenAIProvider
 
-    if not imports_successful():  # pragma: no cover
+    if not imports_successful():  # pragma: lax no cover
         pytest.skip('OpenAI is not installed')
 
     openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))

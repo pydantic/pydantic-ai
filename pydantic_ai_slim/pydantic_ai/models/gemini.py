@@ -389,7 +389,7 @@ def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _Gemi
     if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
         config['frequency_penalty'] = frequency_penalty
     if (thinkingConfig := model_settings.get('gemini_thinking_config')) is not None:
-        config['thinking_config'] = thinkingConfig  # pragma: no cover
+        config['thinking_config'] = thinkingConfig  # pragma: lax no cover
     return config
 
 
