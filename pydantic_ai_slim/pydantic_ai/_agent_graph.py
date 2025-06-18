@@ -442,7 +442,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         async for _event in stream:
             pass
 
-    async def _run_stream(
+    async def _run_stream(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         if self._events_iterator is None:
@@ -458,6 +458,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             texts.append(part.content)
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
+                    elif isinstance(part, _messages.ThinkingPart):
+                        # We don't need to do anything with thinking parts in this tool-calling node.
+                        # We need to handle text parts in case there are no tool calls and/or the desired output comes
+                        # from the text, but thinking parts should not directly influence the execution of tools or
+                        # determination of the next node of graph execution here.
+                        pass
                     else:
                         assert_never(part)
 
