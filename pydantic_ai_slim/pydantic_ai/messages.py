@@ -974,8 +974,17 @@ class FunctionToolCallEvent:
     """Event type identifier, used as a discriminator."""
 
     @property
+    def tool_call_id(self) -> str:
+        """An ID used for matching details about the call to its result."""
+        return self.part.tool_call_id
+
+    @property
     def call_id(self) -> str:
-        """An ID used for matching details about the call to its result. If present, defaults to the part's tool_call_id."""
+        """An ID used for matching details about the call to its result.
+
+        .. deprecated::
+            Use `tool_call_id` instead. This is kept for backward compatibility.
+        """
         return self.part.tool_call_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -987,10 +996,13 @@ class FunctionToolResultEvent:
 
     result: ToolReturnPart | RetryPromptPart
     """The result of the call to the function tool."""
-    tool_call_id: str
-    """An ID used to match the result to its original call."""
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""
+
+    @property
+    def tool_call_id(self) -> str:
+        """An ID used to match the result to its original call."""
+        return self.result.tool_call_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

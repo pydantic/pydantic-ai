@@ -650,7 +650,7 @@ async def process_function_tools(  # noqa C901
             else:
                 event = _messages.FunctionToolCallEvent(call)
                 yield event
-                call_index_to_event_id[len(calls_to_run)] = event.call_id
+                call_index_to_event_id[len(calls_to_run)] = event.tool_call_id
                 calls_to_run.append((tool, call))
         elif mcp_tool := await _tool_from_mcp_server(call.tool_name, ctx):
             if stub_function_tools:
@@ -665,7 +665,7 @@ async def process_function_tools(  # noqa C901
             else:
                 event = _messages.FunctionToolCallEvent(call)
                 yield event
-                call_index_to_event_id[len(calls_to_run)] = event.call_id
+                call_index_to_event_id[len(calls_to_run)] = event.tool_call_id
                 calls_to_run.append((mcp_tool, call))
         elif output_schema is not None and call.tool_name in output_schema.tools:
             # if tool_name is in output_schema, it means we found a output tool but an error occurred in
@@ -682,13 +682,13 @@ async def process_function_tools(  # noqa C901
                     content=content,
                     tool_call_id=call.tool_call_id,
                 )
-                yield _messages.FunctionToolResultEvent(part, tool_call_id=call.tool_call_id)
+                yield _messages.FunctionToolResultEvent(part)
                 output_parts.append(part)
         else:
             yield _messages.FunctionToolCallEvent(call)
 
             part = _unknown_tool(call.tool_name, call.tool_call_id, ctx)
-            yield _messages.FunctionToolResultEvent(part, tool_call_id=call.tool_call_id)
+            yield _messages.FunctionToolResultEvent(part)
             output_parts.append(part)
 
     if not calls_to_run:
@@ -716,7 +716,7 @@ async def process_function_tools(  # noqa C901
             for task in done:
                 index = tasks.index(task)
                 result = task.result()
-                yield _messages.FunctionToolResultEvent(result, tool_call_id=call_index_to_event_id[index])
+                yield _messages.FunctionToolResultEvent(result)
 
                 if isinstance(result, _messages.RetryPromptPart):
                     results_by_index[index] = result
