@@ -12,7 +12,7 @@ from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -583,6 +583,17 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
 
     with pytest.raises(UnexpectedModelBehavior, match='Safety settings triggered'):
         await agent.run('Tell me a joke about a Brazilians.')
+
+
+async def test_google_model_usage_limit_exceeded(allow_model_requests: None, google_provider: GoogleProvider):
+    # this passes with 'gemini-1.5-flash' but fails with 'google-gla:gemini-2.5-pro-preview-05-06'
+    m = GoogleModel('google-gla:gemini-2.5-pro-preview-05-06', provider=google_provider)
+    agent = Agent(m, model_settings=dict(max_tokens=1))
+
+    with pytest.raises(UsageLimitExceeded):
+        await agent.run(
+            'Write me a two paragraph essay about the history of the internet.',
+        )
 
 
 async def test_google_model_empty_user_prompt(allow_model_requests: None, google_provider: GoogleProvider):
