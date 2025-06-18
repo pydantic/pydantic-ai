@@ -835,6 +835,8 @@ def test_messages_to_otel_events_without_prompts_and_completions():
         ModelResponse(parts=[TextPart('text1')]),
         ModelRequest(parts=[UserPromptPart('user_prompt')]),
         ModelResponse(parts=[TextPart('text2')]),
+        ModelRequest(parts=[ToolReturnPart('tool', 'tool_return_content', 'tool_call_1')]),
+        ModelRequest(parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')]),
     ]
     settings = InstrumentationSettings(include_sensitive_content=False)
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -862,6 +864,22 @@ def test_messages_to_otel_events_without_prompts_and_completions():
                 'role': 'assistant',
                 'gen_ai.message.index': 3,
                 'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'content': 'SCRUBBED',
+                'role': 'tool',
+                'id': 'tool_call_1',
+                'name': 'tool',
+                'gen_ai.message.index': 4,
+                'event.name': 'gen_ai.tool.message',
+            },
+            {
+                'content': 'SCRUBBED',
+                'role': 'tool',
+                'id': 'tool_call_2',
+                'name': 'tool',
+                'gen_ai.message.index': 5,
+                'event.name': 'gen_ai.tool.message',
             },
         ]
     )
