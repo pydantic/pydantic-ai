@@ -20,7 +20,7 @@ def split_content_into_text_and_thinking(content: str) -> list[ThinkingPart | Te
     start_index = content.find(START_THINK_TAG)
     while start_index >= 0:
         before_think, content = content[:start_index], content[start_index + len(START_THINK_TAG) :]
-        if before_think.strip():
+        if before_think:
             parts.append(TextPart(content=before_think))
         end_index = content.find(END_THINK_TAG)
         if end_index >= 0:
