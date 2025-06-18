@@ -763,7 +763,9 @@ class ThinkingPartDelta:
             ValueError: If `part` is not a `ThinkingPart`.
         """
         if isinstance(part, ThinkingPart):
-            return replace(part, content=part.content + self.content_delta if self.content_delta else None)
+            new_content = part.content + self.content_delta if self.content_delta else part.content
+            new_signature = self.signature_delta if self.signature_delta is not None else part.signature
+            return replace(part, content=new_content, signature=new_signature)
         elif isinstance(part, ThinkingPartDelta):
             if self.content_delta is None and self.signature_delta is None:
                 raise ValueError('Cannot apply ThinkingPartDelta with no content or signature')
