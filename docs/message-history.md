@@ -386,6 +386,34 @@ long_conversation_history: list[ModelMessage] = []  # Your long conversation his
 # result = agent.run_sync('What did we discuss?', message_history=long_conversation_history)
 ```
 
+#### `RunContext` parameter
+
+History processors can optionally accept a [`RunContext`][pydantic_ai.tools.RunContext] parameter to access
+additional information about the current run, such as dependencies, model information, and usage statistics:
+
+```python {title="context_aware_processor.py"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.tools import RunContext
+
+
+def context_aware_processor(
+    ctx: RunContext[None],
+    messages: list[ModelMessage],
+) -> list[ModelMessage]:
+    # Access current usage
+    current_tokens = ctx.usage.total_tokens
+
+    # Filter messages based on context
+    if current_tokens > 1000:
+        return messages[-3:]  # Keep only recent messages when token usage is high
+    return messages
+
+agent = Agent('openai:gpt-4o', history_processors=[context_aware_processor])
+```
+
+This allows for more sophisticated message processing based on the current state of the agent run.
+
 #### Summarize Old Messages
 
 Use an LLM to summarize older messages to preserve context while reducing tokens.
