@@ -116,8 +116,8 @@ Then we can create the client:
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
-agent = Agent('openai:gpt-4o', mcp_servers=[server])
+server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
+agent = Agent('openai:gpt-4o', mcp_servers=[server])  # (2)!
 
 async def main():
     async with agent.run_mcp_servers():  # (3)!
@@ -126,8 +126,9 @@ async def main():
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
 
-1. Create an agent with the MCP server attached.
-2. Create a client session to connect to the server.
+1. Define the MCP server with the URL used to connect.
+2. Create an agent with the MCP server attached.
+3. Create a client session to connect to the server.
 
 _(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -165,6 +166,48 @@ async def main():
 ```
 
 1. See [MCP Run Python](run-python.md) for more information.
+
+## Tool call customisation
+
+The MCP servers provide the ability to set a `process_tool_call` which allows
+the customisation of tool call requests and their responses.
+
+A common use case for this is to inject metadata to the requests which the server
+call needs.
+
+```python {title="mcp_process_tool_call.py" py="3.10"}
+from typing import Any
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import CallToolFunc, MCPServerStdio, ToolResult
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext
+
+
+async def process_tool_call(
+    ctx: RunContext[int],
+    call_tool: CallToolFunc,
+    tool_name: str,
+    args: dict[str, Any],
+) -> ToolResult:
+    """A tool call processor that passes along the deps."""
+    return await call_tool(tool_name, args, metadata={'deps': ctx.deps})
+
+
+server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
+agent = Agent(
+    model=TestModel(call_tools=['echo_deps']),
+    deps_type=int,
+    mcp_servers=[server]
+)
+
+
+async def main():
+    async with agent.run_mcp_servers():
+        result = await agent.run('Echo with deps set to 42', deps=42)
+    print(result.output)
+    #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
+```
 
 ## Using Tool Prefixes to Avoid Naming Conflicts
 

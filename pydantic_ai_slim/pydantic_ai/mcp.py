@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import functools
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +23,7 @@ try:
     from mcp.client.stdio import StdioServerParameters, stdio_client
     from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
     from mcp.shared.context import RequestContext
+    from mcp.shared.exceptions import McpError
     from mcp.shared.message import SessionMessage
 except ImportError as _import_error:
     raise ImportError(
@@ -42,13 +43,16 @@ class MCPServer(ABC):
     See <https://modelcontextprotocol.io> for more information.
     """
 
-    # these three fields should be re-defined by dataclass subclasses so they appear as fields
+    # these fields should be re-defined by dataclass subclasses so they appear as fields {
     tool_prefix: str | None = None
     log_level: mcp_types.LoggingLevel | None = None
     log_handler: LoggingFnT | None = None
     init_timeout: float = 5
+    process_tool_call: ProcessToolCallback | None = None
+    # } end of "abstract fields"
 
     _running_count: int = 0
+
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
@@ -100,19 +104,17 @@ class MCPServer(ABC):
         ]
 
     async def call_tool(
-        self, tool_name: str, arguments: dict[str, Any]
-    ) -> (
-        str
-        | messages.BinaryContent
-        | dict[str, Any]
-        | list[Any]
-        | Sequence[str | messages.BinaryContent | dict[str, Any] | list[Any]]
-    ):
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> ToolResult:
         """Call a tool on the server.
 
         Args:
             tool_name: The name of the tool to call.
             arguments: The arguments to pass to the tool.
+            metadata: Request-level metadata (optional)
 
         Returns:
             The result of the tool call.
@@ -120,7 +122,23 @@ class MCPServer(ABC):
         Raises:
             ModelRetry: If the tool call fails.
         """
-        result = await self._client.call_tool(self.get_unprefixed_tool_name(tool_name), arguments)
+        try:
+            # meta param is not provided by session yet, so build and can send_request directly.
+            result = await self._client.send_request(
+                mcp_types.ClientRequest(
+                    mcp_types.CallToolRequest(
+                        method='tools/call',
+                        params=mcp_types.CallToolRequestParams(
+                            name=self.get_unprefixed_tool_name(tool_name),
+                            arguments=arguments,
+                            _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
+                        ),
+                    )
+                ),
+                mcp_types.CallToolResult,
+            )
+        except McpError as e:
+            raise exceptions.ModelRetry(e.error.message)
 
         content = [self._map_tool_result_part(part) for part in result.content]
 
@@ -301,6 +319,12 @@ class MCPServerStdio(MCPServer):
     init_timeout: float = 5
     """The timeout in seconds to wait for the client to initialize."""
 
+    timeout: float = 5
+    """ The timeout in seconds to wait for the client to initialize."""
+
+    process_tool_call: ProcessToolCallback | None = None
+    """Hook to customize tool calling and optionally pass extra metadata."""
+
     @asynccontextmanager
     async def client_streams(
         self,
@@ -391,6 +415,9 @@ class _MCPServerHTTP(MCPServer):
 
     init_timeout: float = 5
     """The timeout in seconds to wait for the client to initialize."""
+
+    process_tool_call: ProcessToolCallback | None = None
+    """Hook to customize tool calling and optionally pass extra metadata."""
 
     @property
     @abstractmethod
@@ -547,3 +574,33 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     @property
     def _transport_client(self):
         return streamablehttp_client  # pragma: no cover
+
+
+ToolResult = (
+    str
+    | messages.BinaryContent
+    | dict[str, Any]
+    | list[Any]
+    | Sequence[str | messages.BinaryContent | dict[str, Any] | list[Any]]
+)
+"""The result type of a tool call."""
+
+CallToolFunc = Callable[[str, dict[str, Any], dict[str, Any] | None], Awaitable[ToolResult]]
+"""A function type that represents a tool call."""
+
+ProcessToolCallback = Callable[
+    [
+        tools.RunContext[Any],
+        CallToolFunc,
+        str,
+        dict[str, Any],
+    ],
+    Awaitable[ToolResult],
+]
+"""A process tool callback.
+
+It accepts a run context, the original tool call function, a tool name, and arguments.
+
+Allows wrapping an MCP server tool call to customize it, including adding extra request
+metadata.
+"""
