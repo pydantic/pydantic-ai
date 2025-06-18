@@ -75,6 +75,8 @@ class SystemPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_event(self, _settings: InstrumentationSettings) -> Event:
+        if not _settings.include_sensitive_content:
+            return Event('gen_ai.system.message', body={'content': 'SCRUBBED', 'role': 'system'})
         return Event('gen_ai.system.message', body={'content': self.content, 'role': 'system'})
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -353,6 +355,8 @@ class UserPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:
+        if not settings.include_sensitive_content:
+            return Event('gen_ai.user.message', body={'content': 'SCRUBBED', 'role': 'user'})  # Redacting the content
         content: str | list[dict[str, Any] | str]
         if isinstance(self.content, str):
             content = self.content
@@ -415,7 +419,12 @@ class ToolReturnPart:
     def otel_event(self, _settings: InstrumentationSettings) -> Event:
         return Event(
             'gen_ai.tool.message',
-            body={'content': self.content, 'role': 'tool', 'id': self.tool_call_id, 'name': self.tool_name},
+            body={
+                'content': self.content if _settings.include_sensitive_content else 'SCRUBBED',
+                'role': 'tool',
+                'id': self.tool_call_id,
+                'name': self.tool_name,
+            },
         )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -478,7 +487,7 @@ class RetryPromptPart:
             return Event(
                 'gen_ai.tool.message',
                 body={
-                    'content': self.model_response(),
+                    'content': self.model_response() if _settings.include_sensitive_content else 'SCRUBBED',
                     'role': 'tool',
                     'id': self.tool_call_id,
                     'name': self.tool_name,
@@ -629,7 +638,7 @@ class ModelResponse:
     vendor_id: str | None = None
     """Vendor ID as specified by the model provider. This can be used to track the specific request to the model."""
 
-    def otel_events(self) -> list[Event]:
+    def otel_events(self, _settings: InstrumentationSettings) -> list[Event]:
         """Return OpenTelemetry events for the response."""
         result: list[Event] = []
 
@@ -655,7 +664,7 @@ class ModelResponse:
             elif isinstance(part, TextPart):
                 if body.get('content'):
                     body = new_event_body()
-                body['content'] = part.content
+                body['content'] = part.content if _settings.include_sensitive_content else 'SCRUBBED'
 
         return result
 

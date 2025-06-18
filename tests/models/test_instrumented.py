@@ -827,3 +827,41 @@ def test_messages_to_otel_events_without_binary_content(document_content: Binary
             }
         ]
     )
+
+
+def test_messages_to_otel_events_without_prompts_and_completions():
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('system_prompt')]),
+        ModelResponse(parts=[TextPart('text1')]),
+        ModelRequest(parts=[UserPromptPart('user_prompt')]),
+        ModelResponse(parts=[TextPart('text2')]),
+    ]
+    settings = InstrumentationSettings(include_sensitive_content=False)
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+        [
+            {
+                'content': 'SCRUBBED',
+                'role': 'system',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.system.message',
+            },
+            {
+                'content': 'SCRUBBED',
+                'role': 'assistant',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'content': 'SCRUBBED',
+                'role': 'user',
+                'gen_ai.message.index': 2,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'content': 'SCRUBBED',
+                'role': 'assistant',
+                'gen_ai.message.index': 3,
+                'event.name': 'gen_ai.assistant.message',
+            },
+        ]
+    )
