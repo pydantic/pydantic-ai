@@ -116,8 +116,8 @@ Then we can create the client:
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
-agent = Agent('openai:gpt-4o', mcp_servers=[server])
+server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
+agent = Agent('openai:gpt-4o', mcp_servers=[server])  # (2)!
 
 async def main():
     async with agent.run_mcp_servers():  # (3)!
@@ -126,8 +126,9 @@ async def main():
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
 
-1. Create an agent with the MCP server attached.
-2. Create a client session to connect to the server.
+1. Define the MCP server with the URL used to connect.
+2. Create an agent with the MCP server attached.
+3. Create a client session to connect to the server.
 
 _(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
 
