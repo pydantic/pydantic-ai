@@ -9,8 +9,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from inline_snapshot import snapshot
-from mcp import SamplingMessage
-from mcp.types import ImageContent, TextContent
 
 from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response
 from pydantic_ai.agent import Agent
@@ -33,8 +31,8 @@ from pydantic_ai.usage import Usage
 from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
-    from mcp import ErrorData, McpError
-    from mcp.types import CreateMessageRequestParams
+    from mcp import ErrorData, McpError, SamplingMessage
+    from mcp.types import CreateMessageRequestParams, ImageContent, TextContent
 
     from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
     from pydantic_ai.models.google import GoogleModel
