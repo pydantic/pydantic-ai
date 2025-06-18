@@ -305,3 +305,15 @@ agent = Agent('gpt-4o', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
+
+### Excluding sensitive content
+
+```python {title="exluding_sensitive_content.py"}
+from pydantic_ai.agent import Agent, InstrumentationSettings
+
+instrumentation_settings = InstrumentationSettings(include_sensitive_content=False)
+
+agent = Agent('gpt-4o', instrument=instrumentation_settings)
+# or to instrument all agents:
+Agent.instrument_all(instrumentation_settings)
+```
