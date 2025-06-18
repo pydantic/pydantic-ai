@@ -818,7 +818,7 @@ class OpenAIResponsesModel(Model):
                         # last_thinking_part_idx = len(openai_messages)
                         # openai_messages.append(
                         #     responses.ResponseReasoningItemParam(
-                        #         id=item.id or generate_thinking_id(),
+                        #         id=item.id or generate_tool_call_id(),
                         #         summary=[Summary(text=item.content, type='summary_text')],
                         #         type='reasoning',
                         #     )
