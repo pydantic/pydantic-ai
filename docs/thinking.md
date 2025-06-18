@@ -4,41 +4,52 @@ Thinking (or reasoning) is the process by which a model works through a problem 
 providing its final answer.
 
 This capability is typically disabled by default and depends on the specific model being used.
+See the below sections for how to enable thinking for each provider.
+
+Internally, if the model doesn't provide thinking objects, PydanticAI will convert the thinking blocks
+(`"<think>..."</think>"`) in provider specific text parts to PydanticAI `ThinkingPart`s. We also made
+the decision to not send back the `ThinkingPart`s to the provider in a multi-turn conversation - the
+idea is to save costs on behalf of the user. In the future, we intend to add a setting to customize
+this behavior.
 
 ## OpenAI
 
-The [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel] doesn't generate thinking (reasoning) parts,
-but it can receive messages from other models that do. When this happens, it converts
-[`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects into [`TextPart`][pydantic_ai.messages.TextPart]s
-using the `"<think>"` tag.
+When using the [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel], thinking objects are not created
+by default. However, the text content may contain `"<think>"` tags. When this happens, PydanticAI will
+convert them to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
 
-To properly generate thinking parts, you need to use the
-[`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
+On the other hand, the [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] does
+generate thinking parts. To enable it, you need to set the `openai_reasoning_effort` and
+`openai_reasoning_summary` fields in the
+[`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings].
 
 ```python {title="openai_thinking_part.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 model = OpenAIResponsesModel('o3-mini')
-settings = OpenAIResponsesModelSettings(openai_reasoning_effort='low', openai_reasoning_summary='detailed')
+settings = OpenAIResponsesModelSettings(
+    openai_reasoning_effort='low',
+    openai_reasoning_summary='detailed',
+)
 agent = Agent(model, model_settings=settings)
 ...
 ```
 
 ## Anthropic
 
-Unlike other providers, Anthropic includes a signature in the thinking part. This signature
-is used to ensure that the thinking part hasn't been tampered with.
-
-To enable thinking, use the `anthropic_thinking` field in the
-[`AnthropicModelSettings`][pydantic_ai.models.anthropic.AnthropicModelSettings]
+Unlike other providers, Anthropic includes a signature in the thinking part. This signature is used to
+ensure that the thinking part hasn't been tampered with. To enable thinking, use the `anthropic_thinking`
+field in the [`AnthropicModelSettings`][pydantic_ai.models.anthropic.AnthropicModelSettings].
 
 ```python {title="anthropic_thinking_part.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 
 model = AnthropicModel('claude-3-7-sonnet-latest')
-settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
+settings = AnthropicModelSettings(
+    anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024},
+)
 agent = Agent(model, model_settings=settings)
 ...
 ```
@@ -67,7 +78,7 @@ agent = Agent(model, model_settings=settings)
 ## Google
 
 To enable thinking, use the `google_thinking_config` field in the
-[`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings]
+[`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings].
 
 ```python {title="google_thinking_part.py"}
 from pydantic_ai import Agent
@@ -81,6 +92,4 @@ agent = Agent(model, model_settings=settings)
 
 ## Mistral / Cohere
 
-Neither Mistral nor Cohere generate thinking parts, but when they receive thinking parts in the
-conversation history, they convert [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects into
-[`TextPart`][pydantic_ai.messages.TextPart]s using the `"<think>"` tag.
+Neither Mistral nor Cohere generate thinking parts.
