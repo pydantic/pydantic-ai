@@ -1,21 +1,27 @@
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
+import base64
 import re
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from inline_snapshot import snapshot
+from mcp import SamplingMessage
+from mcp.types import ImageContent, TextContent
 
+from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -24,10 +30,11 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import Usage
 
-from .conftest import IsDatetime, IsStr, try_import
+from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from mcp import ErrorData, McpError
+    from mcp.types import CreateMessageRequestParams
 
     from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
     from pydantic_ai.models.google import GoogleModel
@@ -991,3 +998,52 @@ async def test_mcp_server_raises_mcp_error(allow_model_requests: None, agent: Ag
         ):
             with pytest.raises(ModelRetry, match='Test MCP error conversion'):
                 await server.call_tool('test_tool', {})
+
+
+def test_map_from_mcp_params_model_request():
+    params = CreateMessageRequestParams(
+        messages=[
+            SamplingMessage(role='user', content=TextContent(type='text', text='xx')),
+            SamplingMessage(
+                role='user',
+                content=ImageContent(type='image', data=base64.b64encode(b'img').decode(), mimeType='image/png'),
+            ),
+        ],
+        maxTokens=8,
+    )
+    pai_messages = map_from_mcp_params(params)
+    assert pai_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='xx', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(
+                        content=[BinaryContent(data=b'img', media_type='image/png')], timestamp=IsNow(tz=timezone.utc)
+                    ),
+                ]
+            )
+        ]
+    )
+
+
+def test_map_from_mcp_params_model_response():
+    params = CreateMessageRequestParams(
+        messages=[
+            SamplingMessage(role='assistant', content=TextContent(type='text', text='xx')),
+        ],
+        maxTokens=8,
+    )
+    pai_messages = map_from_mcp_params(params)
+    assert pai_messages == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='xx')],
+                timestamp=IsNow(tz=timezone.utc),
+            )
+        ]
+    )
+
+
+def test_map_from_model_response():
+    with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ThinkingPart, expected TextPart'):
+        map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking...')]))

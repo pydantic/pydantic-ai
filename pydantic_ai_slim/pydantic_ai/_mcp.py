@@ -48,7 +48,7 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
 
     if response_parts:
         pai_messages.append(messages.ModelResponse(parts=response_parts))
-    elif request_parts:
+    if request_parts:
         pai_messages.append(messages.ModelRequest(parts=request_parts))
     return pai_messages
 
@@ -103,7 +103,7 @@ def map_from_model_response(model_response: messages.ModelResponse) -> mcp_types
         if isinstance(part, messages.TextPart):
             text_parts.append(part.content)
         else:
-            raise exceptions.UnexpectedModelBehavior(f'Unexpected part type: {type(part)}, expected TextPart')
+            raise exceptions.UnexpectedModelBehavior(f'Unexpected part type: {type(part).__name__}, expected TextPart')
     return mcp_types.TextContent(type='text', text=''.join(text_parts))
 
 
