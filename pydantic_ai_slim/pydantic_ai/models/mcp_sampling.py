@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from .. import _mcp, usage
+from .. import _mcp, exceptions, usage
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from . import Model, ModelRequestParameters, StreamedResponse
@@ -57,11 +57,16 @@ class MCPSamplingModel(Model):
             model_preferences=model_settings.get('mcp_model_preferences'),
             stop_sequences=model_settings.get('stop_sequences'),
         )
-        return ModelResponse(
-            parts=[_mcp.map_from_sampling_content(result.content)],
-            usage=usage.Usage(requests=1),
-            model_name=result.model,
-        )
+        if result.role == 'assistant':
+            return ModelResponse(
+                parts=[_mcp.map_from_sampling_content(result.content)],
+                usage=usage.Usage(requests=1),
+                model_name=result.model,
+            )
+        else:
+            raise exceptions.UnexpectedModelBehavior(
+                f'Unexpected result from MCP sampling, expected "assistant" role, got {result.role}.'
+            )
 
     @asynccontextmanager
     async def request_stream(
