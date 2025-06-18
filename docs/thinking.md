@@ -4,13 +4,12 @@ Thinking (or reasoning) is the process by which a model works through a problem 
 providing its final answer.
 
 This capability is typically disabled by default and depends on the specific model being used.
-See the below sections for how to enable thinking for each provider.
+See the sections below for how to enable thinking for each provider.
 
-Internally, if the model doesn't provide thinking objects, PydanticAI will convert the thinking blocks
-(`"<think>..."</think>"`) in provider specific text parts to PydanticAI `ThinkingPart`s. We also made
-the decision to not send back the `ThinkingPart`s to the provider in a multi-turn conversation - the
-idea is to save costs on behalf of the user. In the future, we intend to add a setting to customize
-this behavior.
+Internally, if the model doesn't provide thinking objects, PydanticAI will convert thinking blocks
+(`"<think>..."</think>"`) in provider-specific text parts to `ThinkingPart`s. We have also made
+the decision not to send `ThinkingPart`s back to the provider in multi-turn conversations -
+this helps save costs for users. In the future, we plan to add a setting to customize this behavior.
 
 ## OpenAI
 
@@ -18,8 +17,8 @@ When using the [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel], thinking 
 by default. However, the text content may contain `"<think>"` tags. When this happens, PydanticAI will
 convert them to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
 
-On the other hand, the [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] does
-generate thinking parts. To enable it, you need to set the `openai_reasoning_effort` and
+In contrast, the [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] does
+generate thinking parts. To enable this functionality, you need to set the `openai_reasoning_effort` and
 `openai_reasoning_summary` fields in the
 [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings].
 
@@ -39,7 +38,7 @@ agent = Agent(model, model_settings=settings)
 ## Anthropic
 
 Unlike other providers, Anthropic includes a signature in the thinking part. This signature is used to
-ensure that the thinking part hasn't been tampered with. To enable thinking, use the `anthropic_thinking`
+ensure that the thinking part has not been tampered with. To enable thinking, use the `anthropic_thinking`
 field in the [`AnthropicModelSettings`][pydantic_ai.models.anthropic.AnthropicModelSettings].
 
 ```python {title="anthropic_thinking_part.py"}
