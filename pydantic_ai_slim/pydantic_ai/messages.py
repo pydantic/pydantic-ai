@@ -356,7 +356,7 @@ class UserPromptPart:
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:
         if not settings.include_sensitive_content:
-            return Event('gen_ai.user.message', body={'content': 'SCRUBBED', 'role': 'user'})  # Redacting the content
+            return Event('gen_ai.user.message', body={'content': 'SCRUBBED', 'role': 'user'})
         content: str | list[dict[str, Any] | str]
         if isinstance(self.content, str):
             content = self.content
