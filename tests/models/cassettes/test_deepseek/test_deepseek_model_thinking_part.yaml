@@ -1,0 +1,91 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '118'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: How do I cross the street?
+        role: user
+      model: deepseek-reasoner
+      n: 1
+      stream: false
+    uri: https://api.deepseek.com/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '4148'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "Crossing the street safely involves careful observation and following traffic rules. Here's a step-by-step
+            guide:\n\n1. **Find a Safe Spot**:  \n   - Use a **crosswalk** or intersection with pedestrian signals whenever
+            possible.  \n   - Avoid crossing between parked cars, curves, or hills where visibility is poor.  \n\n2. **Check
+            Traffic Signals**:  \n   - Wait for the \"walk\" signal or green light. If there's a button, press it to activate
+            the pedestrian signal.  \n   - **Never cross** on a red light, flashing \"don't walk,\" or steady hand signal.
+            \ \n\n3. **Look Both Ways**:  \n   - **Look left, right, and left again** (or right, left, right in countries
+            with left-side traffic).  \n   - Keep checking for cars, bikes, or motorcycles while crossing.  \n\n4. **Make
+            Eye Contact**:  \n   - Ensure drivers see you before stepping into the road, especially at stop signs or turning
+            lanes.  \n\n5. **Stay Focused**:  \n   - Avoid distractions like phones, headphones, or conversations.  \n   -
+            Walk briskly (don't run) and follow a straight path.  \n\n6. **Watch for Turning Vehicles**:  \n   - Be cautious
+            of cars turning into your path, even if you have the right of way.  \n\n7. **Be Visible**:  \n   - At night, wear
+            reflective clothing or use a flashlight.  \n\n8. **Use Pedestrian Infrastructure**:  \n   - Opt for bridges, tunnels,
+            or islands if available.  \n\n9. **Follow Local Laws**:  \n   - Avoid jaywalking—it's illegal in many areas and
+            increases accident risk.  \n\n**Remember**: Never assume drivers will stop. Prioritize safety over speed, and
+            stay alert until you've fully crossed."
+          reasoning_content: |-
+            Okay, the user is asking how to cross the street. Let me think about how to approach this. First, I need to make sure I cover all the essential steps clearly. Maybe start with finding a safe place to cross. Crosswalks and intersections are important here. I should mention looking for traffic lights or pedestrian signals.
+
+            Wait, what about places without crosswalks? Maybe advise them to choose a well-lit area with a clear view of traffic. Then, checking both directions for cars. But in some countries, traffic is on the left, so I should mention looking left and right, then left again, or something like that. Wait, maybe just say look both ways multiple times to be safe.
+
+            Oh, and making eye contact with drivers if possible. That's a good point. Also, stay visible, maybe avoid distractions like phones. Don't forget to walk, not run, and keep looking while crossing. What about if there's a button to press at the crosswalk? Maybe include that step. Also, explain different signals like the walking person and the hand signal. Maybe warn against crossing on a red hand or don't walk signal.
+
+            What about situations where there's no traffic light? Like a stop sign? The pedestrian has the right of way there, but still need to be cautious. Also, remind them to watch for turning vehicles, even if they have the right of way. Maybe add something about using pedestrian bridges or tunnels if available. Oh, and be extra careful at night or in bad weather. Wear reflective clothing if possible.
+
+            I should structure this step by step. Start with finding a safe spot, checking signals, looking both ways, making eye contact, staying focused, walking straight across, and continuing to look. Maybe include additional tips like using pedestrian infrastructure, being cautious at night, and following local laws. Also, emphasize not assuming drivers see you. Did I miss anything? Maybe jaywalking? Advise against it. Alright, I think that covers the basics. Need to present it clearly and concisely.
+          role: assistant
+      created: 1745330951
+      id: 181d9669-2b3a-445e-bd13-2ebff2c378f6
+      model: deepseek-reasoner
+      object: chat.completion
+      system_fingerprint: fp_5417b77867_prod0225
+      usage:
+        completion_tokens: 789
+        completion_tokens_details:
+          reasoning_tokens: 415
+        prompt_cache_hit_tokens: 0
+        prompt_cache_miss_tokens: 12
+        prompt_tokens: 12
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 801
+    status:
+      code: 200
+      message: OK
+version: 1

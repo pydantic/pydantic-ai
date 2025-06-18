@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
 import pydantic_core
+from typing_extensions import assert_never
 
 from .. import _utils
 from ..messages import (
@@ -19,17 +20,14 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
 )
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import Usage
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-)
+from . import Model, ModelRequestParameters, StreamedResponse
 from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
 
@@ -254,10 +252,15 @@ class TestStreamedResponse(StreamedResponse):
                 for word in words:
                     self._usage += _get_string_usage(word)
                     yield self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
-            else:
+            elif isinstance(part, ToolCallPart):
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
                 )
+            elif isinstance(part, ThinkingPart):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since we don't generate ThinkingPart on TestModel.
+                assert False, "This should be unreachable — we don't generate ThinkingPart on TestModel."
+            else:
+                assert_never(part)
 
     @property
     def model_name(self) -> str:

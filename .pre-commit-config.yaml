@@ -13,8 +13,11 @@ repos:
     rev: 0.6.8
     hooks:
       - id: fix-smartquotes
+        exclude: 'cassettes/'
       - id: fix-spaces
+        exclude: 'cassettes/'
       - id: fix-ligatures
+        exclude: 'cassettes/'
 
   - repo: local
     hooks:
@@ -60,6 +63,6 @@ repos:
     rev: v2.3.0
     hooks:
     - id: codespell
-      args: ['--skip', 'tests/models/cassettes/*,docs/a2a/fasta2a.md']
+      args: ['--skip', 'tests/models/cassettes/*,docs/a2a/fasta2a.md,tests/models/test_cohere.py']
       additional_dependencies:
       - tomli

@@ -13,6 +13,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolCallPartDelta,
 )
@@ -439,3 +440,60 @@ def test_apply_tool_delta_variants(
         tool_call_part = manager.get_parts()[0]
         assert isinstance(tool_call_part, ToolCallPart)
         assert tool_call_part.args == result
+
+
+def test_handle_thinking_delta_no_vendor_id_with_existing_thinking_part():
+    manager = ModelResponsePartsManager()
+
+    # Add a thinking part first
+    event = manager.handle_thinking_delta(vendor_part_id='first', content='initial thought', signature=None)
+    assert isinstance(event, PartStartEvent)
+    assert event.index == 0
+
+    # Now add another thinking delta with no vendor_part_id - should update the latest thinking part
+    event = manager.handle_thinking_delta(vendor_part_id=None, content=' more', signature=None)
+    assert isinstance(event, PartDeltaEvent)
+    assert event.index == 0
+
+    parts = manager.get_parts()
+    assert parts == snapshot([ThinkingPart(content='initial thought more')])
+
+
+def test_handle_thinking_delta_wrong_part_type():
+    manager = ModelResponsePartsManager()
+
+    # Add a text part first
+    manager.handle_text_delta(vendor_part_id='text', content='hello')
+
+    # Try to apply thinking delta to the text part - should raise error
+    with pytest.raises(UnexpectedModelBehavior, match=r'Cannot apply a thinking delta to existing_part='):
+        manager.handle_thinking_delta(vendor_part_id='text', content='thinking', signature=None)
+
+
+def test_handle_thinking_delta_new_part_with_vendor_id():
+    manager = ModelResponsePartsManager()
+
+    event = manager.handle_thinking_delta(vendor_part_id='thinking', content='new thought', signature=None)
+    assert isinstance(event, PartStartEvent)
+    assert event.index == 0
+
+    parts = manager.get_parts()
+    assert parts == snapshot([ThinkingPart(content='new thought')])
+
+
+def test_handle_thinking_delta_no_content():
+    manager = ModelResponsePartsManager()
+
+    with pytest.raises(UnexpectedModelBehavior, match='Cannot create a ThinkingPart with no content'):
+        manager.handle_thinking_delta(vendor_part_id=None, content=None, signature=None)
+
+
+def test_handle_thinking_delta_no_content_or_signature():
+    manager = ModelResponsePartsManager()
+
+    # Add a thinking part first
+    manager.handle_thinking_delta(vendor_part_id='thinking', content='initial', signature=None)
+
+    # Try to update with no content or signature - should raise error
+    with pytest.raises(UnexpectedModelBehavior, match='Cannot update a ThinkingPart with no content or signature'):
+        manager.handle_thinking_delta(vendor_part_id='thinking', content=None, signature=None)
