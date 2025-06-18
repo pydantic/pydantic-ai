@@ -11,7 +11,7 @@ from uuid import uuid4
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
-from ..exceptions import UserError
+from ..exceptions import UsageLimitExceeded, UserError
 from ..messages import (
     BinaryContent,
     FileUrl,
@@ -289,7 +289,9 @@ class GoogleModel(Model):
         if not response.candidates or len(response.candidates) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
         if response.candidates[0].content is None or response.candidates[0].content.parts is None:
-            if response.candidates[0].finish_reason == 'SAFETY':
+            if response.candidates[0].finish_reason == 'MAX_TOKENS':
+                raise UsageLimitExceeded(str(response))
+            elif response.candidates[0].finish_reason == 'SAFETY':
                 raise UnexpectedModelBehavior('Safety settings triggered', str(response))
             else:
                 raise UnexpectedModelBehavior(
