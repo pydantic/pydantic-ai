@@ -104,7 +104,7 @@ class GoogleProvider(Provider[genai.Client]):
                 self._client = genai.Client(
                     vertexai=vertexai,
                     project=project or os.environ.get('GOOGLE_CLOUD_PROJECT'),
-                    location=location or os.environ.get('GOOGLE_CLOUD_LOCATION'),
+                    location=location or os.environ.get('GOOGLE_CLOUD_LOCATION') or 'us-central1',
                     credentials=credentials,
                     http_options={'headers': {'User-Agent': get_user_agent()}},
                 )
