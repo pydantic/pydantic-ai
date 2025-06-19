@@ -1,21 +1,24 @@
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
+import base64
 import re
+from datetime import timezone
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -24,18 +27,18 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import Usage
 
-from .conftest import IsDatetime, IsStr, try_import
+from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
-    from mcp import ErrorData, McpError
+    from mcp import ErrorData, McpError, SamplingMessage
+    from mcp.types import CreateMessageRequestParams, ImageContent, TextContent
 
+    from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response
     from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
-
-TOOL_COUNT: Final[int] = 12
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mcp and openai not installed'),
@@ -55,13 +58,20 @@ async def test_stdio_server():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == TOOL_COUNT
+        assert len(tools) == snapshot(13)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
         # Test calling the temperature conversion tool
         result = await server.call_tool('celsius_to_fahrenheit', {'celsius': 0})
         assert result == snapshot('32.0')
+
+
+async def test_reentrant_context_manager():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        async with server:
+            pass
 
 
 async def test_stdio_server_with_tool_prefix():
@@ -76,7 +86,7 @@ async def test_stdio_server_with_cwd():
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == TOOL_COUNT
+        assert len(tools) == snapshot(13)
 
 
 async def test_process_tool_call() -> None:
@@ -104,7 +114,7 @@ async def test_process_tool_call() -> None:
 def test_sse_server():
     sse_server = MCPServerSSE(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
-    assert sse_server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
+    assert sse_server.log_level is None
 
 
 def test_sse_server_with_header_and_timeout():
@@ -119,7 +129,7 @@ def test_sse_server_with_header_and_timeout():
     assert sse_server.headers is not None and sse_server.headers['my-custom-header'] == 'my-header-value'
     assert sse_server.timeout == 10
     assert sse_server.sse_read_timeout == 100
-    assert sse_server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
+    assert sse_server.log_level == 'info'
 
 
 @pytest.mark.vcr()
@@ -240,10 +250,10 @@ async def test_agent_with_server_not_running(openai_api_key: str):
 
 async def test_log_level_unset():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    assert server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
+    assert server.log_level is None
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == TOOL_COUNT
+        assert len(tools) == snapshot(13)
         assert tools[10].name == 'get_log_level'
 
         result = await server.call_tool('get_log_level', {})
@@ -252,7 +262,7 @@ async def test_log_level_unset():
 
 async def test_log_level_set():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
-    assert server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
+    assert server.log_level == 'info'
     async with server:
         result = await server.call_tool('get_log_level', {})
         assert result == snapshot('info')
@@ -963,6 +973,23 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
         )
 
 
+async def test_client_sampling():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
+    server.sampling_model = TestModel(custom_output_text='sampling model response')
+    assert server.log_level == 'info'
+    async with server:
+        result = await server.call_tool('use_sampling', {'foo': 'bar'})
+        assert result == snapshot(
+            {
+                'meta': None,
+                'role': 'assistant',
+                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None},
+                'model': 'test',
+                'stopReason': None,
+            }
+        )
+
+
 async def test_mcp_server_raises_mcp_error(allow_model_requests: None, agent: Agent) -> None:
     server = agent._mcp_servers[0]  # pyright: ignore[reportPrivateUsage]
 
@@ -976,3 +1003,52 @@ async def test_mcp_server_raises_mcp_error(allow_model_requests: None, agent: Ag
         ):
             with pytest.raises(ModelRetry, match='Test MCP error conversion'):
                 await server.call_tool('test_tool', {})
+
+
+def test_map_from_mcp_params_model_request():
+    params = CreateMessageRequestParams(
+        messages=[
+            SamplingMessage(role='user', content=TextContent(type='text', text='xx')),
+            SamplingMessage(
+                role='user',
+                content=ImageContent(type='image', data=base64.b64encode(b'img').decode(), mimeType='image/png'),
+            ),
+        ],
+        maxTokens=8,
+    )
+    pai_messages = map_from_mcp_params(params)
+    assert pai_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='xx', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(
+                        content=[BinaryContent(data=b'img', media_type='image/png')], timestamp=IsNow(tz=timezone.utc)
+                    ),
+                ]
+            )
+        ]
+    )
+
+
+def test_map_from_mcp_params_model_response():
+    params = CreateMessageRequestParams(
+        messages=[
+            SamplingMessage(role='assistant', content=TextContent(type='text', text='xx')),
+        ],
+        maxTokens=8,
+    )
+    pai_messages = map_from_mcp_params(params)
+    assert pai_messages == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='xx')],
+                timestamp=IsNow(tz=timezone.utc),
+            )
+        ]
+    )
+
+
+def test_map_from_model_response():
+    with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ThinkingPart, expected TextPart'):
+        map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking...')]))

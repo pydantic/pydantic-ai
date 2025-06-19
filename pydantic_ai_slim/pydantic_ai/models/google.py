@@ -24,6 +24,7 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -79,8 +80,11 @@ LatestGoogleModelNames = Literal[
     'gemini-2.0-flash-lite-preview-02-05',
     'gemini-2.0-pro-exp-02-05',
     'gemini-2.5-flash-preview-05-20',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite-preview-06-17',
     'gemini-2.5-pro-exp-03-25',
     'gemini-2.5-pro-preview-05-06',
+    'gemini-2.5-pro',
 ]
 """Latest Gemini models."""
 
@@ -438,7 +442,10 @@ class GeminiStreamedResponse(StreamedResponse):
             assert candidate.content.parts is not None
             for part in candidate.content.parts:
                 if part.text is not None:
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
+                    if part.thought:
+                        yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
+                    else:
+                        yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=uuid4(),
@@ -471,6 +478,11 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
         elif isinstance(item, TextPart):
             if item.content:  # pragma: no branch
                 parts.append({'text': item.content})
+        elif isinstance(item, ThinkingPart):  # pragma: no cover
+            # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
+            # please open an issue. The below code is the code to send thinking to the provider.
+            # parts.append({'text': item.content, 'thought': True})
+            pass
         else:
             assert_never(item)
     return ContentDict(role='model', parts=parts)
@@ -486,7 +498,10 @@ def _process_response_from_parts(
     items: list[ModelResponsePart] = []
     for part in parts:
         if part.text is not None:
-            items.append(TextPart(content=part.text))
+            if part.thought:
+                items.append(ThinkingPart(content=part.text))
+            else:
+                items.append(TextPart(content=part.text))
         elif part.function_call:
             assert part.function_call.name is not None
             tool_call_part = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)

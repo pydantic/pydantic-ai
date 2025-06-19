@@ -39,6 +39,7 @@ nav:
       - graph.md
       - evals.md
       - input.md
+      - thinking.md
       - direct.md
       - MCP:
           - mcp/index.md
