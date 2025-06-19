@@ -20,7 +20,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
-pytestmark = pytest.mark.skipif(not imports_successful, reason='mcp package not installed')
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='mcp package not installed')
 
 
 @dataclass
