@@ -11,6 +11,22 @@ from typing_inspection.introspection import is_union_origin
 from .messages import RetryPromptPart
 from .tools import RunContext
 
+__all__ = (
+    # classes
+    'ToolOutput',
+    'ModelStructuredOutput',
+    'PromptedStructuredOutput',
+    'TextOutput',
+    'ToolRetryError',
+    # types
+    'OutputDataT',
+    'OutputMode',
+    'StructuredOutputMode',
+    'OutputTypeOrFunction',
+    'OutputSpec',
+    'TextOutputFunction',
+)
+
 OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
 """Covariant type variable for the result data type of a run."""
 
@@ -23,7 +39,7 @@ StructuredOutputMode = Literal['tool', 'model_structured', 'prompted_structured'
 
 
 class ToolRetryError(Exception):
-    """Internal exception used to signal a `ToolRetry` message should be returned to the LLM."""
+    """Exception used to signal a `ToolRetry` message should be returned to the LLM."""
 
     def __init__(self, tool_retry: RetryPromptPart):
         self.tool_retry = tool_retry
@@ -65,10 +81,15 @@ class ToolOutput(Generic[OutputDataT]):
     """
 
     output: OutputTypeOrFunction[OutputDataT]
+    """An output type or function."""
     name: str | None
+    """The name of the tool that will be passed to the model. If not specified and only one output is provided, `final_result` will be used. If multiple outputs are provided, the name of the output type or function will be added to the tool name."""
     description: str | None
+    """The description of the tool that will be passed to the model. If not specified, the docstring of the output type or function will be used."""
     max_retries: int | None
+    """The maximum number of retries for the tool."""
     strict: bool | None
+    """Whether to use strict mode for the tool."""
 
     def __init__(
         self,
@@ -122,8 +143,11 @@ class ModelStructuredOutput(Generic[OutputDataT]):
     """
 
     outputs: Sequence[OutputTypeOrFunction[OutputDataT]]
+    """The output types or functions."""
     name: str | None
+    """The name of the structured output that will be passed to the model. If not specified and only one output is provided, the name of the output type or function will be used."""
     description: str | None
+    """The description of the structured output that will be passed to the model. If not specified and only one output is provided, the docstring of the output type or function will be used."""
 
     def __init__(
         self,
@@ -184,8 +208,11 @@ class PromptedStructuredOutput(Generic[OutputDataT]):
     """
 
     outputs: Sequence[OutputTypeOrFunction[OutputDataT]]
+    """The output types or functions."""
     name: str | None
+    """The name of the structured output that will be passed to the model. If not specified and only one output is provided, the name of the output type or function will be used."""
     description: str | None
+    """The description that will be passed to the model. If not specified and only one output is provided, the docstring of the output type or function will be used."""
     template: str | None
     """Template for the prompt passed to the model.
     The '{schema}' placeholder will be replaced with the output JSON schema.
@@ -230,6 +257,7 @@ class TextOutput(Generic[OutputDataT]):
     """
 
     output_function: TextOutputFunction[OutputDataT]
+    """The function that will be called to process the model's plain text output. The function must take a single string argument."""
 
 
 def _get_union_args(tp: Any) -> tuple[Any, ...]:
