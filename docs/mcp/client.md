@@ -329,7 +329,7 @@ Let's say we have an MCP server that wants to use sampling (in this case to gene
 
     @app.tool()
     async def image_generator(ctx: Context, subject: str, style: str) -> str:
-        prompt = f'Picture of {subject} in the style of {style}'
+        prompt = f'{subject=} {style=}'
         # `ctx.session.create_message` is the sampling call
         result = await ctx.session.create_message(
             [SamplingMessage(role='user', content=TextContent(type='text', text=prompt))],
@@ -344,7 +344,7 @@ Let's say we have an MCP server that wants to use sampling (in this case to gene
             path.write_text(m.group(1))
         else:
             path.write_text(result.content.text)
-        return f'image written to {path}'
+        return f'See {path}'
 
 
     if __name__ == '__main__':
@@ -354,7 +354,7 @@ Let's say we have an MCP server that wants to use sampling (in this case to gene
 
 Using this server with an `Agent` will automatically allow sampling:
 
-```python {title="sampling_mcp_client.py" py="3.10"}
+```python {title="sampling_mcp_client.py" py="3.10" requires="generate_svg.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
@@ -366,10 +366,7 @@ async def main():
     async with agent.run_mcp_servers():
         result = await agent.run('Create an image of a robot in a punk style.')
     print(result.output)
-
-
-if __name__ == '__main__':
-    asyncio.run(main())
+    #> Image file written to robot_punk.svg.
 ```
 
 _(This example is complete, it can be run "as is" with Python 3.10+)_

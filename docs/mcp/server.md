@@ -32,7 +32,7 @@ if __name__ == '__main__':
 
 This server can be queried with any MCP client. Here is an example using the Python SDK directly:
 
-```py {title="mcp_client.py" py="3.10"}
+```py {title="mcp_client.py" py="3.10" requires="mcp_server.py" dunder_name="not_main"}
 import asyncio
 import os
 
@@ -64,9 +64,9 @@ if __name__ == '__main__':
 ## MCP Sampling
 
 !!! info "What is MCP Sampling?"
-    See the [client](./client.md#mcp-sampling) for details of what MCP sampling is, and how you can enable it when using Pydantic AI as an MCP client.
+    See the [MCP client docs](./client.md#mcp-sampling) for details of what MCP sampling is, and how you can enable it when using Pydantic AI as an MCP client.
 
-When Pydantic AI agents are used within MCP servers, they can used sampling via [`MCPSamplingModel`][pydantic_ai.models.mcp_sampling.MCPSamplingModel].
+When Pydantic AI agents are used within MCP servers, they can use sampling via [`MCPSamplingModel`][pydantic_ai.models.mcp_sampling.MCPSamplingModel].
 
 We can extend the above example to use sampling so instead of connecting directly to the LLM, the agent calls back through the MCP client to make LLM calls.
 
@@ -95,9 +95,8 @@ The [above](#simple-client) client does not support sampling, so if you tried to
 
 The simplest way to support sampling in an MCP client is to [use](./client.md#mcp-sampling) a Pydantic AI agent as the client, but if you wanted to support sampling with the vanilla MCP SDK, you could do so like this:
 
-```py {title="mcp_client_sampling.py" py="3.10"}
+```py {title="mcp_client_sampling.py" py="3.10" requires="mcp_server_sampling.py"}
 import asyncio
-import os
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
@@ -110,10 +109,22 @@ async def sampling_callback(
     context: RequestContext[ClientSession, Any], params: CreateMessageRequestParams
 ) -> CreateMessageResult | ErrorData:
     print('sampling system prompt:', params.systemPrompt)
+    #> sampling system prompt: always reply in rhyme
     print('sampling messages:', params.messages)
+    """
+    sampling messages:
+    [
+        SamplingMessage(
+            role='user',
+            content=TextContent(
+                type='text', text='write a poem about socks', annotations=None
+            ),
+        )
+    ]
+    """
 
     # TODO get the response content by calling an LLM...
-    response_content = 'this is the response from a fictional LLM!'
+    response_content = 'Socks for a fox.'
 
     return CreateMessageResult(
         role='assistant',
@@ -129,6 +140,7 @@ async def client():
             await session.initialize()
             result = await session.call_tool('poet', {'theme': 'socks'})
             print(result.content[0].text)
+            #> Socks for a fox.
 
 
 if __name__ == '__main__':
