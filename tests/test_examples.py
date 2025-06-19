@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
-import secrets
 import shutil
 import sys
 from collections.abc import AsyncIterator, Iterable, Sequence
@@ -70,12 +69,13 @@ code_examples: dict[str, CodeExample] = {}
 
 def find_filter_examples() -> Iterable[ParameterSet]:
     # Ensure this is run from the package root regardless of where/how the tests are run
-    os.chdir(Path(__file__).parent.parent)
+    root_dir = Path(__file__).parent.parent
+    os.chdir(root_dir)
 
     for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if ex.path.name != '_utils.py':
             try:
-                path = ex.path.relative_to(Path.cwd())
+                path = ex.path.relative_to(root_dir)
             except ValueError:
                 path = ex.path
             test_id = f'{path}:{ex.start_line}'
@@ -87,27 +87,16 @@ def find_filter_examples() -> Iterable[ParameterSet]:
             yield pytest.param(ex, id=test_id)
 
 
-@pytest.fixture(scope='session')
-def session_tmp_local_path():
-    root_dir = Path(__file__).parent.parent
-    session_tmp_path = root_dir / 'test_tmp'
-    if session_tmp_path.exists():
-        shutil.rmtree(session_tmp_path)
-    session_tmp_path.mkdir()
-    return session_tmp_path
-
-
 @pytest.fixture
-def tmp_local_path(session_tmp_local_path: Path):
+def tmp_path_cwd(tmp_path: Path):
     cwd = os.getcwd()
-    tmp_path = session_tmp_local_path / f'tmp_{secrets.token_hex(8)}'
-    tmp_path.mkdir()
 
     root_dir = Path(__file__).parent.parent
     for file in (root_dir / 'tests' / 'example_modules').glob('*.py'):
         shutil.copy(file, tmp_path)
     sys.path.append(str(tmp_path))
     os.chdir(tmp_path)
+
     try:
         yield tmp_path
     finally:
@@ -124,7 +113,7 @@ def test_docs_examples(  # noqa: C901
     client_with_handler: ClientWithHandler,
     allow_model_requests: None,
     env: TestEnv,
-    tmp_local_path: Path,
+    tmp_path_cwd: Path,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
@@ -183,7 +172,7 @@ def test_docs_examples(  # noqa: C901
     if requires:
         for req in requires.split(','):
             if ex := code_examples.get(req):
-                (tmp_local_path / req).write_text(ex.source)
+                (tmp_path_cwd / req).write_text(ex.source)
             else:  # pragma: no cover
                 raise KeyError(f'Example {req} not found, check the `requires` header of this example.')
 
