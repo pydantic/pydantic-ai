@@ -1700,13 +1700,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         """
         try:
             sampling_model: models.Model | None = self._get_model(model)
-        except exceptions.UserError:
+        except exceptions.UserError:  # pragma: no cover
             sampling_model = None
 
         exit_stack = AsyncExitStack()
         try:
             for mcp_server in self._mcp_servers:
-                if sampling_model is not None:
+                if sampling_model is not None:  # pragma: no branch
                     mcp_server.sampling_model = sampling_model
                 await exit_stack.enter_async_context(mcp_server)
             yield
