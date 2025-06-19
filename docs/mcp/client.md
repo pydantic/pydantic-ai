@@ -377,8 +377,8 @@ You can disallow sampling by settings [`allow_sampling=False`][pydantic_ai.mcp.M
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio(
-    command='uv',
-    args=['run', 'generate_svg.py'],
+    command='python',
+    args=['generate_svg.py'],
     allow_sampling=False,
 )
 ```
