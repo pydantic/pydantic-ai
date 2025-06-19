@@ -308,7 +308,7 @@ Agent.instrument_all(instrumentation_settings)
 
 ### Excluding sensitive content
 
-```python {title="exluding_sensitive_content.py"}
+```python {title="excluding_sensitive_content.py.py"}
 from pydantic_ai.agent import Agent, InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_content=False)
