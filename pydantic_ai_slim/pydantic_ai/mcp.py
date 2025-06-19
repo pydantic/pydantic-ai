@@ -313,6 +313,7 @@ class MCPServerStdio(MCPServer):
 
     If `None`, no log level will be set.
     """
+
     log_handler: LoggingFnT | None = None
     """A handler for logging messages from the server."""
 
@@ -410,6 +411,7 @@ class _MCPServerHTTP(MCPServer):
 
     If `None`, no log level will be set.
     """
+
     log_handler: LoggingFnT | None = None
     """A handler for logging messages from the server."""
 
