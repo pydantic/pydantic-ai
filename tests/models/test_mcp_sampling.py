@@ -32,6 +32,12 @@ def fake_session(create_message: Any) -> Any:
     return FakeSession(create_message)
 
 
+def test_mcp_sampling_model():
+    model = MCPSamplingModel(fake_session(AsyncMock()))
+    assert model.model_name == 'mcp-sampling'
+    assert model.system == 'MCP'
+
+
 def test_assistant_text():
     result = CreateMessageResult(
         role='assistant', content=TextContent(type='text', text='text content'), model='test-model'

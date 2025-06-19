@@ -33,12 +33,14 @@ class MCPSamplingModel(Model):
     """
 
     session: ServerSession
-    """The MCP server session to use for sampling """
+    """The MCP server session to use for sampling."""
+
     default_max_tokens: int = 16_384
     """Default max tokens to use if not set in [ModelSettings][pydantic_ai.settings.ModelSettings].
 
     Max tokens is a required parameter for MCP Sampling, but optional on
-    [ModelSettings][pydantic_ai.settings.ModelSettings], so this value is used as fallback."""
+    [ModelSettings][pydantic_ai.settings.ModelSettings], so this value is used as fallback.
+    """
 
     async def request(
         self,

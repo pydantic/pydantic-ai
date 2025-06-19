@@ -67,6 +67,13 @@ async def test_stdio_server():
         assert result == snapshot('32.0')
 
 
+async def test_reentrant_context_manager():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        async with server:
+            pass
+
+
 async def test_stdio_server_with_tool_prefix():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
     async with server:

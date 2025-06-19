@@ -147,6 +147,8 @@ async def use_sampling(ctx: Context, foo: str) -> str:  # type: ignore
         ],
         max_tokens=1_024,
         system_prompt='this is a test of MCP sampling',
+        temperature=0.5,
+        stop_sequences=['potato'],
     )
     return result.model_dump_json(indent=2)
 

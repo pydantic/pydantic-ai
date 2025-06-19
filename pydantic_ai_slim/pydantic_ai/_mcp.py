@@ -28,6 +28,7 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
                 pai_messages.append(messages.ModelResponse(parts=response_parts))
                 response_parts = []
 
+            # TODO(Marcelo): We can reuse the `_map_tool_result_part` from the mcp module here.
             if isinstance(content, mcp_types.TextContent):
                 user_part_content: str | Sequence[messages.UserContent] = content.text
             else:
@@ -61,7 +62,10 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
     """
     sampling_msgs: list[mcp_types.SamplingMessage] = []
 
-    def add_msg(role: Literal['user', 'assistant'], content: mcp_types.TextContent | mcp_types.ImageContent):
+    def add_msg(
+        role: Literal['user', 'assistant'],
+        content: mcp_types.TextContent | mcp_types.ImageContent | mcp_types.AudioContent,
+    ):
         sampling_msgs.append(mcp_types.SamplingMessage(role=role, content=content))
 
     system_prompt: list[str] = []
@@ -89,6 +93,7 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                                         mimeType=chunk.media_type,
                                     ),
                                 )
+                            # TODO(Marcelo): Add support for audio content.
                             else:
                                 raise NotImplementedError(f'Unsupported content type: {type(chunk)}')
         else:
@@ -102,6 +107,7 @@ def map_from_model_response(model_response: messages.ModelResponse) -> mcp_types
     for part in model_response.parts:
         if isinstance(part, messages.TextPart):
             text_parts.append(part.content)
+        # TODO(Marcelo): We should ignore ThinkingPart here.
         else:
             raise exceptions.UnexpectedModelBehavior(f'Unexpected part type: {type(part).__name__}, expected TextPart')
     return mcp_types.TextContent(type='text', text=''.join(text_parts))

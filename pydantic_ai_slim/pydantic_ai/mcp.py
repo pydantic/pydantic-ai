@@ -184,15 +184,15 @@ class MCPServer(ABC):
     ) -> mcp_types.CreateMessageResult | mcp_types.ErrorData:
         """MCP sampling callback."""
         if self.sampling_model is None:
-            raise ValueError('Sampling model is not set')
+            raise ValueError('Sampling model is not set')  # pragma: no cover
 
         pai_messages = _mcp.map_from_mcp_params(params)
         model_settings = models.ModelSettings()
-        if max_tokens := params.maxTokens:
+        if max_tokens := params.maxTokens:  # pragma: no branch
             model_settings['max_tokens'] = max_tokens
-        if temperature := params.temperature:
+        if temperature := params.temperature:  # pragma: no branch
             model_settings['temperature'] = temperature
-        if stop_sequences := params.stopSequences:
+        if stop_sequences := params.stopSequences:  # pragma: no branch
             model_settings['stop_sequences'] = stop_sequences
 
         model_response = await self.sampling_model.request(
