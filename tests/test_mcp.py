@@ -121,13 +121,13 @@ def test_sse_server_with_header_and_timeout():
     sse_server = MCPServerSSE(
         url='http://localhost:8000/sse',
         headers={'my-custom-header': 'my-header-value'},
-        timeout=10,
+        init_timeout=10,
         sse_read_timeout=100,
         log_level='info',
     )
     assert sse_server.url == 'http://localhost:8000/sse'
     assert sse_server.headers is not None and sse_server.headers['my-custom-header'] == 'my-header-value'
-    assert sse_server.timeout == 10
+    assert sse_server.init_timeout == 10
     assert sse_server.sse_read_timeout == 100
     assert sse_server.log_level == 'info'
 
@@ -974,9 +974,8 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
 
 
 async def test_client_sampling():
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     server.sampling_model = TestModel(custom_output_text='sampling model response')
-    assert server.log_level == 'info'
     async with server:
         result = await server.call_tool('use_sampling', {'foo': 'bar'})
         assert result == snapshot(
@@ -988,6 +987,14 @@ async def test_client_sampling():
                 'stopReason': None,
             }
         )
+
+
+async def test_client_sampling_disabled():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], allow_sampling=False)
+    server.sampling_model = TestModel(custom_output_text='sampling model response')
+    async with server:
+        with pytest.raises(ModelRetry, match='Error executing tool use_sampling: Sampling not supported'):
+            await server.call_tool('use_sampling', {'foo': 'bar'})
 
 
 async def test_mcp_server_raises_mcp_error(allow_model_requests: None, agent: Agent) -> None:

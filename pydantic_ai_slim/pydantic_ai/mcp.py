@@ -49,6 +49,7 @@ class MCPServer(ABC):
     log_handler: LoggingFnT | None = None
     init_timeout: float = 5
     process_tool_call: ProcessToolCallback | None = None
+    allow_sampling: bool = True
     # } end of "abstract fields"
 
     _running_count: int = 0
@@ -156,7 +157,7 @@ class MCPServer(ABC):
             client = ClientSession(
                 read_stream=self._read_stream,
                 write_stream=self._write_stream,
-                sampling_callback=self._sampling_callback,
+                sampling_callback=self._sampling_callback if self.allow_sampling else None,
                 logging_callback=self.log_handler,
             )
             self._client = await self._exit_stack.enter_async_context(client)
@@ -320,11 +321,11 @@ class MCPServerStdio(MCPServer):
     init_timeout: float = 5
     """The timeout in seconds to wait for the client to initialize."""
 
-    timeout: float = 5
-    """ The timeout in seconds to wait for the client to initialize."""
-
     process_tool_call: ProcessToolCallback | None = None
     """Hook to customize tool calling and optionally pass extra metadata."""
+
+    allow_sampling: bool = True
+    """Whether to allow MCP sampling through this client."""
 
     @asynccontextmanager
     async def client_streams(
@@ -380,13 +381,6 @@ class _MCPServerHTTP(MCPServer):
         ```
     """
 
-    timeout: float = 5
-    """Initial connection timeout in seconds for establishing the connection.
-
-    This timeout applies to the initial connection setup and handshake.
-    If the connection cannot be established within this time, the operation will fail.
-    """
-
     sse_read_timeout: float = 5 * 60
     """Maximum time in seconds to wait for new SSE messages before timing out.
 
@@ -420,6 +414,9 @@ class _MCPServerHTTP(MCPServer):
 
     process_tool_call: ProcessToolCallback | None = None
     """Hook to customize tool calling and optionally pass extra metadata."""
+
+    allow_sampling: bool = True
+    """Whether to allow MCP sampling through this client."""
 
     @property
     @abstractmethod
@@ -457,7 +454,7 @@ class _MCPServerHTTP(MCPServer):
         transport_client_partial = functools.partial(
             self._transport_client,
             url=self.url,
-            timeout=self.timeout,
+            timeout=self.init_timeout,
             sse_read_timeout=self.sse_read_timeout,
         )
 
