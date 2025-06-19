@@ -74,10 +74,11 @@ class SystemPromptPart:
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self, _settings: InstrumentationSettings) -> Event:
-        if not _settings.include_content:
-            return Event('gen_ai.system.message', body={'content': 'SCRUBBED', 'role': 'system'})
-        return Event('gen_ai.system.message', body={'content': self.content, 'role': 'system'})
+    def otel_event(self, settings: InstrumentationSettings) -> Event:
+        return Event(
+            'gen_ai.system.message',
+            body={'role': 'system', **({'content': self.content} if settings.include_content else {})},
+        )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -356,7 +357,7 @@ class UserPromptPart:
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:
         if not settings.include_content:
-            return Event('gen_ai.user.message', body={'content': 'SCRUBBED', 'role': 'user'})
+            return Event('gen_ai.user.message', body={'role': 'user'})
         content: str | list[dict[str, Any] | str]
         if isinstance(self.content, str):
             content = self.content
@@ -416,11 +417,11 @@ class ToolReturnPart:
         else:
             return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
 
-    def otel_event(self, _settings: InstrumentationSettings) -> Event:
+    def otel_event(self, settings: InstrumentationSettings) -> Event:
         return Event(
             'gen_ai.tool.message',
             body={
-                'content': self.content if _settings.include_content else 'SCRUBBED',
+                **({'content': self.content} if settings.include_content else {}),
                 'role': 'tool',
                 'id': self.tool_call_id,
                 'name': self.tool_name,
@@ -480,14 +481,14 @@ class RetryPromptPart:
             description = f'{len(self.content)} validation errors: {json_errors.decode()}'
         return f'{description}\n\nFix the errors and try again.'
 
-    def otel_event(self, _settings: InstrumentationSettings) -> Event:
+    def otel_event(self, settings: InstrumentationSettings) -> Event:
         if self.tool_name is None:
             return Event('gen_ai.user.message', body={'content': self.model_response(), 'role': 'user'})
         else:
             return Event(
                 'gen_ai.tool.message',
                 body={
-                    'content': self.model_response() if _settings.include_content else 'SCRUBBED',
+                    **({'content': self.model_response()} if settings.include_content else {}),
                     'role': 'tool',
                     'id': self.tool_call_id,
                     'name': self.tool_name,
@@ -638,7 +639,7 @@ class ModelResponse:
     vendor_id: str | None = None
     """Vendor ID as specified by the model provider. This can be used to track the specific request to the model."""
 
-    def otel_events(self, _settings: InstrumentationSettings) -> list[Event]:
+    def otel_events(self, settings: InstrumentationSettings) -> list[Event]:
         """Return OpenTelemetry events for the response."""
         result: list[Event] = []
 
@@ -664,7 +665,8 @@ class ModelResponse:
             elif isinstance(part, TextPart):
                 if body.get('content'):
                     body = new_event_body()
-                body['content'] = part.content if _settings.include_content else 'SCRUBBED'
+                if settings.include_content:
+                    body['content'] = part.content
 
         return result
 
