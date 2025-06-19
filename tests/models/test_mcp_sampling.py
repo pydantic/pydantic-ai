@@ -10,7 +10,6 @@ from inline_snapshot import snapshot
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import BinaryContent, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
-from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsNow, try_import
@@ -18,6 +17,8 @@ from ..conftest import IsNow, try_import
 with try_import() as imports_successful:
     from mcp import CreateMessageResult
     from mcp.types import TextContent
+
+    from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
 
 @dataclass
