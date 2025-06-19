@@ -42,7 +42,7 @@ from mcp.client.stdio import stdio_client
 
 async def client():
     server_params = StdioServerParameters(
-        command='uv', args=['run', 'mcp_server.py'], env=os.environ
+        command='python', args=['mcp_server.py'], env=os.environ
     )
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
@@ -134,7 +134,7 @@ async def sampling_callback(
 
 
 async def client():
-    server_params = StdioServerParameters(command='uv', args=['run', 'mcp_server_sampling.py'])
+    server_params = StdioServerParameters(command='python', args=['mcp_server_sampling.py'])
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write, sampling_callback=sampling_callback) as session:
             await session.initialize()

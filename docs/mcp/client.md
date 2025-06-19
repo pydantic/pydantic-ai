@@ -195,7 +195,7 @@ async def process_tool_call(
     return await call_tool(tool_name, args, metadata={'deps': ctx.deps})
 
 
-server = MCPServerStdio('uv', ['run', 'mcp_server.py'], process_tool_call=process_tool_call)
+server = MCPServerStdio('python', ['mcp_server.py'], process_tool_call=process_tool_call)
 agent = Agent(
     model=TestModel(call_tools=['echo_deps']),
     deps_type=int,
@@ -358,7 +358,7 @@ Using this server with an `Agent` will automatically allow sampling:
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
-server = MCPServerStdio(command='uv', args=['run', 'generate_svg.py'])
+server = MCPServerStdio(command='python', args=['generate_svg.py'])
 agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
 
