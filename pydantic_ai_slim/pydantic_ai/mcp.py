@@ -47,7 +47,7 @@ class MCPServer(ABC):
     tool_prefix: str | None = None
     log_level: mcp_types.LoggingLevel | None = None
     log_handler: LoggingFnT | None = None
-    init_timeout: float = 5
+    timeout: float = 5
     process_tool_call: ProcessToolCallback | None = None
     allow_sampling: bool = True
     # } end of "abstract fields"
@@ -162,7 +162,7 @@ class MCPServer(ABC):
             )
             self._client = await self._exit_stack.enter_async_context(client)
 
-            with anyio.fail_after(self.init_timeout):
+            with anyio.fail_after(self.timeout):
                 await self._client.initialize()
 
                 if log_level := self.log_level:
@@ -318,7 +318,7 @@ class MCPServerStdio(MCPServer):
     log_handler: LoggingFnT | None = None
     """A handler for logging messages from the server."""
 
-    init_timeout: float = 5
+    timeout: float = 5
     """The timeout in seconds to wait for the client to initialize."""
 
     process_tool_call: ProcessToolCallback | None = None
@@ -409,7 +409,7 @@ class _MCPServerHTTP(MCPServer):
     log_handler: LoggingFnT | None = None
     """A handler for logging messages from the server."""
 
-    init_timeout: float = 5
+    timeout: float = 5
     """The timeout in seconds to wait for the client to initialize."""
 
     process_tool_call: ProcessToolCallback | None = None
@@ -454,7 +454,7 @@ class _MCPServerHTTP(MCPServer):
         transport_client_partial = functools.partial(
             self._transport_client,
             url=self.url,
-            timeout=self.init_timeout,
+            timeout=self.timeout,
             sse_read_timeout=self.sse_read_timeout,
         )
 

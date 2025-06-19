@@ -99,6 +99,7 @@ def session_tmp_local_path():
 
 @pytest.fixture
 def tmp_local_path(session_tmp_local_path: Path):
+    cwd = os.getcwd()
     tmp_path = session_tmp_local_path / f'tmp_{secrets.token_hex(8)}'
     tmp_path.mkdir()
 
@@ -107,12 +108,16 @@ def tmp_local_path(session_tmp_local_path: Path):
         shutil.copy(file, tmp_path)
     sys.path.append(str(tmp_path))
     os.chdir(tmp_path)
-    return tmp_path
+    try:
+        yield tmp_path
+    finally:
+        os.chdir(cwd)
+        sys.path.remove(str(tmp_path))
 
 
 @pytest.mark.xdist_group(name='doc_tests')
 @pytest.mark.parametrize('example', find_filter_examples())
-def test_docs_examples(
+def test_docs_examples(  # noqa: C901
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
@@ -177,7 +182,10 @@ def test_docs_examples(
 
     if requires:
         for req in requires.split(','):
-            (tmp_local_path / req).write_text(code_examples[req].source)
+            if ex := code_examples.get(req):
+                (tmp_local_path / req).write_text(ex.source)
+            else:  # pragma: no cover
+                raise KeyError(f'Example {req} not found, check the `requires` header of this example.')
 
     ruff_ignore: list[str] = ['D', 'Q001']
     # `from bank_database import DatabaseConn` wrongly sorted in imports

@@ -121,13 +121,13 @@ def test_sse_server_with_header_and_timeout():
     sse_server = MCPServerSSE(
         url='http://localhost:8000/sse',
         headers={'my-custom-header': 'my-header-value'},
-        init_timeout=10,
+        timeout=10,
         sse_read_timeout=100,
         log_level='info',
     )
     assert sse_server.url == 'http://localhost:8000/sse'
     assert sse_server.headers is not None and sse_server.headers['my-custom-header'] == 'my-header-value'
-    assert sse_server.init_timeout == 10
+    assert sse_server.timeout == 10
     assert sse_server.sse_read_timeout == 100
     assert sse_server.log_level == 'info'
 
