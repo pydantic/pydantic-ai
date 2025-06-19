@@ -92,7 +92,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         event_logger_provider: EventLoggerProvider | None = None,
         include_binary_content: bool = True,
-        include_sensitive_content: bool = True,
+        include_content: bool = True,
     ):
         """Create instrumentation options.
 
@@ -110,7 +110,7 @@ class InstrumentationSettings:
                 Calling `logfire.configure()` sets the global event logger provider, so most users don't need this.
                 This is only used if `event_mode='logs'`.
             include_binary_content: Whether to include binary content in the instrumentation events.
-            include_sensitive_content: Whether to include prompt and completion messages in the instrumentation events.
+            include_content: Whether to include prompt and completion messages in the instrumentation events.
         """
         from pydantic_ai import __version__
 
@@ -123,7 +123,7 @@ class InstrumentationSettings:
         self.event_logger = event_logger_provider.get_event_logger(scope_name, __version__)
         self.event_mode = event_mode
         self.include_binary_content = include_binary_content
-        self.include_sensitive_content = include_sensitive_content
+        self.include_content = include_content
 
         # As specified in the OpenTelemetry GenAI metrics spec:
         # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage

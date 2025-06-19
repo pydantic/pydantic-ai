@@ -838,7 +838,7 @@ def test_messages_to_otel_events_without_prompts_and_completions():
         ModelRequest(parts=[ToolReturnPart('tool', 'tool_return_content', 'tool_call_1')]),
         ModelRequest(parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')]),
     ]
-    settings = InstrumentationSettings(include_sensitive_content=False)
+    settings = InstrumentationSettings(include_content=False)
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
             {

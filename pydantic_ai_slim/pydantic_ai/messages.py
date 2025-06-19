@@ -75,7 +75,7 @@ class SystemPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_event(self, _settings: InstrumentationSettings) -> Event:
-        if not _settings.include_sensitive_content:
+        if not _settings.include_content:
             return Event('gen_ai.system.message', body={'content': 'SCRUBBED', 'role': 'system'})
         return Event('gen_ai.system.message', body={'content': self.content, 'role': 'system'})
 
@@ -355,7 +355,7 @@ class UserPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:
-        if not settings.include_sensitive_content:
+        if not settings.include_content:
             return Event('gen_ai.user.message', body={'content': 'SCRUBBED', 'role': 'user'})
         content: str | list[dict[str, Any] | str]
         if isinstance(self.content, str):
@@ -420,7 +420,7 @@ class ToolReturnPart:
         return Event(
             'gen_ai.tool.message',
             body={
-                'content': self.content if _settings.include_sensitive_content else 'SCRUBBED',
+                'content': self.content if _settings.include_content else 'SCRUBBED',
                 'role': 'tool',
                 'id': self.tool_call_id,
                 'name': self.tool_name,
@@ -487,7 +487,7 @@ class RetryPromptPart:
             return Event(
                 'gen_ai.tool.message',
                 body={
-                    'content': self.model_response() if _settings.include_sensitive_content else 'SCRUBBED',
+                    'content': self.model_response() if _settings.include_content else 'SCRUBBED',
                     'role': 'tool',
                     'id': self.tool_call_id,
                     'name': self.tool_name,
@@ -664,7 +664,7 @@ class ModelResponse:
             elif isinstance(part, TextPart):
                 if body.get('content'):
                     body = new_event_body()
-                body['content'] = part.content if _settings.include_sensitive_content else 'SCRUBBED'
+                body['content'] = part.content if _settings.include_content else 'SCRUBBED'
 
         return result
 
