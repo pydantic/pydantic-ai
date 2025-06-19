@@ -22,6 +22,7 @@ class MCPSamplingModelSettings(ModelSettings, total=False):
     """
 
     mcp_model_preferences: ModelPreferences
+    """Model preferences to use for MCP Sampling."""
 
 
 @dataclass
@@ -36,10 +37,10 @@ class MCPSamplingModel(Model):
     """The MCP server session to use for sampling."""
 
     default_max_tokens: int = 16_384
-    """Default max tokens to use if not set in [ModelSettings][pydantic_ai.settings.ModelSettings].
+    """Default max tokens to use if not set in [`ModelSettings`][pydantic_ai.settings.ModelSettings.max_tokens].
 
     Max tokens is a required parameter for MCP Sampling, but optional on
-    [ModelSettings][pydantic_ai.settings.ModelSettings], so this value is used as fallback.
+    [`ModelSettings`][pydantic_ai.settings.ModelSettings], so this value is used as fallback.
     """
 
     async def request(
@@ -82,10 +83,13 @@ class MCPSamplingModel(Model):
 
     @property
     def model_name(self) -> str:
-        """The model name."""
+        """The model name.
+
+        Since the model name isn't known until the request is made, this property always returns `'mcp-sampling'`.
+        """
         return 'mcp-sampling'
 
     @property
     def system(self) -> str:
-        """The system / model provider."""
+        """The system / model provider, returns `'MCP'`."""
         return 'MCP'
