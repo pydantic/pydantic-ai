@@ -705,13 +705,13 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
     assert event_parts == snapshot(
         [
             PartStartEvent(index=0, part=IsInstance(ThinkingPart)),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartStartEvent(index=1, part=IsInstance(TextPart)),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),

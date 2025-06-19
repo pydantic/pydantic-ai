@@ -712,7 +712,6 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
     assert event_parts == snapshot(
         [
             PartStartEvent(index=0, part=ThinkingPart(content='Okay')),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', so')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' user is')),
@@ -1136,6 +1135,7 @@ Also\
 """
                 ),
             ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Crossing the')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' street safely involves')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' careful')),

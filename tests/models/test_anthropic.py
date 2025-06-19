@@ -1077,7 +1077,6 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
     assert event_parts == snapshot(
         [
             PartStartEvent(index=0, part=ThinkingPart(content='', signature='')),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
@@ -1088,6 +1087,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartStartEvent(index=1, part=IsInstance(TextPart)),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
                 index=1,
                 delta=TextPartDelta(
