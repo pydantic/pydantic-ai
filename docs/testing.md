@@ -256,7 +256,7 @@ If you're writing lots of tests that all require model to be overridden, you can
 
 Here's an example of a fixture that overrides the model with `TestModel`:
 
-```python {title="tests.py"}
+```python {title="test_agent.py" requires="weather_app.py"}
 import pytest
 from weather_app import weather_agent
 

@@ -195,7 +195,7 @@ async def process_tool_call(
     return await call_tool(tool_name, args, metadata={'deps': ctx.deps})
 
 
-server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
+server = MCPServerStdio('uv', ['run', 'mcp_server.py'], process_tool_call=process_tool_call)
 agent = Agent(
     model=TestModel(call_tools=['echo_deps']),
     deps_type=int,

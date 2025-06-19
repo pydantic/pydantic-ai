@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
+import secrets
 import shutil
 import sys
 from collections.abc import AsyncIterator, Iterable, Sequence
@@ -64,20 +65,12 @@ pytestmark = [
         reason='google-auth or logfire or google-provider not installed',
     ),
 ]
+code_examples: dict[str, CodeExample] = {}
 
 
 def find_filter_examples() -> Iterable[ParameterSet]:
     # Ensure this is run from the package root regardless of where/how the tests are run
-    root_dir = Path(__file__).parent.parent
-    tmp_path = root_dir / 'test_tmp'
-    if tmp_path.exists():
-        shutil.rmtree(tmp_path)
-
-    tmp_path.mkdir()
-    for file in (root_dir / 'tests' / 'example_modules').glob('*.py'):
-        shutil.copy(file, tmp_path)
-    sys.path.append(str(tmp_path))
-    os.chdir(root_dir)
+    os.chdir(Path(__file__).parent.parent)
 
     for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if ex.path.name != '_utils.py':
@@ -89,22 +82,44 @@ def find_filter_examples() -> Iterable[ParameterSet]:
             prefix_settings = ex.prefix_settings()
             if title := prefix_settings.get('title'):
                 if title.endswith('.py'):
-                    path = tmp_path / title
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text(ex.source)
+                    code_examples[title] = ex
                 test_id += f':{title}'
             yield pytest.param(ex, id=test_id)
 
 
+@pytest.fixture(scope='session')
+def session_tmp_local_path():
+    root_dir = Path(__file__).parent.parent
+    session_tmp_path = root_dir / 'test_tmp'
+    if session_tmp_path.exists():
+        shutil.rmtree(session_tmp_path)
+    session_tmp_path.mkdir()
+    return session_tmp_path
+
+
+@pytest.fixture
+def tmp_local_path(session_tmp_local_path: Path):
+    tmp_path = session_tmp_local_path / f'tmp_{secrets.token_hex(8)}'
+    tmp_path.mkdir()
+
+    root_dir = Path(__file__).parent.parent
+    for file in (root_dir / 'tests' / 'example_modules').glob('*.py'):
+        shutil.copy(file, tmp_path)
+    sys.path.append(str(tmp_path))
+    os.chdir(tmp_path)
+    return tmp_path
+
+
 @pytest.mark.xdist_group(name='doc_tests')
 @pytest.mark.parametrize('example', find_filter_examples())
-def test_docs_examples(  # noqa: C901
+def test_docs_examples(
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
     client_with_handler: ClientWithHandler,
     allow_model_requests: None,
     env: TestEnv,
+    tmp_local_path: Path,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
@@ -160,16 +175,9 @@ def test_docs_examples(  # noqa: C901
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
         pytest.skip('both running code and lint skipped')
 
-    tmp_path = Path(__file__).parent.parent / 'test_tmp'
-    os.chdir(tmp_path)
-
     if requires:
-        missing: list[str] = []
         for req in requires.split(','):
-            if not (tmp_path / req).exists():
-                missing.append(req)
-        if missing:
-            pytest.fail(f'missing requirements: {", ".join(missing)}')
+            (tmp_local_path / req).write_text(code_examples[req].source)
 
     ruff_ignore: list[str] = ['D', 'Q001']
     # `from bank_database import DatabaseConn` wrongly sorted in imports
