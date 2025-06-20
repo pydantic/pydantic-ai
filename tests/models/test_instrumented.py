@@ -214,6 +214,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
             {
                 'body': {
                     'content': """\
+Validator response:
 retry_prompt1
 
 Fix the errors and try again.\
@@ -238,6 +239,7 @@ Fix the errors and try again.\
             {
                 'body': {
                     'content': """\
+Validator response:
 retry_prompt2
 
 Fix the errors and try again.\
@@ -596,6 +598,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                                 {
                                     'event.name': 'gen_ai.tool.message',
                                     'content': """\
+Validator response:
 retry_prompt1
 
 Fix the errors and try again.\
@@ -609,6 +612,7 @@ Fix the errors and try again.\
                                 {
                                     'event.name': 'gen_ai.user.message',
                                     'content': """\
+Validator response:
 retry_prompt2
 
 Fix the errors and try again.\
