@@ -1591,11 +1591,11 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    TextPart(content=IsStr()),
                     ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
                     ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
                     ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
                     ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    IsInstance(TextPart),
                 ],
                 usage=Usage(
                     request_tokens=13,
@@ -1619,11 +1619,11 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    TextPart(content=IsStr()),
                     ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
                     ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
                     ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
                     ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    IsInstance(TextPart),
                 ],
                 usage=Usage(
                     request_tokens=13,
@@ -1645,10 +1645,10 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content=IsStr()),
                     ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
                     ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
                     ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
+                    IsInstance(TextPart),
                 ],
                 usage=Usage(
                     request_tokens=424,
@@ -1677,11 +1677,11 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    TextPart(content=IsStr()),
                     IsInstance(ThinkingPart),
                     IsInstance(ThinkingPart),
                     IsInstance(ThinkingPart),
                     IsInstance(ThinkingPart),
+                    IsInstance(TextPart),
                 ],
                 usage=Usage(
                     request_tokens=13,
@@ -1706,11 +1706,11 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    TextPart(content=IsStr()),
                     IsInstance(ThinkingPart),
                     IsInstance(ThinkingPart),
                     IsInstance(ThinkingPart),
                     IsInstance(ThinkingPart),
+                    IsInstance(TextPart),
                 ],
                 usage=Usage(
                     request_tokens=13,
