@@ -66,7 +66,7 @@ _(This example is complete, it can be run "as is")_
 
 Let's print the messages from that game to see what happened:
 
-```python {title="dice_game_messages.py"}
+```python {title="dice_game_messages.py" requires="dice_game.py"}
 from dice_game import dice_result
 
 print(dice_result.all_messages())

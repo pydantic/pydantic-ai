@@ -243,6 +243,7 @@ exclude_lines = [
     'if __name__ == .__main__.:',
     'except ImportError as _import_error:',
     '$\s*pass$',
+    'assert False',
 ]
 
 [tool.logfire]

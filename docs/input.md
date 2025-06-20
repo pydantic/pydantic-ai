@@ -10,7 +10,7 @@ Some LLMs are now capable of understanding audio, video, image and document cont
 
 If you have a direct URL for the image, you can use [`ImageUrl`][pydantic_ai.ImageUrl]:
 
-```py {title="main.py" test="skip" lint="skip"}
+```py {title="image_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, ImageUrl
 
 agent = Agent(model='openai:gpt-4o')
@@ -26,7 +26,7 @@ print(result.output)
 
 If you have the image locally, you can also use [`BinaryContent`][pydantic_ai.BinaryContent]:
 
-```py {title="main.py" test="skip" lint="skip"}
+```py {title="local_image_input.py" test="skip" lint="skip"}
 import httpx
 
 from pydantic_ai import Agent, BinaryContent
@@ -69,7 +69,7 @@ You can provide document input using either [`DocumentUrl`][pydantic_ai.Document
 
 If you have a direct URL for the document, you can use [`DocumentUrl`][pydantic_ai.DocumentUrl]:
 
-```py {title="main.py" test="skip" lint="skip"}
+```py {title="document_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, DocumentUrl
 
 agent = Agent(model='anthropic:claude-3-sonnet')
@@ -87,7 +87,7 @@ The supported document formats vary by model.
 
 You can also use [`BinaryContent`][pydantic_ai.BinaryContent] to pass document data directly:
 
-```py {title="main.py" test="skip" lint="skip"}
+```py {title="binary_content_input.py" test="skip" lint="skip"}
 from pathlib import Path
 from pydantic_ai import Agent, BinaryContent
 

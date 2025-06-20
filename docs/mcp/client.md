@@ -98,7 +98,7 @@ Will display as follows:
 
 Before creating the Streamable HTTP client, we need to run a server that supports the Streamable HTTP transport.
 
-```python {title="streamable_http_server.py" py="3.10" test="skip"}
+```python {title="streamable_http_server.py" py="3.10" dunder_name="not_main"}
 from mcp.server.fastmcp import FastMCP
 
 app = FastMCP()
@@ -107,7 +107,8 @@ app = FastMCP()
 def add(a: int, b: int) -> int:
     return a + b
 
-app.run(transport='streamable-http')
+if __name__ == '__main__':
+    app.run(transport='streamable-http')
 ```
 
 Then we can create the client:
@@ -116,8 +117,8 @@ Then we can create the client:
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
-agent = Agent('openai:gpt-4o', mcp_servers=[server])
+server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
+agent = Agent('openai:gpt-4o', mcp_servers=[server])  # (2)!
 
 async def main():
     async with agent.run_mcp_servers():  # (3)!
@@ -126,8 +127,9 @@ async def main():
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
 
-1. Create an agent with the MCP server attached.
-2. Create a client session to connect to the server.
+1. Define the MCP server with the URL used to connect.
+2. Create an agent with the MCP server attached.
+3. Create a client session to connect to the server.
 
 _(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -165,6 +167,48 @@ async def main():
 ```
 
 1. See [MCP Run Python](run-python.md) for more information.
+
+## Tool call customisation
+
+The MCP servers provide the ability to set a `process_tool_call` which allows
+the customisation of tool call requests and their responses.
+
+A common use case for this is to inject metadata to the requests which the server
+call needs.
+
+```python {title="mcp_process_tool_call.py" py="3.10"}
+from typing import Any
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import CallToolFunc, MCPServerStdio, ToolResult
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext
+
+
+async def process_tool_call(
+    ctx: RunContext[int],
+    call_tool: CallToolFunc,
+    tool_name: str,
+    args: dict[str, Any],
+) -> ToolResult:
+    """A tool call processor that passes along the deps."""
+    return await call_tool(tool_name, args, metadata={'deps': ctx.deps})
+
+
+server = MCPServerStdio('python', ['mcp_server.py'], process_tool_call=process_tool_call)
+agent = Agent(
+    model=TestModel(call_tools=['echo_deps']),
+    deps_type=int,
+    mcp_servers=[server]
+)
+
+
+async def main():
+    async with agent.run_mcp_servers():
+        result = await agent.run('Echo with deps set to 42', deps=42)
+    print(result.output)
+    #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
+```
 
 ## Using Tool Prefixes to Avoid Naming Conflicts
 
@@ -232,3 +276,109 @@ agent = Agent('openai:gpt-4o', mcp_servers=[python_server, js_server])
 ```
 
 When the model interacts with these servers, it will see the prefixed tool names, but the prefixes will be automatically handled when making tool calls.
+
+## MCP Sampling
+
+!!! info "What is MCP Sampling?"
+    In MCP [sampling](https://modelcontextprotocol.io/docs/concepts/sampling) is a system by which an MCP server can make LLM calls via the MCP client - effectively proxying requests to an LLM via the client over whatever transport is being used.
+
+    Sampling is extremely useful when MCP servers need to use Gen AI but you don't want to provision them each with their own LLM credentials or when a public MCP server would like the connecting client to pay for LLM calls.
+
+    Confusingly it has nothing to do with the concept of "sampling" in observability, or frankly the concept of "sampling" in any other domain.
+
+    ??? info "Sampling Diagram"
+        Here's a mermaid diagram that may or may not make the data flow clearer:
+
+        ```mermaid
+        sequenceDiagram
+            participant LLM
+            participant MCP_Client as MCP client
+            participant MCP_Server as MCP server
+
+            MCP_Client->>LLM: LLM call
+            LLM->>MCP_Client: LLM tool call response
+
+            MCP_Client->>MCP_Server: tool call
+            MCP_Server->>MCP_Client: sampling "create message"
+
+            MCP_Client->>LLM: LLM call
+            LLM->>MCP_Client: LLM text response
+
+            MCP_Client->>MCP_Server: sampling response
+            MCP_Server->>MCP_Client: tool call response
+        ```
+
+Pydantic AI supports sampling as both a client and server. See the [server](./server.md#mcp-sampling) documentation for details on how to use sampling within a server.
+
+Sampling is automatically supported by Pydantic AI agents when they act as a client.
+
+Let's say we have an MCP server that wants to use sampling (in this case to generate an SVG as per the tool arguments).
+
+??? example "Sampling MCP Server"
+
+    ```python {title="generate_svg.py" py="3.10"}
+    import re
+    from pathlib import Path
+
+    from mcp import SamplingMessage
+    from mcp.server.fastmcp import Context, FastMCP
+    from mcp.types import TextContent
+
+    app = FastMCP()
+
+
+    @app.tool()
+    async def image_generator(ctx: Context, subject: str, style: str) -> str:
+        prompt = f'{subject=} {style=}'
+        # `ctx.session.create_message` is the sampling call
+        result = await ctx.session.create_message(
+            [SamplingMessage(role='user', content=TextContent(type='text', text=prompt))],
+            max_tokens=1_024,
+            system_prompt='Generate an SVG image as per the user input',
+        )
+        assert isinstance(result.content, TextContent)
+
+        path = Path(f'{subject}_{style}.svg')
+        # remove triple backticks if the svg was returned within markdown
+        if m := re.search(r'^```\w*$(.+?)```$', result.content.text, re.S | re.M):
+            path.write_text(m.group(1))
+        else:
+            path.write_text(result.content.text)
+        return f'See {path}'
+
+
+    if __name__ == '__main__':
+        # run the server via stdio
+        app.run()
+    ```
+
+Using this server with an `Agent` will automatically allow sampling:
+
+```python {title="sampling_mcp_client.py" py="3.10" requires="generate_svg.py"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+
+server = MCPServerStdio(command='python', args=['generate_svg.py'])
+agent = Agent('openai:gpt-4o', mcp_servers=[server])
+
+
+async def main():
+    async with agent.run_mcp_servers():
+        result = await agent.run('Create an image of a robot in a punk style.')
+    print(result.output)
+    #> Image file written to robot_punk.svg.
+```
+
+_(This example is complete, it can be run "as is" with Python 3.10+)_
+
+You can disallow sampling by settings [`allow_sampling=False`][pydantic_ai.mcp.MCPServerStdio.allow_sampling] when creating the server reference, e.g.:
+
+```python {title="sampling_disallowed.py" hl_lines="6" py="3.10"}
+from pydantic_ai.mcp import MCPServerStdio
+
+server = MCPServerStdio(
+    command='python',
+    args=['generate_svg.py'],
+    allow_sampling=False,
+)
+```

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Union
 
 import pytest
-from httpx import Request
+from httpx import Request, Timeout
 from inline_snapshot import Is, snapshot
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
@@ -29,6 +29,8 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -593,6 +595,153 @@ async def test_google_model_empty_user_prompt(allow_model_requests: None, google
     )
 
 
+async def test_google_model_thinking_part(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-pro-preview-03-25', provider=google_provider)
+    settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True})
+    agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful assistant.', timestamp=IsDatetime()),
+                    UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+**My Approach to Street Crossing Advice**
+
+Okay, so the user wants to know how to cross the street. Simple question, right? But safety is paramount here. My brain immediately goes into problem-solving mode. First, I have to *deconstruct* the request. Then, I define the core *goal*: crossing safely.  That means I need to brainstorm the key principles that make that possible.
+
+I'm thinking: **visibility**, **awareness**, **predictability**, **caution**, and using designated crossings.  These are the building blocks.  Now, how to structure this into a clear, helpful response?  A step-by-step approach seems best. I'll break it down into *before*, *during*, and some *general tips*.
+
+Let's flesh this out.  "Before" means finding a safe spot: marked **crosswalks**, intersections with signals, or pedestrian bridges/tunnels are ideal. Avoid darting out!  Then, I need to *stop* at the curb, *look* and *listen* in all directions, and make eye contact with drivers, if possible.  Wait for a *gap* or a signal.
+
+During crossing, the plan is to *walk*, not run. Keep looking and listening, stay in the crosswalk, and be visible. No distractions like phones. That's the basic framework.
+
+Now, for the "general tips." Teaching children how to do it is important. Extra caution at night or in bad weather is obvious. I should emphasize *never assume* drivers see you or will stop. Alcohol and drugs are a huge no-no. Watch out for parked cars, and turning vehicles are another common hazard. Always follow local laws!
+
+Okay, time to refine the language.  I want clear, action-oriented verbs and maybe some bullet points for readability. Bolding key terms helps too. And then, I need to consider edge cases. What if there are no crosswalks? Well, find a spot with good visibility and wait for a large gap. What about different traffic rules?  I'll just say to look in *all* directions.  I want to make sure it covers all bases.
+
+Finally, a quick review to make sure it's logical, comprehensive, easy to understand, and not too complex.  I think this is a good balance between thoroughness and conciseness.  Hopefully, this will keep people safe!
+"""
+                    ),
+                    TextPart(
+                        content="""\
+Crossing the street safely is crucial! Here's a step-by-step guide:
+
+1.  **Find a Safe Place to Cross:**
+    *   **Best:** Use a designated pedestrian crossing (zebra stripes, crosswalk lines) or an intersection with traffic lights and pedestrian signals ("walk/don't walk" signs).
+    *   **Good:** If no designated crossing is nearby, go to a street corner or an area where you have a clear view of traffic in all directions.
+    *   **Avoid:** Crossing between parked cars, on a curve, or near the crest of a hill where drivers can't see you easily.
+
+2.  **Stop at the Edge:**
+    *   Stop at the curb or the edge of the road. Don't step into the street yet.
+
+3.  **Look and Listen for Traffic:**
+    *   **Look Left:** Check for oncoming traffic.
+    *   **Look Right:** Check for oncoming traffic from the other direction.
+    *   **Look Left Again:** Double-check the closest lane of traffic before stepping out.
+    *   **Listen:** Sometimes you can hear traffic before you see it, especially large vehicles or motorcycles.
+
+4.  **Wait for a Safe Gap (or the Signal):**
+    *   **No Signal:** Wait until there's a large enough gap in traffic for you to cross safely without rushing. Make sure drivers have seen you and have time to stop if necessary. Try to make eye contact with drivers.
+    *   **With Signal:** Wait for the "WALK" signal or the little green walking person symbol. Even with a green signal, quickly check for turning vehicles before stepping off the curb.
+
+5.  **Cross Alertly:**
+    *   **Walk, Don't Run:** Walking briskly is good, but running can increase your risk of tripping and falling.
+    *   **Keep Looking and Listening:** Continue to check for traffic as you cross. The situation can change quickly.
+    *   **Stay Visible:** If it's dark or visibility is poor (rain, fog), wear bright or reflective clothing.
+    *   **Avoid Distractions:** Put away your phone, take off headphones, and focus on crossing safely.
+
+6.  **If There's a Median Strip or Island:**
+    *   Cross to the median, stop, and repeat the "Look Left, Right, Left" process for the next set of lanes before continuing.
+
+**Key Things to Remember:**
+
+*   **Never assume a driver sees you.** Always try to make eye contact.
+*   **Be extra careful at night or in bad weather.**
+*   **Teach children these rules** and hold their hands when crossing.
+*   **Obey traffic signals and signs.**
+*   **Don't dart out** into the street.
+
+Stay safe!\
+"""
+                    ),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=15,
+                    response_tokens=606,
+                    total_tokens=1704,
+                    details={'thoughts_tokens': 1083, 'text_prompt_tokens': 15},
+                ),
+                model_name='models/gemini-2.5-pro-preview-05-06',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+        ]
+    )
+
+
+async def test_google_model_thinking_part_iter(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-pro-preview-03-25', provider=google_provider)
+    settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True})
+    agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(index=0, part=IsInstance(ThinkingPart)),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartStartEvent(index=1, part=IsInstance(TextPart)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+        ]
+    )
+
+
 @pytest.mark.skipif(
     not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
 )
@@ -726,3 +875,94 @@ async def test_google_gs_url_force_download_raises_user_error(allow_model_reques
     url = ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png', force_download=True)
     with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported.'):
         _ = await agent.run(['What is the main content of this URL?', url])
+
+
+async def test_google_tool_config_any_with_tool_without_args(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    class Foo(TypedDict):
+        bar: str
+
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(m, output_type=Foo)
+
+    @agent.tool_plain
+    async def bar() -> str:
+        return 'hello'
+
+    result = await agent.run('run bar for me please')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='run bar for me please',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='bar', args={}, tool_call_id=IsStr())],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=21,
+                    response_tokens=1,
+                    total_tokens=22,
+                    details={'text_candidates_tokens': 1, 'text_prompt_tokens': 21},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='bar',
+                        content='hello',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'bar': 'hello'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=27,
+                    response_tokens=5,
+                    total_tokens=32,
+                    details={'text_candidates_tokens': 5, 'text_prompt_tokens': 27},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+
+async def test_google_timeout(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    agent = Agent(model=model)
+
+    result = await agent.run('Hello!', model_settings={'timeout': 10})
+    assert result.output == snapshot('Hello there! How can I help you today?\n')
+
+    with pytest.raises(UserError, match='Google does not support setting ModelSettings.timeout to a httpx.Timeout'):
+        await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
