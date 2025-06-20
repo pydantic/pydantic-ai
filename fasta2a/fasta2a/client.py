@@ -3,39 +3,34 @@ from __future__ import annotations as _annotations
 import uuid
 from typing import Any
 
-import pydantic
-
-from .schema import (
+import httpx
+from a2a.client import A2AClient as SDKA2AClient
+from a2a.types import (
     GetTaskRequest,
     GetTaskResponse,
     Message,
-    PushNotificationConfig,
-    SendTaskRequest,
-    SendTaskResponse,
-    TaskSendParams,
-    a2a_request_ta,
+    MessageSendConfiguration,
+    SendMessageRequest,
+    SendMessageResponse,
+    TaskQueryParams,
 )
 
-send_task_response_ta = pydantic.TypeAdapter(SendTaskResponse)
-get_task_response_ta = pydantic.TypeAdapter(GetTaskResponse)
-
-try:
-    import httpx
-except ImportError as _import_error:
-    raise ImportError(
-        'httpx is required to use the A2AClient. Please install it with `pip install httpx`.',
-    ) from _import_error
+from .schema import PushNotificationConfig
 
 
 class A2AClient:
     """A client for the A2A protocol."""
 
-    def __init__(self, base_url: str = 'http://localhost:8000', http_client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8000",
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
         if http_client is None:
-            self.http_client = httpx.AsyncClient(base_url=base_url)
-        else:
-            self.http_client = http_client
-            self.http_client.base_url = base_url
+            http_client = httpx.AsyncClient()
+        # The SDK's client will be initialized with a URL that points to the JSON-RPC endpoint.
+        # fasta2a server sets this at root '/', so we append it.
+        self.sdk_client = SDKA2AClient(http_client, url=f'{base_url.rstrip("/")}/')
 
     async def send_task(
         self,
@@ -43,36 +38,28 @@ class A2AClient:
         history_length: int | None = None,
         push_notification: PushNotificationConfig | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> SendTaskResponse:
-        task = TaskSendParams(message=message, id=str(uuid.uuid4()))
-        if history_length is not None:
-            task['history_length'] = history_length
-        if push_notification is not None:
-            task['push_notification'] = push_notification
-        if metadata is not None:
-            task['metadata'] = metadata
+    ) -> SendMessageResponse:
+        """Sends a task to the agent.
 
-        payload = SendTaskRequest(jsonrpc='2.0', id=None, method='tasks/send', params=task)
-        content = a2a_request_ta.dump_json(payload, by_alias=True)
-        response = await self.http_client.post('/', content=content, headers={'Content-Type': 'application/json'})
-        self._raise_for_status(response)
-        return send_task_response_ta.validate_json(response.content)
+        This now maps to the 'message/send' A2A method.
+        """
+        if metadata:
+            message.metadata = (message.metadata or {}) | metadata
+
+        configuration = MessageSendConfiguration(
+            historyLength=history_length,
+            pushNotificationConfig=push_notification,
+        )
+
+        request = SendMessageRequest(
+            id=str(uuid.uuid4()),
+            params={"message": message, "configuration": configuration},
+        )
+        return await self.sdk_client.send_message(request)
 
     async def get_task(self, task_id: str) -> GetTaskResponse:
-        payload = GetTaskRequest(jsonrpc='2.0', id=None, method='tasks/get', params={'id': task_id})
-        content = a2a_request_ta.dump_json(payload, by_alias=True)
-        response = await self.http_client.post('/', content=content, headers={'Content-Type': 'application/json'})
-        self._raise_for_status(response)
-        return get_task_response_ta.validate_json(response.content)
-
-    def _raise_for_status(self, response: httpx.Response) -> None:
-        if response.status_code >= 400:
-            raise UnexpectedResponseError(response.status_code, response.text)
-
-
-class UnexpectedResponseError(Exception):
-    """An error raised when an unexpected response is received from the server."""
-
-    def __init__(self, status_code: int, content: str) -> None:
-        self.status_code = status_code
-        self.content = content
+        """Retrieves a task from the agent."""
+        request = GetTaskRequest(
+            id=str(uuid.uuid4()), params=TaskQueryParams(id=task_id)
+        )
+        return await self.sdk_client.get_task(request)
