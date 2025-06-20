@@ -437,6 +437,9 @@ text_responses: dict[str, str | ToolCallPart] = {
         tool_name='image_generator', args={'subject': 'robot', 'style': 'punk'}, tool_call_id='0001'
     ),
     "subject='robot' style='punk'": '<svg/>',
+    'What is a banana?': ToolCallPart(tool_name='return_fruit', args={'name': 'banana', 'color': 'yellow'}),
+    'What is a Ford Explorer?': '{"result": {"kind": "Vehicle", "data": {"name": "Ford Explorer", "wheels": 4}}}',
+    'What is a MacBook?': '{"result": {"kind": "Device", "data": {"name": "MacBook", "kind": "laptop"}}}',
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -768,7 +771,12 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         return model
     else:
         model_name = model if isinstance(model, str) else model.model_name
-        return FunctionModel(model_logic, stream_function=stream_model_logic, model_name=model_name)
+        return FunctionModel(
+            model_logic,
+            stream_function=stream_model_logic,
+            model_name=model_name,
+            profile=model.profile if isinstance(model, Model) else None,
+        )
 
 
 def mock_group_by_temporal(aiter: Any, soft_max_interval: float | None) -> Any:

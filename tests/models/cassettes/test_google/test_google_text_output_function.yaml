@@ -1,0 +1,147 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '279'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.
+        role: user
+      generationConfig: {}
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_user_country
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '769'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2956
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |
+              Okay, I can help with that. First, I need to determine your country.
+          - functionCall:
+              args: {}
+              name: get_user_country
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: models/gemini-2.5-pro-preview-05-06
+      responseId: J25HaLv8GvDQz7IPp_zUiQo
+      usageMetadata:
+        candidatesTokenCount: 30
+        promptTokenCount: 49
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 49
+        thoughtsTokenCount: 159
+        totalTokenCount: 238
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '672'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.
+        role: user
+      - parts:
+        - text: |
+            Okay, I can help with that. First, I need to determine your country.
+        - functionCall:
+            args: {}
+            id: pyd_ai_82dd46d016b24cf999ce5d812b383f1a
+            name: get_user_country
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_82dd46d016b24cf999ce5d812b383f1a
+            name: get_user_country
+            response:
+              return_value: Mexico
+        role: user
+      generationConfig: {}
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_user_country
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '637'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1426
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: Based on the information I have, the largest city in Mexico is Mexico City.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: models/gemini-2.5-pro-preview-05-06
+      responseId: KG5HaKT3Nc2fz7IPy9KsuQU
+      usageMetadata:
+        candidatesTokenCount: 16
+        promptTokenCount: 98
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 98
+        thoughtsTokenCount: 45
+        totalTokenCount: 159
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, cast
 
 from . import _utils
-from .tools import AgentDepsT, RunContext, SystemPromptFunc
+from ._run_context import AgentDepsT, RunContext
+from .tools import SystemPromptFunc
 
 
 @dataclass

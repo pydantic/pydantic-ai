@@ -11,10 +11,11 @@ from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, RunContext, Tool, ToolOutput, UserError
+from pydantic_ai import Agent, RunContext, Tool, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import ToolDefinition
 
 
@@ -571,7 +572,7 @@ def test_tool_return_conflict():
     # this is also okay
     Agent('test', tools=[ctx_tool], deps_type=int, output_type=int)
     # this raises an error
-    with pytest.raises(UserError, match="Tool name conflicts with result schema name: 'ctx_tool'"):
+    with pytest.raises(UserError, match="Tool name conflicts with output tool name: 'ctx_tool'"):
         Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(int, name='ctx_tool'))
 
 
