@@ -316,7 +316,7 @@ Model Structured Output mode uses a model's native "Structured Outputs" feature 
 
 To use this mode, you can wrap the output type(s) in the [`ModelStructuredOutput`][pydantic_ai.output.ModelStructuredOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient.
 
-```python {title="model_structured_output.py"}
+```python {title="model_structured_output.py" requires="tool_output.py"}
 from tool_output import Fruit, Vehicle
 
 from pydantic_ai import Agent, ModelStructuredOutput
@@ -346,7 +346,7 @@ If the model API supports the "JSON Mode" feature (aka "JSON Object response for
 
 To use this mode, you can wrap the output type(s) in the [`PromptedStructuredOutput`][pydantic_ai.output.PromptedStructuredOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient. Additionally, it supports an `template` argument lets you specify a custom instructions template to be used instead of the [default][pydantic_ai.profiles.ModelProfile.prompted_structured_output_template].
 
-```python {title="prompted_structured_output.py"}
+```python {title="prompted_structured_output.py" requires="tool_output.py"}
 from pydantic import BaseModel
 from tool_output import Vehicle
 
