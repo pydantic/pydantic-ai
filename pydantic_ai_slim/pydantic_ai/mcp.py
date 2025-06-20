@@ -410,7 +410,11 @@ class _MCPServerHTTP(MCPServer):
     """A handler for logging messages from the server."""
 
     timeout: float = 5
-    """The timeout in seconds to wait for the client to initialize."""
+    """Initial connection timeout in seconds for establishing the connection.
+
+    This timeout applies to the initial connection setup and handshake.
+    If the connection cannot be established within this time, the operation will fail.
+    """
 
     process_tool_call: ProcessToolCallback | None = None
     """Hook to customize tool calling and optionally pass extra metadata."""

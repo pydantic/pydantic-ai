@@ -98,7 +98,7 @@ Will display as follows:
 
 Before creating the Streamable HTTP client, we need to run a server that supports the Streamable HTTP transport.
 
-```python {title="streamable_http_server.py" py="3.10"}
+```python {title="streamable_http_server.py" py="3.10" dunder_name="not_main"}
 from mcp.server.fastmcp import FastMCP
 
 app = FastMCP()

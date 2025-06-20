@@ -398,7 +398,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 If you want fine-grained control of validation, particularly catching validation errors, you can use the following pattern:
 
-```python {title="streamed_user_profile_validation.py" line_length="120"}
+```python {title="streamed_user_profile.py" line_length="120"}
 from datetime import date
 
 from pydantic import ValidationError
