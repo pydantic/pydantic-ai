@@ -316,7 +316,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
                         if isinstance(item, BaseEvent):
                             self.logger.debug('ag-ui event: %s', item)
                             yield encoder.encode(item)
-                case _:
+                case _:  # pragma: no cover
                     # Not currently interested in other types.
                     pass
 
@@ -354,7 +354,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
             Raises:
                 UnexpectedToolCallError: Always raised since this is a stub.
             """
-            raise UnexpectedToolCallError(tool_name=tool.name)
+            raise UnexpectedToolCallError(tool_name=tool.name)  # pragma: no cover
 
         # TODO(steve): See it we can avoid the cast here.
         return cast(
@@ -486,7 +486,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
                         # TODO(steve): Merge with above list if we don't remove the local_tool_calls case.
                         if tool_name:
                             stream_ctx.part_ends.append(None)  # Signal continuation of the stream.
-                    case ThinkingPart():
+                    case ThinkingPart():  # pragma: no cover
                         # No equivalent AG-UI event yet.
                         pass
             case PartDeltaEvent():
@@ -515,7 +515,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
                                 else json.dumps(agent_event.delta.args_delta),
                             ),
                         )
-                    case ThinkingPartDelta():
+                    case ThinkingPartDelta():  # pragma: no cover
                         # No equivalent AG-UI event yet.
                         pass
             case FinalResultEvent():

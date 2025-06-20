@@ -32,7 +32,7 @@ class UnexpectedToolCallError(RunError):
         Args:
             tool_name: The name of the tool that was unexpectedly called.
         """
-        self.message = f'unexpected tool call name={tool_name}'
+        self.message = f'unexpected tool call name={tool_name}'  # pragma: no cover
 
 
 @dataclass

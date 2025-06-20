@@ -11,9 +11,10 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from itertools import count
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, cast
 
 import pytest
+from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
@@ -40,6 +41,7 @@ if has_required_python:
 
         from adapter_ag_ui._enums import Role
         from adapter_ag_ui.adapter import AdapterAGUI
+        from adapter_ag_ui.deps import StateDeps
 
         has_ag_ui = True
 
@@ -69,6 +71,12 @@ EXPECTED_EVENTS: Final[list[str]] = [
 UUID_PATTERN: Final[re.Pattern[str]] = re.compile(r'\d{8}-\d{4}-\d{4}-\d{4}-\d{12}')
 
 
+class StateInt(BaseModel):
+    """Example state class for testing purposes."""
+
+    value: int = 0
+
+
 def get_weather() -> Tool:
     return Tool(
         name='get_weather',
@@ -87,7 +95,7 @@ def get_weather() -> Tool:
 
 
 @pytest.fixture
-async def adapter() -> AdapterAGUI[None, str]:
+async def adapter() -> AdapterAGUI[StateDeps[StateInt], str]:
     """Fixture to create an AdapterAGUI instance for testing.
 
     Returns:
@@ -96,7 +104,7 @@ async def adapter() -> AdapterAGUI[None, str]:
     return await create_adapter([])
 
 
-async def create_adapter(tools: list[str] | Literal['all'] = 'all') -> AdapterAGUI[None, str]:
+async def create_adapter(tools: list[str] | Literal['all'] = 'all') -> AdapterAGUI[StateDeps[StateInt], str]:
     """Create an AdapterAGUI instance for testing.
 
     Args:
@@ -107,6 +115,7 @@ async def create_adapter(tools: list[str] | Literal['all'] = 'all') -> AdapterAG
     """
     return Agent(
         model=TestModel(tools),
+        deps_type=cast(type[StateDeps[StateInt]], StateDeps[StateInt]),
         tools=[send_snapshot, send_custom],
     ).to_ag_ui()
 
@@ -257,6 +266,7 @@ class AdapterRunTest:
     runs: list[Run]
     call_tools: list[str] = field(default_factory=lambda: list[str]())
     expected_events: list[str] = field(default_factory=lambda: list(EXPECTED_EVENTS))
+    expected_state: int | None = None
 
 
 # Test parameter data
@@ -471,6 +481,22 @@ def tc_parameters() -> list[AdapterRunTest]:
                 '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
             ],
         ),
+        AdapterRunTest(
+            id='request_with_state',
+            runs=[
+                Run(
+                    messages=[  # pyright: ignore[reportArgumentType]
+                        UserMessage(
+                            id='msg_1',
+                            role=Role.USER.value,
+                            content='Hello, how are you?',
+                        ),
+                    ],
+                    state={'value': 42},
+                ),
+            ],
+            expected_state=42,
+        ),
     ]
 
 
@@ -486,16 +512,19 @@ async def test_run_method(mock_uuid: _MockUUID, tc: AdapterRunTest) -> None:
     run: Run
     events: list[str] = []
     thread_id: str = f'{THREAD_ID_PREFIX}{mock_uuid()}'
-    adapter: AdapterAGUI[None, str] = await create_adapter(tc.call_tools)
+    adapter: AdapterAGUI[StateDeps[StateInt], str] = await create_adapter(tc.call_tools)
+    deps: StateDeps[StateInt] = cast(StateDeps[StateInt], StateDeps[StateInt](state_type=StateInt))
     for run in tc.runs:
         run_input: RunAgentInput = run.run_input(
             thread_id=thread_id,
             run_id=f'{RUN_ID_PREFIX}{mock_uuid()}',
         )
 
-        events.extend([event async for event in adapter.run(run_input)])
+        events.extend([event async for event in adapter.run(run_input, deps=deps)])
 
     assert_events(events, tc.expected_events)
+    if tc.expected_state is not None:
+        assert deps.state.value == tc.expected_state
 
 
 async def test_concurrent_runs(mock_uuid: _MockUUID, adapter: AdapterAGUI[None, str]) -> None:

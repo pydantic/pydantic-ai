@@ -27,12 +27,15 @@ class StateDeps(Generic[StateT]):
         Implements the `StateHandler` protocol.
 
         Args:
-            state: The run state.
+            state: The run state, which should match the expected model type or be `None`.
 
         Raises:
-            InvalidStateError: If `state` does not match the expected model.
+            InvalidStateError: If `state` does not match the expected model and is not `None`.
         """
+        if state is None:
+            return
+
         try:
             self.state = self.state_type.model_validate(state)
-        except ValidationError as e:
+        except ValidationError as e:  # pragma: no cover
             raise InvalidStateError from e
