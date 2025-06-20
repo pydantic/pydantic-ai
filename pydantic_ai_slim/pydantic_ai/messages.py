@@ -356,8 +356,6 @@ class UserPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:
-        if not settings.include_content:
-            return Event('gen_ai.user.message', body={'role': 'user'})
         content: str | list[dict[str, Any] | str]
         if isinstance(self.content, str):
             content = self.content
@@ -365,12 +363,12 @@ class UserPromptPart:
             content = []
             for part in self.content:
                 if isinstance(part, str):
-                    content.append(part)
+                    content.append(part if settings.include_content else {'kind': 'text'})
                 elif isinstance(part, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
-                    content.append({'kind': part.kind, 'url': part.url})
+                    content.append({'kind': part.kind, **({'url': part.url} if settings.include_content else {})})
                 elif isinstance(part, BinaryContent):
                     converted_part = {'kind': part.kind, 'media_type': part.media_type}
-                    if settings.include_binary_content:
+                    if settings.include_content and settings.include_binary_content:
                         converted_part['binary_content'] = base64.b64encode(part.data).decode()
                     content.append(converted_part)
                 else:
