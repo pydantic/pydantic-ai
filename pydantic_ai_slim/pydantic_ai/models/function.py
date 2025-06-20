@@ -214,21 +214,39 @@ class DeltaToolCall:
     """Incremental change to the tool call ID."""
 
 
+@dataclass
+class DeltaThinkingCall:
+    """Incremental change to a thinking part.
+
+    Used to describe a chunk when streaming thinking responses.
+    """
+
+    content_delta: str | None = None
+    """Incremental change to the thinking content."""
+    signature_delta: str | None = None
+    """Incremental change to the thinking signature."""
+
+
 DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
 """A mapping of tool call IDs to incremental changes."""
+
+DeltaThinkingCalls: TypeAlias = dict[int, DeltaThinkingCall]
+"""A mapping of thinking call IDs to incremental changes."""
 
 # TODO: Change the signature to Callable[[list[ModelMessage], ModelSettings, ModelRequestParameters], ...]
 FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], Union[ModelResponse, Awaitable[ModelResponse]]]
 """A function used to generate a non-streamed response."""
 
 # TODO: Change signature as indicated above
-StreamFunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], AsyncIterator[Union[str, DeltaToolCalls]]]
+StreamFunctionDef: TypeAlias = Callable[
+    [list[ModelMessage], AgentInfo], AsyncIterator[Union[str, DeltaToolCalls, DeltaThinkingCalls]]
+]
 """A function used to generate a streamed response.
 
-While this is defined as having return type of `AsyncIterator[Union[str, DeltaToolCalls]]`, it should
-really be considered as `Union[AsyncIterator[str], AsyncIterator[DeltaToolCalls]`,
+While this is defined as having return type of `AsyncIterator[Union[str, DeltaToolCalls, DeltaThinkingCalls]]`, it should
+really be considered as `Union[AsyncIterator[str], AsyncIterator[DeltaToolCalls], AsyncIterator[DeltaThinkingCalls]]`,
 
-E.g. you need to yield all text or all `DeltaToolCalls`, not mix them.
+E.g. you need to yield all text, all `DeltaToolCalls`, or all `DeltaThinkingCalls`, not mix them.
 """
 
 
@@ -237,7 +255,7 @@ class FunctionStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
 
     _model_name: str
-    _iter: AsyncIterator[str | DeltaToolCalls]
+    _iter: AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     def __post_init__(self):
@@ -249,20 +267,41 @@ class FunctionStreamedResponse(StreamedResponse):
                 response_tokens = _estimate_string_tokens(item)
                 self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
                 yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=item)
-            else:
-                delta_tool_calls = item
-                for dtc_index, delta_tool_call in delta_tool_calls.items():
-                    if delta_tool_call.json_args:
-                        response_tokens = _estimate_string_tokens(delta_tool_call.json_args)
-                        self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=dtc_index,
-                        tool_name=delta_tool_call.name,
-                        args=delta_tool_call.json_args,
-                        tool_call_id=delta_tool_call.tool_call_id,
-                    )
-                    if maybe_event is not None:
-                        yield maybe_event
+            elif isinstance(item, dict) and item:
+                first_value = next(iter(item.values()))
+                if isinstance(first_value, DeltaThinkingCall):
+                    # Handle DeltaThinkingCalls.
+                    for dtc_index, delta_call in item.items():
+                        if not isinstance(delta_call, DeltaThinkingCall):  # pragma: no branch
+                            raise TypeError(  # pragma: no cover
+                                f'Expected DeltaThinkingCall, got {type(delta_call).__name__} for index {dtc_index}'
+                            )
+                        if delta_call.content_delta:  # pragma: no branch
+                            response_tokens = _estimate_string_tokens(delta_call.content_delta)
+                            self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+                        yield self._parts_manager.handle_thinking_delta(
+                            vendor_part_id=dtc_index,
+                            content=delta_call.content_delta,
+                            signature=delta_call.signature_delta,
+                        )
+                else:
+                    # Handle DeltaToolCalls.
+                    for dtc_index, delta_call in item.items():
+                        if not isinstance(delta_call, DeltaToolCall):  # pragma: no branch
+                            raise TypeError(  # pragma: no cover
+                                f'Expected DeltaToolCall, got {type(delta_call).__name__} for index {dtc_index}'
+                            )
+                        if delta_call.json_args:
+                            response_tokens = _estimate_string_tokens(delta_call.json_args)
+                            self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=dtc_index,
+                            tool_name=delta_call.name,
+                            args=delta_call.json_args,
+                            tool_call_id=delta_call.tool_call_id,
+                        )
+                        if maybe_event is not None:
+                            yield maybe_event
 
     @property
     def model_name(self) -> str:
@@ -299,12 +338,9 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
                 if isinstance(part, TextPart):
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ThinkingPart):
-                    # NOTE: We don't send ThinkingPart to the providers yet.
-                    # If you are unsatisfied with this, please open an issue.
-                    pass
+                    response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolCallPart):
-                    call = part
-                    response_tokens += 1 + _estimate_string_tokens(call.args_as_json_str())
+                    response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
                 else:
                     assert_never(part)
         else:

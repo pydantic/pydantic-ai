@@ -49,6 +49,7 @@ nav:
           - mcp/server.md
           - mcp/run-python.md
       - A2A: a2a.md
+      - AG-UI: ag-ui.md
       - cli.md
   - Examples:
       - examples/index.md
@@ -64,6 +65,7 @@ nav:
       - examples/question-graph.md
       - examples/slack-lead-qualifier.md
   - API Reference:
+      - api/ag_ui.md
       - api/agent.md
       - api/tools.md
       - api/toolsets.md
