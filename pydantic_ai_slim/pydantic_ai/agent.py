@@ -54,6 +54,7 @@ ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
 
 if TYPE_CHECKING:
+    from fastapi import FastAPI
     from starlette.middleware import Middleware
     from starlette.routing import Route
     from starlette.types import ExceptionHandler, Lifespan
@@ -1768,6 +1769,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             exception_handlers=exception_handlers,
             lifespan=lifespan,
         )
+
+    def to_chat_completions(self) -> FastAPI:
+        from ._chat_completions import to_chat_completions
+
+        return to_chat_completions(self)  # type: ignore[reportArgumentType]
 
     async def to_cli(self: Self, deps: AgentDepsT = None, prog_name: str = 'pydantic-ai') -> None:
         """Run the agent in a CLI chat interface.
