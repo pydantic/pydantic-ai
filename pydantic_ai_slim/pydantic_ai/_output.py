@@ -4,7 +4,7 @@ import inspect
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Iterable, Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast, overload
 
 from pydantic import TypeAdapter, ValidationError
@@ -95,7 +95,11 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
             Result of either the validated result data (ok) or a retry message (Err).
         """
         if self._takes_ctx:
-            ctx = run_context.replace_with(tool_name=tool_call.tool_name if tool_call else None)
+            ctx = (
+                replace(run_context, tool_name=tool_call.tool_name, tool_call_id=tool_call.tool_call_id)
+                if tool_call
+                else run_context
+            )
             args = ctx, result
         else:
             args = (result,)
@@ -501,14 +505,6 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
     def tools(self) -> dict[str, OutputTool[OutputDataT]]:
         """Get the tools for this output schema."""
         return self._tools
-
-    def tool_names(self) -> list[str]:
-        """Return the names of the tools."""
-        return list(self.tools.keys())
-
-    def tool_defs(self) -> list[ToolDefinition]:
-        """Get tool definitions to register with the model."""
-        return [t.tool_def for t in self.tools.values()]
 
     def find_named_tool(
         self, parts: Iterable[_messages.ModelResponsePart], tool_name: str

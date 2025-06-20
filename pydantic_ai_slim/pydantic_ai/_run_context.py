@@ -27,10 +27,12 @@ class RunContext(Generic[AgentDepsT]):
     """The model used in this run."""
     usage: Usage
     """LLM usage associated with the run."""
-    prompt: str | Sequence[_messages.UserContent] | None
+    prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""
+    retries: dict[str, int] = field(default_factory=dict)
+    """Number of retries for each tool."""
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None
@@ -39,18 +41,5 @@ class RunContext(Generic[AgentDepsT]):
     """Number of retries so far."""
     run_step: int = 0
     """The current step in the run."""
-
-    def replace_with(
-        self,
-        retry: int | None = None,
-        tool_name: str | None | _utils.Unset = _utils.UNSET,
-    ) -> RunContext[AgentDepsT]:
-        # Create a new `RunContext` a new `retry` value and `tool_name`.
-        kwargs = {}
-        if retry is not None:
-            kwargs['retry'] = retry
-        if tool_name is not _utils.UNSET:  # pragma: no branch
-            kwargs['tool_name'] = tool_name
-        return dataclasses.replace(self, **kwargs)
 
     __repr__ = _utils.dataclasses_no_defaults_repr

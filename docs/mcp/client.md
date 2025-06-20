@@ -29,7 +29,7 @@ Examples of both are shown below; [mcp-run-python](run-python.md) is used as the
 [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] connects over HTTP using the [HTTP + Server Sent Events transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) to a server.
 
 !!! note
-    [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] requires an MCP server to be running and accepting HTTP connections before calling [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers]. Running the server is not managed by PydanticAI.
+    [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] requires an MCP server to be running and accepting HTTP connections before calling [`agent.run_toolsets()`][pydantic_ai.Agent.run_toolsets]. Running the server is not managed by PydanticAI.
 
 The name "HTTP" is used since this implemented will be adapted in future to use the new
 [Streamable HTTP](https://github.com/modelcontextprotocol/specification/pull/206) currently in development.
@@ -51,7 +51,7 @@ agent = Agent('openai:gpt-4o', mcp_servers=[server])  # (2)!
 
 
 async def main():
-    async with agent.run_mcp_servers():  # (3)!
+    async with agent.run_toolsets():  # (3)!
         result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
@@ -93,7 +93,7 @@ Will display as follows:
 !!! note
     [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] requires an MCP server to be
     running and accepting HTTP connections before calling
-    [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers]. Running the server is not
+    [`agent.run_toolsets()`][pydantic_ai.Agent.run_toolsets]. Running the server is not
     managed by PydanticAI.
 
 Before creating the Streamable HTTP client, we need to run a server that supports the Streamable HTTP transport.
@@ -120,7 +120,7 @@ server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
 agent = Agent('openai:gpt-4o', mcp_servers=[server])  # (2)!
 
 async def main():
-    async with agent.run_mcp_servers():  # (3)!
+    async with agent.run_toolsets():  # (3)!
         result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
@@ -137,7 +137,7 @@ _(This example is complete, it can be run "as is" with Python 3.10+ — you'll n
 The other transport offered by MCP is the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. In this case, you'd use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class.
 
 !!! note
-    When using [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] servers, the [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers] context manager is responsible for starting and stopping the server.
+    When using [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] servers, the [`agent.run_toolsets()`][pydantic_ai.Agent.run_toolsets] context manager is responsible for starting and stopping the server.
 
 ```python {title="mcp_stdio_client.py" py="3.10"}
 from pydantic_ai import Agent
@@ -159,7 +159,7 @@ agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
 
 async def main():
-    async with agent.run_mcp_servers():
+    async with agent.run_toolsets():
         result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
@@ -179,19 +179,20 @@ call needs.
 from typing import Any
 
 from pydantic_ai import Agent
-from pydantic_ai.mcp import CallToolFunc, MCPServerStdio, ToolResult
+from pydantic_ai.mcp import MCPServerStdio, ToolResult
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
+from pydantic_ai.toolset import CallToolFunc
 
 
 async def process_tool_call(
     ctx: RunContext[int],
     call_tool: CallToolFunc,
-    tool_name: str,
-    args: dict[str, Any],
+    name: str,
+    tool_args: dict[str, Any],
 ) -> ToolResult:
     """A tool call processor that passes along the deps."""
-    return await call_tool(tool_name, args, metadata={'deps': ctx.deps})
+    return await call_tool(name, tool_args, metadata={'deps': ctx.deps})
 
 
 server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
@@ -203,7 +204,7 @@ agent = Agent(
 
 
 async def main():
-    async with agent.run_mcp_servers():
+    async with agent.run_toolsets():
         result = await agent.run('Echo with deps set to 42', deps=42)
     print(result.output)
     #> {"echo_deps":{"echo":"This is an echo message","deps":42}}

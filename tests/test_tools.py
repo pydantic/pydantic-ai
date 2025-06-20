@@ -12,6 +12,7 @@ from pydantic_core import PydanticSerializationError, core_schema
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool, UserError
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -486,15 +487,15 @@ def test_init_tool_plain():
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
-    assert agent._function_tools['plain_tool'].takes_ctx is False
-    assert agent._function_tools['plain_tool'].max_retries == 7
+    assert agent._function_toolset.tools['plain_tool'].takes_ctx is False
+    assert agent._function_toolset.tools['plain_tool'].max_retries == 7
 
     agent_infer = Agent('test', tools=[plain_tool], retries=7)
     result = agent_infer.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0, 0])
-    assert agent_infer._function_tools['plain_tool'].takes_ctx is False
-    assert agent_infer._function_tools['plain_tool'].max_retries == 7
+    assert agent_infer._function_toolset.tools['plain_tool'].takes_ctx is False
+    assert agent_infer._function_toolset.tools['plain_tool'].max_retries == 7
 
 
 def ctx_tool(ctx: RunContext[int], x: int) -> int:
@@ -506,13 +507,13 @@ def test_init_tool_ctx():
     agent = Agent('test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries=7)
     result = agent.run_sync('foobar', deps=5)
     assert result.output == snapshot('{"ctx_tool":5}')
-    assert agent._function_tools['ctx_tool'].takes_ctx is True
-    assert agent._function_tools['ctx_tool'].max_retries == 3
+    assert agent._function_toolset.tools['ctx_tool'].takes_ctx is True
+    assert agent._function_toolset.tools['ctx_tool'].max_retries == 3
 
     agent_infer = Agent('test', tools=[ctx_tool], deps_type=int)
     result = agent_infer.run_sync('foobar', deps=6)
     assert result.output == snapshot('{"ctx_tool":6}')
-    assert agent_infer._function_tools['ctx_tool'].takes_ctx is True
+    assert agent_infer._function_toolset.tools['ctx_tool'].takes_ctx is True
 
 
 def test_repeat_tool_by_rename():
@@ -562,7 +563,7 @@ def test_repeat_tool():
     def bar(x: int, y: str) -> str:  # pragma: no cover
         return f'{x} {y}'
 
-    with pytest.raises(UserError, match=r"Tool name conflicts with existing tool: 'bar'."):
+    with pytest.raises(UserError, match="Tool name conflicts with previously renamed tool: 'bar'."):
         agent.run_sync('')
 
 
@@ -572,7 +573,10 @@ def test_tool_return_conflict():
     # this is also okay
     Agent('test', tools=[ctx_tool], deps_type=int, output_type=int)
     # this raises an error
-    with pytest.raises(UserError, match="Tool name conflicts with output tool name: 'ctx_tool'"):
+    with pytest.raises(
+        UserError,
+        match="FunctionToolset defines a tool whose name conflicts with existing tool from OutputToolset: 'ctx_tool'. Consider renaming the tool or wrapping the toolset in a `PrefixedToolset` to avoid name conflicts.",
+    ):
         Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(int, name='ctx_tool'))
 
 
@@ -1044,7 +1048,7 @@ def test_dynamic_tools_agent_wide():
     with agent.override(model=FunctionModel(get_json_schema)):
         result = agent.run_sync('', deps=21)
         json_schema = json.loads(result.output)
-        assert agent._function_tools['foobar'].strict is None
+        assert agent._function_toolset.tools['foobar'].strict is None
         assert json_schema['strict'] is True
 
     result = agent.run_sync('', deps=1)
@@ -1071,8 +1075,8 @@ def test_function_tool_consistent_with_schema():
     agent = Agent('test', tools=[pydantic_tool], retries=0)
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
-    assert agent._function_tools['foobar'].takes_ctx is False
-    assert agent._function_tools['foobar'].max_retries == 0
+    assert agent._function_toolset.tools['foobar'].takes_ctx is False
+    assert agent._function_toolset.tools['foobar'].max_retries == 0
 
 
 def test_function_tool_inconsistent_with_schema():
@@ -1118,5 +1122,37 @@ def test_async_function_tool_consistent_with_schema():
     agent = Agent('test', tools=[pydantic_tool], retries=0)
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
-    assert agent._function_tools['foobar'].takes_ctx is False
-    assert agent._function_tools['foobar'].max_retries == 0
+    assert agent._function_toolset.tools['foobar'].takes_ctx is False
+    assert agent._function_toolset.tools['foobar'].max_retries == 0
+
+
+def test_tool_retries():
+    prepare_tools_retries: list[int] = []
+    prepare_retries: list[int] = []
+    call_retries: list[int] = []
+
+    async def prepare_tool_defs(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        nonlocal prepare_tools_retries
+        retry = ctx.retries.get('infinite_retry_tool', 0)
+        prepare_tools_retries.append(retry)
+        return tool_defs
+
+    agent = Agent(TestModel(), retries=3, prepare_tools=prepare_tool_defs)
+
+    async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        nonlocal prepare_retries
+        prepare_retries.append(ctx.retry)
+        return tool_def
+
+    @agent.tool(retries=5, prepare=prepare_tool_def)
+    def infinite_retry_tool(ctx: RunContext[None]) -> int:
+        nonlocal call_retries
+        call_retries.append(ctx.retry)
+        raise ModelRetry('Please try again.')
+
+    with pytest.raises(UnexpectedModelBehavior, match='Tool exceeded max retries count of 5'):
+        agent.run_sync('Begin infinite retry loop!')
+
+    assert prepare_tools_retries == [0, 1, 2, 3, 4, 5]
+    assert prepare_retries == [0, 1, 2, 3, 4, 5]
+    assert call_retries == [0, 1, 2, 3, 4, 5]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import functools
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +15,9 @@ import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing_extensions import Self, assert_never, deprecated
+
+from .exceptions import UserError
+from .toolset import AbstractToolset, MCPToolset, PrefixedToolset, ProcessedToolset, ToolProcessFunc
 
 try:
     from mcp import types as mcp_types
@@ -32,7 +35,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 # after mcp imports so any import error maps to this file, not _mcp.py
-from . import _mcp, exceptions, messages, models, tools
+from . import _mcp, exceptions, messages, models
 
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
 
@@ -48,7 +51,7 @@ class MCPServer(ABC):
     log_level: mcp_types.LoggingLevel | None = None
     log_handler: LoggingFnT | None = None
     init_timeout: float = 5
-    process_tool_call: ProcessToolCallback | None = None
+    process_tool_call: ToolProcessFunc | None = None
     # } end of "abstract fields"
 
     _running_count: int = 0
@@ -73,35 +76,22 @@ class MCPServer(ABC):
         raise NotImplementedError('MCP Server subclasses must implement this method.')
         yield
 
-    def get_prefixed_tool_name(self, tool_name: str) -> str:
-        """Get the tool name with prefix if `tool_prefix` is set."""
-        return f'{self.tool_prefix}_{tool_name}' if self.tool_prefix else tool_name
-
-    def get_unprefixed_tool_name(self, tool_name: str) -> str:
-        """Get original tool name without prefix for calling tools."""
-        return tool_name.removeprefix(f'{self.tool_prefix}_') if self.tool_prefix else tool_name
-
     @property
     def is_running(self) -> bool:
         """Check if the MCP server is running."""
         return bool(self._running_count)
 
-    async def list_tools(self) -> list[tools.ToolDefinition]:
+    async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
 
         Note:
         - We don't cache tools as they might change.
         - We also don't subscribe to the server to avoid complexity.
         """
-        mcp_tools = await self._client.list_tools()
-        return [
-            tools.ToolDefinition(
-                name=self.get_prefixed_tool_name(tool.name),
-                description=tool.description or '',
-                parameters_json_schema=tool.inputSchema,
-            )
-            for tool in mcp_tools.tools
-        ]
+        if not self.is_running:  # pragma: no cover
+            raise UserError(f'MCP server is not running: {self}')
+        result = await self._client.list_tools()
+        return result.tools
 
     async def call_tool(
         self,
@@ -122,6 +112,8 @@ class MCPServer(ABC):
         Raises:
             ModelRetry: If the tool call fails.
         """
+        if not self.is_running:  # pragma: no cover
+            raise UserError(f'MCP server is not running: {self}')
         try:
             # meta param is not provided by session yet, so build and can send_request directly.
             result = await self._client.send_request(
@@ -129,7 +121,7 @@ class MCPServer(ABC):
                     mcp_types.CallToolRequest(
                         method='tools/call',
                         params=mcp_types.CallToolRequestParams(
-                            name=self.get_unprefixed_tool_name(tool_name),
+                            name=tool_name,
                             arguments=arguments,
                             _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
                         ),
@@ -147,6 +139,14 @@ class MCPServer(ABC):
             raise exceptions.ModelRetry(text)
         else:
             return content[0] if len(content) == 1 else content
+
+    def as_toolset(self, max_retries: int = 1) -> AbstractToolset:
+        toolset = MCPToolset(self, max_retries=max_retries)
+        if self.process_tool_call:
+            toolset = ProcessedToolset(toolset, self.process_tool_call)
+        if self.tool_prefix:
+            toolset = PrefixedToolset(toolset, self.tool_prefix)
+        return toolset
 
     async def __aenter__(self) -> Self:
         if self._running_count == 0:
@@ -273,7 +273,7 @@ class MCPServerStdio(MCPServer):
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
-        async with agent.run_mcp_servers():  # (2)!
+        async with agent.run_toolsets():  # (2)!
             ...
     ```
 
@@ -323,7 +323,7 @@ class MCPServerStdio(MCPServer):
     timeout: float = 5
     """ The timeout in seconds to wait for the client to initialize."""
 
-    process_tool_call: ProcessToolCallback | None = None
+    process_tool_call: ToolProcessFunc | None = None
     """Hook to customize tool calling and optionally pass extra metadata."""
 
     @asynccontextmanager
@@ -418,7 +418,7 @@ class _MCPServerHTTP(MCPServer):
     init_timeout: float = 5
     """The timeout in seconds to wait for the client to initialize."""
 
-    process_tool_call: ProcessToolCallback | None = None
+    process_tool_call: ToolProcessFunc | None = None
     """Hook to customize tool calling and optionally pass extra metadata."""
 
     @property
@@ -505,7 +505,7 @@ class MCPServerSSE(_MCPServerHTTP):
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
-        async with agent.run_mcp_servers():  # (2)!
+        async with agent.run_toolsets():  # (2)!
             ...
     ```
 
@@ -539,7 +539,7 @@ class MCPServerHTTP(MCPServerSSE):
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
-        async with agent.run_mcp_servers():  # (2)!
+        async with agent.run_toolsets():  # (2)!
             ...
     ```
 
@@ -568,7 +568,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
-        async with agent.run_mcp_servers():  # (2)!
+        async with agent.run_toolsets():  # (2)!
             ...
     ```
     """
@@ -585,24 +585,4 @@ ToolResult = (
     | list[Any]
     | Sequence[str | messages.BinaryContent | dict[str, Any] | list[Any]]
 )
-"""The result type of a tool call."""
-
-CallToolFunc = Callable[[str, dict[str, Any], dict[str, Any] | None], Awaitable[ToolResult]]
-"""A function type that represents a tool call."""
-
-ProcessToolCallback = Callable[
-    [
-        tools.RunContext[Any],
-        CallToolFunc,
-        str,
-        dict[str, Any],
-    ],
-    Awaitable[ToolResult],
-]
-"""A process tool callback.
-
-It accepts a run context, the original tool call function, a tool name, and arguments.
-
-Allows wrapping an MCP server tool call to customize it, including adding extra request
-metadata.
-"""
+"""The result type of an MCP tool call."""

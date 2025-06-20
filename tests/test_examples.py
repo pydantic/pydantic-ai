@@ -36,6 +36,7 @@ from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolset import AbstractToolset, MCPToolset
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
@@ -261,9 +262,14 @@ class MockMCPServer:
     async def __aexit__(self, *args: Any) -> None:
         pass
 
-    @staticmethod
-    async def list_tools() -> list[None]:
+    async def list_tools(self) -> list[None]:
         return []
+
+    async def call_tool(self, name: str, args: dict[str, Any], metadata: dict[str, Any] | None = None) -> Any:
+        return None
+
+    def as_toolset(self, max_retries: int = 1) -> AbstractToolset:
+        return MCPToolset(self, max_retries=max_retries)  # type: ignore
 
 
 text_responses: dict[str, str | ToolCallPart] = {

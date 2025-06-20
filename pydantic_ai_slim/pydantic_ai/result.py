@@ -95,7 +95,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             match = self._output_schema.find_named_tool(message.parts, output_tool_name)
             if match is None:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                    f'Invalid response, unable to find tool: {self._output_schema.tool_names()}'
+                    'Invalid response, unable to find tool'
                 )
 
             call, output_tool = match
@@ -413,7 +413,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             match = self._output_schema.find_named_tool(message.parts, self._output_tool_name)
             if match is None:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                    f'Invalid response, unable to find tool: {self._output_schema.tool_names()}'
+                    'Invalid response, unable to find tool'
                 )
 
             call, output_tool = match
