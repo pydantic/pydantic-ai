@@ -16,11 +16,13 @@ import httpx
 import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
+from pydantic_core import SchemaValidator, core_schema
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_mock import MockerFixture
 from rich.console import Console
 
 from pydantic_ai import ModelHTTPError
+from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -36,7 +38,8 @@ from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolset import AbstractToolset, MCPToolset
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolset import AbstractToolset
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
@@ -253,7 +256,7 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         raise ValueError(f'Unexpected prompt: {prompt}')
 
 
-class MockMCPServer:
+class MockMCPServer(AbstractToolset[Any]):
     is_running = True
 
     async def __aenter__(self) -> MockMCPServer:
@@ -262,14 +265,20 @@ class MockMCPServer:
     async def __aexit__(self, *args: Any) -> None:
         pass
 
-    async def list_tools(self) -> list[None]:
+    @property
+    def tool_defs(self) -> list[ToolDefinition]:
         return []
 
-    async def call_tool(self, name: str, args: dict[str, Any], metadata: dict[str, Any] | None = None) -> Any:
-        return None
+    def get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> SchemaValidator:
+        return SchemaValidator(core_schema.any_schema())
 
-    def as_toolset(self, max_retries: int = 1) -> AbstractToolset:
-        return MCPToolset(self, max_retries=max_retries)  # type: ignore
+    def max_retries_for_tool(self, name: str) -> int:
+        return 0
+
+    async def call_tool(
+        self, ctx: RunContext[Any], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
+    ) -> Any:
+        return None
 
 
 text_responses: dict[str, str | ToolCallPart] = {

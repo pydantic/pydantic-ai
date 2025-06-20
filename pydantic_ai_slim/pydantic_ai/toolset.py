@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, Never, Protocol, overl
 
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema
-from pydantic_core import SchemaValidator, core_schema
+from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
 from ._output import BaseOutputSchema
@@ -29,7 +29,6 @@ from .tools import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai.mcp import MCPServer
     from pydantic_ai.models import Model
 
 
@@ -98,7 +97,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
 
 @dataclass(init=False)
-class _BareFunctionToolset(AbstractToolset[AgentDepsT]):
+class FunctionToolset(AbstractToolset[AgentDepsT]):
     """A toolset that functions can be registered to as tools."""
 
     max_retries: int = field(default=1)
@@ -259,6 +258,16 @@ class _BareFunctionToolset(AbstractToolset[AgentDepsT]):
             tool.max_retries = self.max_retries
         self.tools[tool.name] = tool
 
+    async def freeze_for_run(self, ctx: RunContext[AgentDepsT]) -> FrozenToolset[AgentDepsT]:
+        frozen_self = FrozenToolset[AgentDepsT](self, ctx)
+        toolset = await IndividuallyPreparedToolset(frozen_self, self._prepare_tool_def).freeze_for_run(ctx)
+        return FrozenToolset[AgentDepsT](toolset, ctx, original=self)
+
+    async def _prepare_tool_def(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
+        tool_name = tool_def.name
+        ctx = replace(ctx, tool_name=tool_name, retry=ctx.retries.get(tool_name, 0))
+        return await self.tools[tool_name].prepare_tool_def(ctx)
+
     @property
     def tool_defs(self) -> list[ToolDefinition]:
         return [tool.tool_def for tool in self.tools.values()]
@@ -299,63 +308,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         # TODO: Should never be called for an output tool?
         return await self.output_schema.tools[name].processor.process(tool_args, ctx)
-
-
-@dataclass
-class MCPToolset(AbstractToolset[AgentDepsT]):
-    """A toolset that contains MCP tools and handles running the server."""
-
-    server: MCPServer
-    max_retries: int = field(default=1)
-
-    @property
-    def name(self) -> str:
-        return repr(self.server)
-
-    @property
-    def name_conflict_hint(self) -> str:
-        return 'Consider setting `tool_prefix` to avoid name conflicts.'
-
-    async def __aenter__(self) -> Self:
-        await self.server.__aenter__()
-        return self
-
-    async def __aexit__(
-        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
-    ) -> bool | None:
-        return await self.server.__aexit__(exc_type, exc_value, traceback)
-
-    async def freeze_for_run(self, ctx: RunContext[AgentDepsT]) -> FrozenToolset[AgentDepsT]:
-        return FrozenToolset[AgentDepsT](self, ctx, await self.list_tool_defs())
-
-    @property
-    def tool_defs(self) -> list[ToolDefinition]:
-        return []
-
-    async def list_tool_defs(self) -> list[ToolDefinition]:
-        mcp_tools = await self.server.list_tools()
-        return [
-            ToolDefinition(
-                name=mcp_tool.name,
-                description=mcp_tool.description or '',
-                parameters_json_schema=mcp_tool.inputSchema,
-            )
-            for mcp_tool in mcp_tools
-        ]
-
-    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        return SchemaValidator(schema=core_schema.dict_schema(core_schema.str_schema(), core_schema.any_schema()))
-
-    def max_retries_for_tool(self, name: str) -> int:
-        return self.max_retries
-
-    async def call_tool(
-        self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], metadata: dict[str, Any] | None = None
-    ) -> Any:
-        return await self.server.call_tool(name, tool_args, metadata)
-
-    def set_mcp_sampling_model(self, model: Model) -> None:
-        self.server.sampling_model = model
 
 
 @dataclass
@@ -569,21 +521,6 @@ class IndividuallyPreparedToolset(WrapperToolset[AgentDepsT]):
         return FrozenToolset[AgentDepsT](freezable_prepared, ctx)
 
 
-@dataclass
-class FunctionToolset(IndividuallyPreparedToolset[AgentDepsT]):
-    """A toolset that contains function tools."""
-
-    def __init__(self, tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [], max_retries: int = 1):
-        wrapped = _BareFunctionToolset(tools, max_retries)
-
-        async def prepare_tool_def(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
-            tool_name = tool_def.name
-            ctx = replace(ctx, tool_name=tool_name, retry=ctx.retries.get(tool_name, 0))
-            return await wrapped.tools[tool_name].prepare_tool_def(ctx)
-
-        super().__init__(wrapped, prepare_tool_def)
-
-
 @dataclass(init=False)
 class _FreezableIndividuallyPreparedToolset(IndividuallyPreparedToolset[AgentDepsT]):
     name_map: dict[str, str]
@@ -676,18 +613,21 @@ class FrozenToolset(WrapperToolset[AgentDepsT]):
     _tool_defs: list[ToolDefinition]
     _tool_names: list[str]
     _retries: dict[str, int]
+    _original: AbstractToolset[AgentDepsT]
 
     def __init__(
         self,
         wrapped: AbstractToolset[AgentDepsT],
         ctx: RunContext[AgentDepsT],
         tool_defs: list[ToolDefinition] | None = None,
+        original: AbstractToolset[AgentDepsT] | None = None,
     ):
         self.wrapped = wrapped
         self.ctx = ctx
         self._tool_defs = wrapped.tool_defs if tool_defs is None else tool_defs
         self._tool_names = [tool_def.name for tool_def in self._tool_defs]
         self._retries = ctx.retries.copy()
+        self._original = original or wrapped
 
     @property
     def name(self) -> str:
@@ -698,7 +638,7 @@ class FrozenToolset(WrapperToolset[AgentDepsT]):
             return self
         else:
             ctx = replace(ctx, retries=self._retries)
-            return await self.wrapped.freeze_for_run(ctx)
+            return await self._original.freeze_for_run(ctx)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:

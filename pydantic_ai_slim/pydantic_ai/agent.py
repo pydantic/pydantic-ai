@@ -235,7 +235,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        mcp_servers: Sequence[MCPServer] = (),
+        mcp_servers: Sequence[
+            MCPServer
+        ] = (),  # TODO: Deprecate argument, MCPServers can be passed directly to toolsets
         toolsets: Sequence[AbstractToolset[AgentDepsT]] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -364,11 +366,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         # This will raise errors for any name conflicts
         CombinedToolset[AgentDepsT]([self._output_toolset, self._function_toolset])
 
-        mcp_toolsets = [
-            cast(AbstractToolset[AgentDepsT], mcp_server.as_toolset(max_retries=self._max_result_retries))
-            for mcp_server in mcp_servers
-        ]
-        toolset = CombinedToolset[AgentDepsT]([self._function_toolset, *toolsets, *mcp_toolsets])
+        toolset = CombinedToolset[AgentDepsT]([self._function_toolset, *toolsets, *mcp_servers])
         if prepare_tools:
             toolset = PreparedToolset[AgentDepsT](toolset, prepare_tools)
         self._toolset = toolset
