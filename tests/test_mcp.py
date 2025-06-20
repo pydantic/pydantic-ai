@@ -974,9 +974,8 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
 
 
 async def test_client_sampling():
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     server.sampling_model = TestModel(custom_output_text='sampling model response')
-    assert server.log_level == 'info'
     async with server:
         result = await server.call_tool('use_sampling', {'foo': 'bar'})
         assert result == snapshot(
@@ -988,6 +987,14 @@ async def test_client_sampling():
                 'stopReason': None,
             }
         )
+
+
+async def test_client_sampling_disabled():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], allow_sampling=False)
+    server.sampling_model = TestModel(custom_output_text='sampling model response')
+    async with server:
+        with pytest.raises(ModelRetry, match='Error executing tool use_sampling: Sampling not supported'):
+            await server.call_tool('use_sampling', {'foo': 'bar'})
 
 
 async def test_mcp_server_raises_mcp_error(allow_model_requests: None, agent: Agent) -> None:

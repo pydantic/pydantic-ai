@@ -20,7 +20,7 @@ pip/uv-add "pydantic-ai-slim[duckduckgo]"
 
 Here's an example of how you can use the DuckDuckGo search tool with an agent:
 
-```py {title="main.py" test="skip"}
+```py {title="duckduckgo_search.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 
@@ -103,7 +103,7 @@ pip/uv-add "pydantic-ai-slim[tavily]"
 
 Here's an example of how you can use the Tavily search tool with an agent:
 
-```py {title="main.py" test="skip"}
+```py {title="tavily_search.py" test="skip"}
 import os
 
 from pydantic_ai.agent import Agent

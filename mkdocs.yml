@@ -86,6 +86,7 @@ nav:
       - api/models/function.md
       - api/models/fallback.md
       - api/models/wrapper.md
+      - api/models/mcp-sampling.md
       - api/profiles.md
       - api/providers.md
       - api/pydantic_graph/graph.md

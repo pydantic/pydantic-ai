@@ -3,13 +3,13 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
+import shutil
 import sys
 from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass
 from inspect import FrameInfo
 from io import StringIO
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 
 import httpx
@@ -64,32 +64,44 @@ pytestmark = [
         reason='google-auth or logfire or google-provider not installed',
     ),
 ]
+code_examples: dict[str, CodeExample] = {}
 
 
 def find_filter_examples() -> Iterable[ParameterSet]:
     # Ensure this is run from the package root regardless of where/how the tests are run
-    os.chdir(Path(__file__).parent.parent)
+    root_dir = Path(__file__).parent.parent
+    os.chdir(root_dir)
 
     for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if ex.path.name != '_utils.py':
             try:
-                path = ex.path.relative_to(Path.cwd())
+                path = ex.path.relative_to(root_dir)
             except ValueError:
                 path = ex.path
             test_id = f'{path}:{ex.start_line}'
             prefix_settings = ex.prefix_settings()
-            if opt_title := prefix_settings.get('title'):
-                test_id += f':{opt_title}'
+            if title := prefix_settings.get('title'):
+                if title.endswith('.py'):
+                    code_examples[title] = ex
+                test_id += f':{title}'
             yield pytest.param(ex, id=test_id)
 
 
 @pytest.fixture
-def reset_cwd():
-    original_cwd = os.getcwd()
+def tmp_path_cwd(tmp_path: Path):
+    cwd = os.getcwd()
+
+    root_dir = Path(__file__).parent.parent
+    for file in (root_dir / 'tests' / 'example_modules').glob('*.py'):
+        shutil.copy(file, tmp_path)
+    sys.path.append(str(tmp_path))
+    os.chdir(tmp_path)
+
     try:
-        yield
+        yield tmp_path
     finally:
-        os.chdir(original_cwd)
+        os.chdir(cwd)
+        sys.path.remove(str(tmp_path))
 
 
 @pytest.mark.xdist_group(name='doc_tests')
@@ -101,8 +113,7 @@ def test_docs_examples(  # noqa: C901
     client_with_handler: ClientWithHandler,
     allow_model_requests: None,
     env: TestEnv,
-    tmp_path: Path,
-    reset_cwd: None,
+    tmp_path_cwd: Path,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
@@ -142,14 +153,13 @@ def test_docs_examples(  # noqa: C901
     env.set('AWS_SECRET_ACCESS_KEY', 'testing')
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
 
-    sys.path.append('tests/example_modules')
-
     prefix_settings = example.prefix_settings()
-    opt_title = prefix_settings.get('title')
     opt_test = prefix_settings.get('test', '')
     opt_lint = prefix_settings.get('lint', '')
     noqa = prefix_settings.get('noqa', '')
-    python_version = prefix_settings.get('py', None)
+    python_version = prefix_settings.get('py')
+    dunder_name = prefix_settings.get('dunder_name', '__main__')
+    requires = prefix_settings.get('requires')
 
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
@@ -159,14 +169,12 @@ def test_docs_examples(  # noqa: C901
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
         pytest.skip('both running code and lint skipped')
 
-    if opt_title in {
-        'ai_q_and_a_run.py',
-        'count_down_from_persistence.py',
-        'generate_dataset_example.py',
-        'generate_dataset_example_json.py',
-        'save_load_dataset_example.py',
-    }:
-        os.chdir(tmp_path)
+    if requires:
+        for req in requires.split(','):
+            if ex := code_examples.get(req):
+                (tmp_path_cwd / req).write_text(ex.source)
+            else:  # pragma: no cover
+                raise KeyError(f'Example {req} not found, check the `requires` header of this example.')
 
     ruff_ignore: list[str] = ['D', 'Q001']
     # `from bank_database import DatabaseConn` wrongly sorted in imports
@@ -196,19 +204,12 @@ def test_docs_examples(  # noqa: C901
     if opt_test.startswith('skip'):
         print(opt_test[4:].lstrip(' -') or 'running code skipped')
     else:
-        test_globals: dict[str, str] = {}
-        if opt_title == 'mcp_client.py':
-            test_globals['__name__'] = '__test__'
-        if eval_example.update_examples:  # pragma: lax no cover
-            module_dict = eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
-        else:
-            module_dict = eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
+        test_globals: dict[str, str] = {'__name__': dunder_name}
 
-        if title := opt_title:
-            if title.endswith('.py'):
-                module_name = title[:-3]
-                sys.modules[module_name] = module = ModuleType(module_name)
-                module.__dict__.update(module_dict)
+        if eval_example.update_examples:  # pragma: lax no cover
+            eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
+        else:
+            eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
 
 
 def print_callback(s: str) -> str:
@@ -432,6 +433,10 @@ text_responses: dict[str, str | ToolCallPart] = {
             'explanation': 'I am not equipped to provide travel information, such as flights from Amsterdam to Mexico City.'
         },
     ),
+    'Create an image of a robot in a punk style.': ToolCallPart(
+        tool_name='image_generator', args={'subject': 'robot', 'style': 'punk'}, tool_call_id='0001'
+    ),
+    "subject='robot' style='punk'": '<svg/>',
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -676,6 +681,8 @@ async def model_logic(  # noqa: C901
                 )
             ]
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'image_generator':
+        return ModelResponse(parts=[TextPart('Image file written to robot_punk.svg.')])
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')
