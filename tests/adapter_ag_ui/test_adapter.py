@@ -1,0 +1,534 @@
+"""Comprehensive tests for AdapterAGUI.run method."""
+
+# pyright: reportPossiblyUnboundVariable=none
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import re
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from itertools import count
+from typing import Any, Final, Literal
+
+import pytest
+
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+
+has_ag_ui: bool = False
+with contextlib.suppress(ImportError):
+    from ag_ui.core import (
+        AssistantMessage,
+        CustomEvent,
+        DeveloperMessage,
+        EventType,
+        FunctionCall,
+        Message,
+        RunAgentInput,
+        StateSnapshotEvent,
+        SystemMessage,
+        Tool,
+        ToolCall,
+        ToolMessage,
+        UserMessage,
+    )
+
+    from adapter_ag_ui._enums import Role
+    from adapter_ag_ui.adapter import AdapterAGUI
+
+    has_ag_ui = True
+
+
+pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not has_ag_ui, reason='adapter-ag-ui not installed')]
+
+# Type aliases.
+_MockUUID = Callable[[], str]
+
+# Constants.
+THREAD_ID_PREFIX: Final[str] = 'thread_'
+RUN_ID_PREFIX: Final[str] = 'run_'
+EXPECTED_EVENTS: Final[list[str]] = [
+    '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+    '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000003","role":"assistant"}',
+    '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000003","delta":"success "}',
+    '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000003","delta":"(no "}',
+    '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000003","delta":"tool "}',
+    '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000003","delta":"calls)"}',
+    '{"type":"TEXT_MESSAGE_END","messageId":"00000000-0000-0000-0000-000000000003"}',
+    '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+]
+UUID_PATTERN: Final[re.Pattern[str]] = re.compile(r'\d{8}-\d{4}-\d{4}-\d{4}-\d{12}')
+
+
+def get_weather() -> Tool:
+    return Tool(
+        name='get_weather',
+        description='Get the weather for a given location',
+        parameters={
+            'type': 'object',
+            'properties': {
+                'location': {
+                    'type': 'string',
+                    'description': 'The location to get the weather for',
+                },
+            },
+            'required': ['location'],
+        },
+    )
+
+
+@pytest.fixture
+async def adapter() -> AdapterAGUI[None, str]:
+    """Fixture to create an AdapterAGUI instance for testing.
+
+    Returns:
+        An AdapterAGUI instance configured for testing.
+    """
+    return await create_adapter([])
+
+
+async def create_adapter(tools: list[str] | Literal['all'] = 'all') -> AdapterAGUI[None, str]:
+    """Create an AdapterAGUI instance for testing.
+
+    Args:
+        tools: List of tool names to enable, or 'all' for all tools.
+
+    Returns:
+        An AdapterAGUI instance configured with the specified tools.
+    """
+    return Agent(
+        model=TestModel(tools),
+        tools=[send_snapshot, send_custom],
+    ).to_ag_ui()
+
+
+@pytest.fixture
+def mock_uuid(monkeypatch: pytest.MonkeyPatch) -> _MockUUID:
+    """Mock UUID generation for consistent test results.
+
+    This fixture replaces the uuid.uuid4 function with a mock that generates
+    sequential UUIDs for testing purposes. This ensures that UUIDs are
+    predictable and consistent across test runs.
+
+    Args:
+        monkeypatch: The pytest monkeypatch fixture to modify uuid.uuid4.
+
+    Returns:
+        A function that generates a mock UUID.
+    """
+    counter = count(1)
+
+    def _fake_uuid() -> str:
+        """Generate a fake UUID string with sequential numbering.
+
+        Returns:
+            A fake UUID string in the format '00000000-0000-0000-0000-{counter:012d}'.
+        """
+        return f'00000000-0000-0000-0000-{next(counter):012d}'
+
+    def _fake_uuid4() -> uuid.UUID:
+        """Generate a fake UUID object using the fake UUID string.
+
+        Returns:
+            A UUID object created from the fake UUID string.
+        """
+        return uuid.UUID(_fake_uuid())
+
+    # Due to how ToolCallPart uses generate_uuid with field default_factory, we
+    # have to patch uuid.uuid4 directly instead of the generate function. This
+    # also covers how we generate messages IDs.
+    monkeypatch.setattr('uuid.uuid4', _fake_uuid4)
+
+    return _fake_uuid
+
+
+def assert_events(events: list[str], expected_events: list[str], *, loose: bool = False) -> None:
+    expected: str
+    event: str
+    for event, expected in zip(events, expected_events, strict=True):
+        if loose:
+            expected = normalize_uuids(expected)
+            event = normalize_uuids(event)
+        assert event == f'data: {expected}\n\n'
+
+
+def normalize_uuids(text: str) -> str:
+    """Normalize UUIDs in the given text to a fixed format.
+
+    Args:
+        text: The input text containing UUIDs.
+
+    Returns:
+        The text with UUIDs replaced by a fixed UUID.
+    """
+    return UUID_PATTERN.sub('00000000-0000-0000-0000-000000000001', text)
+
+
+async def send_snapshot() -> StateSnapshotEvent:
+    """Display the recipe to the user.
+
+    Returns:
+        StateSnapshotEvent.
+    """
+    return StateSnapshotEvent(
+        type=EventType.STATE_SNAPSHOT,
+        snapshot={'key': 'value'},
+    )
+
+
+async def send_custom() -> list[CustomEvent]:
+    """Display the recipe to the user.
+
+    Returns:
+        StateSnapshotEvent.
+    """
+    return [
+        CustomEvent(
+            type=EventType.CUSTOM,
+            name='custom_event1',
+            value={'key1': 'value1'},
+        ),
+        CustomEvent(
+            type=EventType.CUSTOM,
+            name='custom_event2',
+            value={'key2': 'value2'},
+        ),
+    ]
+
+
+@dataclass(frozen=True)
+class Run:
+    """Test parameter class for AdapterAGUI.run method tests.
+
+    Args:
+        messages: List of messages for the run input.
+        state: State object for the run input.
+        context: Context list for the run input.
+        tools: List of tools for the run input.
+        forwarded_props: Forwarded properties for the run input.
+    """
+
+    messages: list[Message]
+    state: Any = None
+    context: list[Any] = field(default_factory=lambda: list[Any]())
+    tools: list[Tool] = field(default_factory=lambda: list[Tool]())
+    forwarded_props: Any = None
+
+    def run_input(self, *, thread_id: str, run_id: str) -> RunAgentInput:
+        """Create a RunAgentInput instance for the test case.
+
+        Args:
+            thread_id: The thread ID for the run.
+            run_id: The run ID for the run.
+
+        Returns:
+            A RunAgentInput instance with the test case parameters.
+        """
+        return RunAgentInput(
+            thread_id=thread_id,
+            run_id=run_id,
+            messages=self.messages,
+            state=self.state,
+            context=self.context,
+            tools=self.tools,
+            forwarded_props=self.forwarded_props,
+        )
+
+
+@dataclass(frozen=True)
+class AdapterRunTest:
+    """Test parameter class for AdapterAGUI.run method tests.
+
+    Args:
+        id: Name of the test case.
+        runs: List of Run instances for the test case.
+    """
+
+    id: str
+    runs: list[Run]
+    call_tools: list[str] = field(default_factory=lambda: list[str]())
+    expected_events: list[str] = field(default_factory=lambda: list(EXPECTED_EVENTS))
+
+
+# Test parameter data
+def tc_parameters() -> list[AdapterRunTest]:
+    if not has_ag_ui:
+        return [AdapterRunTest(id='skipped', runs=[])]
+
+    return [
+        AdapterRunTest(
+            id='basic_user_message',
+            runs=[
+                Run(
+                    messages=[  # pyright: ignore[reportArgumentType]
+                        UserMessage(
+                            id='msg_1',
+                            role=Role.USER.value,
+                            content='Hello, how are you?',
+                        ),
+                    ],
+                ),
+            ],
+        ),
+        AdapterRunTest(
+            id='empty_messages',
+            runs=[
+                Run(messages=[]),
+            ],
+            expected_events=[
+                '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"RUN_ERROR","message":"no messages found in the input","code":"no_messages"}',
+            ],
+        ),
+        AdapterRunTest(
+            id='multiple_messages',
+            runs=[
+                Run(
+                    messages=[  # pyright: ignore[reportArgumentType]
+                        UserMessage(
+                            id='msg_1',
+                            role=Role.USER.value,
+                            content='First message',
+                        ),
+                        AssistantMessage(
+                            id='msg_2',
+                            role=Role.ASSISTANT.value,
+                            content='Assistant response',
+                        ),
+                        SystemMessage(
+                            id='msg_3',
+                            role=Role.SYSTEM.value,
+                            content='System message',
+                        ),
+                        DeveloperMessage(
+                            id='msg_4',
+                            role=Role.DEVELOPER.value,
+                            content='Developer note',
+                        ),
+                        UserMessage(
+                            id='msg_5',
+                            role=Role.USER.value,
+                            content='Second message',
+                        ),
+                    ],
+                ),
+            ],
+        ),
+        AdapterRunTest(
+            id='messages_with_history',
+            runs=[
+                Run(
+                    messages=[  # pyright: ignore[reportArgumentType]
+                        UserMessage(
+                            id='msg_1',
+                            role=Role.USER.value,
+                            content='First message',
+                        ),
+                        UserMessage(
+                            id='msg_2',
+                            role=Role.USER.value,
+                            content='Second message',
+                        ),
+                    ],
+                ),
+            ],
+        ),
+        AdapterRunTest(
+            id='tool_call',
+            call_tools=['get_weather'],
+            runs=[
+                Run(
+                    messages=[  # pyright: ignore[reportArgumentType]
+                        UserMessage(
+                            id='msg_1',
+                            role=Role.USER.value,
+                            content='Please call get_weather for Paris',
+                        ),
+                    ],
+                    tools=[get_weather()],
+                ),
+                Run(
+                    messages=[  # pyright: ignore[reportArgumentType]
+                        UserMessage(
+                            id='msg_1',
+                            role=Role.USER.value,
+                            content='Please call get_weather for Paris',
+                        ),
+                        AssistantMessage(
+                            id='msg_2',
+                            role=Role.ASSISTANT.value,
+                            tool_calls=[
+                                ToolCall(
+                                    id='pyd_ai_00000000000000000000000000000003',
+                                    type='function',
+                                    function=FunctionCall(
+                                        name='get_weather',
+                                        arguments='{"location": "Paris"}',
+                                    ),
+                                ),
+                            ],
+                        ),
+                        ToolMessage(
+                            id='msg_3',
+                            role=Role.TOOL.value,
+                            content='Tool result',
+                            tool_call_id='pyd_ai_00000000000000000000000000000003',
+                        ),
+                    ],
+                    tools=[get_weather()],
+                ),
+            ],
+            expected_events=[
+                '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"TOOL_CALL_START","toolCallId":"pyd_ai_00000000000000000000000000000003","toolCallName":"get_weather"}',
+                '{"type":"TOOL_CALL_END","toolCallId":"pyd_ai_00000000000000000000000000000003"}',
+                '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000004"}',
+                '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000005","role":"assistant"}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000005","delta":"{\\"get_weather\\":\\"Tool "}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000005","delta":"result\\"}"}',
+                '{"type":"TEXT_MESSAGE_END","messageId":"00000000-0000-0000-0000-000000000005"}',
+                '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000004"}',
+            ],
+        ),
+        AdapterRunTest(
+            id='tool_call_no_result',
+            call_tools=['get_weather'],
+            runs=[
+                Run(
+                    messages=[  # pyright: ignore[reportArgumentType]
+                        UserMessage(
+                            id='msg_1',
+                            role=Role.USER.value,
+                            content='Please call get_weather for Paris',
+                        ),
+                    ],
+                    tools=[get_weather()],
+                ),
+            ],
+            expected_events=[
+                '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"TOOL_CALL_START","toolCallId":"pyd_ai_00000000000000000000000000000003","toolCallName":"get_weather"}',
+                '{"type":"TOOL_CALL_END","toolCallId":"pyd_ai_00000000000000000000000000000003"}',
+                '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+            ],
+        ),
+        AdapterRunTest(
+            id='tool_single_event',
+            call_tools=['send_snapshot'],
+            runs=[
+                Run(
+                    messages=[  # pyright: ignore[reportArgumentType]
+                        UserMessage(
+                            id='msg_1',
+                            role=Role.USER.value,
+                            content='Please call send_snapshot',
+                        ),
+                    ],
+                ),
+            ],
+            expected_events=[
+                '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"STATE_SNAPSHOT","snapshot":{"key":"value"}}',
+                '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000004","role":"assistant"}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000004","delta":"{\\"send_snapshot\\":{\\"type\\":\\"STATE_SNAPSHOT\\",\\"timestam"}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000004","delta":"p\\":null,\\"rawEvent\\":null,\\"snapshot\\":{\\"key\\":\\"value\\"}}}"}',
+                '{"type":"TEXT_MESSAGE_END","messageId":"00000000-0000-0000-0000-000000000004"}',
+                '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+            ],
+        ),
+        AdapterRunTest(
+            id='tool_multiple_events',
+            call_tools=['send_custom'],
+            runs=[
+                Run(
+                    messages=[  # pyright: ignore[reportArgumentType]
+                        UserMessage(
+                            id='msg_1',
+                            role=Role.USER.value,
+                            content='Please call send_custom',
+                        ),
+                    ],
+                ),
+            ],
+            expected_events=[
+                '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"CUSTOM","name":"custom_event1","value":{"key1":"value1"}}',
+                '{"type":"CUSTOM","name":"custom_event2","value":{"key2":"value2"}}',
+                '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000004","role":"assistant"}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000004","delta":"{\\"send_custom\\":[{\\"type\\":\\"CUSTOM\\",\\"timestamp\\":null,\\"rawEvent\\":null,\\"name\\":\\"custom_event1\\",\\"value\\":{\\"key1\\":\\"va"}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000004","delta":"lue1\\"}},{\\"type\\":\\"CUSTOM\\",\\"timestamp\\":null,\\"rawEvent\\":null,\\"name\\":\\"custom_event2\\",\\"value\\":{\\"key2\\":\\"value2\\"}}]}"}',
+                '{"type":"TEXT_MESSAGE_END","messageId":"00000000-0000-0000-0000-000000000004"}',
+                '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+            ],
+        ),
+    ]
+
+
+@pytest.mark.parametrize('tc', tc_parameters(), ids=lambda tc: tc.id)
+async def test_run_method(mock_uuid: _MockUUID, tc: AdapterRunTest) -> None:
+    """Test the AdapterAGUI.run method with various scenarios.
+
+    Args:
+        mock_uuid: The mock UUID generator fixture.
+        tc: The test case parameters.
+    """
+
+    run: Run
+    events: list[str] = []
+    thread_id: str = f'{THREAD_ID_PREFIX}{mock_uuid()}'
+    adapter: AdapterAGUI[None, str] = await create_adapter(tc.call_tools)
+    for run in tc.runs:
+        run_input: RunAgentInput = run.run_input(
+            thread_id=thread_id,
+            run_id=f'{RUN_ID_PREFIX}{mock_uuid()}',
+        )
+
+        events.extend([event async for event in adapter.run(run_input)])
+
+    assert_events(events, tc.expected_events)
+
+
+async def test_concurrent_runs(mock_uuid: _MockUUID, adapter: AdapterAGUI[None, str]) -> None:
+    """Test concurrent execution of multiple runs."""
+
+    async def collect_events(run_input: RunAgentInput) -> list[str]:
+        """Collect all events from an adapter run.
+
+        Args:
+            run_input: The input configuration for the adapter run.
+
+        Returns:
+            List of all events generated by the adapter run.
+        """
+        return [event async for event in adapter.run(run_input)]
+
+    concurrent_tasks: list[asyncio.Task[list[str]]] = []
+
+    for i in range(20):
+        run_input: RunAgentInput = RunAgentInput(
+            thread_id=f'{THREAD_ID_PREFIX}{mock_uuid()}',
+            run_id=f'{RUN_ID_PREFIX}{mock_uuid()}',
+            messages=[  # pyright: ignore[reportArgumentType]
+                UserMessage(
+                    id=f'msg_{i}',
+                    role=Role.USER.value,
+                    content=f'Message {i}',
+                ),
+            ],
+            state=None,
+            context=[],
+            tools=[],
+            forwarded_props=None,
+        )
+
+        task = asyncio.create_task(collect_events(run_input))
+        concurrent_tasks.append(task)
+
+    results = await asyncio.gather(*concurrent_tasks)
+
+    for events in results:
+        assert_events(events, EXPECTED_EVENTS, loose=True)
+        assert len(events) == len(EXPECTED_EVENTS)

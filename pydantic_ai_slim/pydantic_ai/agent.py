@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 import inspect
 import json
+import logging
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
@@ -58,12 +59,12 @@ if TYPE_CHECKING:
     from starlette.routing import Route
     from starlette.types import ExceptionHandler, Lifespan
 
+    from adapter_ag_ui import AdapterAGUI
     from fasta2a.applications import FastA2A
     from fasta2a.broker import Broker
     from fasta2a.schema import Provider, Skill
     from fasta2a.storage import Storage
     from pydantic_ai.mcp import MCPServer
-
 
 __all__ = (
     'Agent',
@@ -375,6 +376,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -390,6 +392,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     @overload
@@ -406,6 +409,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     async def run(
@@ -420,6 +424,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -450,6 +455,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            additional_tools: Additional tools to use for this run.
 
         Returns:
             The result of the run.
@@ -472,6 +478,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             usage_limits=usage_limits,
             usage=usage,
+            additional_tools=additional_tools,
         ) as agent_run:
             async for _ in agent_run:
                 pass
@@ -492,6 +499,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -508,6 +516,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -525,6 +534,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, Any]]: ...
 
     @asynccontextmanager
@@ -540,6 +550,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -614,6 +625,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            additional_tools: Additional tools to use for this run.
 
         Returns:
             The result of the run.
@@ -686,6 +698,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         # Copy the function tools so that retry state is agent-run-specific
         # Note that the retry count is reset to 0 when this happens due to the `default=0` and `init=False`.
         run_function_tools = {k: dataclasses.replace(v) for k, v in self._function_tools.items()}
+        if additional_tools:
+            self._register_tool_to(run_function_tools, additional_tools)
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
@@ -1553,18 +1567,33 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._register_tool(tool)
 
     def _register_tool(self, tool: Tool[AgentDepsT]) -> None:
-        """Private utility to register a tool instance."""
-        if tool.max_retries is None:
-            # noinspection PyTypeChecker
-            tool = dataclasses.replace(tool, max_retries=self._default_retries)
+        """Private utility to register a tool instance persistently.
 
-        if tool.name in self._function_tools:
-            raise exceptions.UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
+        Args:
+            tool: The tool to register.
+        """
+        self._register_tool_to(self._function_tools, [tool])
 
-        if self._output_schema and tool.name in self._output_schema.tools:
-            raise exceptions.UserError(f'Tool name conflicts with result schema name: {tool.name!r}')
+    def _register_tool_to(self, store: dict[str, Tool[AgentDepsT]], tools: Sequence[Tool[AgentDepsT]]) -> None:
+        """Utility to register a tool instance into a given store.
 
-        self._function_tools[tool.name] = tool
+        Args:
+            store: The store to register the tool into.
+            tools: The tools to register.
+        """
+        tool: Tool[AgentDepsT]
+        for tool in tools:
+            if tool.max_retries is None:
+                # noinspection PyTypeChecker
+                tool = dataclasses.replace(tool, max_retries=self._default_retries)
+
+            if tool.name in store:
+                raise exceptions.UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
+
+            if self._output_schema and tool.name in self._output_schema.tools:
+                raise exceptions.UserError(f'Tool name conflicts with result schema name: {tool.name!r}')
+
+            store[tool.name] = tool
 
     def _get_model(self, model: models.Model | models.KnownModelName | str | None) -> models.Model:
         """Create a model configured for this agent.
@@ -1712,6 +1741,28 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             yield
         finally:
             await exit_stack.aclose()
+
+    def to_ag_ui(
+        self,
+        *,
+        logger: logging.Logger | None = None,
+        tool_prefix: str | None = None,
+    ) -> AdapterAGUI[AgentDepsT, OutputDataT]:
+        try:
+            from adapter_ag_ui.adapter import AdapterAGUI
+        except ImportError as _import_error:
+            raise ImportError(
+                'Please install the `adapter-ag-ui` package to use `Agent.to_ag_ui()` method, '
+                'you can use the `ag_ui` optional group — `pip install "pydantic-ai-slim[ag_ui]"`'
+            ) from _import_error
+
+        kwargs: dict[str, Any] = {}
+        if tool_prefix is not None:
+            kwargs['tool_prefix'] = tool_prefix
+        if logger is not None:
+            kwargs['logger'] = logger
+
+        return AdapterAGUI(agent=self, **kwargs)
 
     def to_a2a(
         self,

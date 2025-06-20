@@ -68,6 +68,7 @@ pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
 fasta2a = { workspace = true }
+adapter-ag-ui = { workspace = true }
 
 [tool.uv.workspace]
 members = [
@@ -78,6 +79,7 @@ members = [
     "clai",
     "examples",
     "fasta2a",
+    "adapter_ag_ui",
 ]
 
 [dependency-groups]
@@ -108,6 +110,7 @@ include = [
     "pydantic_graph/**/*.py",
     "mcp-run-python/**/*.py",
     "fasta2a/**/*.py",
+    "adapter_ag_ui/**/*.py",
     "examples/**/*.py",
     "clai/**/*.py",
     "tests/**/*.py",
@@ -166,6 +169,7 @@ include = [
     "pydantic_graph",
     "mcp-run-python",
     "fasta2a",
+    "adapter_ag_ui",
     "tests",
     "examples",
     "clai",
@@ -214,6 +218,7 @@ include = [
     "pydantic_graph/**/*.py",
     # TODO(Marcelo): Add 100% coverage for A2A.
     # "fasta2a/**/*.py",
+    "adapter_ag_ui/**/*.py",
     "tests/**/*.py",
 ]
 omit = ["tests/test_live.py", "tests/example_modules/*.py"]
