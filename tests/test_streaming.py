@@ -971,8 +971,7 @@ async def test_unknown_tool_call_events():
                     tool_name='unknown_tool',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
-                ),
-                tool_call_id=IsStr(),
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='known_tool', args={'x': 5}, tool_call_id=IsStr()),
@@ -983,8 +982,7 @@ async def test_unknown_tool_call_events():
                     content=10,
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
-                ),
-                tool_call_id=IsStr(),
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -1035,8 +1033,7 @@ async def test_output_tool_validation_failure_events():
                     content='Output tool not used - result failed validation.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
-                ),
-                tool_call_id=IsStr(),
+                )
             ),
         ]
     )
