@@ -47,8 +47,9 @@ class MCPServer(ABC):
     tool_prefix: str | None = None
     log_level: mcp_types.LoggingLevel | None = None
     log_handler: LoggingFnT | None = None
-    init_timeout: float = 5
+    timeout: float = 5
     process_tool_call: ProcessToolCallback | None = None
+    allow_sampling: bool = True
     # } end of "abstract fields"
 
     _running_count: int = 0
@@ -156,12 +157,12 @@ class MCPServer(ABC):
             client = ClientSession(
                 read_stream=self._read_stream,
                 write_stream=self._write_stream,
-                sampling_callback=self._sampling_callback,
+                sampling_callback=self._sampling_callback if self.allow_sampling else None,
                 logging_callback=self.log_handler,
             )
             self._client = await self._exit_stack.enter_async_context(client)
 
-            with anyio.fail_after(self.init_timeout):
+            with anyio.fail_after(self.timeout):
                 await self._client.initialize()
 
                 if log_level := self.log_level:
@@ -317,14 +318,14 @@ class MCPServerStdio(MCPServer):
     log_handler: LoggingFnT | None = None
     """A handler for logging messages from the server."""
 
-    init_timeout: float = 5
-    """The timeout in seconds to wait for the client to initialize."""
-
     timeout: float = 5
-    """ The timeout in seconds to wait for the client to initialize."""
+    """The timeout in seconds to wait for the client to initialize."""
 
     process_tool_call: ProcessToolCallback | None = None
     """Hook to customize tool calling and optionally pass extra metadata."""
+
+    allow_sampling: bool = True
+    """Whether to allow MCP sampling through this client."""
 
     @asynccontextmanager
     async def client_streams(
@@ -380,13 +381,6 @@ class _MCPServerHTTP(MCPServer):
         ```
     """
 
-    timeout: float = 5
-    """Initial connection timeout in seconds for establishing the connection.
-
-    This timeout applies to the initial connection setup and handshake.
-    If the connection cannot be established within this time, the operation will fail.
-    """
-
     sse_read_timeout: float = 5 * 60
     """Maximum time in seconds to wait for new SSE messages before timing out.
 
@@ -415,11 +409,18 @@ class _MCPServerHTTP(MCPServer):
     log_handler: LoggingFnT | None = None
     """A handler for logging messages from the server."""
 
-    init_timeout: float = 5
-    """The timeout in seconds to wait for the client to initialize."""
+    timeout: float = 5
+    """Initial connection timeout in seconds for establishing the connection.
+
+    This timeout applies to the initial connection setup and handshake.
+    If the connection cannot be established within this time, the operation will fail.
+    """
 
     process_tool_call: ProcessToolCallback | None = None
     """Hook to customize tool calling and optionally pass extra metadata."""
+
+    allow_sampling: bool = True
+    """Whether to allow MCP sampling through this client."""
 
     @property
     @abstractmethod
