@@ -1074,6 +1074,7 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             response_tokens=response_usage.output_tokens,
             total_tokens=response_usage.total_tokens,
             details={
+                **details,
                 'reasoning_tokens': response_usage.output_tokens_details.reasoning_tokens,
                 'cached_tokens': response_usage.input_tokens_details.cached_tokens,
             },
