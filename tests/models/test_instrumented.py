@@ -847,7 +847,7 @@ def test_messages_without_content(document_content: BinaryContent):
                 )
             ]
         ),
-        ModelResponse(parts=[TextPart('text2')]),
+        ModelResponse(parts=[TextPart('text2'), ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4})]),
         ModelRequest(parts=[ToolReturnPart('tool', 'tool_return_content', 'tool_call_1')]),
         ModelRequest(parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')]),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])]),
@@ -880,6 +880,13 @@ def test_messages_without_content(document_content: BinaryContent):
             },
             {
                 'role': 'assistant',
+                'tool_calls': [
+                    {
+                        'id': IsStr(),
+                        'type': 'function',
+                        'function': {'name': 'my_tool', 'arguments': {'a': 13, 'b': 4}},
+                    }
+                ],
                 'gen_ai.message.index': 3,
                 'event.name': 'gen_ai.assistant.message',
             },
