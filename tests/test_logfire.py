@@ -291,6 +291,7 @@ def test_logfire(
                                 'strict': None,
                             }
                         ],
+                        'builtin_tools': [],
                         'allow_text_output': True,
                         'output_tools': [],
                     }
@@ -472,14 +473,37 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'test',
                     'gen_ai.request.model': 'test',
-                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
+                    'model_request_parameters': IsJson(
+                        {'function_tools': [], 'builtin_tools': [], 'allow_text_output': True, 'output_tools': []}
+                    ),
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 4,
                     'gen_ai.response.model': 'test',
-                    'events': '[{"content": "Hello", "role": "user", "gen_ai.system": "test", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}, {"index": 0, "message": {"role": "assistant", "content": "success (no tool calls)"}, "gen_ai.system": "test", "event.name": "gen_ai.choice"}]',
-                    'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}, "model_request_parameters": {"type": "object"}}}',
+                    'events': IsJson(
+                        [
+                            {
+                                'content': 'Hello',
+                                'role': 'user',
+                                'gen_ai.system': 'test',
+                                'gen_ai.message.index': 0,
+                                'event.name': 'gen_ai.user.message',
+                            },
+                            {
+                                'index': 0,
+                                'message': {'role': 'assistant', 'content': 'success (no tool calls)'},
+                                'gen_ai.system': 'test',
+                                'event.name': 'gen_ai.choice',
+                            },
+                        ]
+                    ),
+                    'logfire.json_schema': IsJson(
+                        {
+                            'type': 'object',
+                            'properties': {'events': {'type': 'array'}, 'model_request_parameters': {'type': 'object'}},
+                        }
+                    ),
                 },
             },
             {

@@ -12,7 +12,7 @@ from typing_extensions import assert_never
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
+from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..messages import (
     BinaryContent,
     DocumentUrl,
@@ -23,6 +23,8 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
+    ServerToolCallPart,
+    ServerToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -223,7 +225,7 @@ class GroqModel(Model):
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.chat.completions.create(
-                model=str(self._model_name),
+                model=self._model_name,
                 messages=groq_messages,
                 n=1,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
@@ -253,6 +255,15 @@ class GroqModel(Model):
         timestamp = number_to_datetime(response.created)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+        if choice.message.executed_tools:
+            for tool in choice.message.executed_tools:
+                tool_call_id = generate_tool_call_id()
+                items.append(
+                    ServerToolCallPart(
+                        tool_name=tool.type, args=tool.arguments, model_name='groq', tool_call_id=tool_call_id
+                    )
+                )
+                items.append(ServerToolReturnPart(tool_name=tool.type, content=tool.output, tool_call_id=tool_call_id))
         # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
         if choice.message.reasoning is not None:
             items.append(ThinkingPart(content=choice.message.reasoning))
