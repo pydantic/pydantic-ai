@@ -7,6 +7,7 @@ from pytest_mock import MockerFixture
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
@@ -18,13 +19,14 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.usage import Usage
 
-from ..conftest import TestEnv, try_import
+from ..conftest import IsDatetime, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 
@@ -69,14 +71,44 @@ def test_openrouter_pass_openai_client() -> None:
 
 async def test_openrouter_with_google_model(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenAIModel('google/gemini-2.0-flash-exp:free', provider=provider)
-    agent = Agent(model, instructions='Be helpful.')
+    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    agent = Agent(model, instructions='Be helpful.', retries=1)
     response = await agent.run('Tell me a joke.')
     assert response.output == snapshot("""\
 Why don't scientists trust atoms? \n\
 
 Because they make up everything!
 """)
+
+    assert response.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Tell me a joke.',
+                        timestamp=IsDatetime(iso_string=True),
+                    )
+                ],
+                instructions='Be helpful.',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+Why don't scientists trust atoms? \n\
+
+Because they make up everything!
+"""
+                    )
+                ],
+                usage=Usage(requests=1, request_tokens=8, response_tokens=17, total_tokens=25, details={}),
+                model_name='google/gemini-2.0-flash-exp:free',
+                timestamp=IsDatetime(iso_string=True),
+                vendor_details={'provider': 'Google'},
+                vendor_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_openrouter_provider_model_profile(mocker: MockerFixture):
