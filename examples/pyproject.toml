@@ -42,7 +42,7 @@ requires-python = ">=3.9"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic,ag-ui]=={{ version }}",
     "pydantic-evals=={{ version }}",
     "asyncpg>=0.30.0",
     "fastapi>=0.115.4",
@@ -56,7 +56,10 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["pydantic_ai_examples"]
+packages = [
+    "pydantic_ai_ag_ui_examples",
+    "pydantic_ai_examples",
+]
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }

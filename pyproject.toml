@@ -46,7 +46,7 @@ requires-python = ">=3.9"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,cli,mcp,evals,a2a]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,cli,mcp,evals,a2a,ag-ui]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -68,9 +68,11 @@ pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
 fasta2a = { workspace = true }
+pydantic-ai-ag-ui = { workspace = true }
 
 [tool.uv.workspace]
 members = [
+    "pydantic_ai_ag_ui",
     "pydantic_ai_slim",
     "pydantic_evals",
     "pydantic_graph",
@@ -103,6 +105,7 @@ include = ["/README.md", "/Makefile", "/tests"]
 line-length = 120
 target-version = "py39"
 include = [
+    "pydantic_ai_ag_ui/**/*.py",
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
@@ -161,6 +164,7 @@ reportUnnecessaryIsInstance = false
 reportUnnecessaryTypeIgnoreComment = true
 reportMissingModuleSource = false
 include = [
+    "pydantic_ai_ag_ui",
     "pydantic_ai_slim",
     "pydantic_evals",
     "pydantic_graph",
@@ -209,6 +213,7 @@ filterwarnings = [
 [tool.coverage.run]
 # required to avoid warnings about files created by create_module fixture
 include = [
+    "pydantic_ai_ag_ui/**/*.py",
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",

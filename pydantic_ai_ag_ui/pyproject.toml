@@ -11,11 +11,11 @@ style = "pep440"
 bump = true
 
 [project]
-name = "fasta2a"
+name = "pydantic-ai-ag-ui"
 dynamic = ["version", "dependencies"]
-description = "Convert an AI Agent into a A2A server! ✨"
+description = "Convert an AI Agent to speak AG UI! ✨"
 authors = [
-    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "Steven Hartland", email = "steve@rocketscience.gg" },
 ]
 license = "MIT"
 readme = "README.md"
@@ -44,19 +44,19 @@ requires-python = ">=3.9"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "starlette>0.29.0",
+    "ag-ui-protocol>=0.1.5",
     "pydantic>=2.10",
-    "opentelemetry-api>=1.28.0",
+    "pydantic-ai>=0.3.2",
 ]
 
-[project.optional-dependencies]
-logfire = ["logfire>=2.3"]
-
 [project.urls]
-Homepage = "https://ai.pydantic.dev/a2a/fasta2a"
-Source = "https://github.com/pydantic/pydantic-ai"
-Documentation = "https://ai.pydantic.dev/a2a"
+Homepage = "https://ai.pydantic.dev/ag-ui/pydantic_ai_ag_ui"
+Source = "https://github.com/pydantic/pydantic-ai/"
+Documentation = "https://ai.pydantic.dev/ag-ui"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [tool.hatch.build.targets.wheel]
-packages = ["fasta2a"]
+packages = ["pydantic_ai_ag_ui"]
+
+[tool.uv.sources]
+pydantic-ai = { workspace = true }
