@@ -1062,7 +1062,13 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
     if response_usage is None:
         return usage.Usage()
     elif isinstance(response_usage, responses.ResponseUsage):
-        details: dict[str, int] = {}
+        details: dict[str, int] = {
+            key: value
+            for key, value in response_usage.model_dump(
+                exclude={'input_tokens', 'output_tokens', 'total_tokens'}
+            ).items()
+            if isinstance(value, int)
+        }
         return usage.Usage(
             request_tokens=response_usage.input_tokens,
             response_tokens=response_usage.output_tokens,
@@ -1073,7 +1079,13 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             },
         )
     else:
-        details = {}
+        details = {
+            key: value
+            for key, value in response_usage.model_dump(
+                exclude={'prompt_tokens', 'completion_tokens', 'total_tokens'}
+            ).items()
+            if isinstance(value, int)
+        }
         if response_usage.completion_tokens_details is not None:
             details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
         if response_usage.prompt_tokens_details is not None:
