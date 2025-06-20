@@ -1069,15 +1069,13 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             ).items()
             if isinstance(value, int)
         }
+        details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
+        details['cached_tokens'] = response_usage.input_tokens_details.cached_tokens
         return usage.Usage(
             request_tokens=response_usage.input_tokens,
             response_tokens=response_usage.output_tokens,
             total_tokens=response_usage.total_tokens,
-            details={
-                **details,
-                'reasoning_tokens': response_usage.output_tokens_details.reasoning_tokens,
-                'cached_tokens': response_usage.input_tokens_details.cached_tokens,
-            },
+            details=details,
         )
     else:
         details = {
