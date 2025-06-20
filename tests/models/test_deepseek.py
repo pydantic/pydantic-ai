@@ -35,7 +35,12 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
                     request_tokens=12,
                     response_tokens=789,
                     total_tokens=801,
-                    details={'reasoning_tokens': 415, 'cached_tokens': 0},
+                    details={
+                        'prompt_cache_hit_tokens': 0,
+                        'prompt_cache_miss_tokens': 12,
+                        'reasoning_tokens': 415,
+                        'cached_tokens': 0,
+                    },
                 ),
                 model_name='deepseek-reasoner',
                 timestamp=IsDatetime(),
