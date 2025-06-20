@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import sys
 from dataclasses import dataclass, field
 from typing import Final
 
@@ -12,16 +13,19 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
+has_required_python: bool = sys.version_info >= (3, 10)
 has_ag_ui: bool = False
-with contextlib.suppress(ImportError):
-    from adapter_ag_ui.adapter import _LOGGER as adapter_logger, AdapterAGUI  # type: ignore[reportPrivateUsage]
+if has_required_python:
+    with contextlib.suppress(ImportError):
+        from adapter_ag_ui.adapter import _LOGGER as adapter_logger, AdapterAGUI  # type: ignore[reportPrivateUsage]
 
-    has_ag_ui = True
+        has_ag_ui = True
 
 
 pytestmark = [
     pytest.mark.anyio,
-    pytest.mark.skipif(not has_ag_ui, reason='adapter-ag-ui not installed'),
+    pytest.mark.skipif(not has_required_python, reason='requires Python 3.10 or higher'),
+    pytest.mark.skipif(has_required_python and not has_ag_ui, reason='adapter-ag-ui not installed'),
 ]
 
 # Constants.
