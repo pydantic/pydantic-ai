@@ -21,10 +21,23 @@ members = [
     "clai",
     "mcp-run-python",
     "pydantic-ai",
+    "pydantic-ai-ag-ui",
     "pydantic-ai-examples",
     "pydantic-ai-slim",
     "pydantic-evals",
     "pydantic-graph",
+]
+
+[[package]]
+name = "ag-ui-protocol"
+version = "0.1.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/90/26/1d5530e3fa84da37a8b58300f7a4352f763be43b2c393b0fad4d119f8653/ag_ui_protocol-0.1.5.tar.gz", hash = "sha256:48757afe82a4ee88eb078f31ef9672e09df624573d82045054f5a5b5dc021832", size = 4175, upload-time = "2025-05-20T11:37:06.835Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/db/39/c488044d3195f82e35102c190f92b605a8af1ad63f26b9166e9be460e1c1/ag_ui_protocol-0.1.5-py3-none-any.whl", hash = "sha256:d51a0ad9635059b629b4cb57a9a2ec425b4cc8220e91d50a8f9d559571737ae9", size = 5819, upload-time = "2025-05-20T11:37:05.521Z" },
 ]
 
 [[package]]
@@ -2966,7 +2979,7 @@ wheels = [
 name = "pydantic-ai"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "mcp", "mistral", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "mcp", "mistral", "openai", "vertexai"] },
 ]
 
 [package.optional-dependencies]
@@ -3005,7 +3018,7 @@ requires-dist = [
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.11.0" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "mcp", "mistral", "openai", "vertexai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "mcp", "mistral", "openai", "vertexai"], editable = "pydantic_ai_slim" },
 ]
 provides-extras = ["a2a", "examples", "logfire"]
 
@@ -3030,6 +3043,22 @@ lint = [
 ]
 
 [[package]]
+name = "pydantic-ai-ag-ui"
+source = { editable = "pydantic_ai_ag_ui" }
+dependencies = [
+    { name = "ag-ui-protocol" },
+    { name = "pydantic" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ag-ui-protocol", specifier = ">=0.1.5" },
+    { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-ai", editable = "." },
+]
+
+[[package]]
 name = "pydantic-ai-examples"
 source = { editable = "examples" }
 dependencies = [
@@ -3040,7 +3069,7 @@ dependencies = [
     { name = "logfire", extra = ["asyncpg", "fastapi", "httpx", "sqlite3"] },
     { name = "mcp", extra = ["cli"], marker = "python_full_version >= '3.10'" },
     { name = "modal" },
-    { name = "pydantic-ai-slim", extra = ["anthropic", "groq", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "groq", "openai", "vertexai"] },
     { name = "pydantic-evals" },
     { name = "python-multipart" },
     { name = "rich" },
@@ -3056,7 +3085,7 @@ requires-dist = [
     { name = "logfire", extras = ["asyncpg", "fastapi", "httpx", "sqlite3"], specifier = ">=2.6" },
     { name = "mcp", extras = ["cli"], marker = "python_full_version >= '3.10'", specifier = ">=1.4.1" },
     { name = "modal", specifier = ">=1.0.4" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "groq", "openai", "vertexai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "groq", "openai", "vertexai"], editable = "pydantic_ai_slim" },
     { name = "pydantic-evals", editable = "pydantic_evals" },
     { name = "python-multipart", specifier = ">=0.0.17" },
     { name = "rich", specifier = ">=13.9.2" },
@@ -3080,6 +3109,9 @@ dependencies = [
 [package.optional-dependencies]
 a2a = [
     { name = "fasta2a" },
+]
+ag-ui = [
+    { name = "pydantic-ai-ag-ui" },
 ]
 anthropic = [
     { name = "anthropic" },
@@ -3170,6 +3202,7 @@ requires-dist = [
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
     { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-ai-ag-ui", marker = "extra == 'ag-ui'", editable = "pydantic_ai_ag_ui" },
     { name = "pydantic-evals", marker = "extra == 'evals'", editable = "pydantic_evals" },
     { name = "pydantic-graph", editable = "pydantic_graph" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.2" },
@@ -3177,7 +3210,7 @@ requires-dist = [
     { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
-provides-extras = ["a2a", "anthropic", "bedrock", "cli", "cohere", "duckduckgo", "evals", "google", "groq", "logfire", "mcp", "mistral", "openai", "tavily", "vertexai"]
+provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "duckduckgo", "evals", "google", "groq", "logfire", "mcp", "mistral", "openai", "tavily", "vertexai"]
 
 [package.metadata.requires-dev]
 dev = [

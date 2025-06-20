@@ -11,10 +11,12 @@ style = "pep440"
 bump = true
 
 [project]
-name = "pydantic-ai-examples"
+name = "fasta2a"
 dynamic = ["version", "dependencies"]
-description = "Examples of how to use PydanticAI and what it can do."
-authors = [{ name = "Samuel Colvin", email = "samuel@pydantic.dev" }]
+description = "Convert an AI Agent into a A2A server! ✨"
+authors = [
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+]
 license = "MIT"
 readme = "README.md"
 classifiers = [
@@ -42,29 +44,19 @@ requires-python = ">=3.9"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic,ag-ui]=={{ version }}",
-    "pydantic-evals=={{ version }}",
-    "asyncpg>=0.30.0",
-    "fastapi>=0.115.4",
-    "logfire[asyncpg,fastapi,sqlite3,httpx]>=2.6",
-    "python-multipart>=0.0.17",
-    "rich>=13.9.2",
-    "uvicorn>=0.32.0",
-    "devtools>=0.12.2",
-    "gradio>=5.9.0; python_version>'3.9'",
-    "mcp[cli]>=1.4.1; python_version >= '3.10'",
-    "modal>=1.0.4",
+    "starlette>0.29.0",
+    "pydantic>=2.10",
+    "opentelemetry-api>=1.28.0",
 ]
+
+[project.optional-dependencies]
+logfire = ["logfire>=2.3"]
+
+[project.urls]
+Homepage = "https://ai.pydantic.dev/a2a/fasta2a"
+Source = "https://github.com/pydantic/pydantic-ai"
+Documentation = "https://ai.pydantic.dev/a2a"
+Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [tool.hatch.build.targets.wheel]
-packages = [
-    "pydantic_ai_ag_ui_examples",
-    "pydantic_ai_examples",
-]
-
-[tool.uv.sources]
-pydantic-ai-slim = { workspace = true }
-
-[tool.ruff]
-extend = "../pyproject.toml"
-line-length = 88
+packages = ["fasta2a"]

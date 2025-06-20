@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 import inspect
 import json
+import logging
 import warnings
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
@@ -73,7 +74,7 @@ if TYPE_CHECKING:
     from starlette.types import ExceptionHandler, Lifespan
 
     from pydantic_ai.mcp import MCPServer
-
+    from pydantic_ai_ag_ui import Adapter
 
 __all__ = (
     'Agent',
@@ -1874,6 +1875,39 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         async with self:
             yield
+
+    def to_ag_ui(
+        self,
+        *,
+        logger: logging.Logger | None = None,
+        tool_prefix: str | None = None,
+    ) -> Adapter[AgentDepsT, OutputDataT]:
+        """Convert the agent to an Adapter instance.
+
+        This allows you to use the agent with a compatible AG-UI frontend.
+
+        Args:
+            logger: Optional logger to use for the adapter.
+            tool_prefix: Optional prefix to add to tool names in the AG-UI.
+
+        Returns:
+            An adapter that converts between AG-UI protocol and PydanticAI.
+        """
+        try:
+            from pydantic_ai_ag_ui.adapter import Adapter
+        except ImportError as _import_error:
+            raise ImportError(
+                'Please install the `pydantic-ai-ag-ui` package to use `Agent.to_ag_ui()` method, '
+                'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag_ui]"`'
+            ) from _import_error
+
+        kwargs: dict[str, Any] = {}
+        if tool_prefix is not None:
+            kwargs['tool_prefix'] = tool_prefix
+        if logger is not None:
+            kwargs['logger'] = logger
+
+        return Adapter(agent=self, **kwargs)
 
     def to_a2a(
         self,
