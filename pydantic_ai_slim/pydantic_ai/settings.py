@@ -23,6 +23,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
+    * MCP Sampling
     """
 
     temperature: float

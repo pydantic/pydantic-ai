@@ -512,7 +512,7 @@ Crossing a river can be a different challenge compared to crossing a street, and
    - **Bridge or Ferry:** If available, use a bridge or a ferry service. These are typically the safest and most reliable methods for crossing a river.
 
 3. **Prepare and Pack Essential Items:**
-   - **Life Jacket/Personal Floatation Device (PFD):** Always wear a life jacket or PFD when crossing a river, especially if swimming or using a boat.
+   - **Life Jacket/Personal Flotation Device (PFD):** Always wear a life jacket or PFD when crossing a river, especially if swimming or using a boat.
    - **First-Aid Kit:** Carry a basic first-aid kit to handle any minor injuries that might occur during the crossing.
    - **Map and Compass:** Navigate the river and its surroundings with the help of a map and compass, especially if you're in an unfamiliar area.
    - **Communication Device:** Have a means of communication, such as a satellite phone or a personal locator beacon, especially in remote areas.
