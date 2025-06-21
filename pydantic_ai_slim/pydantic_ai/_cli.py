@@ -25,6 +25,7 @@ from .models import KnownModelName, infer_model
 
 try:
     import argcomplete
+    import pyperclip
     from prompt_toolkit import PromptSession
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory, Suggestion
     from prompt_toolkit.buffer import Buffer
@@ -39,7 +40,7 @@ try:
     from rich.text import Text
 except ImportError as _import_error:
     raise ImportError(
-        'Please install `rich`, `prompt-toolkit` and `argcomplete` to use the PydanticAI CLI, '
+        'Please install `rich`, `prompt-toolkit`, `pyperclip` and `argcomplete` to use the PydanticAI CLI, '
         'you can use the `cli` optional group — `pip install "pydantic-ai-slim[cli]"`'
     ) from _import_error
 
@@ -113,6 +114,7 @@ Special prompts:
 * `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
 * `/markdown` - show the last markdown output of the last question
 * `/multiline` - toggle multiline mode
+* `/cp` - copy the last response to clipboard
 """,
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -236,7 +238,7 @@ async def run_chat(
 
     while True:
         try:
-            auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit'])
+            auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit', '/cp'])
             text = await session.prompt_async(f'{prog_name} ➤ ', auto_suggest=auto_suggest, multiline=multiline)
         except (KeyboardInterrupt, EOFError):  # pragma: no cover
             return 0
@@ -341,6 +343,19 @@ def handle_slash_command(
     elif ident_prompt == '/exit':
         console.print('[dim]Exiting…[/dim]')
         return 0, multiline
+    elif ident_prompt == '/cp':
+        try:
+            parts = messages[-1].parts
+        except IndexError:
+            console.print('[dim]No output available to copy.[/dim]')
+        else:
+            text_to_copy = ''.join(part.content for part in parts if part.part_kind == 'text')
+            text_to_copy = text_to_copy.strip()
+            if text_to_copy:
+                pyperclip.copy(text_to_copy)
+                console.print('[dim]Copied last output to clipboard.[/dim]')
+            else:
+                console.print('[dim]No text content to copy.[/dim]')
     else:
         console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
     return None, multiline
