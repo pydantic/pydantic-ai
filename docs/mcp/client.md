@@ -364,7 +364,7 @@ agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
 
 async def main():
-    async with agent.run_mcp_servers():
+    async with agent.run_toolsets():
         result = await agent.run('Create an image of a robot in a punk style.')
     print(result.output)
     #> Image file written to robot_punk.svg.
