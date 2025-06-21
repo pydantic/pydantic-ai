@@ -16,11 +16,13 @@ import httpx
 import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
+from pydantic_core import SchemaValidator, core_schema
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_mock import MockerFixture
 from rich.console import Console
 
 from pydantic_ai import ModelHTTPError
+from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -36,6 +38,8 @@ from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolset import AbstractToolset
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
@@ -253,7 +257,7 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         raise ValueError(f'Unexpected prompt: {prompt}')
 
 
-class MockMCPServer:
+class MockMCPServer(AbstractToolset[Any]):
     is_running = True
 
     async def __aenter__(self) -> MockMCPServer:
@@ -262,9 +266,20 @@ class MockMCPServer:
     async def __aexit__(self, *args: Any) -> None:
         pass
 
-    @staticmethod
-    async def list_tools() -> list[None]:
+    @property
+    def tool_defs(self) -> list[ToolDefinition]:
         return []
+
+    def get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> SchemaValidator:
+        return SchemaValidator(core_schema.any_schema())  # pragma: lax no cover
+
+    def max_retries_for_tool(self, name: str) -> int:
+        return 0  # pragma: lax no cover
+
+    async def call_tool(
+        self, ctx: RunContext[Any], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
+    ) -> Any:
+        return None  # pragma: lax no cover
 
 
 text_responses: dict[str, str | ToolCallPart] = {
@@ -437,6 +452,9 @@ text_responses: dict[str, str | ToolCallPart] = {
         tool_name='image_generator', args={'subject': 'robot', 'style': 'punk'}, tool_call_id='0001'
     ),
     "subject='robot' style='punk'": '<svg/>',
+    'What is a banana?': ToolCallPart(tool_name='return_fruit', args={'name': 'banana', 'color': 'yellow'}),
+    'What is a Ford Explorer?': '{"result": {"kind": "Vehicle", "data": {"name": "Ford Explorer", "wheels": 4}}}',
+    'What is a MacBook?': '{"result": {"kind": "Device", "data": {"name": "MacBook", "kind": "laptop"}}}',
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -768,7 +786,12 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         return model
     else:
         model_name = model if isinstance(model, str) else model.model_name
-        return FunctionModel(model_logic, stream_function=stream_model_logic, model_name=model_name)
+        return FunctionModel(
+            model_logic,
+            stream_function=stream_model_logic,
+            model_name=model_name,
+            profile=model.profile if isinstance(model, Model) else None,
+        )
 
 
 def mock_group_by_temporal(aiter: Any, soft_max_interval: float | None) -> Any:

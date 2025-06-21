@@ -174,7 +174,7 @@ class JsonSchemaTransformer(ABC):
                 # they are both null, so just return one of them
                 return [cases[0]]
 
-        return cases  # pragma: no cover
+        return cases
 
 
 class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):

@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import functools
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +15,12 @@ import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing_extensions import Self, assert_never, deprecated
+
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.tools import ToolDefinition
+
+from .exceptions import UserError
+from .toolset import AbstractToolset, PrefixedToolset, ProcessedToolset, RunToolset, ToolProcessFunc
 
 try:
     from mcp import types as mcp_types
@@ -32,12 +38,12 @@ except ImportError as _import_error:
     ) from _import_error
 
 # after mcp imports so any import error maps to this file, not _mcp.py
-from . import _mcp, exceptions, messages, models, tools
+from . import _mcp, exceptions, messages, models
 
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
 
 
-class MCPServer(ABC):
+class MCPServer(AbstractToolset[Any], ABC):
     """Base class for attaching agents to MCP servers.
 
     See <https://modelcontextprotocol.io> for more information.
@@ -48,7 +54,7 @@ class MCPServer(ABC):
     log_level: mcp_types.LoggingLevel | None = None
     log_handler: LoggingFnT | None = None
     timeout: float = 5
-    process_tool_call: ProcessToolCallback | None = None
+    process_tool_call: ToolProcessFunc[Any] | None = None
     allow_sampling: bool = True
     # } end of "abstract fields"
 
@@ -74,48 +80,49 @@ class MCPServer(ABC):
         raise NotImplementedError('MCP Server subclasses must implement this method.')
         yield
 
-    def get_prefixed_tool_name(self, tool_name: str) -> str:
-        """Get the tool name with prefix if `tool_prefix` is set."""
-        return f'{self.tool_prefix}_{tool_name}' if self.tool_prefix else tool_name
-
-    def get_unprefixed_tool_name(self, tool_name: str) -> str:
-        """Get original tool name without prefix for calling tools."""
-        return tool_name.removeprefix(f'{self.tool_prefix}_') if self.tool_prefix else tool_name
-
     @property
     def is_running(self) -> bool:
         """Check if the MCP server is running."""
         return bool(self._running_count)
 
-    async def list_tools(self) -> list[tools.ToolDefinition]:
+    @property
+    def name(self) -> str:
+        return repr(self)
+
+    @property
+    def name_conflict_hint(self) -> str:
+        return 'Consider setting `tool_prefix` to avoid name conflicts.'
+
+    async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
 
         Note:
         - We don't cache tools as they might change.
         - We also don't subscribe to the server to avoid complexity.
         """
-        mcp_tools = await self._client.list_tools()
-        return [
-            tools.ToolDefinition(
-                name=self.get_prefixed_tool_name(tool.name),
-                description=tool.description or '',
-                parameters_json_schema=tool.inputSchema,
-            )
-            for tool in mcp_tools.tools
-        ]
+        if not self.is_running:  # pragma: no cover
+            raise UserError(f'MCP server is not running: {self}')
+        result = await self._client.list_tools()
+        return result.tools
 
     async def call_tool(
         self,
-        tool_name: str,
-        arguments: dict[str, Any],
+        ctx: RunContext[Any],
+        name: str,
+        tool_args: dict[str, Any],
+        *args: Any,
         metadata: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> ToolResult:
         """Call a tool on the server.
 
         Args:
-            tool_name: The name of the tool to call.
-            arguments: The arguments to pass to the tool.
+            ctx: The run context of the tool call.
+            name: The name of the tool to call.
+            tool_args: The arguments to pass to the tool.
+            *args: Additional arguments passed by a tool call processor.
             metadata: Request-level metadata (optional)
+            **kwargs: Additional keyword arguments passed by a tool call processor.
 
         Returns:
             The result of the tool call.
@@ -123,6 +130,8 @@ class MCPServer(ABC):
         Raises:
             ModelRetry: If the tool call fails.
         """
+        if not self.is_running:  # pragma: no cover
+            raise UserError(f'MCP server is not running: {self}')
         try:
             # meta param is not provided by session yet, so build and can send_request directly.
             result = await self._client.send_request(
@@ -130,8 +139,8 @@ class MCPServer(ABC):
                     mcp_types.CallToolRequest(
                         method='tools/call',
                         params=mcp_types.CallToolRequestParams(
-                            name=self.get_unprefixed_tool_name(tool_name),
-                            arguments=arguments,
+                            name=name,
+                            arguments=tool_args,
                             _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
                         ),
                     )
@@ -148,6 +157,43 @@ class MCPServer(ABC):
             raise exceptions.ModelRetry(text)
         else:
             return content[0] if len(content) == 1 else content
+
+    async def prepare_for_run(self, ctx: RunContext[Any]) -> RunToolset[Any]:
+        frozen_self = RunToolset(self, ctx, await self.list_tool_defs())
+        frozen_toolset = frozen_self
+        if self.process_tool_call:
+            frozen_toolset = await ProcessedToolset(frozen_toolset, self.process_tool_call).prepare_for_run(ctx)
+        if self.tool_prefix:
+            frozen_toolset = await PrefixedToolset(frozen_toolset, self.tool_prefix).prepare_for_run(ctx)
+        return RunToolset(frozen_toolset, ctx, original=self)
+
+    @property
+    def tool_defs(self) -> list[ToolDefinition]:
+        return []
+
+    async def list_tool_defs(self) -> list[ToolDefinition]:
+        mcp_tools = await self.list_tools()
+        return [
+            ToolDefinition(
+                name=mcp_tool.name,
+                description=mcp_tool.description or '',
+                parameters_json_schema=mcp_tool.inputSchema,
+            )
+            for mcp_tool in mcp_tools
+        ]
+
+    def get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> pydantic_core.SchemaValidator:
+        return pydantic_core.SchemaValidator(
+            schema=pydantic_core.core_schema.dict_schema(
+                pydantic_core.core_schema.str_schema(), pydantic_core.core_schema.any_schema()
+            )
+        )
+
+    def max_retries_for_tool(self, name: str) -> int:
+        return 1
+
+    def set_mcp_sampling_model(self, model: models.Model) -> None:
+        self.sampling_model = model
 
     async def __aenter__(self) -> Self:
         if self._running_count == 0:
@@ -274,7 +320,7 @@ class MCPServerStdio(MCPServer):
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
-        async with agent.run_mcp_servers():  # (2)!
+        async with agent.run_toolsets():  # (2)!
             ...
     ```
 
@@ -321,7 +367,7 @@ class MCPServerStdio(MCPServer):
     timeout: float = 5
     """The timeout in seconds to wait for the client to initialize."""
 
-    process_tool_call: ProcessToolCallback | None = None
+    process_tool_call: ToolProcessFunc[Any] | None = None
     """Hook to customize tool calling and optionally pass extra metadata."""
 
     allow_sampling: bool = True
@@ -416,7 +462,7 @@ class _MCPServerHTTP(MCPServer):
     If the connection cannot be established within this time, the operation will fail.
     """
 
-    process_tool_call: ProcessToolCallback | None = None
+    process_tool_call: ToolProcessFunc[Any] | None = None
     """Hook to customize tool calling and optionally pass extra metadata."""
 
     allow_sampling: bool = True
@@ -506,7 +552,7 @@ class MCPServerSSE(_MCPServerHTTP):
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
-        async with agent.run_mcp_servers():  # (2)!
+        async with agent.run_toolsets():  # (2)!
             ...
     ```
 
@@ -540,7 +586,7 @@ class MCPServerHTTP(MCPServerSSE):
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
-        async with agent.run_mcp_servers():  # (2)!
+        async with agent.run_toolsets():  # (2)!
             ...
     ```
 
@@ -569,7 +615,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     agent = Agent('openai:gpt-4o', mcp_servers=[server])
 
     async def main():
-        async with agent.run_mcp_servers():  # (2)!
+        async with agent.run_toolsets():  # (2)!
             ...
     ```
     """
@@ -586,24 +632,4 @@ ToolResult = (
     | list[Any]
     | Sequence[str | messages.BinaryContent | dict[str, Any] | list[Any]]
 )
-"""The result type of a tool call."""
-
-CallToolFunc = Callable[[str, dict[str, Any], dict[str, Any] | None], Awaitable[ToolResult]]
-"""A function type that represents a tool call."""
-
-ProcessToolCallback = Callable[
-    [
-        tools.RunContext[Any],
-        CallToolFunc,
-        str,
-        dict[str, Any],
-    ],
-    Awaitable[ToolResult],
-]
-"""A process tool callback.
-
-It accepts a run context, the original tool call function, a tool name, and arguments.
-
-Allows wrapping an MCP server tool call to customize it, including adding extra request
-metadata.
-"""
+"""The result type of an MCP tool call."""

@@ -14,14 +14,13 @@ from typing import Any, cast
 
 from typing_inspection.introspection import get_literal_values
 
-from pydantic_ai.result import OutputDataT
-from pydantic_ai.tools import AgentDepsT
-
 from . import __version__
+from ._run_context import AgentDepsT
 from .agent import Agent
 from .exceptions import UserError
 from .messages import ModelMessage
 from .models import KnownModelName, infer_model
+from .output import OutputDataT
 
 try:
     import argcomplete

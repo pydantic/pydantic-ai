@@ -5,7 +5,7 @@ import inspect
 import json
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from copy import deepcopy
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
@@ -14,6 +14,8 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.toolset import AbstractToolset, CombinedToolset, FunctionToolset, OutputToolset, PreparedToolset
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
 
@@ -30,7 +32,8 @@ from . import (
 )
 from ._agent_graph import HistoryProcessor
 from .models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
-from .result import FinalResult, OutputDataT, StreamedRunResult
+from .output import OutputDataT, OutputSpec
+from .result import FinalResult, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDepsT,
@@ -91,7 +94,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM.
 
     Agents are generic in the dependency type they take [`AgentDepsT`][pydantic_ai.tools.AgentDepsT]
-    and the result data type they return, [`OutputDataT`][pydantic_ai.result.OutputDataT].
+    and the output type they return, [`OutputDataT`][pydantic_ai.output.OutputDataT].
 
     By default, if neither generic parameter is customised, agents have type `Agent[None, str]`.
 
@@ -128,7 +131,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     be merged with this value, with the runtime argument taking priority.
     """
 
-    output_type: _output.OutputType[OutputDataT]
+    output_type: OutputSpec[OutputDataT]
     """
     The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`.
     """
@@ -141,7 +144,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _deprecated_result_tool_name: str | None = dataclasses.field(repr=False)
     _deprecated_result_tool_description: str | None = dataclasses.field(repr=False)
-    _output_schema: _output.OutputSchema[OutputDataT] | None = dataclasses.field(repr=False)
+    _output_schema: _output.BaseOutputSchema[OutputDataT] = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
     _instructions: str | None = dataclasses.field(repr=False)
     _instructions_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
@@ -150,10 +153,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
         repr=False
     )
-    _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
-    _function_tools: dict[str, Tool[AgentDepsT]] = dataclasses.field(repr=False)
-    _mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
-    _default_retries: int = dataclasses.field(repr=False)
+    _function_toolset: FunctionToolset[AgentDepsT] = dataclasses.field(repr=False)
+    _output_toolset: OutputToolset[AgentDepsT] = dataclasses.field(repr=False)
+    _toolset: AbstractToolset[AgentDepsT] = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _override_deps: _utils.Option[AgentDepsT] = dataclasses.field(default=None, repr=False)
     _override_model: _utils.Option[models.Model] = dataclasses.field(default=None, repr=False)
@@ -163,7 +165,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        output_type: _output.OutputType[OutputDataT] = str,
+        output_type: OutputSpec[OutputDataT] = str,
         instructions: str
         | _system_prompt.SystemPromptFunc[AgentDepsT]
         | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
@@ -177,6 +179,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -207,6 +210,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -231,7 +235,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        mcp_servers: Sequence[MCPServer] = (),
+        mcp_servers: Sequence[
+            MCPServer
+        ] = (),  # TODO: Deprecate argument, MCPServers can be passed directly to toolsets
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -265,6 +272,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 a subset of tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
             mcp_servers: MCP servers to register with the agent. You should register a [`MCPServer`][pydantic_ai.mcp.MCPServer]
                 for each server you want the agent to connect to.
+            toolsets: Toolsets to register with the agent.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
                 which checks for the necessary environment variables. Set this to `false`
@@ -324,8 +332,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning)
             output_retries = result_retries
 
+        default_output_mode = (
+            self.model.profile.default_structured_output_mode if isinstance(self.model, models.Model) else None
+        )
         self._output_schema = _output.OutputSchema[OutputDataT].build(
-            output_type, self._deprecated_result_tool_name, self._deprecated_result_tool_description
+            output_type,
+            default_mode=default_output_mode,
+            name=self._deprecated_result_tool_name,
+            description=self._deprecated_result_tool_description,
         )
         self._output_validators = []
 
@@ -344,18 +358,20 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._system_prompt_functions = []
         self._system_prompt_dynamic_functions = {}
 
-        self._function_tools = {}
-
-        self._default_retries = retries
         self._max_result_retries = output_retries if output_retries is not None else retries
-        self._mcp_servers = mcp_servers
-        self._prepare_tools = prepare_tools
+
+        self._output_toolset = OutputToolset[AgentDepsT](self._output_schema, max_retries=self._max_result_retries)
+        self._function_toolset = FunctionToolset[AgentDepsT](tools, max_retries=retries)
+
+        # This will raise errors for any name conflicts
+        CombinedToolset[AgentDepsT]([self._output_toolset, self._function_toolset])
+
+        toolset = CombinedToolset[AgentDepsT]([self._function_toolset, *toolsets, *mcp_servers])
+        if prepare_tools:
+            toolset = PreparedToolset[AgentDepsT](toolset, prepare_tools)
+        self._toolset = toolset
+
         self.history_processors = history_processors or []
-        for tool in tools:
-            if isinstance(tool, Tool):
-                self._register_tool(tool)
-            else:
-                self._register_tool(Tool(tool))
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -382,7 +398,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: _output.OutputType[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -412,7 +428,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: _output.OutputType[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -500,7 +516,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None,
         *,
-        output_type: _output.OutputType[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -532,7 +548,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: _output.OutputType[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -631,9 +647,20 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
-        output_schema = self._prepare_output_schema(output_type)
+        output_schema = self._prepare_output_schema(output_type, model_used.profile)
 
         output_type_ = output_type or self.output_type
+
+        # We consider it a user error if a user tries to restrict the result type while having an output validator that
+        # may change the result type from the restricted type to something else. Therefore, we consider the following
+        # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
+        output_validators = cast(list[_output.OutputValidator[AgentDepsT, RunOutputDataT]], self._output_validators)
+
+        output_toolset = self._output_toolset
+        if output_schema != self._output_schema or output_validators:
+            output_toolset = OutputToolset[AgentDepsT](
+                output_schema, max_retries=self._max_result_retries, output_validators=output_validators
+            )
 
         # Build the graph
         graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (
@@ -649,10 +676,20 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             run_step=0,
         )
 
-        # We consider it a user error if a user tries to restrict the result type while having an output validator that
-        # may change the result type from the restricted type to something else. Therefore, we consider the following
-        # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
-        output_validators = cast(list[_output.OutputValidator[AgentDepsT, RunOutputDataT]], self._output_validators)
+        run_context = RunContext[AgentDepsT](
+            deps=deps,
+            model=model_used,
+            usage=usage,
+            prompt=user_prompt,
+            messages=state.message_history,
+            run_step=state.run_step,
+        )
+
+        run_toolset = await self._toolset.prepare_for_run(run_context)
+        run_output_toolset = await output_toolset.prepare_for_run(run_context)
+
+        # This will raise errors for any name conflicts
+        CombinedToolset([run_output_toolset, run_toolset])
 
         model_settings = merge_model_settings(self.model_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
@@ -674,18 +711,20 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         )
 
         async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            if self._instructions is None and not self._instructions_functions:
+            parts = [
+                self._instructions,
+                *[await func.run(run_context) for func in self._instructions_functions],
+            ]
+
+            model_profile = model_used.profile
+            if isinstance(output_schema, _output.PromptedStructuredOutputSchema):
+                instructions = output_schema.instructions(model_profile.prompted_structured_output_template)
+                parts.append(instructions)
+
+            parts = [p for p in parts if p]
+            if not parts:
                 return None
-
-            instructions = [self._instructions] if self._instructions else []
-            for instructions_runner in self._instructions_functions:
-                instructions.append(await instructions_runner.run(run_context))
-            concatenated_instructions = '\n'.join(instruction for instruction in instructions if instruction)
-            return concatenated_instructions.strip() if concatenated_instructions else None
-
-        # Copy the function tools so that retry state is agent-run-specific
-        # Note that the retry count is reset to 0 when this happens due to the `default=0` and `init=False`.
-        run_function_tools = {k: dataclasses.replace(v) for k, v in self._function_tools.items()}
+            return '\n\n'.join(parts).strip()
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
@@ -698,12 +737,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             end_strategy=self.end_strategy,
             output_schema=output_schema,
             output_validators=output_validators,
+            output_toolset=run_output_toolset,
             history_processors=self.history_processors,
-            function_tools=run_function_tools,
-            mcp_servers=self._mcp_servers,
-            default_retries=self._default_retries,
+            toolset=run_toolset,
             tracer=tracer,
-            prepare_tools=self._prepare_tools,
             get_instructions=get_instructions,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
@@ -779,7 +816,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: _output.OutputType[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -809,7 +846,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: _output.OutputType[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -892,7 +929,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent],
         *,
-        output_type: _output.OutputType[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -923,7 +960,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: _output.OutputType[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -1002,10 +1039,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                             async for maybe_part_event in streamed_response:
                                 if isinstance(maybe_part_event, _messages.PartStartEvent):
                                     new_part = maybe_part_event.part
-                                    if isinstance(new_part, _messages.TextPart):
-                                        if _output.allow_text_output(output_schema):
-                                            return FinalResult(s, None, None)
-                                    elif isinstance(new_part, _messages.ToolCallPart) and output_schema:
+                                    if isinstance(new_part, _messages.TextPart) and isinstance(
+                                        output_schema, _output.TextOutputSchema
+                                    ):
+                                        return FinalResult(s, None, None)
+                                    elif isinstance(new_part, _messages.ToolCallPart) and isinstance(
+                                        output_schema, _output.ToolOutputSchema
+                                    ):  # pragma: no branch
                                         for call, _ in output_schema.find_tool([new_part]):
                                             return FinalResult(s, call.tool_name, call.tool_call_id)
                             return None
@@ -1031,10 +1071,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                 ]
 
                                 parts: list[_messages.ModelRequestPart] = []
+                                # TODO: Make this work again. We may have pulled too much out of process_function_tools :)
                                 async for _event in _agent_graph.process_function_tools(
+                                    graph_ctx.deps.toolset,
                                     tool_calls,
-                                    final_result_details.tool_name,
-                                    final_result_details.tool_call_id,
                                     graph_ctx,
                                     parts,
                                 ):
@@ -1390,7 +1430,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 func_: ToolFuncContext[AgentDepsT, ToolParams],
             ) -> ToolFuncContext[AgentDepsT, ToolParams]:
                 # noinspection PyTypeChecker
-                self._register_function(
+                self._function_toolset.register_function(
                     func_,
                     True,
                     name,
@@ -1406,7 +1446,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             return tool_decorator
         else:
             # noinspection PyTypeChecker
-            self._register_function(
+            self._function_toolset.register_function(
                 func,
                 True,
                 name,
@@ -1497,7 +1537,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
             def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
                 # noinspection PyTypeChecker
-                self._register_function(
+                self._function_toolset.register_function(
                     func_,
                     False,
                     name,
@@ -1512,7 +1552,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
             return tool_decorator
         else:
-            self._register_function(
+            self._function_toolset.register_function(
                 func,
                 False,
                 name,
@@ -1524,47 +1564,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 strict,
             )
             return func
-
-    def _register_function(
-        self,
-        func: ToolFuncEither[AgentDepsT, ToolParams],
-        takes_ctx: bool,
-        name: str | None,
-        retries: int | None,
-        prepare: ToolPrepareFunc[AgentDepsT] | None,
-        docstring_format: DocstringFormat,
-        require_parameter_descriptions: bool,
-        schema_generator: type[GenerateJsonSchema],
-        strict: bool | None,
-    ) -> None:
-        """Private utility to register a function as a tool."""
-        retries_ = retries if retries is not None else self._default_retries
-        tool = Tool[AgentDepsT](
-            func,
-            takes_ctx=takes_ctx,
-            name=name,
-            max_retries=retries_,
-            prepare=prepare,
-            docstring_format=docstring_format,
-            require_parameter_descriptions=require_parameter_descriptions,
-            schema_generator=schema_generator,
-            strict=strict,
-        )
-        self._register_tool(tool)
-
-    def _register_tool(self, tool: Tool[AgentDepsT]) -> None:
-        """Private utility to register a tool instance."""
-        if tool.max_retries is None:
-            # noinspection PyTypeChecker
-            tool = dataclasses.replace(tool, max_retries=self._default_retries)
-
-        if tool.name in self._function_tools:
-            raise exceptions.UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
-
-        if self._output_schema and tool.name in self._output_schema.tools:
-            raise exceptions.UserError(f'Tool name conflicts with result schema name: {tool.name!r}')
-
-        self._function_tools[tool.name] = tool
 
     def _get_model(self, model: models.Model | models.KnownModelName | str | None) -> models.Model:
         """Create a model configured for this agent.
@@ -1637,18 +1636,23 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         raise AttributeError('The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.')
 
     def _prepare_output_schema(
-        self, output_type: _output.OutputType[RunOutputDataT] | None
-    ) -> _output.OutputSchema[RunOutputDataT] | None:
+        self, output_type: OutputSpec[RunOutputDataT] | None, model_profile: ModelProfile
+    ) -> _output.OutputSchema[RunOutputDataT]:
         if output_type is not None:
             if self._output_validators:
                 raise exceptions.UserError('Cannot set a custom run `output_type` when the agent has output validators')
-            return _output.OutputSchema[RunOutputDataT].build(
+            schema = _output.OutputSchema[RunOutputDataT].build(
                 output_type,
-                self._deprecated_result_tool_name,
-                self._deprecated_result_tool_description,
+                name=self._deprecated_result_tool_name,
+                description=self._deprecated_result_tool_description,
+                default_mode=model_profile.default_structured_output_mode,
             )
         else:
-            return self._output_schema  # pyright: ignore[reportReturnType]
+            schema = self._output_schema.with_default_mode(model_profile.default_structured_output_mode)
+
+        schema.raise_if_unsupported(model_profile)
+
+        return schema  # pyright: ignore[reportReturnType]
 
     @staticmethod
     def is_model_request_node(
@@ -1691,7 +1695,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         return isinstance(node, End)
 
     @asynccontextmanager
-    async def run_mcp_servers(
+    async def run_toolsets(
         self, model: models.Model | models.KnownModelName | str | None = None
     ) -> AsyncIterator[None]:
         """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] so they can be used by the agent.
@@ -1702,16 +1706,23 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             sampling_model: models.Model | None = self._get_model(model)
         except exceptions.UserError:  # pragma: no cover
             sampling_model = None
+        if sampling_model is not None:  # pragma: no branch
+            self._toolset.set_mcp_sampling_model(sampling_model)
 
-        exit_stack = AsyncExitStack()
-        try:
-            for mcp_server in self._mcp_servers:
-                if sampling_model is not None:  # pragma: no branch
-                    mcp_server.sampling_model = sampling_model
-                await exit_stack.enter_async_context(mcp_server)
+        async with self._toolset:
             yield
-        finally:
-            await exit_stack.aclose()
+
+    @asynccontextmanager
+    @deprecated('`run_mcp_servers` is deprecated, use `run_toolsets` instead.')
+    async def run_mcp_servers(
+        self, model: models.Model | models.KnownModelName | str | None = None
+    ) -> AsyncIterator[None]:
+        """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] so they can be used by the agent.
+
+        Returns: a context manager to start and shutdown the servers.
+        """
+        async with self.run_toolsets(model):
+            yield
 
     def to_a2a(
         self,

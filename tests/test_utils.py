@@ -17,7 +17,9 @@ from pydantic_ai._utils import (
     check_object_json_schema,
     group_by_temporal,
     is_async_callable,
+    merge_json_schema_defs,
     run_in_executor,
+    strip_markdown_fences,
 )
 
 from .models.mock_async_stream import MockAsyncStream
@@ -177,3 +179,327 @@ def test_is_async_callable():
 
     partial_async_callable = functools.partial(AsyncCallable())
     assert is_async_callable(partial_async_callable) is True
+
+
+def test_merge_json_schema_defs():
+    foo_bar_schema = {
+        '$defs': {
+            'Bar': {
+                'description': 'Bar description',
+                'properties': {'bar': {'type': 'string'}},
+                'required': ['bar'],
+                'title': 'Bar',
+                'type': 'object',
+            },
+            'Foo': {
+                'description': 'Foo description',
+                'properties': {'foo': {'type': 'string'}},
+                'required': ['foo'],
+                'title': 'Foo',
+                'type': 'object',
+            },
+        },
+        'properties': {'foo': {'$ref': '#/$defs/Foo'}, 'bar': {'$ref': '#/$defs/Bar'}},
+        'required': ['foo', 'bar'],
+        'type': 'object',
+        'title': 'FooBar',
+    }
+
+    foo_bar_baz_schema = {
+        '$defs': {
+            'Baz': {
+                'description': 'Baz description',
+                'properties': {'baz': {'type': 'string'}},
+                'required': ['baz'],
+                'title': 'Baz',
+                'type': 'object',
+            },
+            'Foo': {
+                'description': 'Foo description. Note that this is different from the Foo in foo_bar_schema!',
+                'properties': {'foo': {'type': 'int'}},
+                'required': ['foo'],
+                'title': 'Foo',
+                'type': 'object',
+            },
+            'Bar': {
+                'description': 'Bar description',
+                'properties': {'bar': {'type': 'string'}},
+                'required': ['bar'],
+                'title': 'Bar',
+                'type': 'object',
+            },
+        },
+        'properties': {'foo': {'$ref': '#/$defs/Foo'}, 'baz': {'$ref': '#/$defs/Baz'}, 'bar': {'$ref': '#/$defs/Bar'}},
+        'required': ['foo', 'baz', 'bar'],
+        'type': 'object',
+        'title': 'FooBarBaz',
+    }
+
+    # A schema with no title that will cause numeric suffixes
+    no_title_schema = {
+        '$defs': {
+            'Foo': {
+                'description': 'Another different Foo',
+                'properties': {'foo': {'type': 'boolean'}},
+                'required': ['foo'],
+                'title': 'Foo',
+                'type': 'object',
+            },
+            'Bar': {
+                'description': 'Another different Bar',
+                'properties': {'bar': {'type': 'number'}},
+                'required': ['bar'],
+                'title': 'Bar',
+                'type': 'object',
+            },
+        },
+        'properties': {'foo': {'$ref': '#/$defs/Foo'}, 'bar': {'$ref': '#/$defs/Bar'}},
+        'required': ['foo', 'bar'],
+        'type': 'object',
+    }
+
+    # Another schema with no title that will cause more numeric suffixes
+    another_no_title_schema = {
+        '$defs': {
+            'Foo': {
+                'description': 'Yet another different Foo',
+                'properties': {'foo': {'type': 'array'}},
+                'required': ['foo'],
+                'title': 'Foo',
+                'type': 'object',
+            },
+            'Bar': {
+                'description': 'Yet another different Bar',
+                'properties': {'bar': {'type': 'object'}},
+                'required': ['bar'],
+                'title': 'Bar',
+                'type': 'object',
+            },
+        },
+        'properties': {'foo': {'$ref': '#/$defs/Foo'}, 'bar': {'$ref': '#/$defs/Bar'}},
+        'required': ['foo', 'bar'],
+        'type': 'object',
+    }
+
+    # Schema with nested properties, array items, prefixItems, and anyOf/oneOf
+    complex_schema = {
+        '$defs': {
+            'Nested': {
+                'description': 'A nested type',
+                'properties': {'nested': {'type': 'string'}},
+                'required': ['nested'],
+                'title': 'Nested',
+                'type': 'object',
+            },
+            'ArrayItem': {
+                'description': 'An array item type',
+                'properties': {'item': {'type': 'string'}},
+                'required': ['item'],
+                'title': 'ArrayItem',
+                'type': 'object',
+            },
+            'UnionType': {
+                'description': 'A union type',
+                'properties': {'union': {'type': 'string'}},
+                'required': ['union'],
+                'title': 'UnionType',
+                'type': 'object',
+            },
+        },
+        'properties': {
+            'nested_props': {
+                'type': 'object',
+                'properties': {
+                    'deep_nested': {'$ref': '#/$defs/Nested'},
+                },
+            },
+            'array_with_items': {
+                'type': 'array',
+                'items': {'$ref': '#/$defs/ArrayItem'},
+            },
+            'array_with_prefix': {
+                'type': 'array',
+                'prefixItems': [
+                    {'$ref': '#/$defs/ArrayItem'},
+                    {'$ref': '#/$defs/Nested'},
+                ],
+            },
+            'union_anyOf': {
+                'anyOf': [
+                    {'$ref': '#/$defs/UnionType'},
+                    {'$ref': '#/$defs/Nested'},
+                ],
+            },
+            'union_oneOf': {
+                'oneOf': [
+                    {'$ref': '#/$defs/UnionType'},
+                    {'$ref': '#/$defs/ArrayItem'},
+                ],
+            },
+        },
+        'type': 'object',
+        'title': 'ComplexSchema',
+    }
+
+    schemas = [foo_bar_schema, foo_bar_baz_schema, no_title_schema, another_no_title_schema, complex_schema]
+    rewritten_schemas, all_defs = merge_json_schema_defs(schemas)
+    assert all_defs == snapshot(
+        {
+            'Bar': {
+                'description': 'Bar description',
+                'properties': {'bar': {'type': 'string'}},
+                'required': ['bar'],
+                'title': 'Bar',
+                'type': 'object',
+            },
+            'Foo': {
+                'description': 'Foo description',
+                'properties': {'foo': {'type': 'string'}},
+                'required': ['foo'],
+                'title': 'Foo',
+                'type': 'object',
+            },
+            'Baz': {
+                'description': 'Baz description',
+                'properties': {'baz': {'type': 'string'}},
+                'required': ['baz'],
+                'title': 'Baz',
+                'type': 'object',
+            },
+            'FooBarBaz_Foo_1': {
+                'description': 'Foo description. Note that this is different from the Foo in foo_bar_schema!',
+                'properties': {'foo': {'type': 'int'}},
+                'required': ['foo'],
+                'title': 'Foo',
+                'type': 'object',
+            },
+            'Foo_1': {
+                'description': 'Another different Foo',
+                'properties': {'foo': {'type': 'boolean'}},
+                'required': ['foo'],
+                'title': 'Foo',
+                'type': 'object',
+            },
+            'Bar_1': {
+                'description': 'Another different Bar',
+                'properties': {'bar': {'type': 'number'}},
+                'required': ['bar'],
+                'title': 'Bar',
+                'type': 'object',
+            },
+            'Foo_2': {
+                'description': 'Yet another different Foo',
+                'properties': {'foo': {'type': 'array'}},
+                'required': ['foo'],
+                'title': 'Foo',
+                'type': 'object',
+            },
+            'Bar_2': {
+                'description': 'Yet another different Bar',
+                'properties': {'bar': {'type': 'object'}},
+                'required': ['bar'],
+                'title': 'Bar',
+                'type': 'object',
+            },
+            'Nested': {
+                'description': 'A nested type',
+                'properties': {'nested': {'type': 'string'}},
+                'required': ['nested'],
+                'title': 'Nested',
+                'type': 'object',
+            },
+            'ArrayItem': {
+                'description': 'An array item type',
+                'properties': {'item': {'type': 'string'}},
+                'required': ['item'],
+                'title': 'ArrayItem',
+                'type': 'object',
+            },
+            'UnionType': {
+                'description': 'A union type',
+                'properties': {'union': {'type': 'string'}},
+                'required': ['union'],
+                'title': 'UnionType',
+                'type': 'object',
+            },
+        }
+    )
+    assert rewritten_schemas == snapshot(
+        [
+            {
+                'properties': {'foo': {'$ref': '#/$defs/Foo'}, 'bar': {'$ref': '#/$defs/Bar'}},
+                'required': ['foo', 'bar'],
+                'type': 'object',
+                'title': 'FooBar',
+            },
+            {
+                'properties': {
+                    'foo': {'$ref': '#/$defs/FooBarBaz_Foo_1'},
+                    'baz': {'$ref': '#/$defs/Baz'},
+                    'bar': {'$ref': '#/$defs/Bar'},
+                },
+                'required': ['foo', 'baz', 'bar'],
+                'type': 'object',
+                'title': 'FooBarBaz',
+            },
+            {
+                'properties': {'foo': {'$ref': '#/$defs/Foo_1'}, 'bar': {'$ref': '#/$defs/Bar_1'}},
+                'required': ['foo', 'bar'],
+                'type': 'object',
+            },
+            {
+                'properties': {'foo': {'$ref': '#/$defs/Foo_2'}, 'bar': {'$ref': '#/$defs/Bar_2'}},
+                'required': ['foo', 'bar'],
+                'type': 'object',
+            },
+            {
+                'properties': {
+                    'nested_props': {
+                        'type': 'object',
+                        'properties': {
+                            'deep_nested': {'$ref': '#/$defs/Nested'},
+                        },
+                    },
+                    'array_with_items': {
+                        'type': 'array',
+                        'items': {'$ref': '#/$defs/ArrayItem'},
+                    },
+                    'array_with_prefix': {
+                        'type': 'array',
+                        'prefixItems': [
+                            {'$ref': '#/$defs/ArrayItem'},
+                            {'$ref': '#/$defs/Nested'},
+                        ],
+                    },
+                    'union_anyOf': {
+                        'anyOf': [
+                            {'$ref': '#/$defs/UnionType'},
+                            {'$ref': '#/$defs/Nested'},
+                        ],
+                    },
+                    'union_oneOf': {
+                        'oneOf': [
+                            {'$ref': '#/$defs/UnionType'},
+                            {'$ref': '#/$defs/ArrayItem'},
+                        ],
+                    },
+                },
+                'type': 'object',
+                'title': 'ComplexSchema',
+            },
+        ]
+    )
+
+
+def test_strip_markdown_fences():
+    assert strip_markdown_fences('{"foo": "bar"}') == '{"foo": "bar"}'
+    assert strip_markdown_fences('```json\n{"foo": "bar"}\n```') == '{"foo": "bar"}'
+    assert (
+        strip_markdown_fences('{"foo": "```json\\n{"foo": "bar"}\\n```"}')
+        == '{"foo": "```json\\n{"foo": "bar"}\\n```"}'
+    )
+    assert (
+        strip_markdown_fences('Here is some beautiful JSON:\n\n```\n{"foo": "bar"}\n``` Nice right?')
+        == '{"foo": "bar"}'
+    )
+    assert strip_markdown_fences('No JSON to be found') == 'No JSON to be found'

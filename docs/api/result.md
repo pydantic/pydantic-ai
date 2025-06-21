@@ -4,5 +4,4 @@
     options:
         inherited_members: true
         members:
-            - OutputDataT
             - StreamedRunResult
