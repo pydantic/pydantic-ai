@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import Enum
 
 
 # TODO(steve): Remove this and all uses once https://github.com/ag-ui-protocol/ag-ui/pull/49 is merged.
-class Role(StrEnum):
+class Role(str, Enum):
     """Enum for message roles in AG-UI protocol."""
 
     ASSISTANT = 'assistant'
