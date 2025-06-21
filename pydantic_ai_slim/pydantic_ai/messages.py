@@ -76,8 +76,11 @@ class SystemPromptPart:
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self, _settings: InstrumentationSettings) -> Event:
-        return Event('gen_ai.system.message', body={'content': self.content, 'role': 'system'})
+    def otel_event(self, settings: InstrumentationSettings) -> Event:
+        return Event(
+            'gen_ai.system.message',
+            body={'role': 'system', **({'content': self.content} if settings.include_content else {})},
+        )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -362,12 +365,12 @@ class UserPromptPart:
             content = []
             for part in self.content:
                 if isinstance(part, str):
-                    content.append(part)
+                    content.append(part if settings.include_content else {'kind': 'text'})
                 elif isinstance(part, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
-                    content.append({'kind': part.kind, 'url': part.url})
+                    content.append({'kind': part.kind, **({'url': part.url} if settings.include_content else {})})
                 elif isinstance(part, BinaryContent):
                     converted_part = {'kind': part.kind, 'media_type': part.media_type}
-                    if settings.include_binary_content:
+                    if settings.include_content and settings.include_binary_content:
                         converted_part['binary_content'] = base64.b64encode(part.data).decode()
                     content.append(converted_part)
                 else:
@@ -414,10 +417,15 @@ class ToolReturnPart:
         else:
             return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
 
-    def otel_event(self, _settings: InstrumentationSettings) -> Event:
+    def otel_event(self, settings: InstrumentationSettings) -> Event:
         return Event(
             'gen_ai.tool.message',
-            body={'content': self.content, 'role': 'tool', 'id': self.tool_call_id, 'name': self.tool_name},
+            body={
+                **({'content': self.content} if settings.include_content else {}),
+                'role': 'tool',
+                'id': self.tool_call_id,
+                'name': self.tool_name,
+            },
         )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -473,14 +481,14 @@ class RetryPromptPart:
             description = f'{len(self.content)} validation errors: {json_errors.decode()}'
         return f'{description}\n\nFix the errors and try again.'
 
-    def otel_event(self, _settings: InstrumentationSettings) -> Event:
+    def otel_event(self, settings: InstrumentationSettings) -> Event:
         if self.tool_name is None:
             return Event('gen_ai.user.message', body={'content': self.model_response(), 'role': 'user'})
         else:
             return Event(
                 'gen_ai.tool.message',
                 body={
-                    'content': self.model_response(),
+                    **({'content': self.model_response()} if settings.include_content else {}),
                     'role': 'tool',
                     'id': self.tool_call_id,
                     'name': self.tool_name,
@@ -657,7 +665,7 @@ class ModelResponse:
     vendor_id: str | None = None
     """Vendor ID as specified by the model provider. This can be used to track the specific request to the model."""
 
-    def otel_events(self) -> list[Event]:
+    def otel_events(self, settings: InstrumentationSettings) -> list[Event]:
         """Return OpenTelemetry events for the response."""
         result: list[Event] = []
 
@@ -683,7 +691,8 @@ class ModelResponse:
             elif isinstance(part, TextPart):
                 if body.get('content'):
                     body = new_event_body()
-                body['content'] = part.content
+                if settings.include_content:
+                    body['content'] = part.content
 
         return result
 
