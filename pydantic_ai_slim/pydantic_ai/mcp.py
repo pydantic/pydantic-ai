@@ -159,13 +159,13 @@ class MCPServer(AbstractToolset[Any], ABC):
             return content[0] if len(content) == 1 else content
 
     async def freeze_for_run(self, ctx: RunContext[Any]) -> FrozenToolset[Any]:
-        frozen_self = FrozenToolset[Any](self, ctx, await self.list_tool_defs())
-        toolset = frozen_self
+        frozen_self = FrozenToolset(self, ctx, await self.list_tool_defs())
+        frozen_toolset = frozen_self
         if self.process_tool_call:
-            toolset = ProcessedToolset(toolset, self.process_tool_call)
+            frozen_toolset = await ProcessedToolset(frozen_toolset, self.process_tool_call).freeze_for_run(ctx)
         if self.tool_prefix:
-            toolset = PrefixedToolset(toolset, self.tool_prefix)
-        return FrozenToolset[Any](toolset, ctx, original=self)
+            frozen_toolset = await PrefixedToolset(frozen_toolset, self.tool_prefix).freeze_for_run(ctx)
+        return FrozenToolset(frozen_toolset, ctx, original=self)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
