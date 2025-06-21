@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Annotated
 
 from adapter_ag_ui.adapter import AdapterAGUI
-from adapter_ag_ui.consts import SSE_ACCEPT
+from adapter_ag_ui.consts import SSE_CONTENT_TYPE
 from fastapi import FastAPI, Header
 from fastapi.responses import StreamingResponse
 
@@ -25,7 +25,7 @@ adapter: AdapterAGUI[None, str] = agent.to_ag_ui()
 
 @app.post('/agent')
 async def handler(
-    input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_ACCEPT
+    input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_CONTENT_TYPE
 ) -> StreamingResponse:
     """Endpoint to handle AG-UI protocol requests and stream responses.
 
@@ -38,7 +38,7 @@ async def handler(
     """
     return StreamingResponse(
         adapter.run(input_data, accept),
-        media_type='text/event-stream',
+        media_type=SSE_CONTENT_TYPE,
     )
 
 

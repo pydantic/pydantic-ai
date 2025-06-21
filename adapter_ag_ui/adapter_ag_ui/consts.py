@@ -4,5 +4,5 @@ from __future__ import annotations
 
 from typing import Final
 
-SSE_ACCEPT: Final[str] = 'text/event-stream'
-"""Accept header value for Server-Sent Events (SSE)."""
+SSE_CONTENT_TYPE: Final[str] = 'text/event-stream'
+"""Content type header value for Server-Sent Events (SSE)."""

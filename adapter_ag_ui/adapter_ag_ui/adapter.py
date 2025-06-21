@@ -62,7 +62,7 @@ from pydantic_ai.usage import Usage, UsageLimits
 
 from ._enums import Role
 from ._exceptions import NoMessagesError, RunError, UnexpectedToolCallError
-from .consts import SSE_ACCEPT
+from .consts import SSE_CONTENT_TYPE
 from .protocols import StateHandler
 
 if TYPE_CHECKING:
@@ -123,7 +123,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
         from fastapi.responses import StreamingResponse
         from pydantic_ai import Agent
 
-        from adapter_ag_ui import SSE_ACCEPT, AdapterAGUI
+        from adapter_ag_ui import SSE_CONTENT_TYPE, AdapterAGUI
 
         if TYPE_CHECKING:
             from ag_ui.core import RunAgentInput
@@ -137,10 +137,10 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
         adapter = agent.to_ag_ui()
 
         @app.post("/")
-        async def root(input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_ACCEPT) -> StreamingResponse:
+        async def root(input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_CONTENT_TYPE) -> StreamingResponse:
             return StreamingResponse(
                 adapter.run(input_data, accept, deps=42),
-                media_type="text/event-stream",
+                media_type=SSE_CONTENT_TYPE,
             )
 
     PydanticAI Tools which return AG-UI events will be sent to the client
@@ -149,11 +149,11 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
 
     Examples:
     .. code-block:: python
-        @agent.tool_plain
-        def update_state(ctx: RunContext[StateDeps[int]]) -> StateSnapshotEvent:
+        @agent.tool
+        def update_state(ctx: RunContext[StateDeps[DocumentState]]) -> StateSnapshotEvent:
             return StateSnapshotEvent(
                 type=EventType.STATE_SNAPSHOT,
-                snapshot=state,
+                snapshot=ctx.deps.state,
             )
 
         @agent.tool_plain
@@ -184,7 +184,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
     async def run(
         self,
         run_input: RunAgentInput,
-        accept: str = SSE_ACCEPT,
+        accept: str = SSE_CONTENT_TYPE,
         *,
         output_type: OutputType[RunOutputDataT] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,

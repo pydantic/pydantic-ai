@@ -7,7 +7,7 @@ import logging
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated
 
-from adapter_ag_ui.consts import SSE_ACCEPT
+from adapter_ag_ui.consts import SSE_CONTENT_TYPE
 from adapter_ag_ui.deps import StateDeps
 from ag_ui.core import EventType, RunAgentInput, StateSnapshotEvent
 from fastapi import APIRouter, Header
@@ -141,7 +141,7 @@ The current state of the recipe is:
 
 @router.post('')
 async def handler(
-    input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_ACCEPT
+    input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_CONTENT_TYPE
 ) -> StreamingResponse:
     """Endpoint to handle AG-UI protocol requests and stream responses.
 
@@ -154,5 +154,5 @@ async def handler(
     """
     return StreamingResponse(
         agui.adapter.run(input_data, accept, deps=StateDeps(state_type=RecipeSnapshot)),
-        media_type=SSE_ACCEPT,
+        media_type=SSE_CONTENT_TYPE,
     )
