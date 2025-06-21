@@ -324,7 +324,7 @@ This type is used to define tools parameters (aka arguments) in [ToolDefinition]
 With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `extra_parts=Any`
 """
 
-ToolKind: TypeAlias = Literal['function', 'output', 'pending']
+ToolKind: TypeAlias = Literal['function', 'output', 'deferred']
 """Kind of tool."""
 
 

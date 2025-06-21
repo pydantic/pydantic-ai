@@ -16,7 +16,7 @@ from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import PendingToolCalls, ToolOutput
+from pydantic_ai.output import DeferredToolCalls, ToolOutput
 from pydantic_ai.tools import ToolDefinition
 
 from .conftest import IsStr
@@ -1180,11 +1180,11 @@ def test_tool_retries():
     assert call_retries == [0, 1, 2, 3, 4, 5]
 
 
-def test_pending_tool():
-    agent = Agent(TestModel(), output_type=[str, PendingToolCalls])
+def test_deferred_tool():
+    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls])
 
     async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
-        return replace(tool_def, kind='pending')
+        return replace(tool_def, kind='deferred')
 
     @agent.tool_plain(prepare=prepare_tool)
     def my_tool(x: int) -> int:
@@ -1192,7 +1192,7 @@ def test_pending_tool():
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
-        PendingToolCalls(
+        DeferredToolCalls(
             tool_calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
             tool_defs={
                 'my_tool': ToolDefinition(
@@ -1204,7 +1204,7 @@ def test_pending_tool():
                         'required': ['x'],
                         'type': 'object',
                     },
-                    kind='pending',
+                    kind='deferred',
                 )
             },
         )

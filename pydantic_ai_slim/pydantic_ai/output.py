@@ -233,7 +233,7 @@ class TextOutput(Generic[OutputDataT]):
 
 
 @dataclass
-class PendingToolCalls:
+class DeferredToolCalls:
     """Output type for calls to tools defined as pending."""
 
     tool_calls: list[ToolCallPart]

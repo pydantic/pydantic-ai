@@ -22,7 +22,7 @@ from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
-from .output import OutputDataT, OutputSpec, PendingToolCalls
+from .output import DeferredToolCalls, OutputDataT, OutputSpec
 from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, ToolDefinition, ToolKind
 
@@ -549,8 +549,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             ):
                 yield event
 
-        pending_calls: list[_messages.ToolCallPart] = []
-        for call in tool_calls_by_kind['pending']:
+        deferred_calls: list[_messages.ToolCallPart] = []
+        for call in tool_calls_by_kind['deferred']:
             if final_result:
                 parts.append(
                     _messages.ToolReturnPart(
@@ -561,19 +561,19 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 )
             else:
                 yield _messages.FunctionToolCallEvent(call)
-                pending_calls.append(call)
+                deferred_calls.append(call)
 
-        if pending_calls:
-            if not ctx.deps.output_schema.pending_tool_calls:
+        if deferred_calls:
+            if not ctx.deps.output_schema.deferred_tool_calls:
                 raise exceptions.UserError(
-                    'There are pending tool calls but PendingToolCalls is not among output types.'
+                    'There are pending tool calls but DeferredToolCalls is not among output types.'
                 )
 
-            pending_tool_names = [call.tool_name for call in pending_calls]
-            pending_tool_defs = {
-                tool_def.name: tool_def for tool_def in toolset.tool_defs if tool_def.name in pending_tool_names
+            deferred_tool_names = [call.tool_name for call in deferred_calls]
+            deferred_tool_defs = {
+                tool_def.name: tool_def for tool_def in toolset.tool_defs if tool_def.name in deferred_tool_names
             }
-            output_data = cast(NodeRunEndT, PendingToolCalls(pending_calls, pending_tool_defs))
+            output_data = cast(NodeRunEndT, DeferredToolCalls(deferred_calls, deferred_tool_defs))
             final_result = result.FinalResult(output_data)
 
         if final_result:

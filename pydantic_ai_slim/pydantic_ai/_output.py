@@ -15,12 +15,12 @@ from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, UserError
 from .output import (
+    DeferredToolCalls,
     ModelStructuredOutput,
     OutputDataT,
     OutputMode,
     OutputSpec,
     OutputTypeOrFunction,
-    PendingToolCalls,
     PromptedStructuredOutput,
     StructuredOutputMode,
     TextOutput,
@@ -129,7 +129,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
 
 @dataclass
 class BaseOutputSchema(ABC, Generic[OutputDataT]):
-    pending_tool_calls: bool
+    deferred_tool_calls: bool
 
     @abstractmethod
     def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
@@ -182,8 +182,8 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
         """Build an OutputSchema dataclass from an output type."""
         raw_outputs = _flatten_output_spec(output_spec)
 
-        outputs = [output for output in raw_outputs if output is not PendingToolCalls]
-        pending_tool_calls = len(outputs) < len(raw_outputs)
+        outputs = [output for output in raw_outputs if output is not DeferredToolCalls]
+        deferred_tool_calls = len(outputs) < len(raw_outputs)
         if output := next((output for output in outputs if isinstance(output, ModelStructuredOutput)), None):
             if len(outputs) > 1:
                 raise UserError('ModelStructuredOutput cannot be mixed with other output types.')
@@ -194,7 +194,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                     name=output.name,
                     description=output.description,
                 ),
-                pending_tool_calls=pending_tool_calls,
+                deferred_tool_calls=deferred_tool_calls,
             )
         elif output := next((output for output in outputs if isinstance(output, PromptedStructuredOutput)), None):
             if len(outputs) > 1:
@@ -207,7 +207,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                     description=output.description,
                 ),
                 template=output.template,
-                pending_tool_calls=pending_tool_calls,
+                deferred_tool_calls=deferred_tool_calls,
             )
 
         text_outputs: Sequence[type[str] | TextOutput[OutputDataT]] = []
@@ -240,20 +240,20 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                 text_output_schema = PlainTextOutputProcessor(text_output.output_function)
 
             if len(tools) == 0:
-                return PlainTextOutputSchema(processor=text_output_schema, pending_tool_calls=pending_tool_calls)
+                return PlainTextOutputSchema(processor=text_output_schema, deferred_tool_calls=deferred_tool_calls)
             else:
                 return ToolOrTextOutputSchema(
-                    processor=text_output_schema, tools=tools, pending_tool_calls=pending_tool_calls
+                    processor=text_output_schema, tools=tools, deferred_tool_calls=deferred_tool_calls
                 )
 
         if len(tool_outputs) > 0:
-            return ToolOutputSchema(tools=tools, pending_tool_calls=pending_tool_calls)
+            return ToolOutputSchema(tools=tools, deferred_tool_calls=deferred_tool_calls)
 
         if len(other_outputs) > 0:
             schema = OutputSchemaWithoutMode(
                 processor=cls._build_processor(other_outputs, name=name, description=description, strict=strict),
                 tools=tools,
-                pending_tool_calls=pending_tool_calls,
+                deferred_tool_calls=deferred_tool_calls,
             )
             if default_mode:
                 schema = schema.with_default_mode(default_mode)
@@ -343,19 +343,21 @@ class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
         self,
         processor: ObjectOutputProcessor[OutputDataT] | UnionOutputProcessor[OutputDataT],
         tools: dict[str, OutputTool[OutputDataT]],
-        pending_tool_calls: bool,
+        deferred_tool_calls: bool,
     ):
-        super().__init__(pending_tool_calls)
+        super().__init__(deferred_tool_calls)
         self.processor = processor
         self._tools = tools
 
     def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
         if mode == 'model_structured':
-            return ModelStructuredOutputSchema(processor=self.processor, pending_tool_calls=self.pending_tool_calls)
+            return ModelStructuredOutputSchema(processor=self.processor, deferred_tool_calls=self.deferred_tool_calls)
         elif mode == 'prompted_structured':
-            return PromptedStructuredOutputSchema(processor=self.processor, pending_tool_calls=self.pending_tool_calls)
+            return PromptedStructuredOutputSchema(
+                processor=self.processor, deferred_tool_calls=self.deferred_tool_calls
+            )
         elif mode == 'tool':
-            return ToolOutputSchema(tools=self.tools, pending_tool_calls=self.pending_tool_calls)
+            return ToolOutputSchema(tools=self.tools, deferred_tool_calls=self.deferred_tool_calls)
         else:
             assert_never(mode)
 
@@ -517,8 +519,8 @@ class PromptedStructuredOutputSchema(StructuredTextOutputSchema[OutputDataT]):
 class ToolOutputSchema(OutputSchema[OutputDataT]):
     _tools: dict[str, OutputTool[OutputDataT]] = field(default_factory=dict)
 
-    def __init__(self, tools: dict[str, OutputTool[OutputDataT]], pending_tool_calls: bool):
-        super().__init__(pending_tool_calls)
+    def __init__(self, tools: dict[str, OutputTool[OutputDataT]], deferred_tool_calls: bool):
+        super().__init__(deferred_tool_calls)
         self._tools = tools
 
     @property
@@ -561,9 +563,9 @@ class ToolOrTextOutputSchema(ToolOutputSchema[OutputDataT], PlainTextOutputSchem
         self,
         processor: PlainTextOutputProcessor[OutputDataT] | None,
         tools: dict[str, OutputTool[OutputDataT]],
-        pending_tool_calls: bool,
+        deferred_tool_calls: bool,
     ):
-        super().__init__(tools=tools, pending_tool_calls=pending_tool_calls)
+        super().__init__(tools=tools, deferred_tool_calls=deferred_tool_calls)
         self.processor = processor
 
     @property
