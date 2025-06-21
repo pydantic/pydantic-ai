@@ -63,6 +63,8 @@ class TestModel(Model):
 
     call_tools: list[str] | Literal['all'] = 'all'
     """List of tools to call. If `'all'`, all tools will be called."""
+    tool_call_deltas: set[str] = field(default_factory=set)
+    """A set of tool call names which should result in tool call part deltas."""
     custom_output_text: str | None = None
     """If set, this text is returned as the final output."""
     custom_output_args: Any | None = None
@@ -102,7 +104,10 @@ class TestModel(Model):
 
         model_response = self._request(messages, model_settings, model_request_parameters)
         yield TestStreamedResponse(
-            _model_name=self._model_name, _structured_response=model_response, _messages=messages
+            _model_name=self._model_name,
+            _structured_response=model_response,
+            _messages=messages,
+            _tool_call_deltas=self.tool_call_deltas,
         )
 
     @property
@@ -218,7 +223,8 @@ class TestModel(Model):
             output_tool = output_tools[self.seed % len(output_tools)]
             if custom_output_args is not None:
                 return ModelResponse(
-                    parts=[ToolCallPart(output_tool.name, custom_output_args)], model_name=self._model_name
+                    parts=[ToolCallPart(output_tool.name, custom_output_args)],
+                    model_name=self._model_name,
                 )
             else:
                 response_args = self.gen_tool_args(output_tool)
@@ -232,6 +238,7 @@ class TestStreamedResponse(StreamedResponse):
     _model_name: str
     _structured_response: ModelResponse
     _messages: InitVar[Iterable[ModelMessage]]
+    _tool_call_deltas: set[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
@@ -253,9 +260,31 @@ class TestStreamedResponse(StreamedResponse):
                     self._usage += _get_string_usage(word)
                     yield self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
             elif isinstance(part, ToolCallPart):
-                yield self._parts_manager.handle_tool_call_part(
-                    vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
-                )
+                if part.tool_name in self._tool_call_deltas:
+                    # Start with empty tool call delta.
+                    event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=i, tool_name=part.tool_name, args='', tool_call_id=part.tool_call_id
+                    )
+                    if event is not None:
+                        yield event
+
+                    # Stream the args as JSON string in chunks.
+                    args_json = pydantic_core.to_json(part.args).decode()
+                    *chunks, last_chunk = args_json.split(',') if ',' in args_json else [args_json]
+                    chunks = [f'{chunk},' for chunk in chunks] if chunks else []
+                    if last_chunk:
+                        chunks.append(last_chunk)
+
+                    for chunk in chunks:
+                        event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=i, tool_name=None, args=chunk, tool_call_id=part.tool_call_id
+                        )
+                        if event is not None:
+                            yield event
+                else:
+                    yield self._parts_manager.handle_tool_call_part(
+                        vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
+                    )
             elif isinstance(part, ThinkingPart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate ThinkingPart on TestModel.
                 assert False, "This should be unreachable — we don't generate ThinkingPart on TestModel."
