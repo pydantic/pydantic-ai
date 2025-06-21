@@ -74,7 +74,7 @@ def run_context(model: Model) -> RunContext[int]:
 async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
-        tools = (await server.freeze_for_run(run_context)).tool_defs
+        tools = (await server.prepare_for_run(run_context)).tool_defs
         assert len(tools) == snapshot(13)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
@@ -94,7 +94,7 @@ async def test_reentrant_context_manager():
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
     async with server:
-        tools = (await server.freeze_for_run(run_context)).tool_defs
+        tools = (await server.prepare_for_run(run_context)).tool_defs
         assert all(tool.name.startswith('foo_') for tool in tools)
 
 
@@ -102,7 +102,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     test_dir = Path(__file__).parent
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
-        tools = (await server.freeze_for_run(run_context)).tool_defs
+        tools = (await server.prepare_for_run(run_context)).tool_defs
         assert len(tools) == snapshot(13)
 
 
@@ -269,7 +269,7 @@ async def test_log_level_unset(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     assert server.log_level is None
     async with server:
-        tools = (await server.freeze_for_run(run_context)).tool_defs
+        tools = (await server.prepare_for_run(run_context)).tool_defs
         assert len(tools) == snapshot(13)
         assert tools[10].name == 'get_log_level'
 

@@ -21,7 +21,7 @@ def build_run_context(deps: T) -> RunContext[T]:
     return RunContext(deps=deps, model=TestModel(), usage=Usage(), prompt=None, messages=[], run_step=0)
 
 
-async def test_function_toolset_freeze_for_run():
+async def test_function_toolset_prepare_for_run():
     @dataclass
     class PrefixDeps:
         prefix: str | None = None
@@ -57,8 +57,14 @@ async def test_function_toolset_freeze_for_run():
     )
     assert await toolset.call_tool(context, 'add', {'a': 1, 'b': 2}) == 3
 
+    no_prefix_context = build_run_context(PrefixDeps())
+    no_prefix_toolset = await toolset.prepare_for_run(no_prefix_context)
+    assert no_prefix_toolset.tool_names == toolset.tool_names
+    assert no_prefix_toolset.tool_defs == toolset.tool_defs
+    assert await no_prefix_toolset.call_tool(no_prefix_context, 'add', {'a': 1, 'b': 2}) == 3
+
     foo_context = build_run_context(PrefixDeps(prefix='foo'))
-    foo_toolset = await toolset.freeze_for_run(foo_context)
+    foo_toolset = await toolset.prepare_for_run(foo_context)
     assert foo_toolset.tool_names == snapshot(['foo_add'])
     assert foo_toolset.tool_defs == snapshot(
         [
@@ -79,12 +85,12 @@ async def test_function_toolset_freeze_for_run():
     @toolset.tool
     def subtract(a: int, b: int) -> int:
         """Subtract two numbers"""
-        return a - b
+        return a - b  # pragma: lax no cover
 
     assert foo_toolset.tool_names == snapshot(['foo_add'])
 
     bar_context = build_run_context(PrefixDeps(prefix='bar'))
-    bar_toolset = await toolset.freeze_for_run(bar_context)
+    bar_toolset = await toolset.prepare_for_run(bar_context)
     assert bar_toolset.tool_names == snapshot(['bar_add', 'subtract'])
     assert bar_toolset.tool_defs == snapshot(
         [
@@ -112,5 +118,5 @@ async def test_function_toolset_freeze_for_run():
     )
     assert await bar_toolset.call_tool(bar_context, 'add', {'a': 1, 'b': 2}) == 3
 
-    bar_foo_toolset = await foo_toolset.freeze_for_run(bar_context)
+    bar_foo_toolset = await foo_toolset.prepare_for_run(bar_context)
     assert bar_foo_toolset == bar_toolset

@@ -57,8 +57,8 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     ) -> bool | None:
         return None
 
-    async def freeze_for_run(self, ctx: RunContext[AgentDepsT]) -> FrozenToolset[AgentDepsT]:
-        return FrozenToolset(self, ctx)
+    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
+        return RunToolset(self, ctx)
 
     @property
     @abstractmethod
@@ -258,10 +258,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tool.max_retries = self.max_retries
         self.tools[tool.name] = tool
 
-    async def freeze_for_run(self, ctx: RunContext[AgentDepsT]) -> FrozenToolset[AgentDepsT]:
-        frozen_self = FrozenToolset(self, ctx)
-        frozen_prepared = await IndividuallyPreparedToolset(frozen_self, self._prepare_tool_def).freeze_for_run(ctx)
-        return FrozenToolset(frozen_prepared, ctx, original=self)
+    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
+        self_for_run = RunToolset(self, ctx)
+        prepared_for_run = await IndividuallyPreparedToolset(self_for_run, self._prepare_tool_def).prepare_for_run(ctx)
+        return RunToolset(prepared_for_run, ctx, original=self)
 
     async def _prepare_tool_def(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_name = tool_def.name
@@ -333,7 +333,7 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
     ) -> bool | None:
         return await self.wrapped.__aexit__(exc_type, exc_value, traceback)
 
-    async def freeze_for_run(self, ctx: RunContext[AgentDepsT]) -> FrozenToolset[AgentDepsT]:
+    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
         raise NotImplementedError()
 
     @property
@@ -397,10 +397,10 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
             self._exit_stack = None
         return None
 
-    async def freeze_for_run(self, ctx: RunContext[AgentDepsT]) -> FrozenToolset[AgentDepsT]:
-        frozen_toolsets = await asyncio.gather(*[toolset.freeze_for_run(ctx) for toolset in self.toolsets])
-        freezable_combined = CombinedToolset(frozen_toolsets)
-        return FrozenToolset(freezable_combined, ctx)
+    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
+        toolsets_for_run = await asyncio.gather(*[toolset.prepare_for_run(ctx) for toolset in self.toolsets])
+        combined_for_run = CombinedToolset(toolsets_for_run)
+        return RunToolset(combined_for_run, ctx)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
@@ -438,10 +438,10 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
 
     prefix: str
 
-    async def freeze_for_run(self, ctx: RunContext[AgentDepsT]) -> FrozenToolset[AgentDepsT]:
-        frozen_wrapped = await self.wrapped.freeze_for_run(ctx)
-        freezable_prefixed = PrefixedToolset(frozen_wrapped, self.prefix)
-        return FrozenToolset(freezable_prefixed, ctx)
+    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
+        wrapped_for_run = await self.wrapped.prepare_for_run(ctx)
+        prefixed_for_run = PrefixedToolset(wrapped_for_run, self.prefix)
+        return RunToolset(prefixed_for_run, ctx)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
@@ -474,9 +474,9 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
 
     prepare_func: ToolsPrepareFunc[AgentDepsT]
 
-    async def freeze_for_run(self, ctx: RunContext[AgentDepsT]) -> FrozenToolset[AgentDepsT]:
-        frozen_wrapped = await self.wrapped.freeze_for_run(ctx)
-        original_tool_defs = frozen_wrapped.tool_defs
+    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
+        wrapped_for_run = await self.wrapped.prepare_for_run(ctx)
+        original_tool_defs = wrapped_for_run.tool_defs
         prepared_tool_defs = await self.prepare_func(ctx, original_tool_defs) or []
 
         original_tool_names = {tool_def.name for tool_def in original_tool_defs}
@@ -484,8 +484,8 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
         if len(prepared_tool_names - original_tool_names) > 0:
             raise UserError('Prepare function is not allowed to change tool names or add new tools.')
 
-        freezable_prepared = PreparedToolset(frozen_wrapped, self.prepare_func)
-        return FrozenToolset(freezable_prepared, ctx, prepared_tool_defs)
+        prepared_for_run = PreparedToolset(wrapped_for_run, self.prepare_func)
+        return RunToolset(prepared_for_run, ctx, prepared_tool_defs)
 
 
 @dataclass(init=False)
@@ -505,10 +505,10 @@ class MappedToolset(WrapperToolset[AgentDepsT]):
         self._tool_defs = tool_defs
         self.name_map = name_map
 
-    async def freeze_for_run(self, ctx: RunContext[AgentDepsT]) -> FrozenToolset[AgentDepsT]:
-        frozen_wrapped = await self.wrapped.freeze_for_run(ctx)
-        freezable_mapped = MappedToolset(frozen_wrapped, self._tool_defs, self.name_map)
-        return FrozenToolset(freezable_mapped, ctx)
+    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
+        wrapped_for_run = await self.wrapped.prepare_for_run(ctx)
+        mapped_for_run = MappedToolset(wrapped_for_run, self._tool_defs, self.name_map)
+        return RunToolset(mapped_for_run, ctx)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
@@ -535,12 +535,12 @@ class IndividuallyPreparedToolset(WrapperToolset[AgentDepsT]):
 
     prepare_func: ToolPrepareFunc[AgentDepsT]
 
-    async def freeze_for_run(self, ctx: RunContext[AgentDepsT]) -> FrozenToolset[AgentDepsT]:
-        frozen_wrapped = await self.wrapped.freeze_for_run(ctx)
+    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
+        wrapped_for_run = await self.wrapped.prepare_for_run(ctx)
 
         tool_defs: dict[str, ToolDefinition] = {}
         name_map: dict[str, str] = {}
-        for original_tool_def in frozen_wrapped.tool_defs:
+        for original_tool_def in wrapped_for_run.tool_defs:
             original_name = original_tool_def.name
             tool_def = await self.prepare_func(ctx, original_tool_def)
             if not tool_def:
@@ -556,8 +556,8 @@ class IndividuallyPreparedToolset(WrapperToolset[AgentDepsT]):
 
             tool_defs[new_name] = tool_def
 
-        frozen_mapped = await MappedToolset(frozen_wrapped, list(tool_defs.values()), name_map).freeze_for_run(ctx)
-        return FrozenToolset(frozen_mapped, ctx, original=self)
+        mapped_for_run = await MappedToolset(wrapped_for_run, list(tool_defs.values()), name_map).prepare_for_run(ctx)
+        return RunToolset(mapped_for_run, ctx, original=self)
 
 
 @dataclass(init=False)
@@ -598,10 +598,10 @@ class ProcessedToolset(WrapperToolset[AgentDepsT]):
 
     process: ToolProcessFunc[AgentDepsT]
 
-    async def freeze_for_run(self, ctx: RunContext[AgentDepsT]) -> FrozenToolset[AgentDepsT]:
-        frozen_wrapped = await self.wrapped.freeze_for_run(ctx)
-        processed = ProcessedToolset(frozen_wrapped, self.process)
-        return FrozenToolset(processed, ctx)
+    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
+        wrapped_for_run = await self.wrapped.prepare_for_run(ctx)
+        processed = ProcessedToolset(wrapped_for_run, self.process)
+        return RunToolset(processed, ctx)
 
     async def call_tool(
         self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
@@ -610,7 +610,7 @@ class ProcessedToolset(WrapperToolset[AgentDepsT]):
 
 
 @dataclass(init=False)
-class FrozenToolset(WrapperToolset[AgentDepsT]):
+class RunToolset(WrapperToolset[AgentDepsT]):
     """A toolset that is frozen for a specific run."""
 
     ctx: RunContext[AgentDepsT]
@@ -637,12 +637,12 @@ class FrozenToolset(WrapperToolset[AgentDepsT]):
     def name(self) -> str:
         return self.wrapped.name
 
-    async def freeze_for_run(self, ctx: RunContext[AgentDepsT]) -> FrozenToolset[AgentDepsT]:
+    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
         if ctx == self.ctx:
             return self
         else:
             ctx = replace(ctx, retries=self._retries)
-            return await self._original.freeze_for_run(ctx)
+            return await self._original.prepare_for_run(ctx)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:

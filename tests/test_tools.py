@@ -1155,6 +1155,7 @@ def test_tool_retries():
     with pytest.raises(UnexpectedModelBehavior, match='Tool exceeded max retries count of 5'):
         agent.run_sync('Begin infinite retry loop!')
 
-    assert prepare_tools_retries == [0, 1, 2, 3, 4, 5]
-    assert prepare_retries == [0, 1, 2, 3, 4, 5]
+    # There are extra 0s here because the toolset is prepared once ahead of the graph run, before the user prompt part is added in.
+    assert prepare_tools_retries == [0, 0, 1, 2, 3, 4, 5]
+    assert prepare_retries == [0, 0, 1, 2, 3, 4, 5]
     assert call_retries == [0, 1, 2, 3, 4, 5]

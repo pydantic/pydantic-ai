@@ -16,7 +16,7 @@ from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._utils import is_async_callable, run_in_executor
-from pydantic_ai.toolset import AbstractToolset, CombinedToolset
+from pydantic_ai.toolset import CombinedToolset, RunToolset
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
@@ -106,12 +106,12 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
 
     output_schema: _output.OutputSchema[OutputDataT]
-    output_toolset: AbstractToolset[DepsT]
+    output_toolset: RunToolset[DepsT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
 
     history_processors: Sequence[HistoryProcessor[DepsT]]
 
-    toolset: AbstractToolset[DepsT]
+    toolset: RunToolset[DepsT]
 
     tracer: Tracer
 
@@ -245,8 +245,8 @@ async def _prepare_request_parameters(
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     run_context = build_run_context(ctx)
-    ctx.deps.toolset = toolset = await ctx.deps.toolset.freeze_for_run(run_context)
-    ctx.deps.output_toolset = output_toolset = await ctx.deps.output_toolset.freeze_for_run(run_context)
+    ctx.deps.toolset = toolset = await ctx.deps.toolset.prepare_for_run(run_context)
+    ctx.deps.output_toolset = output_toolset = await ctx.deps.output_toolset.prepare_for_run(run_context)
 
     # This will raise errors for any name conflicts
     CombinedToolset[DepsT]([output_toolset, toolset])

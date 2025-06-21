@@ -654,8 +654,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         output_toolset = self._output_toolset
         if output_schema != self._output_schema:
             output_toolset = OutputToolset[AgentDepsT](output_schema, max_retries=self._max_result_retries)
-            # This will raise errors for any name conflicts
-            CombinedToolset[AgentDepsT]([output_toolset, self._toolset])
 
         # Build the graph
         graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (
@@ -670,6 +668,21 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             retries=0,
             run_step=0,
         )
+
+        run_context = RunContext[AgentDepsT](
+            deps=deps,
+            model=model_used,
+            usage=usage,
+            prompt=user_prompt,
+            messages=state.message_history,
+            run_step=state.run_step,
+        )
+
+        run_toolset = await self._toolset.prepare_for_run(run_context)
+        run_output_toolset = await output_toolset.prepare_for_run(run_context)
+
+        # This will raise errors for any name conflicts
+        CombinedToolset([run_output_toolset, run_toolset])
 
         # We consider it a user error if a user tries to restrict the result type while having an output validator that
         # may change the result type from the restricted type to something else. Therefore, we consider the following
@@ -722,9 +735,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             end_strategy=self.end_strategy,
             output_schema=output_schema,
             output_validators=output_validators,
-            output_toolset=output_toolset,
+            output_toolset=run_output_toolset,
             history_processors=self.history_processors,
-            toolset=self._toolset,
+            toolset=run_toolset,
             tracer=tracer,
             get_instructions=get_instructions,
         )

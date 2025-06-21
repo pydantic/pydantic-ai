@@ -20,7 +20,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import ToolDefinition
 
 from .exceptions import UserError
-from .toolset import AbstractToolset, FrozenToolset, PrefixedToolset, ProcessedToolset, ToolProcessFunc
+from .toolset import AbstractToolset, PrefixedToolset, ProcessedToolset, RunToolset, ToolProcessFunc
 
 try:
     from mcp import types as mcp_types
@@ -158,14 +158,14 @@ class MCPServer(AbstractToolset[Any], ABC):
         else:
             return content[0] if len(content) == 1 else content
 
-    async def freeze_for_run(self, ctx: RunContext[Any]) -> FrozenToolset[Any]:
-        frozen_self = FrozenToolset(self, ctx, await self.list_tool_defs())
+    async def prepare_for_run(self, ctx: RunContext[Any]) -> RunToolset[Any]:
+        frozen_self = RunToolset(self, ctx, await self.list_tool_defs())
         frozen_toolset = frozen_self
         if self.process_tool_call:
-            frozen_toolset = await ProcessedToolset(frozen_toolset, self.process_tool_call).freeze_for_run(ctx)
+            frozen_toolset = await ProcessedToolset(frozen_toolset, self.process_tool_call).prepare_for_run(ctx)
         if self.tool_prefix:
-            frozen_toolset = await PrefixedToolset(frozen_toolset, self.tool_prefix).freeze_for_run(ctx)
-        return FrozenToolset(frozen_toolset, ctx, original=self)
+            frozen_toolset = await PrefixedToolset(frozen_toolset, self.tool_prefix).prepare_for_run(ctx)
+        return RunToolset(frozen_toolset, ctx, original=self)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
