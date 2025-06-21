@@ -483,7 +483,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
                             ),
                             None,  # Signal continuation of the stream.
                         ]
-                    case ThinkingPart():  # pragma: no cover
+                    case ThinkingPart():  # pragma: no branch
                         # No equivalent AG-UI event yet.
                         pass
             case PartDeltaEvent():
@@ -512,7 +512,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
                                 else json.dumps(agent_event.delta.args_delta),
                             ),
                         )
-                    case ThinkingPartDelta():  # pragma: no cover
+                    case ThinkingPartDelta():  # pragma: no branch
                         # No equivalent AG-UI event yet.
                         pass
             case FinalResultEvent():
