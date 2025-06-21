@@ -1131,7 +1131,9 @@ def test_tool_retries():
     prepare_retries: list[int] = []
     call_retries: list[int] = []
 
-    async def prepare_tool_defs(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+    async def prepare_tool_defs(
+        ctx: RunContext[None], tool_defs: list[ToolDefinition]
+    ) -> Union[list[ToolDefinition], None]:
         nonlocal prepare_tools_retries
         retry = ctx.retries.get('infinite_retry_tool', 0)
         prepare_tools_retries.append(retry)
@@ -1139,7 +1141,7 @@ def test_tool_retries():
 
     agent = Agent(TestModel(), retries=3, prepare_tools=prepare_tool_defs)
 
-    async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
         nonlocal prepare_retries
         prepare_retries.append(ctx.retry)
         return tool_def
