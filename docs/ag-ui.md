@@ -50,23 +50,23 @@ You can run the example with:
 uvicorn agent_to_ag_ui:app --host 0.0.0.0 --port 8000
 ```
 
-This will expose the agent as an AG-UI server, and you can start sending requests to it.
-
-See more about [exposing PydanticAI agents as AG-UI servers](#pydanticai-agent-to-ag-ui-server).
+This will expose the agent as an AG-UI server, and you can start sending
+requests to it.
 
 ## Adapter AG UI
 
-**AdapterAGUI** is an adapter between PydanticAI agents and the AG-UI protocol
-written in Python.
+[AdapterAGUI][adapter_ag_ui.AdapterAGUI]is an adapter between PydanticAI agents
+and the AG-UI protocol written in Python.
 
 ### Design
 
 The adapter receives messages in the form of a
-[`RunAgentInput.state`](https://docs.ag-ui.com/sdk/js/core/types#runagentinput)
+[`RunAgentInput`](https://docs.ag-ui.com/sdk/js/core/types#runagentinput)
 which describes the details of a request being passed to the agent including
-messages and state. These are then translated to PydanticAI types, passed to the
-provided agent when then process the request. Results from the agent are then
-streamed back to the caller.
+messages and state. These are then converted to PydanticAI types, passed to the
+provided agent which then process the request. Results from the agent are
+converted from PydanticAI types to AG-UI events and streamed back to the caller
+as Server-Sent Events (SSE).
 
 A user request may require multiple round trips between client UI and PydanticAI
 server, depending on the tools and events needed.
