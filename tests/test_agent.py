@@ -2657,3 +2657,79 @@ def test_tool_call_with_validation_value_error_serializable():
             'kind': 'request',
         }
     )
+
+
+def test_deprecated_kwargs_validation_agent_init():
+    """Test that invalid kwargs raise UserError in Agent constructor."""
+    with pytest.raises(UserError, match='Unknown keyword arguments: `usage_limits`'):
+        Agent('test', usage_limits='invalid')
+
+    with pytest.raises(UserError, match='Unknown keyword arguments: `invalid_kwarg`'):
+        Agent('test', invalid_kwarg='value')
+
+    with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
+        Agent('test', foo='value1', bar='value2')
+
+
+def test_deprecated_kwargs_validation_agent_run():
+    """Test that invalid kwargs raise UserError in Agent.run method."""
+    agent = Agent('test')
+    
+    with pytest.raises(UserError, match='Unknown keyword arguments: `invalid_kwarg`'):
+        agent.run_sync('test', invalid_kwarg='value')
+
+    with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
+        agent.run_sync('test', foo='value1', bar='value2')
+
+
+def test_deprecated_kwargs_still_work():
+    """Test that valid deprecated kwargs still work with warnings."""
+    import warnings
+    
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        
+        agent = Agent('test', result_type=str)
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert '`result_type` is deprecated' in str(w[0].message)
+        assert agent.output_type == str
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        
+        agent = Agent('test', result_tool_name='test_tool')
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert '`result_tool_name` is deprecated' in str(w[0].message)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        
+        agent = Agent('test', result_tool_description='test description')
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert '`result_tool_description` is deprecated' in str(w[0].message)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        
+        agent = Agent('test', result_retries=3)
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert '`result_retries` is deprecated' in str(w[0].message)
+
+
+def test_deprecated_kwargs_mixed_valid_invalid():
+    """Test that mix of valid deprecated and invalid kwargs raises error for invalid ones."""
+    import warnings
+    
+    with pytest.raises(UserError, match='Unknown keyword arguments: `usage_limits`'):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)  # Ignore the deprecation warning for result_type
+            Agent('test', result_type=str, usage_limits='invalid')
+
+    with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)  # Ignore the deprecation warning for result_tool_name
+            Agent('test', result_tool_name='test', foo='value1', bar='value2')
