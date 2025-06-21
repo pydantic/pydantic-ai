@@ -326,6 +326,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         if _deprecated_kwargs:
             from .exceptions import UserError
+
             unknown_kwargs = ', '.join(f'`{k}`' for k in _deprecated_kwargs.keys())
             raise UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
@@ -470,6 +471,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         if _deprecated_kwargs:
             from .exceptions import UserError
+
             unknown_kwargs = ', '.join(f'`{k}`' for k in _deprecated_kwargs.keys())
             raise UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
@@ -641,6 +643,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         if _deprecated_kwargs:
             from .exceptions import UserError
+
             unknown_kwargs = ', '.join(f'`{k}`' for k in _deprecated_kwargs.keys())
             raise UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
@@ -876,6 +879,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         if _deprecated_kwargs:
             from .exceptions import UserError
+
             unknown_kwargs = ', '.join(f'`{k}`' for k in _deprecated_kwargs.keys())
             raise UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
@@ -997,6 +1001,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         if _deprecated_kwargs:
             from .exceptions import UserError
+
             unknown_kwargs = ', '.join(f'`{k}`' for k in _deprecated_kwargs.keys())
             raise UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
