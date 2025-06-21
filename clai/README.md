@@ -49,6 +49,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 - `/exit`: Exit the session
 - `/markdown`: Show the last response in markdown format
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
+- `/cp`: Copy the last response to clipboard
 
 ## Help
 
@@ -61,6 +62,7 @@ Special prompts:
 * `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
 * `/markdown` - show the last markdown output of the last question
 * `/multiline` - toggle multiline mode
+* `/cp` - copy the last response to clipboard
 
 positional arguments:
   prompt                AI Prompt, if omitted fall into interactive mode
