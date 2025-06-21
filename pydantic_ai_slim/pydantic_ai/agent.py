@@ -1748,6 +1748,17 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         logger: logging.Logger | None = None,
         tool_prefix: str | None = None,
     ) -> AdapterAGUI[AgentDepsT, OutputDataT]:
+        """Convert the agent to an AdapterAGUI instance.
+
+        This allows you to use the agent with a compatible AG-UI frontend.
+
+        Args:
+            logger: Optional logger to use for the adapter.
+            tool_prefix: Optional prefix to add to tool names in the AG-UI.
+
+        Returns:
+            An instance of `AdapterAGUI` that can be used with AG-UI.
+        """
         try:
             from adapter_ag_ui.adapter import AdapterAGUI
         except ImportError as _import_error:

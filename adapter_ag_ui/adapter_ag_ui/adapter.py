@@ -197,11 +197,11 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
     ) -> AsyncGenerator[str, None]:
         """Run the agent with streaming response using AG-UI protocol events.
 
+        The first two arguments are specific to `AdapterAGUI` the rest map directly to the `Agent.iter` method.
+
         Args:
             run_input: The AG-UI run input containing thread_id, run_id, messages, etc.
             accept: The accept header value for the run.
-
-            These arguments map directly to the `Agent.iter` method:
 
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
