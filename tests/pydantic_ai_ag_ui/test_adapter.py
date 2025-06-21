@@ -1,4 +1,4 @@
-"""Comprehensive tests for AdapterAGUI.run method."""
+"""Comprehensive tests for Adapter.run method."""
 
 # pyright: reportPossiblyUnboundVariable=none
 from __future__ import annotations
@@ -39,9 +39,9 @@ if has_required_python:
             UserMessage,
         )
 
-        from adapter_ag_ui._enums import Role
-        from adapter_ag_ui.adapter import AdapterAGUI
-        from adapter_ag_ui.deps import StateDeps
+        from pydantic_ai_ag_ui._enums import Role
+        from pydantic_ai_ag_ui.adapter import Adapter
+        from pydantic_ai_ag_ui.deps import StateDeps
 
         has_ag_ui = True
 
@@ -95,23 +95,23 @@ def get_weather(name: str = 'get_weather') -> Tool:
 
 
 @pytest.fixture
-async def adapter() -> AdapterAGUI[StateDeps[StateInt], str]:
-    """Fixture to create an AdapterAGUI instance for testing.
+async def adapter() -> Adapter[StateDeps[StateInt], str]:
+    """Fixture to create an Adapter instance for testing.
 
     Returns:
-        An AdapterAGUI instance configured for testing.
+        An Adapter instance configured for testing.
     """
     return await create_adapter([])
 
 
-async def create_adapter(tools: list[str] | Literal['all'] = 'all') -> AdapterAGUI[StateDeps[StateInt], str]:
-    """Create an AdapterAGUI instance for testing.
+async def create_adapter(tools: list[str] | Literal['all'] = 'all') -> Adapter[StateDeps[StateInt], str]:
+    """Create an Adapter instance for testing.
 
     Args:
         tools: List of tool names to enable, or 'all' for all tools.
 
     Returns:
-        An AdapterAGUI instance configured with the specified tools.
+        An Adapter instance configured with the specified tools.
     """
     return Agent(
         model=TestModel(tools, tool_call_deltas={'get_weather_parts', 'current_time'}),
@@ -225,7 +225,7 @@ async def send_custom() -> list[CustomEvent]:
 
 @dataclass(frozen=True)
 class Run:
-    """Test parameter class for AdapterAGUI.run method tests.
+    """Test parameter class for Adapter.run method tests.
 
     Args:
         messages: List of messages for the run input.
@@ -264,7 +264,7 @@ class Run:
 
 @dataclass(frozen=True)
 class AdapterRunTest:
-    """Test parameter class for AdapterAGUI.run method tests.
+    """Test parameter class for Adapter.run method tests.
 
     Args:
         id: Name of the test case.
@@ -650,7 +650,7 @@ def tc_parameters() -> list[AdapterRunTest]:
 
 @pytest.mark.parametrize('tc', tc_parameters(), ids=lambda tc: tc.id)
 async def test_run_method(mock_uuid: _MockUUID, tc: AdapterRunTest) -> None:
-    """Test the AdapterAGUI.run method with various scenarios.
+    """Test the Adapter.run method with various scenarios.
 
     Args:
         mock_uuid: The mock UUID generator fixture.
@@ -660,7 +660,7 @@ async def test_run_method(mock_uuid: _MockUUID, tc: AdapterRunTest) -> None:
     run: Run
     events: list[str] = []
     thread_id: str = f'{THREAD_ID_PREFIX}{mock_uuid()}'
-    adapter: AdapterAGUI[StateDeps[StateInt], str] = await create_adapter(tc.call_tools)
+    adapter: Adapter[StateDeps[StateInt], str] = await create_adapter(tc.call_tools)
     deps: StateDeps[StateInt] = cast(StateDeps[StateInt], StateDeps[StateInt](state_type=StateInt))
     for run in tc.runs:
         run_input: RunAgentInput = run.run_input(
@@ -675,7 +675,7 @@ async def test_run_method(mock_uuid: _MockUUID, tc: AdapterRunTest) -> None:
         assert deps.state.value == tc.expected_state
 
 
-async def test_concurrent_runs(mock_uuid: _MockUUID, adapter: AdapterAGUI[None, str]) -> None:
+async def test_concurrent_runs(mock_uuid: _MockUUID, adapter: Adapter[None, str]) -> None:
     """Test concurrent execution of multiple runs."""
 
     async def collect_events(run_input: RunAgentInput) -> list[str]:

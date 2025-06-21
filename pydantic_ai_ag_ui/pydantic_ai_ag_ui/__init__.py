@@ -6,13 +6,13 @@ for building interactive AI applications with streaming event-based communicatio
 
 from __future__ import annotations
 
-from .adapter import AdapterAGUI
+from .adapter import Adapter
 from .consts import SSE_CONTENT_TYPE
 from .deps import StateDeps
 from .protocols import StateHandler
 
 __all__ = [
-    'AdapterAGUI',
+    'Adapter',
     'SSE_CONTENT_TYPE',
     'StateDeps',
     'StateHandler',

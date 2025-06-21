@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated
 
-from adapter_ag_ui.consts import SSE_CONTENT_TYPE
 from ag_ui.core import RunAgentInput
 from fastapi import APIRouter, Header
 from fastapi.responses import StreamingResponse
+from pydantic_ai_ag_ui.consts import SSE_CONTENT_TYPE
 
 from .agent import AGUIAgent
 

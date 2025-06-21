@@ -1,16 +1,15 @@
-"""Human in the Loop Feature.
-
-No special handling is required for this feature.
-"""
+"""Agentic Chat feature."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Annotated
+from zoneinfo import ZoneInfo
 
-from adapter_ag_ui.consts import SSE_CONTENT_TYPE
 from ag_ui.core import RunAgentInput
 from fastapi import APIRouter, Header
 from fastapi.responses import StreamingResponse
+from pydantic_ai_ag_ui.consts import SSE_CONTENT_TYPE
 
 from .agent import AGUIAgent
 
@@ -18,15 +17,22 @@ if TYPE_CHECKING:  # pragma: no cover
     from ag_ui.core import RunAgentInput
 
 
-instructions: str = """When planning tasks use tools only, without any other messages.
-IMPORTANT:
-- Use the `human_in_the_loop` tool to display the suggested steps to the user
-- Never repeat the plan, or send a message detailing steps
-- If accepted, confirm the creation of the plan and the number of selected (enabled) steps only
-- If rejected, ask the user for additional information
-"""
-router: APIRouter = APIRouter(prefix='/human_in_the_loop')
-agui: AGUIAgent = AGUIAgent(instructions=instructions)
+router: APIRouter = APIRouter(prefix='/agentic_chat')
+agui: AGUIAgent = AGUIAgent()
+
+
+@agui.agent.tool_plain
+async def current_time(timezone: str = 'UTC') -> str:
+    """Get the current time in ISO format.
+
+    Args:
+        timezone: The timezone to use.
+
+    Returns:
+        The current time in ISO format string.
+    """
+    tz: ZoneInfo = ZoneInfo(timezone)
+    return datetime.now(tz=tz).isoformat()
 
 
 @router.post('')

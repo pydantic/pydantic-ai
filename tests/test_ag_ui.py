@@ -1,4 +1,4 @@
-"""Comprehensive tests for AdapterAGUI.run method."""
+"""Comprehensive tests for Adapter.run method."""
 
 from __future__ import annotations
 
@@ -12,12 +12,13 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_ag_ui.adapter import Adapter
 
 has_required_python: bool = sys.version_info >= (3, 10)
 has_ag_ui: bool = False
 if has_required_python:
     with contextlib.suppress(ImportError):
-        from adapter_ag_ui.adapter import _LOGGER as adapter_logger, AdapterAGUI  # type: ignore[reportPrivateUsage]
+        from pydantic_ai_ag_ui.adapter import _LOGGER as adapter_logger, Adapter  # type: ignore[reportPrivateUsage]
 
         has_ag_ui = True
 
@@ -25,7 +26,7 @@ if has_required_python:
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not has_required_python, reason='requires Python 3.10 or higher'),
-    pytest.mark.skipif(has_required_python and not has_ag_ui, reason='adapter-ag-ui not installed'),
+    pytest.mark.skipif(has_required_python and not has_ag_ui, reason='pydantic-ai-ag-ui not installed'),
 ]
 
 # Constants.
@@ -34,7 +35,7 @@ CUSTOM_LOGGER: Final[logging.Logger] = logging.getLogger('test_logger')
 
 @pytest.fixture
 async def agent() -> Agent[None, str]:
-    """Create an AdapterAGUI instance for testing."""
+    """Create an Adapter instance for testing."""
     return Agent(model=TestModel())
 
 
@@ -86,7 +87,7 @@ async def test_to_ag_ui(agent: Agent[None, str], tc: ToAGUITest) -> None:
         tc: Test case parameters including logger, tool prefix, and timeout.
     """
 
-    adapter: AdapterAGUI[None, str] = agent.to_ag_ui(
+    adapter: Adapter[None, str] = agent.to_ag_ui(
         logger=tc.logger,
         tool_prefix=tc.tool_prefix,
     )

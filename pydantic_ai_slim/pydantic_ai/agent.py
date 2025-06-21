@@ -59,12 +59,12 @@ if TYPE_CHECKING:
     from starlette.routing import Route
     from starlette.types import ExceptionHandler, Lifespan
 
-    from adapter_ag_ui import AdapterAGUI
     from fasta2a.applications import FastA2A
     from fasta2a.broker import Broker
     from fasta2a.schema import Provider, Skill
     from fasta2a.storage import Storage
     from pydantic_ai.mcp import MCPServer
+    from pydantic_ai_ag_ui import Adapter
 
 __all__ = (
     'Agent',
@@ -1747,8 +1747,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         logger: logging.Logger | None = None,
         tool_prefix: str | None = None,
-    ) -> AdapterAGUI[AgentDepsT, OutputDataT]:
-        """Convert the agent to an AdapterAGUI instance.
+    ) -> Adapter[AgentDepsT, OutputDataT]:
+        """Convert the agent to an Adapter instance.
 
         This allows you to use the agent with a compatible AG-UI frontend.
 
@@ -1757,14 +1757,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             tool_prefix: Optional prefix to add to tool names in the AG-UI.
 
         Returns:
-            An instance of `AdapterAGUI` that can be used with AG-UI.
+            An adapter that converts between AG-UI protocol and PydanticAI.
         """
         try:
-            from adapter_ag_ui.adapter import AdapterAGUI
+            from pydantic_ai_ag_ui.adapter import Adapter
         except ImportError as _import_error:
             raise ImportError(
-                'Please install the `adapter-ag-ui` package to use `Agent.to_ag_ui()` method, '
-                'you can use the `ag_ui` optional group — `pip install "pydantic-ai-slim[ag_ui]"`'
+                'Please install the `pydantic-ai-ag-ui` package to use `Agent.to_ag_ui()` method, '
+                'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag_ui]"`'
             ) from _import_error
 
         kwargs: dict[str, Any] = {}
@@ -1773,7 +1773,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if logger is not None:
             kwargs['logger'] = logger
 
-        return AdapterAGUI(agent=self, **kwargs)
+        return Adapter(agent=self, **kwargs)
 
     def to_a2a(
         self,

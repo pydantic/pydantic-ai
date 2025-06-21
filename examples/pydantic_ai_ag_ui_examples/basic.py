@@ -1,13 +1,13 @@
-"""Basic example of using adapter_ag_ui with FastAPI."""
+"""Basic example of using pydantic_ai_ag_ui with FastAPI."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated
 
-from adapter_ag_ui.adapter import AdapterAGUI
-from adapter_ag_ui.consts import SSE_CONTENT_TYPE
 from fastapi import FastAPI, Header
 from fastapi.responses import StreamingResponse
+from pydantic_ai_ag_ui.adapter import Adapter
+from pydantic_ai_ag_ui.consts import SSE_CONTENT_TYPE
 
 from pydantic_ai import Agent
 
@@ -20,7 +20,7 @@ agent: Agent[None, str] = Agent(
     'openai:gpt-4o-mini',
     instructions='You are a helpful assistant.',
 )
-adapter: AdapterAGUI[None, str] = agent.to_ag_ui()
+adapter: Adapter[None, str] = agent.to_ag_ui()
 
 
 @app.post('/agent')
@@ -54,7 +54,7 @@ if __name__ == '__main__':
     )
 
     uvicorn.run(
-        'adapter_ag_ui_examples.dojo_server:app',
+        'pydantic_ai_ag_ui_examples.dojo_server:app',
         host='127.0.0.1',
         port=9000,
         reload=True,

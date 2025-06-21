@@ -8,23 +8,25 @@ an open protocol. Think of it as a universal translator for AI-driven systems
 no matter what language an agent speaks: AG-UI ensures fluent communication.
 
 The team at [Rocket Science](https://www.rocketscience.gg/), contributed the
-[adapter-ag-ui](#adapter-ag-ui) library to make it easy to implement the AG-UI
-protocol with PydanticAI agents.
+[pydantic-ai-ag-ui](#ag-ui-adapter) package to make it easy to implement the
+AG-UI protocol with PydanticAI agents.
 
-This also includes a convenience method that exposes PydanticAI agents as an
-AG-UI server, which can then be used by as part of a
+This also includes an [`Agent.to_ag_ui`][pydantic_ai.Agent.to_ag_ui] convenience
+method which simplifies the creation of [`Adapter`][pydantic_ai_ag_ui.Adapter]
+for PydanticAI agents, which can then be used by as part of a
 [fastapi](https://fastapi.tiangolo.com/) app. Let's have a quick look at how to
 use it:
 
 ```py {title="agent_to_ag_ui.py" py="3.10" hl_lines="17-27"}
 """Basic example for AG-UI with FastAPI and Pydantic AI."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated
 
-from adapter_ag_ui import SSE_CONTENT_TYPE
 from fastapi import FastAPI, Header
 from fastapi.responses import StreamingResponse
+from pydantic_ai_ag_ui import SSE_CONTENT_TYPE
 
 from pydantic_ai import Agent
 
@@ -57,7 +59,7 @@ requests to it.
 
 ## AG-UI Adapter
 
-The [AdapterAGUI][adapter_ag_ui.AdapterAGUI] class is an adapter between
+The [Adapter][pydantic_ai_ag_ui.Adapter] class is an adapter between
 PydanticAI agents and the AG-UI protocol written in Python. It provides support
 for all aspects of spec including:
 
@@ -80,16 +82,16 @@ streamed back to the caller as Server-Sent Events (SSE).
 A user request may require multiple round trips between client UI and PydanticAI
 server, depending on the tools and events needed.
 
-[AdapterAGUI][adapter_ag_ui.AdapterAGUI] can be used with any ASGI server.
+[Adapter][pydantic_ai_ag_ui.Adapter] can be used with any ASGI server.
 
 ### Installation
 
-[AdapterAGUI][adapter_ag_ui.AdapterAGUI] is available on PyPI as
-[`adapter-ag-ui`](https://pypi.org/project/adapter-ag-ui/) so installation is as
+[Adapter][pydantic_ai_ag_ui.Adapter] is available on PyPI as
+[`pydantic-ai-ag-ui`](https://pypi.org/project/pydantic-ai-ag-ui/) so installation is as
 simple as:
 
 ```bash
-pip/uv-add adapter-ag-ui
+pip/uv-add pydantic-ai-ag-ui
 ```
 
 The only dependencies are:
@@ -107,7 +109,7 @@ To run the examples you'll also need:
 pip/uv-add 'fastapi'
 ```
 
-You can install PydanticAI with the `ag-ui` extra to include **AdapterAGUI**:
+You can install PydanticAI with the `ag-ui` extra to include **Adapter**:
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[ag-ui]'
@@ -120,8 +122,8 @@ use the [`to_ag_ui`][pydantic_ai.agent.Agent.to_ag_ui] method in combination
 with fastapi.
 
 In the example below we have document state which is shared between the UI and
-server using the [`StateDeps`][adapter_ag_ui.StateDeps] which implements the
-[`StateHandler`][adapter_ag_ui.StateHandler] that can be used to automatically
+server using the [`StateDeps`][pydantic_ai_ag_ui.StateDeps] which implements the
+[`StateHandler`][pydantic_ai_ag_ui.StateHandler] that can be used to automatically
 decode state contained in [`RunAgentInput.state`](https://docs.ag-ui.com/sdk/js/core/types#runagentinput)
 when processing requests.
 
@@ -138,10 +140,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated
 
-from adapter_ag_ui import SSE_CONTENT_TYPE, StateDeps
 from fastapi import FastAPI, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from pydantic_ai_ag_ui import SSE_CONTENT_TYPE, StateDeps
 
 from pydantic_ai import Agent
 
@@ -172,7 +174,6 @@ async def root(
         adapter.run(input_data, accept, deps=StateDeps(state_type=DocumentState)),
         media_type=SSE_CONTENT_TYPE,
     )
-
 ```
 
 Since `app` is an ASGI application, it can be used with any ASGI server.
@@ -183,7 +184,7 @@ uvicorn agent_to_ag_ui:app --host 0.0.0.0 --port 8000
 
 Since the goal of [`to_ag_ui`][pydantic_ai.agent.Agent.to_ag_ui] is to be a
 convenience method, it accepts the same arguments as the
-[`AdapterAGUI`][adapter_ag_ui.AdapterAGUI] constructor.
+[`Adapter`][pydantic_ai_ag_ui.Adapter] constructor.
 
 #### Tools
 
@@ -205,11 +206,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated
 
-from adapter_ag_ui import SSE_CONTENT_TYPE, StateDeps
 from ag_ui.core import CustomEvent, EventType, StateSnapshotEvent
 from fastapi import FastAPI, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from pydantic_ai_ag_ui import SSE_CONTENT_TYPE, StateDeps
 
 from pydantic_ai import Agent, RunContext
 
@@ -224,7 +225,6 @@ class DocumentState(BaseModel):
 
 
 app = FastAPI(title='AG-UI Endpoint')
-
 agent = Agent(
     'openai:gpt-4.1',
     instructions='Be fun!',
@@ -265,30 +265,29 @@ async def root(
         adapter.run(input_data, accept, deps=StateDeps(state_type=DocumentState)),
         media_type=SSE_CONTENT_TYPE,
     )
-
 ```
 
 ### Examples
 
-For more examples of how to use [`AdapterAGUI`][adapter_ag_ui.AdapterAGUI] see
-[`adapter_ag_ui_examples`](https://github.com/pydantic/pydantic-ai/tree/main/examples/adapter_ag_ui_examples),
+For more examples of how to use [`Adapter`][pydantic_ai_ag_ui.Adapter] see
+[`pydantic_ai_ag_ui_examples`](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_ag_ui_examples),
 which includes working server for the with the
 [AG-UI Dojo](https://docs.ag-ui.com/tutorials/debugging#the-ag-ui-dojo) which
-can be run from a clone of the repo or with the `adapter_ag_ui_examples` package
+can be run from a clone of the repo or with the `pydantic_ai_ag_ui_examples` package
 installed with either of the following:
 
 ```bash
-pip/uv-add 'adapter_ag_ui_examples'
+pip/uv-add 'pydantic_ai_ag_ui_examples'
 ```
 
 Direct:
 
 ```shell
-python -m adapter_ag_ui_examples.dojo_server
+python -m pydantic_ai_ag_ui_examples.dojo_server
 ```
 
 Using uvicorn:
 
 ```shell
-uvicorn adapter_ag_ui_examples.dojo_server:app --host 0.0.0.0 --port 8000
+uvicorn pydantic_ai_ag_ui_examples.dojo_server:app --host 0.0.0.0 --port 8000
 ```

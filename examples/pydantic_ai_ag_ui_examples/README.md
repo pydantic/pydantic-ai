@@ -23,7 +23,7 @@ To run this integration you need to:
     cd jobs-agent
     just install-deps
     source .venv/bin/activate
-    python -m examples.adapter_ag_ui.dojo_server
+    python -m examples.pydantic_ai_ag_ui_examples.dojo_server
     ```
 
 5. Open another terminal in root directory of the `ag-ui` repository clone

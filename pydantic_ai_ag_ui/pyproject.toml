@@ -11,7 +11,7 @@ style = "pep440"
 bump = true
 
 [project]
-name = "adapter-ag-ui"
+name = "pydantic-ai-ag-ui"
 dynamic = ["version", "dependencies"]
 description = "Convert an AI Agent to speak AG UI! ✨"
 authors = [
@@ -50,13 +50,13 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://ai.pydantic.dev/ag_ui/adapter_ag_ui"
-Source = "https://github.com/pydantic/ag_ui"
-Documentation = "https://ai.pydantic.dev/ag_ui"
+Homepage = "https://ai.pydantic.dev/ag-ui/pydantic_ai_ag_ui"
+Source = "https://github.com/pydantic/pydantic-ai/"
+Documentation = "https://ai.pydantic.dev/ag-ui"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [tool.hatch.build.targets.wheel]
-packages = ["adapter_ag_ui"]
+packages = ["pydantic_ai_ag_ui"]
 
 [tool.uv.sources]
 pydantic-ai = { workspace = true }

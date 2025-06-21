@@ -7,12 +7,12 @@ import logging
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated
 
-from adapter_ag_ui.consts import SSE_CONTENT_TYPE
-from adapter_ag_ui.deps import StateDeps
 from ag_ui.core import EventType, RunAgentInput, StateSnapshotEvent
 from fastapi import APIRouter, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from pydantic_ai_ag_ui.consts import SSE_CONTENT_TYPE
+from pydantic_ai_ag_ui.deps import StateDeps
 
 from .agent import AGUIAgent
 

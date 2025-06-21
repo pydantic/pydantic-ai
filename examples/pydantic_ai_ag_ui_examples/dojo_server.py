@@ -47,7 +47,7 @@ if __name__ == '__main__':
     )
 
     uvicorn.run(
-        'adapter_ag_ui_examples.dojo_server:app',
+        'pydantic_ai_ag_ui_examples.dojo_server:app',
         host='127.0.0.1',
         port=9000,
         reload=True,

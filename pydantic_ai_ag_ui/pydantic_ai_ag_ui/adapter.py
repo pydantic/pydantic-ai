@@ -101,7 +101,7 @@ class _RequestStreamContext:
 
 
 @dataclass(kw_only=True, repr=False)
-class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
+class Adapter(Generic[AgentDepsT, OutputDataT]):
     """An agent adapter providing AG-UI protocol support for PydanticAI agents.
 
     This class manages the agent runs, tool calls, state storage and providing
@@ -119,7 +119,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
         from fastapi.responses import StreamingResponse
         from pydantic_ai import Agent
 
-        from adapter_ag_ui import SSE_CONTENT_TYPE, AdapterAGUI
+        from pydantic_ai_ag_ui import SSE_CONTENT_TYPE, Adapter
 
         if TYPE_CHECKING:
             from ag_ui.core import RunAgentInput
@@ -193,7 +193,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
     ) -> AsyncGenerator[str, None]:
         """Run the agent with streaming response using AG-UI protocol events.
 
-        The first two arguments are specific to `AdapterAGUI` the rest map directly to the `Agent.iter` method.
+        The first two arguments are specific to `Adapter` the rest map directly to the `Agent.iter` method.
 
         Args:
             run_input: The AG-UI run input containing thread_id, run_id, messages, etc.

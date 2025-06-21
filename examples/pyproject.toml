@@ -57,7 +57,7 @@ dependencies = [
 
 [tool.hatch.build.targets.wheel]
 packages = [
-    "adapter_ag_ui_examples",
+    "pydantic_ai_ag_ui_examples",
     "pydantic_ai_examples",
 ]
 

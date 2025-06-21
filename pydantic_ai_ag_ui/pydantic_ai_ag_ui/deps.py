@@ -20,7 +20,7 @@ class StateDeps(Generic[StateT]):
     the state of the agent run with a specific type of state model, which must
     be a subclass of `BaseModel`.
 
-    The state is set using the `set_state` when the run starts by the `AdapterAGUI`.
+    The state is set using the `set_state` when the run starts by the `Adapter`.
 
     Implements the `StateHandler` protocol.
     """

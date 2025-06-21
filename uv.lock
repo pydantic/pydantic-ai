@@ -18,31 +18,15 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "adapter-ag-ui",
     "clai",
     "fasta2a",
     "mcp-run-python",
     "pydantic-ai",
+    "pydantic-ai-ag-ui",
     "pydantic-ai-examples",
     "pydantic-ai-slim",
     "pydantic-evals",
     "pydantic-graph",
-]
-
-[[package]]
-name = "adapter-ag-ui"
-source = { editable = "adapter_ag_ui" }
-dependencies = [
-    { name = "ag-ui-protocol" },
-    { name = "pydantic" },
-    { name = "pydantic-ai" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "ag-ui-protocol", specifier = ">=0.1.5" },
-    { name = "pydantic", specifier = ">=2.10" },
-    { name = "pydantic-ai", editable = "." },
 ]
 
 [[package]]
@@ -2983,6 +2967,22 @@ lint = [
 ]
 
 [[package]]
+name = "pydantic-ai-ag-ui"
+source = { editable = "pydantic_ai_ag_ui" }
+dependencies = [
+    { name = "ag-ui-protocol" },
+    { name = "pydantic" },
+    { name = "pydantic-ai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ag-ui-protocol", specifier = ">=0.1.5" },
+    { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-ai", editable = "." },
+]
+
+[[package]]
 name = "pydantic-ai-examples"
 source = { editable = "examples" }
 dependencies = [
@@ -3033,8 +3033,7 @@ a2a = [
     { name = "fasta2a" },
 ]
 ag-ui = [
-    { name = "adapter-ag-ui" },
-    { name = "ag-ui-protocol" },
+    { name = "pydantic-ai-ag-ui" },
 ]
 anthropic = [
     { name = "anthropic" },
@@ -3104,8 +3103,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "adapter-ag-ui", marker = "extra == 'ag-ui'", editable = "adapter_ag_ui" },
-    { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.5" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.52.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.37.24" },
@@ -3126,6 +3123,7 @@ requires-dist = [
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
     { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-ai-ag-ui", marker = "extra == 'ag-ui'", editable = "pydantic_ai_ag_ui" },
     { name = "pydantic-evals", marker = "extra == 'evals'", editable = "pydantic_evals" },
     { name = "pydantic-graph", editable = "pydantic_graph" },
     { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.2" },

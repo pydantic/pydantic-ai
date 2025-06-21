@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from types import NoneType
 from typing import Generic
 
-from adapter_ag_ui import AdapterAGUI
 from dotenv import load_dotenv
+from pydantic_ai_ag_ui import Adapter
 
 from pydantic_ai import Agent
 from pydantic_ai.result import OutputDataT
@@ -19,7 +19,7 @@ class AGUIAgent(Generic[AgentDepsT, OutputDataT]):
     """Pydantic AI agent with AG-UI adapter."""
 
     agent: Agent[AgentDepsT, str]
-    adapter: AdapterAGUI[AgentDepsT, str]
+    adapter: Adapter[AgentDepsT, str]
     instructions: str | None
 
     def __init__(
