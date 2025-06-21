@@ -547,7 +547,7 @@ def test_include_tool_args_span_attributes(
 
     summary = get_logfire_summary()
 
-    for _, attributes in summary.attributes.items():
+    for _span_id, attributes in summary.attributes.items():
         if attributes.get('gen_ai.tool.name') == 'add_numbers':
             if include_content:
                 assert 'tool_arguments' in attributes
