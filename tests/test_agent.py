@@ -2662,13 +2662,13 @@ def test_tool_call_with_validation_value_error_serializable():
 def test_deprecated_kwargs_validation_agent_init():
     """Test that invalid kwargs raise UserError in Agent constructor."""
     with pytest.raises(UserError, match='Unknown keyword arguments: `usage_limits`'):
-        Agent('test', usage_limits='invalid')
+        Agent('test', usage_limits='invalid')  # type: ignore[call-arg]
 
     with pytest.raises(UserError, match='Unknown keyword arguments: `invalid_kwarg`'):
-        Agent('test', invalid_kwarg='value')
+        Agent('test', invalid_kwarg='value')  # type: ignore[call-arg]
 
     with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
-        Agent('test', foo='value1', bar='value2')
+        Agent('test', foo='value1', bar='value2')  # type: ignore[call-arg]
 
 
 def test_deprecated_kwargs_validation_agent_run():
@@ -2676,10 +2676,10 @@ def test_deprecated_kwargs_validation_agent_run():
     agent = Agent('test')
 
     with pytest.raises(UserError, match='Unknown keyword arguments: `invalid_kwarg`'):
-        agent.run_sync('test', invalid_kwarg='value')
+        agent.run_sync('test', invalid_kwarg='value')  # type: ignore[call-arg]
 
     with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
-        agent.run_sync('test', foo='value1', bar='value2')
+        agent.run_sync('test', foo='value1', bar='value2')  # type: ignore[call-arg]
 
 
 def test_deprecated_kwargs_still_work():
@@ -2689,7 +2689,7 @@ def test_deprecated_kwargs_still_work():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
 
-        agent = Agent('test', result_type=str)
+        agent = Agent('test', result_type=str)  # type: ignore[call-arg]
         assert len(w) == 1
         assert issubclass(w[0].category, DeprecationWarning)
         assert '`result_type` is deprecated' in str(w[0].message)
@@ -2698,7 +2698,7 @@ def test_deprecated_kwargs_still_work():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
 
-        agent = Agent('test', result_tool_name='test_tool')
+        agent = Agent('test', result_tool_name='test_tool')  # type: ignore[call-arg]
         assert len(w) == 1
         assert issubclass(w[0].category, DeprecationWarning)
         assert '`result_tool_name` is deprecated' in str(w[0].message)
@@ -2706,7 +2706,7 @@ def test_deprecated_kwargs_still_work():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
 
-        agent = Agent('test', result_tool_description='test description')
+        agent = Agent('test', result_tool_description='test description')  # type: ignore[call-arg]
         assert len(w) == 1
         assert issubclass(w[0].category, DeprecationWarning)
         assert '`result_tool_description` is deprecated' in str(w[0].message)
@@ -2714,7 +2714,7 @@ def test_deprecated_kwargs_still_work():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
 
-        agent = Agent('test', result_retries=3)
+        agent = Agent('test', result_retries=3)  # type: ignore[call-arg]
         assert len(w) == 1
         assert issubclass(w[0].category, DeprecationWarning)
         assert '`result_retries` is deprecated' in str(w[0].message)
@@ -2727,9 +2727,9 @@ def test_deprecated_kwargs_mixed_valid_invalid():
     with pytest.raises(UserError, match='Unknown keyword arguments: `usage_limits`'):
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', DeprecationWarning)  # Ignore the deprecation warning for result_type
-            Agent('test', result_type=str, usage_limits='invalid')
+            Agent('test', result_type=str, usage_limits='invalid')  # type: ignore[call-arg]
 
     with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', DeprecationWarning)  # Ignore the deprecation warning for result_tool_name
-            Agent('test', result_tool_name='test', foo='value1', bar='value2')
+            Agent('test', result_tool_name='test', foo='value1', bar='value2')  # type: ignore[call-arg]
