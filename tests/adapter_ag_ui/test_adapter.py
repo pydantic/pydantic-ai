@@ -77,9 +77,9 @@ class StateInt(BaseModel):
     value: int = 0
 
 
-def get_weather() -> Tool:
+def get_weather(name: str = 'get_weather') -> Tool:
     return Tool(
-        name='get_weather',
+        name=name,
         description='Get the weather for a given location',
         parameters={
             'type': 'object',
@@ -114,9 +114,9 @@ async def create_adapter(tools: list[str] | Literal['all'] = 'all') -> AdapterAG
         An AdapterAGUI instance configured with the specified tools.
     """
     return Agent(
-        model=TestModel(tools),
+        model=TestModel(tools, tool_call_deltas={'get_weather_parts', 'current_time'}),
         deps_type=cast(type[StateDeps[StateInt]], StateDeps[StateInt]),
-        tools=[send_snapshot, send_custom],
+        tools=[send_snapshot, send_custom, current_time],
     ).to_ag_ui()
 
 
@@ -180,6 +180,15 @@ def normalize_uuids(text: str) -> str:
         The text with UUIDs replaced by a fixed UUID.
     """
     return UUID_PATTERN.sub('00000000-0000-0000-0000-000000000001', text)
+
+
+def current_time() -> str:
+    """Get the current time in ISO format.
+
+    Returns:
+        The current UTC time in ISO format string.
+    """
+    return '21T12:08:45.485981+00:00'
 
 
 async def send_snapshot() -> StateSnapshotEvent:
@@ -353,7 +362,7 @@ def tc_parameters() -> list[AdapterRunTest]:
             ],
         ),
         AdapterRunTest(
-            id='tool_call',
+            id='tool_call_ag_ui',
             call_tools=['get_weather'],
             runs=[
                 Run(
@@ -411,9 +420,19 @@ def tc_parameters() -> list[AdapterRunTest]:
             ],
         ),
         AdapterRunTest(
-            id='tool_call_no_result',
-            call_tools=['get_weather'],
+            id='tool_call_ag_ui_multiple',
+            call_tools=['get_weather', 'get_weather_parts'],
             runs=[
+                Run(
+                    messages=[  # pyright: ignore[reportArgumentType]
+                        UserMessage(
+                            id='msg_1',
+                            role=Role.USER.value,
+                            content='Please call get_weather and get_weather_parts for Paris',
+                        ),
+                    ],
+                    tools=[get_weather(), get_weather('get_weather_parts')],
+                ),
                 Run(
                     messages=[  # pyright: ignore[reportArgumentType]
                         UserMessage(
@@ -421,8 +440,48 @@ def tc_parameters() -> list[AdapterRunTest]:
                             role=Role.USER.value,
                             content='Please call get_weather for Paris',
                         ),
+                        AssistantMessage(
+                            id='msg_2',
+                            role=Role.ASSISTANT.value,
+                            tool_calls=[
+                                ToolCall(
+                                    id='pyd_ai_00000000000000000000000000000003',
+                                    type='function',
+                                    function=FunctionCall(
+                                        name='get_weather',
+                                        arguments='{"location": "Paris"}',
+                                    ),
+                                ),
+                            ],
+                        ),
+                        ToolMessage(
+                            id='msg_3',
+                            role=Role.TOOL.value,
+                            content='Tool result',
+                            tool_call_id='pyd_ai_00000000000000000000000000000003',
+                        ),
+                        AssistantMessage(
+                            id='msg_4',
+                            role=Role.ASSISTANT.value,
+                            tool_calls=[
+                                ToolCall(
+                                    id='pyd_ai_00000000000000000000000000000003',
+                                    type='function',
+                                    function=FunctionCall(
+                                        name='get_weather_parts',
+                                        arguments='{"location": "Paris"}',
+                                    ),
+                                ),
+                            ],
+                        ),
+                        ToolMessage(
+                            id='msg_5',
+                            role=Role.TOOL.value,
+                            content='Tool result',
+                            tool_call_id='pyd_ai_00000000000000000000000000000003',
+                        ),
                     ],
-                    tools=[get_weather()],
+                    tools=[get_weather(), get_weather('get_weather_parts')],
                 ),
             ],
             expected_events=[
@@ -430,10 +489,76 @@ def tc_parameters() -> list[AdapterRunTest]:
                 '{"type":"TOOL_CALL_START","toolCallId":"pyd_ai_00000000000000000000000000000003","toolCallName":"get_weather"}',
                 '{"type":"TOOL_CALL_END","toolCallId":"pyd_ai_00000000000000000000000000000003"}',
                 '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000005"}',
+                '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000006","role":"assistant"}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000006","delta":"{\\"get_weather\\":\\"Tool "}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000006","delta":"result\\",\\"get_weather_parts\\":\\"Tool "}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000006","delta":"result\\"}"}',
+                '{"type":"TEXT_MESSAGE_END","messageId":"00000000-0000-0000-0000-000000000006"}',
+                '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000005"}',
             ],
         ),
         AdapterRunTest(
-            id='tool_single_event',
+            id='tool_call_ag_ui_parts',
+            call_tools=['get_weather_parts'],
+            runs=[
+                Run(
+                    messages=[  # pyright: ignore[reportArgumentType]
+                        UserMessage(
+                            id='msg_1',
+                            role=Role.USER.value,
+                            content='Please call get_weather_parts for Paris',
+                        ),
+                    ],
+                    tools=[get_weather('get_weather_parts')],
+                ),
+                Run(
+                    messages=[  # pyright: ignore[reportArgumentType]
+                        UserMessage(
+                            id='msg_1',
+                            role=Role.USER.value,
+                            content='Please call get_weather_parts for Paris',
+                        ),
+                        AssistantMessage(
+                            id='msg_2',
+                            role=Role.ASSISTANT.value,
+                            tool_calls=[
+                                ToolCall(
+                                    id='pyd_ai_00000000000000000000000000000003',
+                                    type='function',
+                                    function=FunctionCall(
+                                        name='get_weather_parts',
+                                        arguments='{"location": "Paris"}',
+                                    ),
+                                ),
+                            ],
+                        ),
+                        ToolMessage(
+                            id='msg_3',
+                            role=Role.TOOL.value,
+                            content='Tool result',
+                            tool_call_id='pyd_ai_00000000000000000000000000000003',
+                        ),
+                    ],
+                    tools=[get_weather('get_weather_parts')],
+                ),
+            ],
+            expected_events=[
+                '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"TOOL_CALL_START","toolCallId":"pyd_ai_00000000000000000000000000000003","toolCallName":"get_weather_parts"}',
+                '{"type":"TOOL_CALL_ARGS","toolCallId":"pyd_ai_00000000000000000000000000000003","delta":"{\\"location\\":\\"a\\"}"}',
+                '{"type":"TOOL_CALL_END","toolCallId":"pyd_ai_00000000000000000000000000000003"}',
+                '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000004"}',
+                '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000005","role":"assistant"}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000005","delta":"{\\"get_weather_parts\\":\\"Tool "}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000005","delta":"result\\"}"}',
+                '{"type":"TEXT_MESSAGE_END","messageId":"00000000-0000-0000-0000-000000000005"}',
+                '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000004"}',
+            ],
+        ),
+        AdapterRunTest(
+            id='tool_local_single_event',
             call_tools=['send_snapshot'],
             runs=[
                 Run(
@@ -457,7 +582,7 @@ def tc_parameters() -> list[AdapterRunTest]:
             ],
         ),
         AdapterRunTest(
-            id='tool_multiple_events',
+            id='tool_local_multiple_events',
             call_tools=['send_custom'],
             runs=[
                 Run(
@@ -477,6 +602,29 @@ def tc_parameters() -> list[AdapterRunTest]:
                 '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000004","role":"assistant"}',
                 '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000004","delta":"{\\"send_custom\\":[{\\"type\\":\\"CUSTOM\\",\\"timestamp\\":null,\\"rawEvent\\":null,\\"name\\":\\"custom_event1\\",\\"value\\":{\\"key1\\":\\"va"}',
                 '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000004","delta":"lue1\\"}},{\\"type\\":\\"CUSTOM\\",\\"timestamp\\":null,\\"rawEvent\\":null,\\"name\\":\\"custom_event2\\",\\"value\\":{\\"key2\\":\\"value2\\"}}]}"}',
+                '{"type":"TEXT_MESSAGE_END","messageId":"00000000-0000-0000-0000-000000000004"}',
+                '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+            ],
+        ),
+        AdapterRunTest(
+            id='tool_local_parts',
+            call_tools=['current_time'],
+            runs=[
+                Run(
+                    messages=[  # pyright: ignore[reportArgumentType]
+                        UserMessage(
+                            id='msg_1',
+                            role=Role.USER.value,
+                            content='Please call current_time',
+                        ),
+                    ],
+                ),
+            ],
+            expected_events=[
+                '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000004","role":"assistant"}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000004","delta":"{\\"current_time\\":\\"21T1"}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000004","delta":"2:08:45.485981+00:00\\"}"}',
                 '{"type":"TEXT_MESSAGE_END","messageId":"00000000-0000-0000-0000-000000000004"}',
                 '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
             ],

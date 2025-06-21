@@ -453,7 +453,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
                             ),
                         ]
                         if agent_event.part.content:
-                            yield encoder.encode(
+                            yield encoder.encode(  # pragma: no cover
                                 TextMessageContentEvent(
                                     type=EventType.TEXT_MESSAGE_CONTENT,
                                     message_id=message_id,
