@@ -77,7 +77,6 @@ if TYPE_CHECKING:
 
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
-_LOGGER.setLevel(logging.DEBUG)
 
 
 @dataclass(repr=False)
@@ -105,12 +104,9 @@ class _RequestStreamContext:
 class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
     """An agent adapter providing AG-UI protocol support for PydanticAI agents.
 
-    This class manages the agent runs, tool calls, and provides an adapter
-    for running agents with Server-Sent Event (SSE) streaming responses using
-    the AG-UI protocol.
-
-    It supports multiple threads and runs, allowing for concurrent agent
-    execution and tool calls.
+    This class manages the agent runs, tool calls, state storage and providing
+    an adapter for running agents with Server-Sent Event (SSE) streaming
+    responses using the AG-UI protocol.
 
     Example:
 
@@ -143,8 +139,8 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
                 media_type=SSE_CONTENT_TYPE,
             )
 
-    PydanticAI Tools which return AG-UI events will be sent to the client
-    as part of the event stream, single events and iterables of events are
+    PydanticAI tools which return AG-UI events will be sent to the client
+    as part of the event stream, single events and event iterables are
     supported.
 
     Examples:
@@ -296,8 +292,9 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
         Yields:
             AG-UI Server-Sent Events (SSE).
         """
-        # TODO(steve): Determine how to handle when we have multiple parts. Currently
-        # AG-UI only seems to support a single tool call per request.
+        # TODO(steve): Determine how to handle multiple parts. Currently
+        # AG-UI only supports a single tool call per request, but that
+        # may change in the future.
         part: ModelRequestPart
         for part in parts:
             if not isinstance(part, ToolReturnPart):
@@ -323,9 +320,9 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
     def _convert_tools(self, run_tools: list[ToolAGUI]) -> list[Tool[AgentDepsT]]:
         """Convert AG-UI tools to PydanticAI tools.
 
-        Creates placeholder Tool objects from AG-UI tool definitions. These tools
-        don't actually execute anything - they just provide the necessary tool
-        definitions and names for the PydanticAI agent.
+        Creates `Tool` objects from AG-UI tool definitions. These tools don't
+        actually execute anything, that is done by AG-UI client - they just
+        provide the necessary tool definitions to PydanticAI agent.
 
         Args:
             run_tools: List of AG-UI tool definitions to convert.
@@ -342,7 +339,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
             tool: The AG-UI tool definition to convert.
 
         Returns:
-            A PydanticAI Tool object that calls the AG-UI tool.
+            A PydanticAI `Tool` object that calls the AG-UI tool.
         """
 
         def _tool_stub(*args: Any, **kwargs: Any) -> ToolResult:
@@ -352,7 +349,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
                 Never returns as it always raises an exception.
 
             Raises:
-                UnexpectedToolCallError: Always raised since this is a stub.
+                UnexpectedToolCallError: Always raised since this should never be called.
             """
             raise UnexpectedToolCallError(tool_name=tool.name)  # pragma: no cover
 
@@ -521,13 +518,13 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
 
 
 def _convert_history(messages: list[Message]) -> list[ModelMessage]:
-    """Convert a list of AG-UI history to a PydanticAI one.
+    """Convert a AG-UI history to a PydanticAI one.
 
     Args:
-        messages: List of `ag_ui.Message` to convert.
+        messages: List of AG-UI messages to convert.
 
     Returns:
-        List of `ModelMessage` compatible with PydanticAI.
+        List of PydanticAI model messages.
     """
     msg: Message
     result: list[ModelMessage] = []

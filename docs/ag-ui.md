@@ -3,7 +3,7 @@
 The [Agent User Interaction (AG-UI) Protocol](https://docs.ag-ui.com/introduction)
 is an open standard introduced by the
 [CopilotKit](https://webflow.copilotkit.ai/blog/introducing-ag-ui-the-protocol-where-agents-meet-users)
-team that standardises how front-end applications connect to AI agents through
+team that standardises how frontend applications connect to AI agents through
 an open protocol. Think of it as a universal translator for AI-driven systems
 no matter what language an agent speaks: AG-UI ensures fluent communication.
 
@@ -11,8 +11,10 @@ The team at [Rocket Science](https://www.rocketscience.gg/), contributed the
 [adapter-ag-ui](#adapter-ag-ui) library to make it easy to implement the AG-UI
 protocol with PydanticAI agents.
 
-This also includes a convenience method that expose PydanticAI agents as AG-UI
-servers - let's have a quick look at how to use it:
+This also includes a convenience method that exposes PydanticAI agents as an
+AG-UI server, which can then be used by as part of a
+[fastapi](https://fastapi.tiangolo.com/) app. Let's have a quick look at how to
+use it:
 
 ```py {title="agent_to_ag_ui.py" py="3.10" hl_lines="17-27"}
 """Basic example for AG-UI with FastAPI and Pydantic AI."""
@@ -53,10 +55,16 @@ uvicorn agent_to_ag_ui:app --host 0.0.0.0 --port 8000
 This will expose the agent as an AG-UI server, and you can start sending
 requests to it.
 
-## Adapter AG UI
+## AG-UI Adapter
 
-[AdapterAGUI][adapter_ag_ui.AdapterAGUI]is an adapter between PydanticAI agents
-and the AG-UI protocol written in Python.
+The [AdapterAGUI][adapter_ag_ui.AdapterAGUI] class is an adapter between
+PydanticAI agents and the AG-UI protocol written in Python. It provides support
+for all aspects of spec including:
+
+- [Events](https://docs.ag-ui.com/concepts/events)
+- [Messages](https://docs.ag-ui.com/concepts/messages)
+- [State Management](https://docs.ag-ui.com/concepts/state)
+- [Tools](https://docs.ag-ui.com/concepts/tools)
 
 ### Design
 
@@ -64,9 +72,10 @@ The adapter receives messages in the form of a
 [`RunAgentInput`](https://docs.ag-ui.com/sdk/js/core/types#runagentinput)
 which describes the details of a request being passed to the agent including
 messages and state. These are then converted to PydanticAI types, passed to the
-provided agent which then process the request. Results from the agent are
-converted from PydanticAI types to AG-UI events and streamed back to the caller
-as Server-Sent Events (SSE).
+agent which then process the request.
+
+Results from the agent are converted from PydanticAI types to AG-UI events and
+streamed back to the caller as Server-Sent Events (SSE).
 
 A user request may require multiple round trips between client UI and PydanticAI
 server, depending on the tools and events needed.

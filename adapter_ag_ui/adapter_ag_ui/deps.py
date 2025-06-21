@@ -9,11 +9,21 @@ from pydantic import BaseModel, ValidationError
 from ._exceptions import InvalidStateError
 
 StateT = TypeVar('StateT', bound=BaseModel, contravariant=True)
+"""Type variable for the state type, which must be a subclass of `BaseModel`."""
 
 
 @dataclass(kw_only=True)
 class StateDeps(Generic[StateT]):
-    """Provides AG-UI state management."""
+    """Provides AG-UI state management.
+
+    This class is used to manage the state of an agent run. It allows setting
+    the state of the agent run with a specific type of state model, which must
+    be a subclass of `BaseModel`.
+
+    The state is set using the `set_state` when the run starts by the `AdapterAGUI`.
+
+    Implements the `StateHandler` protocol.
+    """
 
     state_type: type[StateT]
     state: StateT = field(init=False)
