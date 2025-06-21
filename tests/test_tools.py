@@ -16,8 +16,10 @@ from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import ToolOutput
+from pydantic_ai.output import PendingToolCalls, ToolOutput
 from pydantic_ai.tools import ToolDefinition
+
+from .conftest import IsStr
 
 
 def test_tool_no_ctx():
@@ -106,6 +108,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
     keys = list(json_schema.keys())
@@ -142,6 +145,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -181,6 +185,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -220,6 +225,7 @@ def test_google_style_with_returns():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -257,6 +263,7 @@ def test_sphinx_style_with_returns():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -300,6 +307,7 @@ def test_numpy_style_with_returns():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -331,6 +339,7 @@ def test_only_returns_type():
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -353,6 +362,7 @@ def test_docstring_unknown():
             'parameters_json_schema': {'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -393,6 +403,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -426,6 +437,7 @@ def test_takes_just_model():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -468,6 +480,7 @@ def test_takes_model_and_int():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -807,6 +820,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'outer_typed_dict_key': None,
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -876,6 +890,7 @@ def test_json_schema_required_parameters(set_event_loop: None):
                     'type': 'object',
                 },
                 'strict': None,
+                'kind': 'function',
             },
             {
                 'description': '',
@@ -888,6 +903,7 @@ def test_json_schema_required_parameters(set_event_loop: None):
                     'type': 'object',
                 },
                 'strict': None,
+                'kind': 'function',
             },
         ]
     )
@@ -972,6 +988,7 @@ def test_schema_generator():
                     'type': 'object',
                 },
                 'strict': None,
+                'kind': 'function',
             },
             {
                 'description': '',
@@ -982,6 +999,7 @@ def test_schema_generator():
                     'type': 'object',
                 },
                 'strict': None,
+                'kind': 'function',
             },
         ]
     )
@@ -1017,6 +1035,7 @@ def test_tool_parameters_with_attribute_docstrings():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -1159,3 +1178,34 @@ def test_tool_retries():
     assert prepare_tools_retries == [0, 0, 1, 2, 3, 4, 5]
     assert prepare_retries == [0, 0, 1, 2, 3, 4, 5]
     assert call_retries == [0, 1, 2, 3, 4, 5]
+
+
+def test_pending_tool():
+    agent = Agent(TestModel(), output_type=[str, PendingToolCalls])
+
+    async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        return replace(tool_def, kind='pending')
+
+    @agent.tool_plain(prepare=prepare_tool)
+    def my_tool(x: int) -> int:
+        return x + 1
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        PendingToolCalls(
+            tool_calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+            tool_defs={
+                'my_tool': ToolDefinition(
+                    name='my_tool',
+                    description='',
+                    parameters_json_schema={
+                        'additionalProperties': False,
+                        'properties': {'x': {'type': 'integer'}},
+                        'required': ['x'],
+                        'type': 'object',
+                    },
+                    kind='pending',
+                )
+            },
+        )
+    )

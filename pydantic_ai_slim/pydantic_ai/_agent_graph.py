@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import hashlib
 import json
+from collections import defaultdict
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -16,14 +17,14 @@ from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._utils import is_async_callable, run_in_executor
-from pydantic_ai.toolset import CombinedToolset, RunToolset
+from pydantic_ai.toolset import AbstractToolset, CombinedToolset, RunToolset
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
-from .output import OutputDataT, OutputSpec
+from .output import OutputDataT, OutputSpec, PendingToolCalls
 from .settings import ModelSettings, merge_model_settings
-from .tools import RunContext
+from .tools import RunContext, ToolDefinition, ToolKind
 
 if TYPE_CHECKING:
     pass
@@ -397,7 +398,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     _next_node: ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]] | None = field(
         default=None, repr=False
     )
-    _tool_responses: list[_messages.ModelRequestPart] = field(default_factory=list, repr=False)
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -474,49 +474,111 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         async for event in self._events_iterator:
             yield event
 
-    async def _handle_tool_calls(
+    async def _handle_tool_calls(  # noqa: C901
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         tool_calls: list[_messages.ToolCallPart],
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
-        output_schema = ctx.deps.output_schema
         run_context = build_run_context(ctx)
 
         final_result: result.FinalResult[NodeRunEndT] | None = None
         parts: list[_messages.ModelRequestPart] = []
 
-        # TODO: Can we make output tools a toolset? How does CallToolsNode know the result is final, and not be sent back?
+        toolset = await CombinedToolset([ctx.deps.toolset, ctx.deps.output_toolset]).prepare_for_run(run_context)
+
+        unknown_calls: list[_messages.ToolCallPart] = []
+        tool_calls_by_kind: dict[ToolKind, list[_messages.ToolCallPart]] = defaultdict(list)
+        # TODO: Make Toolset.tool_defs a dict
+        tool_defs_by_name: dict[str, ToolDefinition] = {tool_def.name: tool_def for tool_def in toolset.tool_defs}
+        for call in tool_calls:
+            try:
+                tool_def = tool_defs_by_name[call.tool_name]
+                tool_calls_by_kind[tool_def.kind].append(call)
+            except KeyError:
+                unknown_calls.append(call)
+
         # first, look for the output tool call
-        if isinstance(output_schema, _output.ToolOutputSchema):
-            for call, output_tool in output_schema.find_tool(tool_calls):
+        for call in tool_calls_by_kind['output']:
+            if final_result:
+                part = _messages.ToolReturnPart(
+                    tool_name=call.tool_name,
+                    content='Output tool not used - a final result was already processed.',
+                    tool_call_id=call.tool_call_id,
+                )
+                parts.append(part)
+            else:
                 try:
-                    result_data = await output_tool.process(call, run_context)
-                    result_data = await _validate_output(result_data, ctx, call)
+                    result_data = await _call_tool(toolset, call, run_context)
                 except _output.ToolRetryError as e:
-                    # TODO: Should only increment retry stuff once per node execution, not for each tool call
-                    #   Also, should increment the tool-specific retry count rather than the run retry count
-                    ctx.state.increment_retries(ctx.deps.max_result_retries, e)
                     parts.append(e.tool_retry)
                 else:
+                    part = _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content='Final result processed.',
+                        tool_call_id=call.tool_call_id,
+                    )
+                    parts.append(part)
                     final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
-                    break
 
         # Then build the other request parts based on end strategy
-        tool_responses: list[_messages.ModelRequestPart] = self._tool_responses
-        async for event in process_function_tools(
-            tool_calls,
-            final_result and final_result.tool_name,
-            final_result and final_result.tool_call_id,
-            ctx,
-            tool_responses,
-        ):
-            yield event
+        if final_result and ctx.deps.end_strategy == 'early':
+            for call in tool_calls_by_kind['function']:
+                parts.append(
+                    _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content='Tool not executed - a final result was already processed.',
+                        tool_call_id=call.tool_call_id,
+                    )
+                )
+        else:
+            async for event in process_function_tools(
+                toolset,
+                tool_calls_by_kind['function'],
+                ctx,
+                parts,
+            ):
+                yield event
+
+        if unknown_calls:
+            ctx.state.increment_retries(ctx.deps.max_result_retries)
+            async for event in process_function_tools(
+                toolset,
+                unknown_calls,
+                ctx,
+                parts,
+            ):
+                yield event
+
+        pending_calls: list[_messages.ToolCallPart] = []
+        for call in tool_calls_by_kind['pending']:
+            if final_result:
+                parts.append(
+                    _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content='Tool not executed - a final result was already processed.',
+                        tool_call_id=call.tool_call_id,
+                    )
+                )
+            else:
+                yield _messages.FunctionToolCallEvent(call)
+                pending_calls.append(call)
+
+        if pending_calls:
+            if not ctx.deps.output_schema.pending_tool_calls:
+                raise exceptions.UserError(
+                    'There are pending tool calls but PendingToolCalls is not among output types.'
+                )
+
+            pending_tool_names = [call.tool_name for call in pending_calls]
+            pending_tool_defs = {
+                tool_def.name: tool_def for tool_def in toolset.tool_defs if tool_def.name in pending_tool_names
+            }
+            output_data = cast(NodeRunEndT, PendingToolCalls(pending_calls, pending_tool_defs))
+            final_result = result.FinalResult(output_data)
 
         if final_result:
-            self._next_node = self._handle_final_result(ctx, final_result, tool_responses)
+            self._next_node = self._handle_final_result(ctx, final_result, parts)
         else:
-            if tool_responses:
-                parts.extend(tool_responses)
             instructions = await ctx.deps.get_instructions(run_context)
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                 _messages.ModelRequest(parts=parts, instructions=instructions)
@@ -581,10 +643,9 @@ def multi_modal_content_identifier(identifier: str | bytes) -> str:
     return hashlib.sha1(identifier).hexdigest()[:6]
 
 
-async def process_function_tools(  # noqa C901
+async def process_function_tools(
+    toolset: AbstractToolset[DepsT],
     tool_calls: list[_messages.ToolCallPart],
-    output_tool_name: str | None,
-    output_tool_call_id: str | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
@@ -594,68 +655,15 @@ async def process_function_tools(  # noqa C901
 
     Because async iterators can't have return values, we use `output_parts` as an output argument.
     """
-    stub_function_tools = bool(output_tool_name) and ctx.deps.end_strategy == 'early'
-    output_schema = ctx.deps.output_schema
-
-    # we rely on the fact that if we found a result, it's the first output tool in the last
-    found_used_output_tool = False
+    run_context = build_run_context(ctx)
 
     calls_to_run: list[_messages.ToolCallPart] = []
     call_index_to_event_id: dict[int, str] = {}
     for call in tool_calls:
-        if (
-            call.tool_name == output_tool_name
-            and call.tool_call_id == output_tool_call_id
-            and not found_used_output_tool
-        ):
-            found_used_output_tool = True
-            output_parts.append(
-                _messages.ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content='Final result processed.',
-                    tool_call_id=call.tool_call_id,
-                )
-            )
-        elif call.tool_name in output_schema.tools:  # TODO: Check on toolset?
-            # if tool_name is in output_schema, it means we found a output tool but an error occurred in
-            # validation, we don't add another part here
-            if output_tool_name is not None:
-                yield _messages.FunctionToolCallEvent(call)
-                if found_used_output_tool:
-                    content = 'Output tool not used - a final result was already processed.'
-                else:
-                    # TODO: Include information about the validation failure, and/or merge this with the ModelRetry part
-                    content = 'Output tool not used - result failed validation.'
-                part = _messages.ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content=content,
-                    tool_call_id=call.tool_call_id,
-                )
-                yield _messages.FunctionToolResultEvent(part, tool_call_id=call.tool_call_id)
-                output_parts.append(part)
-        elif call.tool_name in ctx.deps.toolset.tool_names:
-            if stub_function_tools:
-                output_parts.append(
-                    _messages.ToolReturnPart(
-                        tool_name=call.tool_name,
-                        content='Tool not executed - a final result was already processed.',
-                        tool_call_id=call.tool_call_id,
-                    )
-                )
-            else:
-                event = _messages.FunctionToolCallEvent(call)
-                yield event
-                call_index_to_event_id[len(calls_to_run)] = event.call_id
-                calls_to_run.append(call)
-        else:
-            yield _messages.FunctionToolCallEvent(call)
-
-            part = await _unknown_tool(call.tool_name, call.tool_call_id, ctx)
-            yield _messages.FunctionToolResultEvent(part, tool_call_id=call.tool_call_id)
-            output_parts.append(part)
-
-    if not calls_to_run:
-        return
+        event = _messages.FunctionToolCallEvent(call)
+        yield event
+        call_index_to_event_id[len(calls_to_run)] = event.call_id
+        calls_to_run.append(call)
 
     user_parts: list[_messages.UserPromptPart] = []
 
@@ -669,7 +677,7 @@ async def process_function_tools(  # noqa C901
         },
     ):
         tasks = [
-            asyncio.create_task(_execute_tool_call(call, ctx, ctx.deps.tracer), name=call.tool_name)
+            asyncio.create_task(_call_function_tool(toolset, call, run_context, ctx.deps.tracer), name=call.tool_name)
             for call in calls_to_run
         ]
 
@@ -721,9 +729,10 @@ async def process_function_tools(  # noqa C901
     output_parts.extend(user_parts)
 
 
-async def _execute_tool_call(
+async def _call_function_tool(
+    toolset: AbstractToolset[DepsT],
     tool_call: _messages.ToolCallPart,
-    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    run_context: RunContext[DepsT],
     tracer: Tracer,
 ) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
     """Run the tool function asynchronously.
@@ -749,57 +758,43 @@ async def _execute_tool_call(
         ),
     }
 
-    run_context = build_run_context(ctx)
-    toolset = ctx.deps.toolset
     with tracer.start_as_current_span('running tool', attributes=span_attributes):
-        run_context = dataclasses.replace(run_context, tool_call_id=tool_call.tool_call_id)
-
         try:
-            args_dict = toolset.validate_tool_args(run_context, tool_call.tool_name, tool_call.args)
-        except ValidationError as e:
-            return _messages.RetryPromptPart(
+            response_content = await _call_tool(toolset, tool_call, run_context)
+        except _output.ToolRetryError as e:
+            return e.tool_retry
+        else:
+            return _messages.ToolReturnPart(
+                tool_name=tool_call.tool_name,
+                content=response_content,
+                tool_call_id=tool_call.tool_call_id,
+            )
+
+
+async def _call_tool(
+    toolset: AbstractToolset[DepsT], tool_call: _messages.ToolCallPart, run_context: RunContext[DepsT]
+) -> Any:
+    run_context = dataclasses.replace(run_context, tool_call_id=tool_call.tool_call_id)
+
+    try:
+        args_dict = toolset.validate_tool_args(run_context, tool_call.tool_name, tool_call.args)
+        response_content = await toolset.call_tool(run_context, tool_call.tool_name, args_dict)
+    except (ValidationError, exceptions.ModelRetry) as e:
+        if isinstance(e, ValidationError):
+            m = _messages.RetryPromptPart(
                 tool_name=tool_call.tool_name,
                 content=e.errors(include_url=False, include_context=False),
                 tool_call_id=tool_call.tool_call_id,
             )
-        try:
-            response_content = await toolset.call_tool(run_context, tool_call.tool_name, args_dict)
-        except exceptions.ModelRetry as e:
-            return _messages.RetryPromptPart(
+        else:
+            m = _messages.RetryPromptPart(
                 tool_name=tool_call.tool_name,
                 content=e.message,
                 tool_call_id=tool_call.tool_call_id,
             )
+        raise _output.ToolRetryError(m)
 
-        return _messages.ToolReturnPart(
-            tool_name=tool_call.tool_name,
-            content=response_content,
-            tool_call_id=tool_call.tool_call_id,
-        )
-
-
-async def _unknown_tool(
-    tool_name: str,
-    tool_call_id: str,
-    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-) -> _messages.RetryPromptPart:
-    ctx.state.increment_retries(ctx.deps.max_result_retries)
-
-    tool_names = [
-        *ctx.deps.toolset.tool_names,
-        *ctx.deps.output_toolset.tool_names,
-    ]
-
-    if tool_names:
-        msg = f'Available tools: {", ".join(tool_names)}'
-    else:
-        msg = 'No tools available.'
-
-    return _messages.RetryPromptPart(
-        tool_name=tool_name,
-        tool_call_id=tool_call_id,
-        content=f'Unknown tool name: {tool_name!r}. {msg}',
-    )
+    return response_content
 
 
 async def _validate_output(

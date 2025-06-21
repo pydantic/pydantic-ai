@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Literal, Union
 
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
@@ -324,6 +324,9 @@ This type is used to define tools parameters (aka arguments) in [ToolDefinition]
 With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `extra_parts=Any`
 """
 
+ToolKind: TypeAlias = Literal['function', 'output', 'pending']
+"""Kind of tool."""
+
 
 @dataclass(repr=False)
 class ToolDefinition:
@@ -358,5 +361,8 @@ class ToolDefinition:
 
     Note: this is currently only supported by OpenAI models.
     """
+
+    kind: ToolKind = field(default='function')
+    """The kind of tool."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr

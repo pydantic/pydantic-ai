@@ -651,9 +651,16 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         output_type_ = output_type or self.output_type
 
+        # We consider it a user error if a user tries to restrict the result type while having an output validator that
+        # may change the result type from the restricted type to something else. Therefore, we consider the following
+        # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
+        output_validators = cast(list[_output.OutputValidator[AgentDepsT, RunOutputDataT]], self._output_validators)
+
         output_toolset = self._output_toolset
-        if output_schema != self._output_schema:
-            output_toolset = OutputToolset[AgentDepsT](output_schema, max_retries=self._max_result_retries)
+        if output_schema != self._output_schema or output_validators:
+            output_toolset = OutputToolset[AgentDepsT](
+                output_schema, max_retries=self._max_result_retries, output_validators=output_validators
+            )
 
         # Build the graph
         graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (
@@ -683,11 +690,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         # This will raise errors for any name conflicts
         CombinedToolset([run_output_toolset, run_toolset])
-
-        # We consider it a user error if a user tries to restrict the result type while having an output validator that
-        # may change the result type from the restricted type to something else. Therefore, we consider the following
-        # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
-        output_validators = cast(list[_output.OutputValidator[AgentDepsT, RunOutputDataT]], self._output_validators)
 
         model_settings = merge_model_settings(self.model_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
@@ -1069,10 +1071,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                 ]
 
                                 parts: list[_messages.ModelRequestPart] = []
+                                # TODO: Make this work again. We may have pulled too much out of process_function_tools :)
                                 async for _event in _agent_graph.process_function_tools(
+                                    graph_ctx.deps.toolset,
                                     tool_calls,
-                                    final_result_details.tool_name,
-                                    final_result_details.tool_call_id,
                                     graph_ctx,
                                     parts,
                                 ):

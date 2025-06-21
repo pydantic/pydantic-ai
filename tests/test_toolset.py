@@ -80,7 +80,7 @@ async def test_function_toolset_prepare_for_run():
             )
         ]
     )
-    assert await foo_toolset.call_tool(foo_context, 'add', {'a': 1, 'b': 2}) == 3
+    assert await foo_toolset.call_tool(foo_context, 'foo_add', {'a': 1, 'b': 2}) == 3
 
     @toolset.tool
     def subtract(a: int, b: int) -> int:
@@ -116,7 +116,7 @@ async def test_function_toolset_prepare_for_run():
             ),
         ]
     )
-    assert await bar_toolset.call_tool(bar_context, 'add', {'a': 1, 'b': 2}) == 3
+    assert await bar_toolset.call_tool(bar_context, 'bar_add', {'a': 1, 'b': 2}) == 3
 
     bar_foo_toolset = await foo_toolset.prepare_for_run(bar_context)
     assert bar_foo_toolset == bar_toolset

@@ -393,6 +393,7 @@ def test_response_tuple():
                     'type': 'object',
                 },
                 outer_typed_dict_key='response',
+                kind='output',
             )
         ]
     )
@@ -466,6 +467,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
                     'title': 'Foo',
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -545,6 +547,7 @@ class Bar(BaseModel):
                     'title': 'Foo',
                     'type': 'object',
                 },
+                kind='output',
             ),
             ToolDefinition(
                 name='final_result_Bar',
@@ -555,6 +558,7 @@ class Bar(BaseModel):
                     'title': 'Bar',
                     'type': 'object',
                 },
+                kind='output',
             ),
         ]
     )
@@ -586,6 +590,7 @@ def test_output_type_with_two_descriptions():
                     'title': 'MyOutput',
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -632,6 +637,7 @@ def test_output_type_tool_output_union():
                 },
                 outer_typed_dict_key='response',
                 strict=False,
+                kind='output',
             )
         ]
     )
@@ -670,6 +676,7 @@ def test_output_type_function():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -709,6 +716,7 @@ def test_output_type_function_with_run_context():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -749,6 +757,7 @@ def test_output_type_bound_instance_method():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -790,6 +799,7 @@ def test_output_type_bound_instance_method_with_run_context():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -986,6 +996,7 @@ def test_output_type_async_function():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -1024,6 +1035,7 @@ def test_output_type_function_with_custom_tool_name():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -1062,6 +1074,7 @@ def test_output_type_function_or_model():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             ),
             ToolDefinition(
                 name='final_result_Weather',
@@ -1072,6 +1085,7 @@ def test_output_type_function_or_model():
                     'title': 'Weather',
                     'type': 'object',
                 },
+                kind='output',
             ),
         ]
     )
@@ -1248,6 +1262,7 @@ def test_output_type_multiple_custom_tools():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             ),
             ToolDefinition(
                 name='return_weather',
@@ -1258,6 +1273,7 @@ def test_output_type_multiple_custom_tools():
                     'title': 'Weather',
                     'type': 'object',
                 },
+                kind='output',
             ),
         ]
     )
@@ -2269,12 +2285,6 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
-                        RetryPromptPart(
-                            tool_name='unknown_tool',
-                            content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
-                            timestamp=IsNow(tz=timezone.utc),
-                            tool_call_id=IsStr(),
-                        ),
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content=42,
@@ -2283,6 +2293,12 @@ class TestMultipleToolCalls:
                         ),
                         ToolReturnPart(
                             tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        ),
+                        RetryPromptPart(
+                            content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
+                            tool_name='unknown_tool',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
                         ),
                     ]
                 ),
@@ -2347,16 +2363,16 @@ class TestMultipleToolCalls:
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='regular_tool',
-                            content='Tool not executed - a final result was already processed.',
-                            tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
-                        ),
-                        ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
                         ),
                         ToolReturnPart(
                             tool_name='another_tool',
@@ -2413,11 +2429,13 @@ class TestMultipleToolCalls:
         # Verify we got appropriate tool returns
         assert result.new_messages()[-1].parts == snapshot(
             [
-                ToolReturnPart(
+                RetryPromptPart(
+                    content=[
+                        {'type': 'missing', 'loc': ('value',), 'msg': 'Field required', 'input': {'bad_value': 'first'}}
+                    ],
                     tool_name='final_result',
                     tool_call_id='first',
-                    content='Output tool not used - result failed validation.',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsDatetime(),
                 ),
                 ToolReturnPart(
                     tool_name='final_result',

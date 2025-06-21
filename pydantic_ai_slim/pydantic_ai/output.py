@@ -8,8 +8,8 @@ from typing_extensions import TypeAliasType, TypeVar, get_args, get_origin
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
-from .messages import RetryPromptPart
-from .tools import RunContext
+from .messages import RetryPromptPart, ToolCallPart
+from .tools import RunContext, ToolDefinition
 
 OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
 """Covariant type variable for the result data type of a run."""
@@ -232,6 +232,14 @@ class TextOutput(Generic[OutputDataT]):
     output_function: TextOutputFunction[OutputDataT]
 
 
+@dataclass
+class PendingToolCalls:
+    """Output type for calls to tools defined as pending."""
+
+    tool_calls: list[ToolCallPart]
+    tool_defs: dict[str, ToolDefinition]
+
+
 def _get_union_args(tp: Any) -> tuple[Any, ...]:
     """Extract the arguments of a Union type if `output_type` is a union, otherwise return an empty tuple."""
     if typing_objects.is_typealiastype(tp):
@@ -266,15 +274,23 @@ OutputTypeOrFunction = TypeAliasType(
     'OutputTypeOrFunction', Union[type[T_co], Callable[..., Union[Awaitable[T_co], T_co]]], type_params=(T_co,)
 )
 
-OutputSpec = TypeAliasType(
-    'OutputSpec',
+OutputSpecItem = TypeAliasType(
+    'OutputSpecItem',
     Union[
         OutputTypeOrFunction[T_co],
         ToolOutput[T_co],
         ModelStructuredOutput[T_co],
         PromptedStructuredOutput[T_co],
         TextOutput[T_co],
-        Sequence[Union[OutputTypeOrFunction[T_co], ToolOutput[T_co], TextOutput[T_co]]],
+    ],
+    type_params=(T_co,),
+)
+
+OutputSpec = TypeAliasType(
+    'OutputSpec',
+    Union[
+        OutputSpecItem[T_co],
+        Sequence[OutputSpecItem[T_co]],
     ],
     type_params=(T_co,),
 )

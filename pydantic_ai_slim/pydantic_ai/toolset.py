@@ -7,14 +7,14 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
 from functools import partial
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, overload
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Protocol, overload
 
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic_core import SchemaValidator
 from typing_extensions import Never, Self
 
-from ._output import BaseOutputSchema
+from ._output import BaseOutputSchema, OutputValidator
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from .tools import (
@@ -74,13 +74,14 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         raise NotImplementedError()
 
     def validate_tool_args(
-        self, ctx: RunContext[AgentDepsT], name: str, args: str | dict[str, Any] | None
+        self, ctx: RunContext[AgentDepsT], name: str, args: str | dict[str, Any] | None, allow_partial: bool = False
     ) -> dict[str, Any]:
+        pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
         validator = self.get_tool_args_validator(ctx, name)
         if isinstance(args, str):
-            return validator.validate_json(args or '{}')
+            return validator.validate_json(args or '{}', allow_partial=pyd_allow_partial)
         else:
-            return validator.validate_python(args or {})
+            return validator.validate_python(args or {}, allow_partial=pyd_allow_partial)
 
     @abstractmethod
     def max_retries_for_tool(self, name: str) -> int:
@@ -290,15 +291,15 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     """A toolset that contains output tools."""
 
     output_schema: BaseOutputSchema[Any]
-    max_retries: int = field(default=1)
+    max_retries: int = field(default=1)  # TODO: Test this works
+    output_validators: list[OutputValidator[AgentDepsT, Any]] = field(default_factory=list)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
         return [tool.tool_def for tool in self.output_schema.tools.values()]
 
     def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        # TODO: Should never be called for an output tool?
-        return self.output_schema.tools[name].processor._validator  # pyright: ignore[reportPrivateUsage]
+        return self.output_schema.tools[name].processor.validator
 
     def max_retries_for_tool(self, name: str) -> int:
         return self.max_retries
@@ -306,8 +307,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     async def call_tool(
         self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
     ) -> Any:
-        # TODO: Should never be called for an output tool?
-        return await self.output_schema.tools[name].processor.process(tool_args, ctx)
+        output = await self.output_schema.tools[name].processor.call(tool_args, ctx)
+        for validator in self.output_validators:
+            output = await validator.validate(output, None, ctx, wrap_validation_errors=False)
+        return output
 
 
 @dataclass(init=False)
@@ -650,19 +653,23 @@ class RunToolset(WrapperToolset[AgentDepsT]):
         return self._tool_names
 
     def validate_tool_args(
-        self, ctx: RunContext[AgentDepsT], name: str, args: str | dict[str, Any] | None
+        self, ctx: RunContext[AgentDepsT], name: str, args: str | dict[str, Any] | None, allow_partial: bool = False
     ) -> dict[str, Any]:
-        ctx = replace(ctx, tool_name=name, retry=self._retries.get(name, 0))
         try:
-            return super().validate_tool_args(ctx, name, args)
+            self._validate_tool_name(name)
+
+            ctx = replace(ctx, tool_name=name, retry=self._retries.get(name, 0))
+            return super().validate_tool_args(ctx, name, args, allow_partial)
         except ValidationError as e:
             return self._on_error(name, e)
 
     async def call_tool(
         self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
     ) -> Any:
-        ctx = replace(ctx, tool_name=name, retry=self._retries.get(name, 0))
         try:
+            self._validate_tool_name(name)
+
+            ctx = replace(ctx, tool_name=name, retry=self._retries.get(name, 0))
             return await super().call_tool(ctx, name, tool_args, *args, **kwargs)
         except ModelRetry as e:
             return self._on_error(name, e)
@@ -675,3 +682,13 @@ class RunToolset(WrapperToolset[AgentDepsT]):
         else:
             self._retries[name] = current_retry + 1
             raise e
+
+    def _validate_tool_name(self, name: str) -> None:
+        if name in self.tool_names:
+            return
+
+        if self.tool_names:
+            msg = f'Available tools: {", ".join(self.tool_names)}'
+        else:
+            msg = 'No tools available.'
+        raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
