@@ -460,7 +460,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
                                     delta=agent_event.part.content,
                                 ),
                             )
-                    case ToolCallPart():
+                    case ToolCallPart():  # pragma: no branch
                         tool_name: str | None = tool_names.get(agent_event.part.tool_name)
                         if not tool_name:
                             stream_ctx.local_tool_calls.add(agent_event.part.tool_call_id)
@@ -496,7 +496,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
                                 delta=agent_event.delta.content_delta,
                             ),
                         )
-                    case ToolCallPartDelta():
+                    case ToolCallPartDelta():  # pragma: no branch
                         if agent_event.delta.tool_call_id in stream_ctx.local_tool_calls:
                             # Local tool calls are not sent to the UI.
                             return
