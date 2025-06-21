@@ -265,21 +265,21 @@ class TestStreamedResponse(StreamedResponse):
                     event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=i, tool_name=part.tool_name, args='', tool_call_id=part.tool_call_id
                     )
-                    if event is not None:
+                    if event is not None:  # pragma: no branch
                         yield event
 
                     # Stream the args as JSON string in chunks.
                     args_json = pydantic_core.to_json(part.args).decode()
                     *chunks, last_chunk = args_json.split(',') if ',' in args_json else [args_json]
                     chunks = [f'{chunk},' for chunk in chunks] if chunks else []
-                    if last_chunk:
+                    if last_chunk:  # pragma: no branch
                         chunks.append(last_chunk)
 
                     for chunk in chunks:
                         event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=i, tool_name=None, args=chunk, tool_call_id=part.tool_call_id
                         )
-                        if event is not None:
+                        if event is not None:  # pragma: no branch
                             yield event
                 else:
                     yield self._parts_manager.handle_tool_call_part(

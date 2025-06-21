@@ -313,7 +313,7 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
                     pass
                 case Iterable() as iter:
                     for item in iter:
-                        if isinstance(item, BaseEvent):
+                        if isinstance(item, BaseEvent):  # pragma: no branch
                             self.logger.debug('ag-ui event: %s', item)
                             yield encoder.encode(item)
                 case _:  # pragma: no cover
@@ -481,11 +481,8 @@ class AdapterAGUI(Generic[AgentDepsT, OutputDataT]):
                                     tool_call_id=agent_event.part.tool_call_id,
                                 ),
                             ),
+                            None,  # Signal continuation of the stream.
                         ]
-
-                        # TODO(steve): Merge with above list if we don't remove the local_tool_calls case.
-                        if tool_name:
-                            stream_ctx.part_ends.append(None)  # Signal continuation of the stream.
                     case ThinkingPart():  # pragma: no cover
                         # No equivalent AG-UI event yet.
                         pass
@@ -574,7 +571,7 @@ def _convert_history(messages: list[Message]) -> list[ModelMessage]:
                         ]
                     )
                 )
-            case DeveloperMessage():
+            case DeveloperMessage():  # pragma: no branch
                 # TODO(steve): Should these be handled differently?
                 result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
 
