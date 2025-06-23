@@ -62,6 +62,7 @@ nav:
       - examples/chat-app.md
       - examples/question-graph.md
   - API Reference:
+      - api/ag_ui.md
       - api/agent.md
       - api/tools.md
       - api/common_tools.md
@@ -102,7 +103,6 @@ nav:
       - api/pydantic_evals/otel.md
       - api/pydantic_evals/generation.md
       - api/fasta2a.md
-      - api/ag_ui.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
