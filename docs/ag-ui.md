@@ -12,9 +12,9 @@ The team at [Rocket Science](https://www.rocketscience.gg/), contributed the
 protocol with PydanticAI agents.
 
 This also includes an [`Agent.to_ag_ui`][pydantic_ai.Agent.to_ag_ui] convenience
-method which simplifies the creation of [`Adapter`][pydantic_ai.ag_ui.Adapter]
-for PydanticAI agents, which can then be used by as part of a
-[fastapi](https://fastapi.tiangolo.com/) app.
+method which simplifies the creation of [`FastAGUI`][pydantic_ai.ag_ui.FastAGUI]
+for PydanticAI agents, which is built on top of [Starlette](https://www.starlette.io/),
+meaning it's fully compatible with any ASGI server.
 
 ## AG-UI Adapter
 
@@ -27,8 +27,6 @@ for all aspects of spec including:
 - [State Management](https://docs.ag-ui.com/concepts/state)
 - [Tools](https://docs.ag-ui.com/concepts/tools)
 
-Let's have a quick look at how to use it:
-
 ### Installation
 
 The only dependencies are:
@@ -40,14 +38,14 @@ The only dependencies are:
 
 To run the examples you'll also need:
 
-- [fastapi](https://fastapi.tiangolo.com/): to provide ASGI compatible server
+- [uvicorn](https://www.uvicorn.org/) or another ASGI compatible server
 
 ```bash
-pip/uv-add 'fastapi'
+pip/uv-add 'uvicorn'
 ```
 
-You can install PydanticAI with the `ag-ui` extra to include
-[Adapter][pydantic_ai.ag_ui.Adapter] run:
+You can install PydanticAI with the `ag-ui` extra to ensure you have all the
+required AG-UI dependencies:
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[ag-ui]'
@@ -60,30 +58,10 @@ pip/uv-add 'pydantic-ai-slim[ag-ui]'
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
-
-from fastapi import FastAPI, Header
-from fastapi.responses import StreamingResponse
-from pydantic_ai.ag_ui import SSE_CONTENT_TYPE
-
 from pydantic_ai import Agent
 
-if TYPE_CHECKING:
-    from ag_ui.core import RunAgentInput
-
 agent = Agent('openai:gpt-4.1', instructions='Be fun!')
-adapter = agent.to_ag_ui()
-app = FastAPI(title='AG-UI Endpoint')
-
-
-@app.post('/')
-async def root(
-    input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_CONTENT_TYPE
-) -> StreamingResponse:
-    return StreamingResponse(
-        adapter.run(input_data, accept),
-        media_type=SSE_CONTENT_TYPE,
-    )
+app = agent.to_ag_ui()
 ```
 
 You can run the example with:
@@ -109,13 +87,16 @@ streamed back to the caller as Server-Sent Events (SSE).
 A user request may require multiple round trips between client UI and PydanticAI
 server, depending on the tools and events needed.
 
-[Adapter][pydantic_ai.ag_ui.Adapter] can be used with any ASGI server.
+In addition to the [Adapter][pydantic_ai.ag_ui.Adapter] there is also
+[FastAGUI][pydantic_ai.ag_ui.FastAGUI] which is slim wrapper around
+[Starlette](https://www.starlette.io/) providing easy access to run a PydanticAI
+server with AG-UI support with any ASGI server.
 
 ### Features
 
 To expose a PydanticAI agent as an AG-UI server including state support, you can
-use the [`to_ag_ui`][pydantic_ai.agent.Agent.to_ag_ui] method in combination
-with [fastapi](https://fastapi.tiangolo.com/).
+use the [`to_ag_ui`][pydantic_ai.agent.Agent.to_ag_ui] method create an ASGI
+compatible server.
 
 In the example below we have document state which is shared between the UI and
 server using the [`StateDeps`][pydantic_ai.ag_ui.StateDeps] which implements the
@@ -134,17 +115,10 @@ real-time synchronization between agents and frontend applications.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
-
-from fastapi import FastAPI, Header
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from pydantic_ai.ag_ui import SSE_CONTENT_TYPE, StateDeps
 
 from pydantic_ai import Agent
-
-if TYPE_CHECKING:
-    from ag_ui.core import RunAgentInput
+from pydantic_ai.ag_ui import StateDeps
 
 
 class DocumentState(BaseModel):
@@ -158,29 +132,27 @@ agent = Agent(
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
-adapter = agent.to_ag_ui()
-app = FastAPI(title='AG-UI Endpoint')
-
-
-@app.post('/')
-async def root(
-    input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_CONTENT_TYPE
-) -> StreamingResponse:
-    return StreamingResponse(
-        adapter.run(input_data, accept, deps=StateDeps(state_type=DocumentState)),
-        media_type=SSE_CONTENT_TYPE,
-    )
+app = agent.to_ag_ui(deps=StateDeps(state_type=DocumentState))
 ```
 
-Since `app` is an ASGI application, it can be used with any ASGI server.
+Since `app` is an ASGI application, it can be used with any ASGI server e.g.
 
 ```bash
 uvicorn agent_to_ag_ui:app --host 0.0.0.0 --port 8000
 ```
 
 Since the goal of [`to_ag_ui`][pydantic_ai.agent.Agent.to_ag_ui] is to be a
-convenience method, it accepts the same arguments as the
-[`Adapter`][pydantic_ai.ag_ui.Adapter] constructor.
+convenience method, it accepts the same a combination of the arguments require
+for:
+
+- [`Adapter`][pydantic_ai.ag_ui.Adapter] constructor
+- [`Agent.iter`][pydantic_ai.agent.Agent.iter] method
+
+If you want more control you can either use
+[`agent_to_ag_ui`][pydantic_ai.ag_ui.agent_to_ag_ui] helper method or create
+and [`Agent`][pydantic_ai.ag_ui.Agent] directly which also provide
+the ability to customise [`Starlette`](https://www.starlette.io/applications/#starlette.applications.Starlette)
+options.
 
 #### Tools
 
@@ -200,18 +172,16 @@ for custom events and state updates.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING
 
 from ag_ui.core import CustomEvent, EventType, StateSnapshotEvent
-from fastapi import FastAPI, Header
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from pydantic_ai.ag_ui import SSE_CONTENT_TYPE, StateDeps
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.ag_ui import StateDeps
 
 if TYPE_CHECKING:
-    from ag_ui.core import RunAgentInput
+    pass
 
 
 class DocumentState(BaseModel):
@@ -225,8 +195,7 @@ agent = Agent(
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
-adapter = agent.to_ag_ui()
-app = FastAPI(title='AG-UI Endpoint')
+app = agent.to_ag_ui(deps=StateDeps(state_type=DocumentState))
 
 
 @agent.tool
@@ -251,16 +220,6 @@ def custom_events() -> list[CustomEvent]:
             value=2,
         ),
     ]
-
-
-@app.post('/')
-async def root(
-    input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_CONTENT_TYPE
-) -> StreamingResponse:
-    return StreamingResponse(
-        adapter.run(input_data, accept, deps=StateDeps(state_type=DocumentState)),
-        media_type=SSE_CONTENT_TYPE,
-    )
 ```
 
 ### Examples
@@ -296,11 +255,11 @@ options:
 Run with adapter debug logging:
 
 ```shell
-python -m pydantic_ai.ag_ui_examples.dojo_server --log-level debug
+python -m pydantic_ai_ag_ui_examples.dojo_server --log-level debug
 ```
 
 Using uvicorn:
 
 ```shell
-uvicorn pydantic_ai.ag_ui_examples.dojo_server:app --port 9000
+uvicorn pydantic_ai_ag_ui_examples.dojo_server:app --port 9000
 ```

@@ -9,10 +9,12 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import InitVar, dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Final, Generic, Protocol, TypeVar, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Final, Generic, Protocol, TypeVar, cast, runtime_checkable
+
+from starlette.responses import Response, StreamingResponse
 
 try:
     from ag_ui.core import (
@@ -41,9 +43,22 @@ try:
         UserMessage,
     )
     from ag_ui.encoder import EventEncoder
-except ImportError as e:
+except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install the `ag-ui-protocol` package to use `Agent.to_ag_ui()` method, '
+        'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
+    ) from e
+
+try:
+    from starlette.applications import Starlette
+    from starlette.middleware import Middleware
+    from starlette.requests import Request
+    from starlette.responses import Response, StreamingResponse
+    from starlette.routing import BaseRoute
+    from starlette.types import ExceptionHandler, Lifespan
+except ImportError as e:  # pragma: no cover
+    raise ImportError(
+        'Please install the `fasta2a` package to use `Agent.to_ag_ui()` method, '
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
 
@@ -51,7 +66,6 @@ from pydantic import BaseModel, ValidationError
 
 from . import Agent, models
 from ._agent_graph import ModelRequestNode
-from ._output import OutputType
 from ._parts_manager import ModelResponsePartsManager
 from .agent import RunOutputDataT
 from .mcp import ToolResult
@@ -75,7 +89,8 @@ from .messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from .result import AgentStream, OutputDataT
+from .output import OutputDataT, OutputSpec
+from .result import AgentStream
 from .settings import ModelSettings
 from .tools import AgentDepsT, Tool
 from .usage import Usage, UsageLimits
@@ -91,154 +106,210 @@ if TYPE_CHECKING:
     from .agent import AgentRun
     from .result import FinalResult
 
-
+# Variables.
 _LOGGER: logging.Logger = logging.getLogger(__name__)
-
 
 # Constants.
 SSE_CONTENT_TYPE: Final[str] = 'text/event-stream'
 """Content type header value for Server-Sent Events (SSE)."""
 
 
-# Enums.
-# TODO(steve): Remove this and all uses once https://github.com/ag-ui-protocol/ag-ui/pull/49 is merged.
-class Role(str, Enum):
-    """Enum for message roles in AG-UI protocol."""
+class FastAGUI(Generic[AgentDepsT, OutputDataT], Starlette):
+    """A FastAPI-like application for running PydanticAI agents with AG-UI protocol support."""
 
-    ASSISTANT = 'assistant'
-    USER = 'user'
-    DEVELOPER = 'developer'
-    SYSTEM = 'system'
-    TOOL = 'tool'
-
-
-# Exceptions.
-@dataclass
-class RunError(Exception):
-    """Exception raised for errors during agent runs."""
-
-    message: str
-    code: str
-
-    def __str__(self) -> str:
-        return self.message
-
-
-@dataclass(kw_only=True)
-class UnexpectedToolCallError(RunError):
-    """Exception raised when an unexpected tool call is encountered."""
-
-    tool_name: InitVar[str]
-    message: str = ''
-    code: str = 'unexpected_tool_call'
-
-    def __post_init__(self, tool_name: str) -> None:
-        """Set the message for the unexpected tool call.
+    def __init__(
+        self,
+        *,
+        # Adapter for the agent.
+        adapter: Adapter[AgentDepsT, OutputDataT],
+        path: str = '/',
+        # Agent.iter parameters.
+        output_type: OutputSpec[OutputDataT] = str,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: Usage | None = None,
+        infer_name: bool = True,
+        additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
+        # Starlette
+        debug: bool = False,
+        routes: Sequence[BaseRoute] | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
+        on_startup: Sequence[Callable[[], Any]] | None = None,
+        on_shutdown: Sequence[Callable[[], Any]] | None = None,
+        lifespan: Lifespan[FastAGUI[AgentDepsT, OutputDataT]] | None = None,
+    ) -> None:
+        """Initialize the FastAGUI application.
 
         Args:
-            tool_name: The name of the tool that was unexpectedly called.
+            adapter: The adapter to use for running the agent.
+            path: The path to serve the agent run endpoint.
+
+            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
+                no output validators since output validators would expect an argument that matches the agent's
+                output type.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
+            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            additional_tools: Additional tools to use for this run.
+
+            debug: Boolean indicating if debug tracebacks should be returned on errors.
+            routes: A list of routes to serve incoming HTTP and WebSocket requests.
+            middleware: A list of middleware to run for every request. A starlette application will always
+                automatically include two middleware classes. `ServerErrorMiddleware` is added as the very
+                outermost middleware, to handle any uncaught errors occurring anywhere in the entire stack.
+                `ExceptionMiddleware` is added as the very innermost middleware, to deal with handled
+                exception cases occurring in the routing or endpoints.
+            exception_handlers: A mapping of either integer status codes, or exception class types onto
+                callables which handle the exceptions. Exception handler callables should be of the form
+                `handler(request, exc) -> response` and may be either standard functions, or async functions.
+            on_startup: A list of callables to run on application startup. Startup handler callables do not
+                take any arguments, and may be either standard functions, or async functions.
+            on_shutdown: A list of callables to run on application shutdown. Shutdown handler callables do
+                not take any arguments, and may be either standard functions, or async functions.
+            lifespan: A lifespan context function, which can be used to perform startup and shutdown tasks.
+                This is a newer style that replaces the `on_startup` and `on_shutdown` handlers. Use one or
+                the other, not both.
         """
-        self.message = f'unexpected tool call name={tool_name}'  # pragma: no cover
+        super().__init__(
+            debug=debug,
+            routes=routes,
+            middleware=middleware,
+            exception_handlers=exception_handlers,
+            on_startup=on_startup,
+            on_shutdown=on_shutdown,
+            lifespan=lifespan,
+        )
+
+        async def endpoint(request: Request) -> Response | StreamingResponse:
+            """Endpoint to run the agent with the provided input data."""
+            accept: str = request.headers.get('accept', SSE_CONTENT_TYPE)
+            try:
+                input_data: RunAgentInput = RunAgentInput.model_validate_json(await request.body())
+            except ValidationError as e:  # pragma: no cover
+                _LOGGER.error('invalid request: %s', e)
+                return Response(
+                    content=json.dumps(e.json()),
+                    media_type='application/json',
+                    status_code=400,
+                )
+
+            return StreamingResponse(
+                adapter.run(
+                    input_data,
+                    accept,
+                    output_type=output_type,
+                    model=model,
+                    deps=deps,
+                    model_settings=model_settings,
+                    usage_limits=usage_limits,
+                    usage=usage,
+                    infer_name=infer_name,
+                    additional_tools=additional_tools,
+                ),
+                media_type=SSE_CONTENT_TYPE,
+            )
+
+        self.router.add_route(path, endpoint, methods=['POST'], name='run_agent')
 
 
-@dataclass
-class NoMessagesError(RunError):
-    """Exception raised when no messages are found in the input."""
+def agent_to_ag_ui(
+    *,
+    # Adapter parameters.
+    agent: Agent[AgentDepsT, OutputDataT],
+    path: str = '/',
+    tool_prefix: str = '',
+    logger: logging.Logger | None = None,
+    # Agent.iter parameters.
+    output_type: OutputSpec[OutputDataT] = str,
+    model: models.Model | models.KnownModelName | str | None = None,
+    deps: AgentDepsT = None,
+    model_settings: ModelSettings | None = None,
+    usage_limits: UsageLimits | None = None,
+    usage: Usage | None = None,
+    infer_name: bool = True,
+    additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
+    # Starlette parameters.
+    debug: bool = False,
+    routes: Sequence[BaseRoute] | None = None,
+    middleware: Sequence[Middleware] | None = None,
+    exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
+    on_startup: Sequence[Callable[[], Any]] | None = None,
+    on_shutdown: Sequence[Callable[[], Any]] | None = None,
+    lifespan: Lifespan[FastAGUI[AgentDepsT, OutputDataT]] | None = None,
+) -> FastAGUI[AgentDepsT, OutputDataT]:
+    """Create a FastAGUI server from an agent.
 
-    message: str = 'no messages found in the input'
-    code: str = 'no_messages'
+    Args:
+        agent: The PydanticAI agent to adapt for AG-UI protocol.
+        path: The path to serve the agent run endpoint.
+        tool_prefix: Optional prefix to add to tool names.
+        logger: Optional logger to use for the adapter, defaults to the module's logger.
 
+        output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
+            no output validators since output validators would expect an argument that matches the agent's
+            output type.
+        model: Optional model to use for this run, required if `model` was not set when creating the agent.
+        deps: Optional dependencies to use for this run.
+        model_settings: Optional settings to use for this model's request.
+        usage_limits: Optional limits on model request count or token usage.
+        usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+        infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+        additional_tools: Additional tools to use for this run.
 
-@dataclass
-class InvalidStateError(RunError, ValidationError):
-    """Exception raised when an invalid state is provided."""
-
-    message: str = 'invalid state provided'
-    code: str = 'invalid_state'
-
-
-# Protocols.
-@runtime_checkable
-class StateHandler(Protocol):
-    """Protocol for state handlers in agent runs."""
-
-    def set_state(self, state: State) -> None:
-        """Set the state of the agent run.
-
-        This method is called to update the state of the agent run with the
-        provided state.
-
-        Args:
-            state: The run state.
-
-        Raises:
-            ValidationError: If `state` does not match the expected model.
-        """
-        ...
-
-
-StateT = TypeVar('StateT', bound=BaseModel, contravariant=True)
-"""Type variable for the state type, which must be a subclass of `BaseModel`."""
-
-
-@dataclass(kw_only=True)
-class StateDeps(Generic[StateT]):
-    """Provides AG-UI state management.
-
-    This class is used to manage the state of an agent run. It allows setting
-    the state of the agent run with a specific type of state model, which must
-    be a subclass of `BaseModel`.
-
-    The state is set using the `set_state` when the run starts by the `Adapter`.
-
-    Implements the `StateHandler` protocol.
+        debug: Boolean indicating if debug tracebacks should be returned on errors.
+        routes: A list of routes to serve incoming HTTP and WebSocket requests.
+        middleware: A list of middleware to run for every request. A starlette application will always
+            automatically include two middleware classes. `ServerErrorMiddleware` is added as the very
+            outermost middleware, to handle any uncaught errors occurring anywhere in the entire stack.
+            `ExceptionMiddleware` is added as the very innermost middleware, to deal with handled
+            exception cases occurring in the routing or endpoints.
+        exception_handlers: A mapping of either integer status codes, or exception class types onto
+            callables which handle the exceptions. Exception handler callables should be of the form
+            `handler(request, exc) -> response` and may be either standard functions, or async functions.
+        on_startup: A list of callables to run on application startup. Startup handler callables do not
+            take any arguments, and may be either standard functions, or async functions.
+        on_shutdown: A list of callables to run on application shutdown. Shutdown handler callables do
+            not take any arguments, and may be either standard functions, or async functions.
+        lifespan: A lifespan context function, which can be used to perform startup and shutdown tasks.
+            This is a newer style that replaces the `on_startup` and `on_shutdown` handlers. Use one or
+            the other, not both.
     """
+    if logger is None:  # pragma: no branch
+        logger = _LOGGER
 
-    state_type: type[StateT]
-    state: StateT = field(init=False)
+    adapter: Adapter[AgentDepsT, OutputDataT] = Adapter(
+        agent=agent,
+        tool_prefix=tool_prefix,
+        logger=logger,
+    )
 
-    def set_state(self, state: State) -> None:
-        """Set the state of the agent run.
-
-        This method is called to update the state of the agent run with the
-        provided state.
-
-        Implements the `StateHandler` protocol.
-
-        Args:
-            state: The run state, which should match the expected model type or be `None`.
-
-        Raises:
-            InvalidStateError: If `state` does not match the expected model and is not `None`.
-        """
-        if state is None:
-            return
-
-        try:
-            self.state = self.state_type.model_validate(state)
-        except ValidationError as e:  # pragma: no cover
-            raise InvalidStateError from e
-
-
-@dataclass(repr=False)
-class _RequestStreamContext:
-    """Data class to hold request stream context."""
-
-    message_id: str = ''
-    last_tool_call_id: str | None = None
-    part_ends: list[BaseEvent | None] = field(default_factory=lambda: list[BaseEvent | None]())
-    local_tool_calls: set[str] = field(default_factory=set)
-
-    def new_message_id(self) -> str:
-        """Generate a new message ID for the request stream.
-
-        Assigns a new UUID to the `message_id` and returns it.
-
-        Returns:
-            A new message ID.
-        """
-        self.message_id = str(uuid.uuid4())
-        return self.message_id
+    return FastAGUI(
+        adapter=adapter,
+        path=path,
+        # Agent.iter parameter
+        output_type=output_type,
+        model=model,
+        deps=deps,
+        model_settings=model_settings,
+        usage_limits=usage_limits,
+        usage=usage,
+        infer_name=infer_name,
+        additional_tools=additional_tools,
+        # Starlette
+        debug=debug,
+        routes=routes,
+        middleware=middleware,
+        exception_handlers=exception_handlers,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        lifespan=lifespan,
+    )
 
 
 @dataclass(kw_only=True, repr=False)
@@ -252,39 +323,32 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
     Examples:
     This is an example of base usage with FastAPI.
     ```python
-    from __future__ import annotations
-
-    from typing import TYPE_CHECKING, Annotated
-
-    from fastapi import FastAPI, Header
-    from fastapi.responses import StreamingResponse
     from pydantic_ai import Agent
 
-    from pydantic_ai.ag_ui import SSE_CONTENT_TYPE, Adapter
-
-    if TYPE_CHECKING:
-        from ag_ui.core import RunAgentInput
-
-    app = FastAPI(title="AG-UI Endpoint")
-    agent = Agent(
-        "openai:gpt-4o-mini",
-        deps_type=int,
-        instructions="You are a helpful assistant.",
-    )
-    adapter = agent.to_ag_ui()
-
-    @app.post("/")
-    async def root(input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_CONTENT_TYPE) -> StreamingResponse:
-        return StreamingResponse(
-            adapter.run(input_data, accept, deps=42),
-            media_type=SSE_CONTENT_TYPE,
-        )
+    agent = Agent('openai:gpt-4.1', instructions='Be fun!')
+    app = agent.to_ag_ui()
     ```
 
     PydanticAI tools which return AG-UI events will be sent to the client
     as part of the event stream, single events and event iterables are
     supported.
     ```python
+    from ag_ui.core import CustomEvent, EventType, StateSnapshotEvent
+    from pydantic import BaseModel
+
+    from pydantic_ai import Agent, RunContext
+    from pydantic_ai.ag_ui import StateDeps
+
+
+    class DocumentState(BaseModel):
+        document: str
+
+
+    agent = Agent(
+        'openai:gpt-4.1', instructions='Be fun!', deps_type=StateDeps[DocumentState]
+    )
+
+
     @agent.tool
     def update_state(ctx: RunContext[StateDeps[DocumentState]]) -> StateSnapshotEvent:
         return StateSnapshotEvent(
@@ -292,17 +356,18 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
             snapshot=ctx.deps.state,
         )
 
+
     @agent.tool_plain
     def custom_events() -> list[CustomEvent]:
         return [
             CustomEvent(
                 type=EventType.CUSTOM,
-                name="count",
+                name='count',
                 value=1,
             ),
             CustomEvent(
                 type=EventType.CUSTOM,
-                name="count",
+                name='count',
                 value=2,
             ),
         ]
@@ -322,7 +387,7 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
         run_input: RunAgentInput,
         accept: str = SSE_CONTENT_TYPE,
         *,
-        output_type: OutputType[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -369,7 +434,7 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
             )
 
             if not run_input.messages:
-                raise NoMessagesError
+                raise _NoMessagesError
 
             if isinstance(deps, StateHandler):
                 deps.set_state(run_input.state)
@@ -405,7 +470,7 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                         break
 
                     yield encoder.encode(event)
-        except RunError as e:
+        except _RunError as e:
             self.logger.exception('agent run')
             yield encoder.encode(
                 RunErrorEvent(type=EventType.RUN_ERROR, message=e.message, code=e.code),
@@ -458,7 +523,7 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
             match msg:
                 case ModelRequest():
                     for request_part in msg.parts:
-                        if isinstance(request_part, ToolReturnPart):
+                        if isinstance(request_part, ToolReturnPart):  # pragma: no branch
                             messages.append(
                                 ToolMessage(
                                     id='result-' + request_part.tool_call_id,
@@ -467,7 +532,7 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                                     tool_call_id=request_part.tool_call_id,
                                 )
                             )
-                case ModelResponse():
+                case ModelResponse():  # pragma: no branch
                     self._convert_response_parts(msg.parts, messages)
 
         self._convert_response_parts(parts_manager.get_parts(), messages)
@@ -589,9 +654,9 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                 Never returns as it always raises an exception.
 
             Raises:
-                UnexpectedToolCallError: Always raised since this should never be called.
+                _UnexpectedToolCallError: Always raised since this should never be called.
             """
-            raise UnexpectedToolCallError(tool_name=tool.name)  # pragma: no cover
+            raise _UnexpectedToolCallError(tool_name=tool.name)  # pragma: no cover
 
         # TODO(steve): See it we can avoid the cast here.
         return cast(
@@ -718,7 +783,7 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                             ),
                             None,  # Signal continuation of the stream.
                         ]
-                    case ThinkingPart():  # pragma: no branch
+                    case ThinkingPart():  # pragma: no cover
                         # No equivalent AG-UI event yet.
                         pass
             case PartDeltaEvent():
@@ -749,7 +814,7 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                             if isinstance(agent_event.delta.args_delta, str)
                             else json.dumps(agent_event.delta.args_delta),
                         )
-                    case ThinkingPartDelta():  # pragma: no branch
+                    case ThinkingPartDelta():  # pragma: no cover
                         # No equivalent AG-UI event yet.
                         pass
             case FinalResultEvent():
@@ -815,18 +880,152 @@ def _convert_history(messages: list[Message]) -> list[ModelMessage]:
     return result
 
 
-# =====================================================================================
-# Exports
-# =====================================================================================
-
 __all__ = [
     'Adapter',
     'SSE_CONTENT_TYPE',
     'StateDeps',
     'StateHandler',
-    'Role',
-    'RunError',
-    'UnexpectedToolCallError',
-    'NoMessagesError',
-    'InvalidStateError',
+    'FastAGUI',
+    'agent_to_ag_ui',
 ]
+
+
+# Enums.
+# TODO(steve): Remove this and all uses once https://github.com/ag-ui-protocol/ag-ui/pull/49 is merged.
+class Role(str, Enum):
+    """Enum for message roles in AG-UI protocol."""
+
+    ASSISTANT = 'assistant'
+    USER = 'user'
+    DEVELOPER = 'developer'
+    SYSTEM = 'system'
+    TOOL = 'tool'
+
+
+# Exceptions.
+@dataclass
+class _RunError(Exception):
+    """Exception raised for errors during agent runs."""
+
+    message: str
+    code: str
+
+    def __str__(self) -> str:
+        return self.message
+
+
+@dataclass(kw_only=True)
+class _UnexpectedToolCallError(_RunError):
+    """Exception raised when an unexpected tool call is encountered."""
+
+    tool_name: InitVar[str]
+    message: str = ''
+    code: str = 'unexpected_tool_call'
+
+    def __post_init__(self, tool_name: str) -> None:
+        """Set the message for the unexpected tool call.
+
+        Args:
+            tool_name: The name of the tool that was unexpectedly called.
+        """
+        self.message = f'unexpected tool call name={tool_name}'  # pragma: no cover
+
+
+@dataclass
+class _NoMessagesError(_RunError):
+    """Exception raised when no messages are found in the input."""
+
+    message: str = 'no messages found in the input'
+    code: str = 'no_messages'
+
+
+@dataclass
+class _InvalidStateError(_RunError, ValidationError):
+    """Exception raised when an invalid state is provided."""
+
+    message: str = 'invalid state provided'
+    code: str = 'invalid_state'
+
+
+# Protocols.
+@runtime_checkable
+class StateHandler(Protocol):
+    """Protocol for state handlers in agent runs."""
+
+    def set_state(self, state: State) -> None:
+        """Set the state of the agent run.
+
+        This method is called to update the state of the agent run with the
+        provided state.
+
+        Args:
+            state: The run state.
+
+        Raises:
+            ValidationError: If `state` does not match the expected model.
+        """
+        ...
+
+
+StateT = TypeVar('StateT', bound=BaseModel, contravariant=True)
+"""Type variable for the state type, which must be a subclass of `BaseModel`."""
+
+
+@dataclass(kw_only=True)
+class StateDeps(Generic[StateT]):
+    """Provides AG-UI state management.
+
+    This class is used to manage the state of an agent run. It allows setting
+    the state of the agent run with a specific type of state model, which must
+    be a subclass of `BaseModel`.
+
+    The state is set using the `set_state` when the run starts by the `Adapter`.
+
+    Implements the `StateHandler` protocol.
+    """
+
+    state_type: type[StateT]
+    state: StateT = field(init=False)
+
+    def set_state(self, state: State) -> None:
+        """Set the state of the agent run.
+
+        This method is called to update the state of the agent run with the
+        provided state.
+
+        Implements the `StateHandler` protocol.
+
+        Args:
+            state: The run state, which should match the expected model type or be `None`.
+
+        Raises:
+            InvalidStateError: If `state` does not match the expected model and is not `None`.
+        """
+        if state is None:
+            return
+
+        try:
+            self.state = self.state_type.model_validate(state)
+        except ValidationError as e:  # pragma: no cover
+            raise _InvalidStateError from e
+
+
+@dataclass(repr=False)
+class _RequestStreamContext:
+    """Data class to hold request stream context."""
+
+    message_id: str = ''
+    last_tool_call_id: str | None = None
+    part_ends: list[BaseEvent | None] = field(default_factory=lambda: list[BaseEvent | None]())
+    local_tool_calls: set[str] = field(default_factory=set)
+
+    def new_message_id(self) -> str:
+        """Generate a new message ID for the request stream.
+
+        Assigns a new UUID to the `message_id` and returns it.
+
+        Returns:
+            A new message ID.
+        """
+        self.message_id = str(uuid.uuid4())
+        return self.message_id
