@@ -56,6 +56,7 @@ from .toolsets import AbstractToolset
 from .toolsets.combined import CombinedToolset
 from .toolsets.function import FunctionToolset
 from .toolsets.prepared import PreparedToolset
+from .usage import Usage, UsageLimits
 
 # Re-exporting like this improves auto-import behavior in PyCharm
 capture_run_messages = _agent_graph.capture_run_messages
@@ -75,7 +76,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.mcp import MCPServer
 
-    from .ag_ui import Adapter
+    from .ag_ui import FastAGUI
 
 __all__ = (
     'Agent',
@@ -1880,35 +1881,64 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     def to_ag_ui(
         self,
         *,
+        # Adapter parameters.
+        tool_prefix: str = '',
         logger: logging.Logger | None = None,
-        tool_prefix: str | None = None,
-    ) -> Adapter[AgentDepsT, OutputDataT]:
+        # Agent.iter parameters
+        output_type: OutputSpec[OutputDataT] = str,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: Usage | None = None,
+        infer_name: bool = True,
+        additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
+    ) -> FastAGUI[AgentDepsT, OutputDataT]:
         """Convert the agent to an Adapter instance.
 
         This allows you to use the agent with a compatible AG-UI frontend.
+
+        The first two arguments are specific to `Adapter` the rest map directly to the `Agent.iter` method.
 
         Args:
             logger: Optional logger to use for the adapter.
             tool_prefix: Optional prefix to add to tool names in the AG-UI.
 
+            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
+                output validators since output validators would expect an argument that matches the agent's output type.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
+            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            additional_tools: Additional tools to use for this run.
+
         Returns:
             An adapter that converts between AG-UI protocol and PydanticAI.
         """
         try:
-            from .ag_ui import Adapter
-        except ImportError as _import_error:
+            from .ag_ui import agent_to_ag_ui
+        except ImportError as e:  # pragma: no cover
             raise ImportError(
                 'Please install the `ag-ui` dependencies to use `Agent.to_ag_ui()` method, '
-                'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag_ui]"`'
-            ) from _import_error
+                'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
+            ) from e
 
-        kwargs: dict[str, Any] = {}
-        if tool_prefix is not None:
-            kwargs['tool_prefix'] = tool_prefix
-        if logger is not None:
-            kwargs['logger'] = logger
-
-        return Adapter(agent=self, **kwargs)
+        return agent_to_ag_ui(
+            agent=self,
+            tool_prefix=tool_prefix,
+            logger=logger,
+            # Agent.iter parameters
+            output_type=output_type,
+            model=model,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            infer_name=infer_name,
+            additional_tools=additional_tools,
+        )
 
     def to_a2a(
         self,

@@ -64,6 +64,7 @@ nav:
       - examples/question-graph.md
       - examples/slack-lead-qualifier.md
   - API Reference:
+      - api/ag_ui.md
       - api/agent.md
       - api/tools.md
       - api/toolsets.md
@@ -107,7 +108,6 @@ nav:
       - api/pydantic_evals/otel.md
       - api/pydantic_evals/generation.md
       - api/fasta2a.md
-      - api/ag_ui.md
 
 extra:
   # hide the "Made with Material for MkDocs" message

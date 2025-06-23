@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 import re
 import uuid
 from collections.abc import Callable
@@ -13,12 +12,14 @@ from dataclasses import dataclass, field
 from itertools import count
 from typing import Any, Final, Literal
 
+import httpx
 import pytest
+from asgi_lifespan import LifespanManager
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.ag_ui import (
-    _LOGGER as adapter_logger,  # type: ignore[reportPrivateUsage]
+    SSE_CONTENT_TYPE,
     Adapter,
     Role,
     StateDeps,
@@ -51,8 +52,6 @@ pytestmark = [
     pytest.mark.skipif(not has_ag_ui, reason='ag-ui-protocol not installed'),
 ]
 
-# Constants.
-CUSTOM_LOGGER: Final[logging.Logger] = logging.getLogger('test_logger')
 
 # Type aliases.
 _MockUUID = Callable[[], str]
@@ -117,14 +116,16 @@ async def create_adapter(
     Returns:
         An Adapter instance configured with the specified tools.
     """
-    return Agent(
-        model=TestModel(
-            call_tools=call_tools,
-            tool_call_deltas={'get_weather_parts', 'current_time'},
-        ),
-        deps_type=StateDeps[StateInt],
-        tools=[send_snapshot, send_custom, current_time],
-    ).to_ag_ui()
+    return Adapter(
+        agent=Agent(
+            model=TestModel(
+                call_tools=call_tools,
+                tool_call_deltas={'get_weather_parts', 'current_time'},
+            ),
+            deps_type=StateDeps[StateInt],
+            tools=[send_snapshot, send_custom, current_time],
+        )
+    )
 
 
 @pytest.fixture
@@ -289,8 +290,8 @@ class AdapterRunTest:
 
 # Test parameter data
 def tc_parameters() -> list[AdapterRunTest]:
-    if not has_ag_ui:
-        return [AdapterRunTest(id='skipped', runs=[])]
+    if not has_ag_ui:  # pragma: no branch
+        return [AdapterRunTest(id='skipped', runs=[])]  # pragma: no cover
 
     return [
         AdapterRunTest(
@@ -823,63 +824,50 @@ async def test_concurrent_runs(mock_uuid: _MockUUID, adapter: Adapter[None, str]
         assert len(events) == len(EXPECTED_EVENTS)
 
 
-@pytest.fixture
-async def agent() -> Agent[None, str]:
-    """Create an Adapter instance for testing."""
-    return Agent(model=TestModel())
-
-
-@dataclass
-class ToAGUITest:
-    id: str
-    logger: logging.Logger | None = None
-    tool_prefix: str | None = None
-    expected_logger: logging.Logger = field(
-        default_factory=lambda: adapter_logger if has_ag_ui else logging.getLogger(__name__)
-    )
-    expected_tool_prefix: str = ''
-
-
-TEST_PARAMETERS = [
-    ToAGUITest(
-        id='defaults',
-    ),
-    ToAGUITest(
-        id='custom_logger',
-        logger=CUSTOM_LOGGER,
-        expected_logger=CUSTOM_LOGGER,
-    ),
-    ToAGUITest(
-        id='custom_tool_prefix',
-        tool_prefix='test_prefix',
-        expected_tool_prefix='test_prefix',
-    ),
-    ToAGUITest(
-        id='custom_tool_timeout',
-    ),
-    ToAGUITest(
-        id='custom_all',
-        logger=CUSTOM_LOGGER,
-        tool_prefix='test_prefix',
-        expected_logger=CUSTOM_LOGGER,
-        expected_tool_prefix='test_prefix',
-    ),
-]
-
-
-@pytest.mark.parametrize('tc', TEST_PARAMETERS, ids=lambda tc: tc.id)
 @pytest.mark.anyio
-async def test_to_ag_ui(agent: Agent[None, str], tc: ToAGUITest) -> None:
-    """Test the agent.to_ag_ui method.
+async def test_to_ag_ui(mock_uuid: _MockUUID) -> None:
+    """Test the agent.to_ag_ui method."""
 
-    Args:
-        agent: The agent instance to test.
-        tc: Test case parameters including logger, tool prefix, and timeout.
-    """
+    agent: Agent[None, str] = Agent(model=TestModel())
+    app = agent.to_ag_ui()
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as client:
+            client.base_url = 'http://localhost:8000'
+            run_input: RunAgentInput = RunAgentInput(
+                state=None,
+                thread_id=f'{THREAD_ID_PREFIX}test_thread',
+                run_id=f'{RUN_ID_PREFIX}test_run',
+                messages=[  # pyright: ignore[reportArgumentType]
+                    UserMessage(
+                        id='msg_1',
+                        role=Role.USER.value,
+                        content='Hello, world!',
+                    ),
+                ],
+                tools=[],
+                context=[],
+                forwarded_props=None,
+            )
+            events: list[str]
+            async with client.stream(
+                'POST',
+                '/',
+                content=run_input.model_dump_json(),
+                headers={'Content-Type': 'application/json', 'Accept': SSE_CONTENT_TYPE},
+            ) as response:
+                assert response.status_code == 200, f'Unexpected status code: {response.status_code}'
+                events = [line + '\n\n' async for line in response.aiter_lines() if line.startswith('data: ')]
 
-    adapter: Adapter[None, str] = agent.to_ag_ui(
-        logger=tc.logger,
-        tool_prefix=tc.tool_prefix,
-    )
-    assert adapter.logger == tc.expected_logger
-    assert adapter.tool_prefix == tc.expected_tool_prefix
+            assert events, 'No parts received from the server'
+            expected: list[str] = [
+                '{"type":"RUN_STARTED","threadId":"thread_test_thread","runId":"run_test_run"}',
+                '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000001","role":"assistant"}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000001","delta":"success "}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000001","delta":"(no "}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000001","delta":"tool "}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000001","delta":"calls)"}',
+                '{"type":"TEXT_MESSAGE_END","messageId":"00000000-0000-0000-0000-000000000001"}',
+                '{"type":"RUN_FINISHED","threadId":"thread_test_thread","runId":"run_test_run"}',
+            ]
+            assert_events(events, expected)
