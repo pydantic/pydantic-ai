@@ -7,9 +7,9 @@ from types import NoneType
 from typing import Generic
 
 from dotenv import load_dotenv
-from pydantic_ai_ag_ui import Adapter
 
 from pydantic_ai import Agent
+from pydantic_ai.ag_ui import Adapter
 from pydantic_ai.result import OutputDataT
 from pydantic_ai.tools import AgentDepsT
 

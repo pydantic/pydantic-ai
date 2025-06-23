@@ -1,4 +1,8 @@
-"""Provides an AG-UI protocol adapter for the PydanticAI agent."""
+"""Provides an AG-UI protocol adapter for the PydanticAI agent.
+
+This package provides seamless integration between pydantic-ai agents and ag-ui
+for building interactive AI applications with streaming event-based communication.
+"""
 
 from __future__ import annotations
 
@@ -6,41 +10,52 @@ import json
 import logging
 import uuid
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, cast
+from dataclasses import InitVar, dataclass, field
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Final, Generic, Protocol, TypeVar, cast, runtime_checkable
 
-from ag_ui.core import (
-    AssistantMessage,
-    BaseEvent,
-    DeveloperMessage,
-    EventType,
-    FunctionCall,
-    Message,
-    MessagesSnapshotEvent,
-    RunAgentInput,
-    RunErrorEvent,
-    RunFinishedEvent,
-    RunStartedEvent,
-    SystemMessage,
-    TextMessageContentEvent,
-    TextMessageEndEvent,
-    TextMessageStartEvent,
-    Tool as ToolAGUI,
-    ToolCall,
-    ToolCallArgsEvent,
-    ToolCallEndEvent,
-    ToolCallStartEvent,
-    ToolMessage,
-    UserMessage,
-)
-from ag_ui.encoder import EventEncoder
+try:
+    from ag_ui.core import (
+        AssistantMessage,
+        BaseEvent,
+        DeveloperMessage,
+        EventType,
+        FunctionCall,
+        Message,
+        MessagesSnapshotEvent,
+        RunAgentInput,
+        RunErrorEvent,
+        RunFinishedEvent,
+        RunStartedEvent,
+        State,
+        SystemMessage,
+        TextMessageContentEvent,
+        TextMessageEndEvent,
+        TextMessageStartEvent,
+        Tool as ToolAGUI,
+        ToolCall,
+        ToolCallArgsEvent,
+        ToolCallEndEvent,
+        ToolCallStartEvent,
+        ToolMessage,
+        UserMessage,
+    )
+    from ag_ui.encoder import EventEncoder
+except ImportError as e:
+    raise ImportError(
+        'Please install the `ag-ui-protocol` package to use `Agent.to_ag_ui()` method, '
+        'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
+    ) from e
 
-from pydantic_ai import Agent, ModelRequestNode, models
-from pydantic_ai._output import OutputType
-from pydantic_ai._parts_manager import ModelResponsePartsManager
-from pydantic_ai.agent import RunOutputDataT
-from pydantic_ai.mcp import ToolResult
-from pydantic_ai.messages import (
+from pydantic import BaseModel, ValidationError
+
+from . import Agent, models
+from ._agent_graph import ModelRequestNode
+from ._output import OutputType
+from ._parts_manager import ModelResponsePartsManager
+from .agent import RunOutputDataT
+from .mcp import ToolResult
+from .messages import (
     AgentStreamEvent,
     FinalResultEvent,
     ModelMessage,
@@ -60,28 +75,149 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.result import AgentStream, OutputDataT
-from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, Tool
-from pydantic_ai.usage import Usage, UsageLimits
-
-from ._enums import Role
-from ._exceptions import NoMessagesError, RunError, UnexpectedToolCallError
-from .consts import SSE_CONTENT_TYPE
-from .protocols import StateHandler
+from .result import AgentStream, OutputDataT
+from .settings import ModelSettings
+from .tools import AgentDepsT, Tool
+from .usage import Usage, UsageLimits
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from ag_ui.encoder import EventEncoder
 
-    from pydantic_ai._agent_graph import AgentNode
-    from pydantic_ai.agent import AgentRun
-    from pydantic_ai.result import FinalResult
     from pydantic_graph.nodes import End
+
+    from ._agent_graph import AgentNode
+    from .agent import AgentRun
+    from .result import FinalResult
 
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
+
+
+# Constants.
+SSE_CONTENT_TYPE: Final[str] = 'text/event-stream'
+"""Content type header value for Server-Sent Events (SSE)."""
+
+
+# Enums.
+# TODO(steve): Remove this and all uses once https://github.com/ag-ui-protocol/ag-ui/pull/49 is merged.
+class Role(str, Enum):
+    """Enum for message roles in AG-UI protocol."""
+
+    ASSISTANT = 'assistant'
+    USER = 'user'
+    DEVELOPER = 'developer'
+    SYSTEM = 'system'
+    TOOL = 'tool'
+
+
+# Exceptions.
+@dataclass
+class RunError(Exception):
+    """Exception raised for errors during agent runs."""
+
+    message: str
+    code: str
+
+    def __str__(self) -> str:
+        return self.message
+
+
+@dataclass(kw_only=True)
+class UnexpectedToolCallError(RunError):
+    """Exception raised when an unexpected tool call is encountered."""
+
+    tool_name: InitVar[str]
+    message: str = ''
+    code: str = 'unexpected_tool_call'
+
+    def __post_init__(self, tool_name: str) -> None:
+        """Set the message for the unexpected tool call.
+
+        Args:
+            tool_name: The name of the tool that was unexpectedly called.
+        """
+        self.message = f'unexpected tool call name={tool_name}'  # pragma: no cover
+
+
+@dataclass
+class NoMessagesError(RunError):
+    """Exception raised when no messages are found in the input."""
+
+    message: str = 'no messages found in the input'
+    code: str = 'no_messages'
+
+
+@dataclass
+class InvalidStateError(RunError, ValidationError):
+    """Exception raised when an invalid state is provided."""
+
+    message: str = 'invalid state provided'
+    code: str = 'invalid_state'
+
+
+# Protocols.
+@runtime_checkable
+class StateHandler(Protocol):
+    """Protocol for state handlers in agent runs."""
+
+    def set_state(self, state: State) -> None:
+        """Set the state of the agent run.
+
+        This method is called to update the state of the agent run with the
+        provided state.
+
+        Args:
+            state: The run state.
+
+        Raises:
+            ValidationError: If `state` does not match the expected model.
+        """
+        ...
+
+
+StateT = TypeVar('StateT', bound=BaseModel, contravariant=True)
+"""Type variable for the state type, which must be a subclass of `BaseModel`."""
+
+
+@dataclass(kw_only=True)
+class StateDeps(Generic[StateT]):
+    """Provides AG-UI state management.
+
+    This class is used to manage the state of an agent run. It allows setting
+    the state of the agent run with a specific type of state model, which must
+    be a subclass of `BaseModel`.
+
+    The state is set using the `set_state` when the run starts by the `Adapter`.
+
+    Implements the `StateHandler` protocol.
+    """
+
+    state_type: type[StateT]
+    state: StateT = field(init=False)
+
+    def set_state(self, state: State) -> None:
+        """Set the state of the agent run.
+
+        This method is called to update the state of the agent run with the
+        provided state.
+
+        Implements the `StateHandler` protocol.
+
+        Args:
+            state: The run state, which should match the expected model type or be `None`.
+
+        Raises:
+            InvalidStateError: If `state` does not match the expected model and is not `None`.
+        """
+        if state is None:
+            return
+
+        try:
+            self.state = self.state_type.model_validate(state)
+        except ValidationError as e:  # pragma: no cover
+            raise InvalidStateError from e
 
 
 @dataclass(repr=False)
@@ -115,61 +251,62 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
 
     Examples:
     This is an example of base usage with FastAPI.
-    .. code-block:: python
-        from __future__ import annotations
+    ```python
+    from __future__ import annotations
 
-        from typing import TYPE_CHECKING, Annotated
+    from typing import TYPE_CHECKING, Annotated
 
-        from fastapi import FastAPI, Header
-        from fastapi.responses import StreamingResponse
-        from pydantic_ai import Agent
+    from fastapi import FastAPI, Header
+    from fastapi.responses import StreamingResponse
+    from pydantic_ai import Agent
 
-        from pydantic_ai_ag_ui import SSE_CONTENT_TYPE, Adapter
+    from pydantic_ai.ag_ui import SSE_CONTENT_TYPE, Adapter
 
-        if TYPE_CHECKING:
-            from ag_ui.core import RunAgentInput
+    if TYPE_CHECKING:
+        from ag_ui.core import RunAgentInput
 
-        app = FastAPI(title="AG-UI Endpoint")
-        agent = Agent(
-            "openai:gpt-4o-mini",
-            deps_type=int,
-            instructions="You are a helpful assistant.",
+    app = FastAPI(title="AG-UI Endpoint")
+    agent = Agent(
+        "openai:gpt-4o-mini",
+        deps_type=int,
+        instructions="You are a helpful assistant.",
+    )
+    adapter = agent.to_ag_ui()
+
+    @app.post("/")
+    async def root(input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_CONTENT_TYPE) -> StreamingResponse:
+        return StreamingResponse(
+            adapter.run(input_data, accept, deps=42),
+            media_type=SSE_CONTENT_TYPE,
         )
-        adapter = agent.to_ag_ui()
-
-        @app.post("/")
-        async def root(input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_CONTENT_TYPE) -> StreamingResponse:
-            return StreamingResponse(
-                adapter.run(input_data, accept, deps=42),
-                media_type=SSE_CONTENT_TYPE,
-            )
+    ```
 
     PydanticAI tools which return AG-UI events will be sent to the client
     as part of the event stream, single events and event iterables are
     supported.
-    .. code-block:: python
-        @agent.tool
-        def update_state(ctx: RunContext[StateDeps[DocumentState]]) -> StateSnapshotEvent:
-            return StateSnapshotEvent(
-                type=EventType.STATE_SNAPSHOT,
-                snapshot=ctx.deps.state,
-            )
+    ```python
+    @agent.tool
+    def update_state(ctx: RunContext[StateDeps[DocumentState]]) -> StateSnapshotEvent:
+        return StateSnapshotEvent(
+            type=EventType.STATE_SNAPSHOT,
+            snapshot=ctx.deps.state,
+        )
 
-        @agent.tool_plain
-        def custom_events() -> list[CustomEvent]:
-            return [
-                CustomEvent(
-                    type=EventType.CUSTOM,
-                    name="count",
-                    value=1,
-                ),
-                CustomEvent(
-                    type=EventType.CUSTOM,
-                    name="count",
-                    value=2,
-                ),
-            ]
-
+    @agent.tool_plain
+    def custom_events() -> list[CustomEvent]:
+        return [
+            CustomEvent(
+                type=EventType.CUSTOM,
+                name="count",
+                value=1,
+            ),
+            CustomEvent(
+                type=EventType.CUSTOM,
+                name="count",
+                value=2,
+            ),
+        ]
+    ```
     Args:
         agent: The PydanticAI `Agent` to adapt.
         tool_prefix: Optional prefix to add to tool names.
@@ -676,3 +813,20 @@ def _convert_history(messages: list[Message]) -> list[ModelMessage]:
                 result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
 
     return result
+
+
+# =====================================================================================
+# Exports
+# =====================================================================================
+
+__all__ = [
+    'Adapter',
+    'SSE_CONTENT_TYPE',
+    'StateDeps',
+    'StateHandler',
+    'Role',
+    'RunError',
+    'UnexpectedToolCallError',
+    'NoMessagesError',
+    'InvalidStateError',
+]

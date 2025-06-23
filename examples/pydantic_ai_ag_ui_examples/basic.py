@@ -1,4 +1,4 @@
-"""Basic example of using pydantic_ai_ag_ui with FastAPI."""
+"""Basic example of using pydantic_ai.ag_ui with FastAPI."""
 
 from __future__ import annotations
 
@@ -6,10 +6,9 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import FastAPI, Header
 from fastapi.responses import StreamingResponse
-from pydantic_ai_ag_ui.adapter import Adapter
-from pydantic_ai_ag_ui.consts import SSE_CONTENT_TYPE
 
 from pydantic_ai import Agent
+from pydantic_ai.ag_ui import SSE_CONTENT_TYPE, Adapter
 
 if TYPE_CHECKING:
     from ag_ui.core import RunAgentInput
@@ -50,7 +49,7 @@ if __name__ == '__main__':
     args: Args = parse_args()
 
     uvicorn.run(
-        'pydantic_ai_ag_ui_examples.dojo_server:app',
+        'pydantic_ai.ag_ui_examples.dojo_server:app',
         port=args.port,
         reload=args.reload,
         log_level=args.log_level,
