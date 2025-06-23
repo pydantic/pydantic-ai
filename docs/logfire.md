@@ -310,7 +310,7 @@ Agent.instrument_all(instrumentation_settings)
 
 For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. PydanticAI allows you to exclude the actual content from instrumentation events while preserving the structural information needed for debugging and monitoring.
 
-When `include_content=False` is set, PydanticAI will exclude sensitive content from OpenTelemetry events.
+When `include_content=False` is set, PydanticAI will exclude sensitive content from OpenTelemetry events, including user prompts and model completions, tool call arguments and responses, and any other message content.
 
 ```python {title="excluding_sensitive_content.py"}
 from pydantic_ai.agent import Agent
