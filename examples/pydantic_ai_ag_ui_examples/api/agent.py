@@ -40,4 +40,4 @@ class AGUIAgent(Generic[AgentDepsT, OutputDataT]):
             instructions=instructions,
             deps_type=deps_type,
         )
-        self.adapter = self.agent.to_ag_ui()
+        self.adapter = Adapter(agent=self.agent)

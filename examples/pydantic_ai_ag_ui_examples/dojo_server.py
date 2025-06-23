@@ -41,7 +41,7 @@ if __name__ == '__main__':
     args: Args = parse_args()
 
     uvicorn.run(
-        'pydantic_ai.ag_ui_examples.dojo_server:app',
+        'pydantic_ai_ag_ui_examples.dojo_server:app',
         port=args.port,
         reload=args.reload,
         log_config=args.log_config(),
