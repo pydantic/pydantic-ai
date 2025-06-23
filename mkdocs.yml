@@ -102,7 +102,7 @@ nav:
       - api/pydantic_evals/otel.md
       - api/pydantic_evals/generation.md
       - api/fasta2a.md
-      - api/pydantic_ai_ag_ui.md
+      - api/ag_ui.md
 
 extra:
   # hide the "Made with Material for MkDocs" message

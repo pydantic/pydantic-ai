@@ -66,7 +66,8 @@ if TYPE_CHECKING:
     from fasta2a.schema import Provider, Skill
     from fasta2a.storage import Storage
     from pydantic_ai.mcp import MCPServer
-    from pydantic_ai_ag_ui import Adapter
+
+    from .ag_ui import Adapter
 
 __all__ = (
     'Agent',
@@ -1782,10 +1783,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             An adapter that converts between AG-UI protocol and PydanticAI.
         """
         try:
-            from pydantic_ai_ag_ui.adapter import Adapter
+            from .ag_ui import Adapter
         except ImportError as _import_error:
             raise ImportError(
-                'Please install the `pydantic-ai-ag-ui` package to use `Agent.to_ag_ui()` method, '
+                'Please install the `ag-ui` dependencies to use `Agent.to_ag_ui()` method, '
                 'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag_ui]"`'
             ) from _import_error
 
