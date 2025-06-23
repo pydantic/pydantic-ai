@@ -65,7 +65,7 @@ def parse_args() -> Args:
         '--loggers',
         nargs='*',
         default=[
-            'pydantic_ai_ag_ui.adapter',
+            'pydantic_ai.ag_ui.adapter',
         ],
         help='Logger names to configure (default: adapter and model loggers)',
     )
