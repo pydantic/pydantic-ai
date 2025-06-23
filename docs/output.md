@@ -139,7 +139,6 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.output import ToolRetryError
 
 
 class Row(BaseModel):
@@ -201,7 +200,7 @@ async def hand_off_to_sql_agent(ctx: RunContext, query: str) -> list[Row]:
         return output
     except UnexpectedModelBehavior as e:
         # Bubble up potentially retryable errors to the router agent
-        if (cause := e.__cause__) and isinstance(cause, ToolRetryError):
+        if (cause := e.__cause__) and hasattr(cause, 'tool_retry'):
             raise ModelRetry(f'SQL agent failed: {cause.tool_retry.content}') from e
         else:
             raise

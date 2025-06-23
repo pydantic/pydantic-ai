@@ -2,13 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, Literal, Union
+from typing import Callable, Generic, Literal, Union
 
-from typing_extensions import TypeAliasType, TypeVar, get_args, get_origin
-from typing_inspection import typing_objects
-from typing_inspection.introspection import is_union_origin
+from typing_extensions import TypeAliasType, TypeVar
 
-from .messages import RetryPromptPart
 from .tools import RunContext
 
 __all__ = (
@@ -17,20 +14,20 @@ __all__ = (
     'ModelStructuredOutput',
     'PromptedStructuredOutput',
     'TextOutput',
-    'ToolRetryError',
     # types
     'OutputDataT',
     'OutputMode',
     'StructuredOutputMode',
-    'OutputTypeOrFunction',
     'OutputSpec',
-    'TextOutputFunction',
+    'OutputTypeOrFunction',
+    'TextOutputFunc',
 )
+
+T = TypeVar('T')
+T_co = TypeVar('T_co', covariant=True)
 
 OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
 """Covariant type variable for the result data type of a run."""
-
-T = TypeVar('T')
 
 OutputMode = Literal['text', 'tool', 'model_structured', 'prompted_structured', 'tool_or_text']
 """All output modes."""
@@ -38,12 +35,31 @@ StructuredOutputMode = Literal['tool', 'model_structured', 'prompted_structured'
 """Output modes that can be used for structured output. Used by ModelProfile.default_structured_output_mode"""
 
 
-class ToolRetryError(Exception):
-    """Exception used to signal a `ToolRetry` message should be returned to the LLM."""
+OutputTypeOrFunction = TypeAliasType(
+    'OutputTypeOrFunction', Union[type[T_co], Callable[..., Union[Awaitable[T_co], T_co]]], type_params=(T_co,)
+)
+"""Definition of an output type or function.
 
-    def __init__(self, tool_retry: RetryPromptPart):
-        self.tool_retry = tool_retry
-        super().__init__()
+You should not need to import or use this type directly.
+
+See [output docs](../output.md) for more information.
+"""
+
+
+TextOutputFunc = TypeAliasType(
+    'TextOutputFunc',
+    Union[
+        Callable[[RunContext, str], Union[Awaitable[T_co], T_co]],
+        Callable[[str], Union[Awaitable[T_co], T_co]],
+    ],
+    type_params=(T_co,),
+)
+"""Definition of a function that will be called to process the model's plain text output. The function must take a single string argument.
+
+You should not need to import or use this type directly.
+
+See [text output docs](../output.md#text-output) for more information.
+"""
 
 
 @dataclass(init=False)
@@ -51,7 +67,7 @@ class ToolOutput(Generic[OutputDataT]):
     """Marker class to use a tool for output and optionally customize the tool.
 
     Example:
-    ```python
+    ```python {title="tool_output.py"}
     from pydantic import BaseModel
 
     from pydantic_ai import Agent, ToolOutput
@@ -112,20 +128,10 @@ class ModelStructuredOutput(Generic[OutputDataT]):
     """Marker class to use the model's built-in structured outputs functionality for outputs and optionally customize the name and description.
 
     Example:
-    ```python
-    from pydantic import BaseModel
+    ```python {title="model_structured_output.py" requires="tool_output.py"}
+    from tool_output import Fruit, Vehicle
 
     from pydantic_ai import Agent, ModelStructuredOutput
-
-
-    class Fruit(BaseModel):
-        name: str
-        color: str
-
-
-    class Vehicle(BaseModel):
-        name: str
-        wheels: int
 
 
     agent = Agent(
@@ -142,7 +148,7 @@ class ModelStructuredOutput(Generic[OutputDataT]):
     ```
     """
 
-    outputs: Sequence[OutputTypeOrFunction[OutputDataT]]
+    outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]]
     """The output types or functions."""
     name: str | None
     """The name of the structured output that will be passed to the model. If not specified and only one output is provided, the name of the output type or function will be used."""
@@ -151,12 +157,12 @@ class ModelStructuredOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        type_: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]],
+        outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]],
         *,
         name: str | None = None,
         description: str | None = None,
     ):
-        self.outputs = _flatten_output_spec(type_)
+        self.outputs = outputs
         self.name = name
         self.description = description
 
@@ -166,15 +172,11 @@ class PromptedStructuredOutput(Generic[OutputDataT]):
     """Marker class to use a prompt to tell the model what to output and optionally customize the prompt.
 
     Example:
-    ```python
+    ```python {title="prompted_structured_output.py" requires="tool_output.py"}
     from pydantic import BaseModel
+    from tool_output import Vehicle
 
     from pydantic_ai import Agent, PromptedStructuredOutput
-
-
-    class Vehicle(BaseModel):
-        name: str
-        wheels: int
 
 
     class Device(BaseModel):
@@ -207,7 +209,7 @@ class PromptedStructuredOutput(Generic[OutputDataT]):
     ```
     """
 
-    outputs: Sequence[OutputTypeOrFunction[OutputDataT]]
+    outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]]
     """The output types or functions."""
     name: str | None
     """The name of the structured output that will be passed to the model. If not specified and only one output is provided, the name of the output type or function will be used."""
@@ -221,13 +223,13 @@ class PromptedStructuredOutput(Generic[OutputDataT]):
 
     def __init__(
         self,
-        type_: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]],
+        outputs: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]],
         *,
         name: str | None = None,
         description: str | None = None,
         template: str | None = None,
     ):
-        self.outputs = _flatten_output_spec(type_)
+        self.outputs = outputs
         self.name = name
         self.description = description
         self.template = template
@@ -256,43 +258,9 @@ class TextOutput(Generic[OutputDataT]):
     ```
     """
 
-    output_function: TextOutputFunction[OutputDataT]
+    output_function: TextOutputFunc[OutputDataT]
     """The function that will be called to process the model's plain text output. The function must take a single string argument."""
 
-
-def _get_union_args(tp: Any) -> tuple[Any, ...]:
-    """Extract the arguments of a Union type if `output_type` is a union, otherwise return an empty tuple."""
-    if typing_objects.is_typealiastype(tp):
-        tp = tp.__value__
-
-    origin = get_origin(tp)
-    if is_union_origin(origin):
-        return get_args(tp)
-    else:
-        return ()
-
-
-def _flatten_output_spec(output_spec: T | Sequence[T]) -> list[T]:
-    outputs: Sequence[T]
-    if isinstance(output_spec, Sequence):
-        outputs = output_spec
-    else:
-        outputs = (output_spec,)
-
-    outputs_flat: list[T] = []
-    for output in outputs:
-        if union_types := _get_union_args(output):
-            outputs_flat.extend(union_types)
-        else:
-            outputs_flat.append(output)
-    return outputs_flat
-
-
-T_co = TypeVar('T_co', covariant=True)
-
-OutputTypeOrFunction = TypeAliasType(
-    'OutputTypeOrFunction', Union[type[T_co], Callable[..., Union[Awaitable[T_co], T_co]]], type_params=(T_co,)
-)
 
 OutputSpec = TypeAliasType(
     'OutputSpec',
@@ -306,12 +274,15 @@ OutputSpec = TypeAliasType(
     ],
     type_params=(T_co,),
 )
+"""Specification of the agent's output data.
 
-TextOutputFunction = TypeAliasType(
-    'TextOutputFunction',
-    Union[
-        Callable[[RunContext, str], Union[Awaitable[T_co], T_co]],
-        Callable[[str], Union[Awaitable[T_co], T_co]],
-    ],
-    type_params=(T_co,),
-)
+This can be a single type, a function, a sequence of types and/or functions, or an instance of one of the output mode marker classes:
+- [`ToolOutput`][pydantic_ai.output.ToolOutput]
+- [`ModelStructuredOutput`][pydantic_ai.output.ModelStructuredOutput]
+- [`PromptedStructuredOutput`][pydantic_ai.output.PromptedStructuredOutput]
+- [`TextOutput`][pydantic_ai.output.TextOutput]
+
+You should not need to import or use this type directly.
+
+See [output docs](../output.md) for more information.
+"""

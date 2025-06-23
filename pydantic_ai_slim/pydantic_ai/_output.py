@@ -23,10 +23,8 @@ from .output import (
     PromptedStructuredOutput,
     StructuredOutputMode,
     TextOutput,
-    TextOutputFunction,
+    TextOutputFunc,
     ToolOutput,
-    ToolRetryError,
-    _flatten_output_spec,  # pyright: ignore[reportPrivateUsage]
 )
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 
@@ -66,6 +64,14 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
+
+
+class ToolRetryError(Exception):
+    """Exception used to signal a `ToolRetry` message should be returned to the LLM."""
+
+    def __init__(self, tool_retry: _messages.RetryPromptPart):
+        self.tool_retry = tool_retry
+        super().__init__()
 
 
 @dataclass
@@ -173,7 +179,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
         if isinstance(output_spec, ModelStructuredOutput):
             return ModelStructuredOutputSchema(
                 cls._build_processor(
-                    output_spec.outputs,
+                    _flatten_output_spec(output_spec.outputs),
                     name=output_spec.name,
                     description=output_spec.description,
                 )
@@ -181,7 +187,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
         elif isinstance(output_spec, PromptedStructuredOutput):
             return PromptedStructuredOutputSchema(
                 cls._build_processor(
-                    output_spec.outputs,
+                    _flatten_output_spec(output_spec.outputs),
                     name=output_spec.name,
                     description=output_spec.description,
                 ),
@@ -804,7 +810,7 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
 
     def __init__(
         self,
-        output_function: TextOutputFunction[OutputDataT],
+        output_function: TextOutputFunc[OutputDataT],
     ):
         self._function_schema = _function_schema.function_schema(output_function, GenerateToolJsonSchema)
 
@@ -910,3 +916,19 @@ class OutputTool(Generic[OutputDataT]):
                 raise  # pragma: lax no cover
         else:
             return output
+
+
+def _flatten_output_spec(output_spec: T | Sequence[T]) -> list[T]:
+    outputs: Sequence[T]
+    if isinstance(output_spec, Sequence):
+        outputs = output_spec
+    else:
+        outputs = (output_spec,)
+
+    outputs_flat: list[T] = []
+    for output in outputs:
+        if union_types := _utils.get_union_args(output):
+            outputs_flat.extend(union_types)
+        else:
+            outputs_flat.append(output)
+    return outputs_flat
