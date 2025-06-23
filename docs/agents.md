@@ -720,7 +720,9 @@ print(result.output)
 
 1. The agent expects a string dependency.
 2. Static instructions defined at agent creation time.
-3. Dynamic instructions defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext], this is called just after `run_sync`, not when the agent is created, so can benefit from runtime information like the dependencies used on that run.
+3. Dynamic instructions defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext],
+   this is called just after `run_sync`, not when the agent is created, so can benefit from runtime
+   information like the dependencies used on that run.
 4. Another dynamic instruction, instructions don't have to have the `RunContext` parameter.
 
 _(This example is complete, it can be run "as is")_
