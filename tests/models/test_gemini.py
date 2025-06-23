@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -41,9 +42,13 @@ from pydantic_ai.models.gemini import (
     _GeminiCandidates,
     _GeminiContent,
     _GeminiFunction,
+    _GeminiFunctionCall,
     _GeminiFunctionCallingConfig,
+    _GeminiFunctionCallPart,
     _GeminiResponse,
     _GeminiSafetyRating,
+    _GeminiTextPart,
+    _GeminiThoughtPart,
     _GeminiToolConfig,
     _GeminiTools,
     _GeminiUsageMetaData,
@@ -52,7 +57,7 @@ from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import ClientWithHandler, IsDatetime, IsNow, IsStr, TestEnv
+from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 pytestmark = pytest.mark.anyio
 
@@ -540,6 +545,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -555,6 +561,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -562,6 +569,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -585,6 +593,7 @@ async def test_request_structured_response(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -647,6 +656,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -666,6 +676,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -688,6 +699,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash-123',
                 timestamp=IsNow(tz=timezone.utc),
+                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -732,12 +744,12 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
                 'Hello world',
             ]
         )
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)]
         assert chunks == snapshot(['Hello ', 'world'])
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
 
 
 async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
@@ -769,7 +781,7 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream(debounce_by=None)]
         assert chunks == snapshot(['abc', 'abc€def', 'abc€def'])
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=4, total_tokens=6))
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
 
 
 async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
@@ -840,7 +852,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         response = await result.get_output()
         assert response == snapshot((1, 2))
-    assert result.usage() == snapshot(Usage(requests=2, request_tokens=3, response_tokens=6, total_tokens=9))
+    assert result.usage() == snapshot(Usage(requests=2, request_tokens=2, response_tokens=4, total_tokens=6))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -849,7 +861,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                     ToolCallPart(tool_name='foo', args={'x': 'a'}, tool_call_id=IsStr()),
                     ToolCallPart(tool_name='bar', args={'y': 'b'}, tool_call_id=IsStr()),
                 ],
-                usage=Usage(request_tokens=2, response_tokens=4, total_tokens=6),
+                usage=Usage(request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -865,7 +877,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': [1, 2]}, tool_call_id=IsStr())],
-                usage=Usage(request_tokens=1, response_tokens=2, total_tokens=3),
+                usage=Usage(request_tokens=1, response_tokens=2, total_tokens=3, details={}),
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -891,8 +903,11 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
             _GeminiContent(
                 role='model',
                 parts=[
-                    {'text': 'foo'},
-                    {'function_call': {'name': 'get_location', 'args': {'loc_name': 'San Fransisco'}}},
+                    _GeminiThoughtPart(thought=True, thought_signature='test-signature-value'),
+                    _GeminiTextPart(text='foo'),
+                    _GeminiFunctionCallPart(
+                        function_call=_GeminiFunctionCall(name='get_location', args={'loc_name': 'San Fransisco'})
+                    ),
                 ],
             )
         ),
@@ -1096,9 +1111,16 @@ I need to use the `get_image` tool to see the image first.
                     ),
                     ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
                 ],
-                usage=Usage(requests=1, request_tokens=38, response_tokens=28, total_tokens=427, details={}),
+                usage=Usage(
+                    requests=1,
+                    request_tokens=38,
+                    response_tokens=28,
+                    total_tokens=427,
+                    details={'thoughts_tokens': 361, 'text_prompt_tokens': 38},
+                ),
                 model_name='gemini-2.5-pro-preview-03-25',
                 timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
             ),
             ModelRequest(
                 parts=[
@@ -1119,12 +1141,31 @@ I need to use the `get_image` tool to see the image first.
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a kiwi fruit, sliced in half.')],
-                usage=Usage(requests=1, request_tokens=360, response_tokens=11, total_tokens=572, details={}),
+                usage=Usage(
+                    requests=1,
+                    request_tokens=360,
+                    response_tokens=11,
+                    total_tokens=572,
+                    details={'thoughts_tokens': 201, 'text_prompt_tokens': 102, 'image_prompt_tokens': 258},
+                ),
                 model_name='gemini-2.5-pro-preview-03-25',
                 timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_labels_are_ignored_with_gla_provider(allow_model_requests: None, gemini_api_key: str) -> None:
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(
+        'What is the capital of France?',
+        model_settings=GeminiModelSettings(gemini_labels={'environment': 'test', 'team': 'analytics'}),
+    )
+    assert result.output == snapshot('The capital of France is **Paris**.\n')
 
 
 @pytest.mark.vcr()
@@ -1229,9 +1270,16 @@ async def test_gemini_model_instructions(allow_model_requests: None, gemini_api_
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.\n')],
-                usage=Usage(requests=1, request_tokens=13, response_tokens=8, total_tokens=21, details={}),
+                usage=Usage(
+                    requests=1,
+                    request_tokens=13,
+                    response_tokens=8,
+                    total_tokens=21,
+                    details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8},
+                ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
             ),
         ]
     )
@@ -1272,3 +1320,299 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
         assert result.output == snapshot(
             'I need a location dictionary to use the `get_temperature` function.  I cannot provide the temperature in Tokyo without more information.\n'
         )
+
+
+@pytest.mark.vcr()
+async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
+    with try_import() as imports_successful:
+        from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+    if not imports_successful():  # pragma: lax no cover
+        pytest.skip('OpenAI is not installed')
+
+    openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    gemini_model = GeminiModel('gemini-2.5-flash-preview-04-17', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(openai_model)
+
+    # We call OpenAI to get the thinking parts, because Google disabled the thoughts in the API.
+    # See https://github.com/pydantic/pydantic-ai/issues/793 for more details.
+    result = await agent.run(
+        'How do I cross the street?',
+        model_settings=OpenAIResponsesModelSettings(
+            openai_reasoning_effort='high', openai_reasoning_summary='detailed'
+        ),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    IsInstance(TextPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                ],
+                usage=Usage(
+                    request_tokens=13,
+                    response_tokens=2028,
+                    total_tokens=2041,
+                    details={'reasoning_tokens': 1664, 'cached_tokens': 0},
+                ),
+                model_name='o3-mini-2025-01-31',
+                timestamp=IsDatetime(),
+                vendor_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        model=gemini_model,
+        message_history=result.all_messages(),
+        model_settings=GeminiModelSettings(
+            gemini_thinking_config={'thinking_budget': 1024, 'include_thoughts': True},
+        ),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    IsInstance(TextPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                ],
+                usage=Usage(
+                    request_tokens=13,
+                    response_tokens=2028,
+                    total_tokens=2041,
+                    details={'reasoning_tokens': 1664, 'cached_tokens': 0},
+                ),
+                model_name='o3-mini-2025-01-31',
+                timestamp=IsDatetime(),
+                vendor_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+Okay, let's draw an analogy between crossing a street and crossing a river, applying the safety principles from the street crossing guide to the river environment.
+
+Think of the **river** as being like the **street** – a natural barrier you need to get across. The **hazards** on the river are different from vehicles, but they are still things that can harm you.
+
+Here's the analogous guide for crossing a river:
+
+1.  **Before you approach the river:**
+    *   Just as you use a sidewalk to get to the street's edge, use a trail or the riverbank to get to a spot where you can assess the river.
+    *   If you're inexperienced with rivers or unsure about the conditions, try to have someone experienced accompany you.
+
+2.  **When you're ready to cross:**
+    *   Just as you look and listen for vehicles, carefully **assess the river conditions**. Look in all directions (upstream, downstream, across):
+        *   How fast is the current moving? (Like checking vehicle speed).
+        *   How deep does the water look? (Like judging the width and how much time you have).
+        *   Are there obstacles in the water (rocks, logs)? (Like parked cars or road hazards).
+        *   Is the bottom visible and does it look stable? (Like checking the road surface).
+        *   Check upstream for potential hazards coming towards you (like debris).
+    *   Listen to the river – the sound can tell you if the current is very strong or if there are rapids.
+    *   Acknowledge the river's power – just as you make eye contact with drivers, respect that the river can be dangerous and doesn't care if you're trying to cross.
+
+3.  **Use designated crossing areas whenever possible:**
+    *   If there's a **bridge or a ferry**, use it. These are like the crosswalks and traffic signals – the safest, established ways to cross, often managing the "flow" (of water below, or people/boats on the river).
+    *   If you must wade or swim, look for the safest possible **crossing point** – maybe a wider, shallower section, a known ford, or a spot with a less turbulent current. This is like choosing a crosswalk instead of crossing anywhere.
+
+4.  **While crossing:**
+    *   Just as you stay alert and avoid distractions, **focus completely on the crossing**. Don't be looking at your phone or distracted by conversation if you are actively navigating the water.
+    *   Move with purpose, but carefully. If wading, maintain your balance against the current and watch your footing. If swimming, focus on your technique and direction. Stay aware of where you are relative to your intended path and the river's flow.
+
+5.  **After crossing:**
+    *   Once you've safely reached the other side, take a moment to ensure you are truly out of the main flow and on stable ground. Be aware of the riverbank conditions.
+
+**Analogous Takeaway:**
+
+Just as you wouldn't just run blindly into a busy street, you shouldn't just jump into a river without understanding its conditions and choosing the safest method and location to cross. Be cautious, assess the "traffic" (current, depth, obstacles), and use the available "infrastructure" (bridges, ferries, established crossing points) whenever possible.\
+"""
+                    ),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=801,
+                    response_tokens=1519,
+                    total_tokens=2320,
+                    details={'thoughts_tokens': 794, 'text_prompt_tokens': 801},
+                ),
+                model_name='gemini-2.5-flash-preview-04-17',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_gemini_youtube_video_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+    url = VideoUrl(url='https://youtu.be/lCdaVNyHtjU')
+
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m)
+    result = await agent.run(['What is the main content of this URL?', url])
+
+    assert result.output == snapshot(
+        'The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several patterns, including the most common endpoints with 404 errors, request patterns (such as all requests being GET requests), timeline-related issues, and configuration/authentication problems. The analysis also provides recommendations for addressing the 404 errors.'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content=['What is the main content of this URL?', url], timestamp=IsDatetime()),
+                ],
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several patterns, including the most common endpoints with 404 errors, request patterns (such as all requests being GET requests), timeline-related issues, and configuration/authentication problems. The analysis also provides recommendations for addressing the 404 errors.'
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=9,
+                    response_tokens=72,
+                    total_tokens=81,
+                    details={
+                        'text_prompt_tokens': 9,
+                        'video_prompt_tokens': 0,
+                        'audio_prompt_tokens': 0,
+                        'text_candidates_tokens': 72,
+                    },
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+        ]
+    )
+
+
+async def test_gemini_no_finish_reason(get_gemini_client: GetGeminiClient):
+    response = gemini_response(
+        _content_model_response(ModelResponse(parts=[TextPart('Hello world')])), finish_reason=None
+    )
+    gemini_client = get_gemini_client(response)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    agent = Agent(m)
+
+    result = await agent.run('Hello World')
+
+    for message in result.all_messages():
+        if isinstance(message, ModelResponse):
+            assert message.vendor_details is None
+
+
+async def test_response_with_thought_part(get_gemini_client: GetGeminiClient):
+    """Tests that a response containing a 'thought' part can be parsed."""
+    content_with_thought = _GeminiContent(
+        role='model',
+        parts=[
+            _GeminiThoughtPart(thought=True, thought_signature='test-signature-value'),
+            _GeminiTextPart(text='Hello from thought test'),
+        ],
+    )
+    response = gemini_response(content_with_thought)
+    gemini_client = get_gemini_client(response)
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(http_client=gemini_client))
+    agent = Agent(m)
+
+    result = await agent.run('Test with thought')
+
+    assert result.output == 'Hello from thought test'
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3))
+
+
+@pytest.mark.vcr()
+async def test_gemini_tool_config_any_with_tool_without_args(allow_model_requests: None, gemini_api_key: str):
+    class Foo(BaseModel):
+        bar: str
+
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    agent = Agent(m, output_type=Foo)
+
+    @agent.tool_plain
+    async def bar() -> str:
+        return 'hello'
+
+    result = await agent.run('run bar for me please')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='run bar for me please',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='bar', args={}, tool_call_id=IsStr())],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=21,
+                    response_tokens=1,
+                    total_tokens=22,
+                    details={'text_candidates_tokens': 1, 'text_prompt_tokens': 21},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='bar',
+                        content='hello',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'bar': 'hello'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=27,
+                    response_tokens=5,
+                    total_tokens=32,
+                    details={'text_candidates_tokens': 5, 'text_prompt_tokens': 27},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )

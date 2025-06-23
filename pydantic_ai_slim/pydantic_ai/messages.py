@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
-import uuid
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -14,7 +14,10 @@ from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUs
 from typing_extensions import TypeAlias
 
 from . import _utils
-from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
+from ._utils import (
+    generate_tool_call_id as _generate_tool_call_id,
+    now_utc as _now_utc,
+)
 from .exceptions import UnexpectedModelBehavior
 from .usage import Usage
 
@@ -80,8 +83,35 @@ class SystemPromptPart:
 
 
 @dataclass(repr=False)
-class VideoUrl:
-    """A URL to an video."""
+class FileUrl(ABC):
+    """Abstract base class for any URL-based file."""
+
+    url: str
+    """The URL of the file."""
+
+    force_download: bool = False
+    """If the model supports it:
+
+    * If True, the file is downloaded and the data is sent to the model as bytes.
+    * If False, the URL is sent directly to the model and no download is performed.
+    """
+
+    @property
+    @abstractmethod
+    def media_type(self) -> str:
+        """Return the media type of the file, based on the url."""
+
+    @property
+    @abstractmethod
+    def format(self) -> str:
+        """The file format."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class VideoUrl(FileUrl):
+    """A URL to a video."""
 
     url: str
     """The URL of the video."""
@@ -108,8 +138,18 @@ class VideoUrl:
             return 'video/x-ms-wmv'
         elif self.url.endswith('.three_gp'):
             return 'video/3gpp'
+        # Assume that YouTube videos are mp4 because there would be no extension
+        # to infer from. This should not be a problem, as Gemini disregards media
+        # type for YouTube URLs.
+        elif self.is_youtube:
+            return 'video/mp4'
         else:
             raise ValueError(f'Unknown video file extension: {self.url}')
+
+    @property
+    def is_youtube(self) -> bool:
+        """True if the URL has a YouTube domain."""
+        return self.url.startswith(('https://youtu.be/', 'https://youtube.com/', 'https://www.youtube.com/'))
 
     @property
     def format(self) -> VideoFormat:
@@ -119,11 +159,9 @@ class VideoUrl:
         """
         return _video_format_lookup[self.media_type]
 
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
 
 @dataclass(repr=False)
-class AudioUrl:
+class AudioUrl(FileUrl):
     """A URL to an audio file."""
 
     url: str
@@ -147,11 +185,9 @@ class AudioUrl:
         """The file format of the audio file."""
         return _audio_format_lookup[self.media_type]
 
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
 
 @dataclass(repr=False)
-class ImageUrl:
+class ImageUrl(FileUrl):
     """A URL to an image."""
 
     url: str
@@ -182,11 +218,9 @@ class ImageUrl:
         """
         return _image_format_lookup[self.media_type]
 
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
 
 @dataclass(repr=False)
-class DocumentUrl:
+class DocumentUrl(FileUrl):
     """The URL of the document."""
 
     url: str
@@ -214,8 +248,6 @@ class DocumentUrl:
             return _document_format_lookup[media_type]
         except KeyError as e:
             raise ValueError(f'Unknown document media type: {media_type}') from e
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass(repr=False)
@@ -378,7 +410,7 @@ class ToolReturnPart:
         """Return a dictionary representation of the content, wrapping non-dict types appropriately."""
         # gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict
         if isinstance(self.content, dict):
-            return tool_return_ta.dump_python(self.content, mode='json')  # pyright: ignore[reportUnknownMemberType]  # pragma: no cover
+            return tool_return_ta.dump_python(self.content, mode='json')  # pyright: ignore[reportUnknownMemberType]
         else:
             return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
 
@@ -503,6 +535,32 @@ class TextPart:
 
 
 @dataclass(repr=False)
+class ThinkingPart:
+    """A thinking response from a model."""
+
+    content: str
+    """The thinking content of the response."""
+
+    id: str | None = None
+    """The identifier of the thinking part."""
+
+    signature: str | None = None
+    """The signature of the thinking.
+
+    The signature is only available on the Anthropic models.
+    """
+
+    part_kind: Literal['thinking'] = 'thinking'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def has_content(self) -> bool:
+        """Return `True` if the thinking content is non-empty."""
+        return bool(self.content)  # pragma: no cover
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class ToolCallPart:
     """A tool call from a model."""
 
@@ -560,7 +618,7 @@ class ToolCallPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discriminator('part_kind')]
+ModelResponsePart = Annotated[Union[TextPart, ToolCallPart, ThinkingPart], pydantic.Discriminator('part_kind')]
 """A message part returned by a model."""
 
 
@@ -589,7 +647,7 @@ class ModelResponse:
     kind: Literal['response'] = 'response'
     """Message type identifier, this is available on all parts as a discriminator."""
 
-    vendor_details: dict[str, Any] | None = field(default=None, repr=False)
+    vendor_details: dict[str, Any] | None = field(default=None)
     """Additional vendor-specific details in a serializable format.
 
     This allows storing selected vendor-specific data that isn't mapped to standard ModelResponse fields.
@@ -666,6 +724,58 @@ class TextPartDelta:
         if not isinstance(part, TextPart):
             raise ValueError('Cannot apply TextPartDeltas to non-TextParts')  # pragma: no cover
         return replace(part, content=part.content + self.content_delta)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class ThinkingPartDelta:
+    """A partial update (delta) for a `ThinkingPart` to append new thinking content."""
+
+    content_delta: str | None = None
+    """The incremental thinking content to add to the existing `ThinkingPart` content."""
+
+    signature_delta: str | None = None
+    """Optional signature delta.
+
+    Note this is never treated as a delta — it can replace None.
+    """
+
+    part_delta_kind: Literal['thinking'] = 'thinking'
+    """Part delta type identifier, used as a discriminator."""
+
+    @overload
+    def apply(self, part: ModelResponsePart) -> ThinkingPart: ...
+
+    @overload
+    def apply(self, part: ModelResponsePart | ThinkingPartDelta) -> ThinkingPart | ThinkingPartDelta: ...
+
+    def apply(self, part: ModelResponsePart | ThinkingPartDelta) -> ThinkingPart | ThinkingPartDelta:
+        """Apply this thinking delta to an existing `ThinkingPart`.
+
+        Args:
+            part: The existing model response part, which must be a `ThinkingPart`.
+
+        Returns:
+            A new `ThinkingPart` with updated thinking content.
+
+        Raises:
+            ValueError: If `part` is not a `ThinkingPart`.
+        """
+        if isinstance(part, ThinkingPart):
+            new_content = part.content + self.content_delta if self.content_delta else part.content
+            new_signature = self.signature_delta if self.signature_delta is not None else part.signature
+            return replace(part, content=new_content, signature=new_signature)
+        elif isinstance(part, ThinkingPartDelta):
+            if self.content_delta is None and self.signature_delta is None:
+                raise ValueError('Cannot apply ThinkingPartDelta with no content or signature')
+            if self.signature_delta is not None:
+                return replace(part, signature_delta=self.signature_delta)
+            if self.content_delta is not None:
+                return replace(part, content_delta=self.content_delta)
+        raise ValueError(  # pragma: no cover
+            f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
+        )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -789,7 +899,9 @@ class ToolCallPartDelta:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-ModelResponsePartDelta = Annotated[Union[TextPartDelta, ToolCallPartDelta], pydantic.Discriminator('part_delta_kind')]
+ModelResponsePartDelta = Annotated[
+    Union[TextPartDelta, ThinkingPartDelta, ToolCallPartDelta], pydantic.Discriminator('part_delta_kind')
+]
 """A partial update (delta) for any model response part."""
 
 
@@ -858,13 +970,13 @@ class FunctionToolCallEvent:
 
     part: ToolCallPart
     """The (function) tool call to make."""
-    call_id: str = field(init=False)
-    """An ID used for matching details about the call to its result. If present, defaults to the part's tool_call_id."""
     event_kind: Literal['function_tool_call'] = 'function_tool_call'
     """Event type identifier, used as a discriminator."""
 
-    def __post_init__(self):
-        self.call_id = self.part.tool_call_id or str(uuid.uuid4())
+    @property
+    def call_id(self) -> str:
+        """An ID used for matching details about the call to its result. If present, defaults to the part's tool_call_id."""
+        return self.part.tool_call_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

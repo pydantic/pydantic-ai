@@ -28,8 +28,9 @@ from . import (
     result,
     usage as _usage,
 )
+from ._agent_graph import HistoryProcessor
 from .models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
-from .result import FinalResult, OutputDataT, StreamedRunResult, ToolOutput
+from .result import FinalResult, OutputDataT, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDepsT,
@@ -127,7 +128,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     be merged with this value, with the runtime argument taking priority.
     """
 
-    output_type: type[OutputDataT] | ToolOutput[OutputDataT]
+    output_type: _output.OutputType[OutputDataT]
     """
     The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`.
     """
@@ -162,7 +163,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        output_type: type[OutputDataT] | ToolOutput[OutputDataT] = str,
+        output_type: _output.OutputType[OutputDataT] = str,
         instructions: str
         | _system_prompt.SystemPromptFunc[AgentDepsT]
         | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
@@ -179,6 +180,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
     ) -> None: ...
 
     @overload
@@ -199,7 +201,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         name: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
-        result_tool_name: str = 'final_result',
+        result_tool_name: str = _output.DEFAULT_OUTPUT_TOOL_NAME,
         result_tool_description: str | None = None,
         result_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
@@ -208,13 +210,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
     ) -> None: ...
 
     def __init__(
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        # TODO change this back to `output_type: type[OutputDataT] | ToolOutput[OutputDataT] = str,` when we remove the overloads
+        # TODO change this back to `output_type: _output.OutputType[OutputDataT] = str,` when we remove the overloads
         output_type: Any = str,
         instructions: str
         | _system_prompt.SystemPromptFunc[AgentDepsT]
@@ -232,6 +235,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -275,6 +279,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 [`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all]
                 will be used, which defaults to False.
                 See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+            history_processors: Optional list of callables to process the message history before sending it to the model.
+                Each processor takes a list of messages and returns a modified list of messages.
+                Processors can be sync or async and are applied in sequence.
         """
         if model is None or defer_model_check:
             self.model = model
@@ -343,6 +350,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._mcp_servers = mcp_servers
         self._prepare_tools = prepare_tools
+        self.history_processors = history_processors or []
         for tool in tools:
             if isinstance(tool, Tool):
                 self._register_tool(tool)
@@ -374,7 +382,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT],
+        output_type: _output.OutputType[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -404,7 +412,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None = None,
+        output_type: _output.OutputType[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -492,7 +500,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT],
+        output_type: _output.OutputType[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -524,7 +532,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None = None,
+        output_type: _output.OutputType[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -646,11 +654,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
         output_validators = cast(list[_output.OutputValidator[AgentDepsT, RunOutputDataT]], self._output_validators)
 
-        # TODO: Instead of this, copy the function tools to ensure they don't share current_retry state between agent
-        #  runs. Requires some changes to `Tool` to make them copyable though.
-        for v in self._function_tools.values():
-            v.current_retry = 0
-
         model_settings = merge_model_settings(self.model_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
 
@@ -674,10 +677,15 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             if self._instructions is None and not self._instructions_functions:
                 return None
 
-            instructions = self._instructions or ''
+            instructions = [self._instructions] if self._instructions else []
             for instructions_runner in self._instructions_functions:
-                instructions += '\n' + await instructions_runner.run(run_context)
-            return instructions.strip()
+                instructions.append(await instructions_runner.run(run_context))
+            concatenated_instructions = '\n'.join(instruction for instruction in instructions if instruction)
+            return concatenated_instructions.strip() if concatenated_instructions else None
+
+        # Copy the function tools so that retry state is agent-run-specific
+        # Note that the retry count is reset to 0 when this happens due to the `default=0` and `init=False`.
+        run_function_tools = {k: dataclasses.replace(v) for k, v in self._function_tools.items()}
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
@@ -690,7 +698,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             end_strategy=self.end_strategy,
             output_schema=output_schema,
             output_validators=output_validators,
-            function_tools=self._function_tools,
+            history_processors=self.history_processors,
+            function_tools=run_function_tools,
             mcp_servers=self._mcp_servers,
             default_retries=self._default_retries,
             tracer=tracer,
@@ -770,7 +779,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None,
+        output_type: _output.OutputType[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -800,7 +809,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None = None,
+        output_type: _output.OutputType[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -883,7 +892,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent],
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT],
+        output_type: _output.OutputType[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -914,7 +923,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None = None,
+        output_type: _output.OutputType[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -994,7 +1003,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                 if isinstance(maybe_part_event, _messages.PartStartEvent):
                                     new_part = maybe_part_event.part
                                     if isinstance(new_part, _messages.TextPart):
-                                        if _agent_graph.allow_text_output(output_schema):
+                                        if _output.allow_text_output(output_schema):
                                             return FinalResult(s, None, None)
                                     elif isinstance(new_part, _messages.ToolCallPart) and output_schema:
                                         for call, _ in output_schema.find_tool([new_part]):
@@ -1628,7 +1637,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         raise AttributeError('The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.')
 
     def _prepare_output_schema(
-        self, output_type: type[RunOutputDataT] | ToolOutput[RunOutputDataT] | None
+        self, output_type: _output.OutputType[RunOutputDataT] | None
     ) -> _output.OutputSchema[RunOutputDataT] | None:
         if output_type is not None:
             if self._output_validators:
@@ -1682,14 +1691,23 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         return isinstance(node, End)
 
     @asynccontextmanager
-    async def run_mcp_servers(self) -> AsyncIterator[None]:
+    async def run_mcp_servers(
+        self, model: models.Model | models.KnownModelName | str | None = None
+    ) -> AsyncIterator[None]:
         """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] so they can be used by the agent.
 
         Returns: a context manager to start and shutdown the servers.
         """
+        try:
+            sampling_model: models.Model | None = self._get_model(model)
+        except exceptions.UserError:  # pragma: no cover
+            sampling_model = None
+
         exit_stack = AsyncExitStack()
         try:
             for mcp_server in self._mcp_servers:
+                if sampling_model is not None:  # pragma: no branch
+                    mcp_server.sampling_model = sampling_model
                 await exit_stack.enter_async_context(mcp_server)
             yield
         finally:

@@ -93,7 +93,7 @@ params = [
     pytest.param(anthropic, id='anthropic'),
     pytest.param(ollama, id='ollama'),
     pytest.param(mistral, id='mistral'),
-    pytest.param(cohere, id='cohere'),
+    pytest.param(cohere, id='cohere', marks=pytest.mark.skip(reason='Might be causing hangs in CI')),
 ]
 GetModel = Callable[[httpx.AsyncClient, Path], Model]
 

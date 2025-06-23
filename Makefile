@@ -64,7 +64,7 @@ test: ## Run tests and collect coverage data
 	@uv run coverage report
 
 .PHONY: test-fast
-test-fast: ## Same as test except no coverage. ~1/4th the time depending on hardware.
+test-fast: ## Same as test except no coverage and 4x faster depending on hardware
 	uv run pytest -n auto --dist=loadgroup
 
 .PHONY: test-all-python
@@ -78,12 +78,12 @@ test-all-python: ## Run tests on Python 3.9 to 3.13
 	@uv run coverage report
 
 .PHONY: testcov
-testcov: test ## Run tests and generate a coverage report
+testcov: test ## Run tests and generate an HTML coverage report
 	@echo "building coverage html"
 	@uv run coverage html
 
 .PHONY: test-mrp
-test-mrp: ## Build and  tests of mcp-run-python
+test-mrp: ## Build and tests of mcp-run-python
 	cd mcp-run-python && deno task build
 	uv run --package mcp-run-python pytest mcp-run-python -v
 

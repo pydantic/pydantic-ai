@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import typing
+import warnings
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -27,13 +28,16 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, cached_async_http_client
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
+from pydantic_ai.profiles import ModelProfileSpec
 from pydantic_ai.providers import Provider, infer_provider
+from pydantic_ai.providers.bedrock import BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -48,6 +52,7 @@ if TYPE_CHECKING:
         ConverseResponseTypeDef,
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
+        DocumentBlockTypeDef,
         GuardrailConfigurationTypeDef,
         ImageBlockTypeDef,
         InferenceConfigurationTypeDef,
@@ -56,6 +61,7 @@ if TYPE_CHECKING:
         PromptVariableValuesTypeDef,
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
+        ToolConfigurationTypeDef,
         ToolTypeDef,
         VideoBlockTypeDef,
     )
@@ -85,6 +91,10 @@ LatestBedrockModelNames = Literal[
     'us.anthropic.claude-3-5-sonnet-20240620-v1:0',
     'anthropic.claude-3-7-sonnet-20250219-v1:0',
     'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+    'anthropic.claude-opus-4-20250514-v1:0',
+    'us.anthropic.claude-opus-4-20250514-v1:0',
+    'anthropic.claude-sonnet-4-20250514-v1:0',
+    'us.anthropic.claude-sonnet-4-20250514-v1:0',
     'cohere.command-text-v14',
     'cohere.command-r-v1:0',
     'cohere.command-r-plus-v1:0',
@@ -190,6 +200,7 @@ class BedrockConverseModel(Model):
         model_name: BedrockModelName,
         *,
         provider: Literal['bedrock'] | Provider[BaseClient] = 'bedrock',
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize a Bedrock model.
 
@@ -200,12 +211,14 @@ class BedrockConverseModel(Model):
             provider: The provider to use for authentication and API access. Can be either the string
                 'bedrock' or an instance of `Provider[BaseClient]`. If not provided, a new provider will be
                 created using the other parameters.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = cast('BedrockRuntimeClient', provider.client)
+        self._profile = profile or provider.model_profile
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
@@ -254,11 +267,16 @@ class BedrockConverseModel(Model):
         items: list[ModelResponsePart] = []
         if message := response['output'].get('message'):  # pragma: no branch
             for item in message['content']:
+                if reasoning_content := item.get('reasoningContent'):
+                    reasoning_text = reasoning_content.get('reasoningText')
+                    if reasoning_text:  # pragma: no branch
+                        thinking_part = ThinkingPart(content=reasoning_text['text'])
+                        if reasoning_signature := reasoning_text.get('signature'):
+                            thinking_part.signature = reasoning_signature
+                        items.append(thinking_part)
                 if text := item.get('text'):
                     items.append(TextPart(content=text))
-                else:
-                    tool_use = item.get('toolUse')
-                    assert tool_use is not None, f'Found a content that is not a text or tool use: {item}'
+                elif tool_use := item.get('toolUse'):
                     items.append(
                         ToolCallPart(
                             tool_name=tool_use['name'],
@@ -301,15 +319,6 @@ class BedrockConverseModel(Model):
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ConverseResponseTypeDef | EventStream[ConverseStreamOutputTypeDef]:
-        tools = self._get_tools(model_request_parameters)
-        support_tools_choice = self.model_name.startswith(('anthropic', 'us.anthropic'))
-        if not tools or not support_tools_choice:
-            tool_choice: ToolChoiceTypeDef = {}
-        elif not model_request_parameters.allow_text_output:
-            tool_choice = {'any': {}}  # pragma: no cover
-        else:
-            tool_choice = {'auto': {}}
-
         system_prompt, bedrock_messages = await self._map_messages(messages)
         inference_config = self._map_inference_config(model_settings)
 
@@ -319,6 +328,10 @@ class BedrockConverseModel(Model):
             'system': system_prompt,
             'inferenceConfig': inference_config,
         }
+
+        tool_config = self._map_tool_config(model_request_parameters)
+        if tool_config:
+            params['toolConfig'] = tool_config
 
         # Bedrock supports a set of specific extra parameters
         if model_settings:
@@ -336,11 +349,6 @@ class BedrockConverseModel(Model):
                 params['additionalModelRequestFields'] = additional_model_requests_fields
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
-
-        if tools:
-            params['toolConfig'] = {'tools': tools}
-            if tool_choice:
-                params['toolConfig']['toolChoice'] = tool_choice
 
         if stream:
             model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
@@ -367,13 +375,31 @@ class BedrockConverseModel(Model):
 
         return inference_config
 
-    async def _map_messages(
+    def _map_tool_config(self, model_request_parameters: ModelRequestParameters) -> ToolConfigurationTypeDef | None:
+        tools = self._get_tools(model_request_parameters)
+        if not tools:
+            return None
+
+        tool_choice: ToolChoiceTypeDef
+        if not model_request_parameters.allow_text_output:
+            tool_choice = {'any': {}}
+        else:
+            tool_choice = {'auto': {}}
+
+        tool_config: ToolConfigurationTypeDef = {'tools': tools}
+        if tool_choice and BedrockModelProfile.from_profile(self.profile).bedrock_supports_tool_choice:
+            tool_config['toolChoice'] = tool_choice
+
+        return tool_config
+
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage]
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
         """Maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`.
 
         Groups consecutive ToolReturnPart objects into a single user message as required by Bedrock Claude/Nova models.
         """
+        profile = BedrockModelProfile.from_profile(self.profile)
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)
@@ -393,7 +419,11 @@ class BedrockConverseModel(Model):
                                     {
                                         'toolResult': {
                                             'toolUseId': part.tool_call_id,
-                                            'content': [{'text': part.model_response_str()}],
+                                            'content': [
+                                                {'text': part.model_response_str()}
+                                                if profile.bedrock_tool_result_format == 'text'
+                                                else {'json': part.model_response_object()}
+                                            ],
                                             'status': 'success',
                                         }
                                     }
@@ -425,6 +455,9 @@ class BedrockConverseModel(Model):
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
+                    elif isinstance(item, ThinkingPart):
+                        # NOTE: We don't pass the thinking part to Bedrock since it raises an error.
+                        pass
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
@@ -480,25 +513,37 @@ class BedrockConverseModel(Model):
                     else:
                         raise NotImplementedError('Binary content is not supported yet.')
                 elif isinstance(item, (ImageUrl, DocumentUrl, VideoUrl)):
-                    response = await cached_async_http_client().get(item.url)
-                    response.raise_for_status()
+                    downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
+                    format = downloaded_item['data_type']
                     if item.kind == 'image-url':
                         format = item.media_type.split('/')[1]
                         assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
-                        image: ImageBlockTypeDef = {'format': format, 'source': {'bytes': response.content}}
+                        image: ImageBlockTypeDef = {'format': format, 'source': {'bytes': downloaded_item['data']}}
                         content.append({'image': image})
 
                     elif item.kind == 'document-url':
                         name = f'Document {next(document_count)}'
-                        data = response.content
-                        content.append({'document': {'name': name, 'format': item.format, 'source': {'bytes': data}}})
+                        document: DocumentBlockTypeDef = {
+                            'name': name,
+                            'format': item.format,
+                            'source': {'bytes': downloaded_item['data']},
+                        }
+                        content.append({'document': document})
 
                     elif item.kind == 'video-url':  # pragma: no branch
                         format = item.media_type.split('/')[1]
-                        assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp'), (
-                            f'Unsupported video format: {format}'
-                        )
-                        video: VideoBlockTypeDef = {'format': format, 'source': {'bytes': response.content}}
+                        assert format in (
+                            'mkv',
+                            'mov',
+                            'mp4',
+                            'webm',
+                            'flv',
+                            'mpeg',
+                            'mpg',
+                            'wmv',
+                            'three_gp',
+                        ), f'Unsupported video format: {format}'
+                        video: VideoBlockTypeDef = {'format': format, 'source': {'bytes': downloaded_item['data']}}
                         content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
@@ -557,6 +602,15 @@ class BedrockStreamedResponse(StreamedResponse):
             if 'contentBlockDelta' in chunk:
                 index = chunk['contentBlockDelta']['contentBlockIndex']
                 delta = chunk['contentBlockDelta']['delta']
+                if 'reasoningContent' in delta:
+                    if text := delta['reasoningContent'].get('text'):
+                        yield self._parts_manager.handle_thinking_delta(vendor_part_id=index, content=text)
+                    else:  # pragma: no cover
+                        warnings.warn(
+                            f'Only text reasoning content is supported yet, but you got {delta["reasoningContent"]}. '
+                            'Please report this to the maintainers.',
+                            UserWarning,
+                        )
                 if 'text' in delta:
                     yield self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
                 if 'toolUse' in delta:

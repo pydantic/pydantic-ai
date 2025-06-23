@@ -725,7 +725,7 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-
+Note that returning an empty string will result in no instruction message added.
 
 ## Reflection and self-correction
 

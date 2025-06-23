@@ -7,6 +7,8 @@ from httpx import AsyncClient as AsyncHTTPClient
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -32,6 +34,9 @@ class MistralProvider(Provider[Mistral]):
     @property
     def client(self) -> Mistral:
         return self._client
+
+    def model_profile(self, model_name: str) -> ModelProfile | None:
+        return mistral_model_profile(model_name)
 
     @overload
     def __init__(self, *, mistral_client: Mistral | None = None) -> None: ...

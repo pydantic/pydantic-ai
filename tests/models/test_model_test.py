@@ -2,11 +2,14 @@
 
 from __future__ import annotations as _annotations
 
+import asyncio
+import dataclasses
 from datetime import timezone
 from typing import Annotated, Any, Literal
 
 import pytest
 from annotated_types import Ge, Gt, Le, Lt, MaxLen, MinLen
+from anyio import Event
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
@@ -160,6 +163,36 @@ def test_output_tool_retry_error_handled():
     assert call_count == 3
 
 
+@dataclasses.dataclass
+class AgentRunDeps:
+    run_id: int
+
+
+@pytest.mark.anyio
+async def test_multiple_concurrent_tool_retries():
+    class OutputModel(BaseModel):
+        x: int
+        y: str
+
+    agent = Agent('test', deps_type=AgentRunDeps, output_type=OutputModel, retries=2)
+    retried_run_ids = set[int]()
+    event = Event()
+
+    run_ids = list(range(5))  # fire off 5 run ids that will all retry the tool before they finish
+
+    @agent.tool
+    async def tool_that_must_be_retried(ctx: RunContext[AgentRunDeps]) -> None:
+        if ctx.deps.run_id not in retried_run_ids:
+            retried_run_ids.add(ctx.deps.run_id)
+            raise ModelRetry('Fail')
+        if len(retried_run_ids) == len(run_ids):  # pragma: no branch  # won't branch if all runs happen very quickly
+            event.set()
+        await event.wait()  # ensure a retry is done by all runs before any of them finish their flow
+        return None
+
+    await asyncio.gather(*[agent.run('Hello', model=TestModel(), deps=AgentRunDeps(run_id)) for run_id in run_ids])
+
+
 def test_output_tool_retry_error_handled_with_custom_args(set_event_loop: None):
     class ResultModel(BaseModel):
         x: int
@@ -303,6 +336,6 @@ def test_max_items():
 )
 def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | BinaryContent):
     agent = Agent()
-    result = agent.run_sync('x', model=TestModel(custom_output_text='custom'))
+    result = agent.run_sync(['x', content], model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=51, response_tokens=1, total_tokens=52))

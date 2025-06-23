@@ -1,20 +1,21 @@
 from __future__ import annotations as _annotations
 
 import base64
-import re
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
+from pydantic_ai._thinking_part import split_content_into_text_and_thinking
+from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._utils import guard_tool_call_id as _guard_tool_call_id
+from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -28,22 +29,23 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
+from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    cached_async_http_client,
     check_allow_model_requests,
+    download_item,
     get_user_agent,
 )
-from ._json_schema import JsonSchema, WalkJsonSchema
 
 try:
     from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream, NotGiven
@@ -116,6 +118,13 @@ class OpenAIModelSettings(ModelSettings, total=False):
     See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
     """
 
+    openai_service_tier: Literal['auto', 'default', 'flex']
+    """The service tier to use for the model request.
+
+    Currently supported values are `auto`, `default`, and `flex`.
+    For more information, see [OpenAI's service tiers documentation](https://platform.openai.com/docs/api-reference/chat/object#chat/object-service_tier).
+    """
+
 
 class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
     """Settings used for an OpenAI Responses model request.
@@ -130,6 +139,9 @@ class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
     """
 
     openai_reasoning_generate_summary: Literal['detailed', 'concise']
+    """Deprecated alias for `openai_reasoning_summary`."""
+
+    openai_reasoning_summary: Literal['detailed', 'concise']
     """A summary of the reasoning performed by the model.
 
     This can be useful for debugging and understanding the model's reasoning process.
@@ -170,7 +182,9 @@ class OpenAIModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure', 'openrouter'] | Provider[AsyncOpenAI] = 'openai',
+        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku']
+        | Provider[AsyncOpenAI] = 'openai',
+        profile: ModelProfileSpec | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
     ):
         """Initialize an OpenAI model.
@@ -180,13 +194,17 @@ class OpenAIModel(Model):
                 [here](https://github.com/openai/openai-python/blob/v1.54.3/src/openai/types/chat_model.py#L7)
                 (Unfortunately, despite being ask to do so, OpenAI do not provide `.inv` files for their API).
             provider: The provider to use. Defaults to `'openai'`.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             system_prompt_role: The role to use for the system prompt message. If not provided, defaults to `'system'`.
                 In the future, this may be inferred from the model name.
         """
         self._model_name = model_name
+
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
+        self._profile = profile or provider.model_profile
+
         self.system_prompt_role = system_prompt_role
 
     @property
@@ -220,9 +238,6 @@ class OpenAIModel(Model):
         )
         async with response:
             yield await self._process_streamed_response(response)
-
-    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
-        return _customize_request_parameters(model_request_parameters)
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -271,6 +286,12 @@ class OpenAIModel(Model):
 
         openai_messages = await self._map_messages(messages)
 
+        sampling_settings = (
+            model_settings
+            if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
+            else OpenAIModelSettings()
+        )
+
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
@@ -284,17 +305,18 @@ class OpenAIModel(Model):
                 stream_options={'include_usage': True} if stream else NOT_GIVEN,
                 stop=model_settings.get('stop_sequences', NOT_GIVEN),
                 max_completion_tokens=model_settings.get('max_tokens', NOT_GIVEN),
-                temperature=model_settings.get('temperature', NOT_GIVEN),
-                top_p=model_settings.get('top_p', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 seed=model_settings.get('seed', NOT_GIVEN),
-                presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
-                frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
-                logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
-                logprobs=model_settings.get('openai_logprobs', NOT_GIVEN),
-                top_logprobs=model_settings.get('openai_top_logprobs', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
+                service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
+                temperature=sampling_settings.get('temperature', NOT_GIVEN),
+                top_p=sampling_settings.get('top_p', NOT_GIVEN),
+                presence_penalty=sampling_settings.get('presence_penalty', NOT_GIVEN),
+                frequency_penalty=sampling_settings.get('frequency_penalty', NOT_GIVEN),
+                logit_bias=sampling_settings.get('logit_bias', NOT_GIVEN),
+                logprobs=sampling_settings.get('openai_logprobs', NOT_GIVEN),
+                top_logprobs=sampling_settings.get('openai_top_logprobs', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -305,9 +327,13 @@ class OpenAIModel(Model):
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
+        timestamp = number_to_datetime(response.created)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+        # The `reasoning_content` is only present in DeepSeek models.
+        if reasoning_content := getattr(choice.message, 'reasoning_content', None):
+            items.append(ThinkingPart(content=reasoning_content))
+
         vendor_details: dict[str, Any] | None = None
 
         # Add logprobs to vendor_details if available
@@ -328,10 +354,12 @@ class OpenAIModel(Model):
             }
 
         if choice.message.content is not None:
-            items.append(TextPart(choice.message.content))
+            items.extend(split_content_into_text_and_thinking(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
-                items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
+                part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
+                part.tool_call_id = _guard_tool_call_id(part)
+                items.append(part)
         return ModelResponse(
             items,
             usage=_map_usage(response),
@@ -353,7 +381,7 @@ class OpenAIModel(Model):
         return OpenAIStreamedResponse(
             _model_name=self._model_name,
             _response=peekable_response,
-            _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+            _timestamp=number_to_datetime(first_chunk.created),
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -375,6 +403,11 @@ class OpenAIModel(Model):
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         texts.append(item.content)
+                    elif isinstance(item, ThinkingPart):
+                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
+                        # please open an issue. The below code is the code to send thinking to the provider.
+                        # texts.append(f'<think>\n{item.content}\n</think>')
+                        pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     else:
@@ -401,8 +434,7 @@ class OpenAIModel(Model):
             function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
         )
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> chat.ChatCompletionToolParam:
+    def _map_tool_definition(self, f: ToolDefinition) -> chat.ChatCompletionToolParam:
         tool_param: chat.ChatCompletionToolParam = {
             'type': 'function',
             'function': {
@@ -411,7 +443,7 @@ class OpenAIModel(Model):
                 'parameters': f.parameters_json_schema,
             },
         }
-        if f.strict:
+        if f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition:
             tool_param['function']['strict'] = f.strict
         return tool_param
 
@@ -481,21 +513,21 @@ class OpenAIModel(Model):
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):
-                    client = cached_async_http_client()
-                    response = await client.get(item.url)
-                    response.raise_for_status()
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    audio_format: Any = response.headers['content-type'].removeprefix('audio/')
-                    audio = InputAudio(data=base64_encoded, format=audio_format)
+                    downloaded_item = await download_item(item, data_format='base64', type_format='extension')
+                    assert downloaded_item['data_type'] in (
+                        'wav',
+                        'mp3',
+                    ), f'Unsupported audio format: {downloaded_item["data_type"]}'
+                    audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
-                    client = cached_async_http_client()
-                    response = await client.get(item.url)
-                    response.raise_for_status()
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    media_type = response.headers.get('content-type').split(';')[0]
-                    file_data = f'data:{media_type};base64,{base64_encoded}'
-                    file = File(file=FileFile(file_data=file_data, filename=f'filename.{item.format}'), type='file')
+                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
+                    file = File(
+                        file=FileFile(
+                            file_data=downloaded_item['data'], filename=f'filename.{downloaded_item["data_type"]}'
+                        ),
+                        type='file',
+                    )
                     content.append(file)
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
@@ -533,18 +565,23 @@ class OpenAIResponsesModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure'] | Provider[AsyncOpenAI] = 'openai',
+        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together']
+        | Provider[AsyncOpenAI] = 'openai',
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize an OpenAI Responses model.
 
         Args:
             model_name: The name of the OpenAI model to use.
             provider: The provider to use. Defaults to `'openai'`.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
         """
         self._model_name = model_name
+
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
+        self._profile = profile or provider.model_profile
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -582,18 +619,26 @@ class OpenAIResponsesModel(Model):
         async with response:
             yield await self._process_streamed_response(response)
 
-    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
-        return _customize_request_parameters(model_request_parameters)
-
     def _process_response(self, response: responses.Response) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = datetime.fromtimestamp(response.created_at, tz=timezone.utc)
+        timestamp = number_to_datetime(response.created_at)
         items: list[ModelResponsePart] = []
         items.append(TextPart(response.output_text))
         for item in response.output:
-            if item.type == 'function_call':
+            if item.type == 'reasoning':
+                for summary in item.summary:
+                    # NOTE: We use the same id for all summaries because we can merge them on the round trip.
+                    # The providers don't force the signature to be unique.
+                    items.append(ThinkingPart(content=summary.text, id=item.id))
+            elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
-        return ModelResponse(items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp)
+        return ModelResponse(
+            items,
+            usage=_map_usage(response),
+            model_name=response.model,
+            vendor_id=response.id,
+            timestamp=timestamp,
+        )
 
     async def _process_streamed_response(
         self, response: AsyncStream[responses.ResponseStreamEvent]
@@ -608,7 +653,7 @@ class OpenAIResponsesModel(Model):
         return OpenAIResponsesStreamedResponse(
             _model_name=self._model_name,
             _response=peekable_response,
-            _timestamp=datetime.fromtimestamp(first_chunk.response.created_at, tz=timezone.utc),
+            _timestamp=number_to_datetime(first_chunk.response.created_at),
         )
 
     @overload
@@ -650,6 +695,12 @@ class OpenAIResponsesModel(Model):
         instructions, openai_messages = await self._map_messages(messages)
         reasoning = self._get_reasoning(model_settings)
 
+        sampling_settings = (
+            model_settings
+            if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
+            else OpenAIResponsesModelSettings()
+        )
+
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
@@ -662,8 +713,8 @@ class OpenAIResponsesModel(Model):
                 tool_choice=tool_choice or NOT_GIVEN,
                 max_output_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 stream=stream,
-                temperature=model_settings.get('temperature', NOT_GIVEN),
-                top_p=model_settings.get('top_p', NOT_GIVEN),
+                temperature=sampling_settings.get('temperature', NOT_GIVEN),
+                top_p=sampling_settings.get('top_p', NOT_GIVEN),
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 reasoning=reasoning,
@@ -678,11 +729,22 @@ class OpenAIResponsesModel(Model):
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
+        reasoning_summary = model_settings.get('openai_reasoning_summary', None)
         reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
 
-        if reasoning_effort is None and reasoning_generate_summary is None:
+        if reasoning_summary and reasoning_generate_summary:  # pragma: no cover
+            raise ValueError('`openai_reasoning_summary` and `openai_reasoning_generate_summary` cannot both be set.')
+
+        if reasoning_generate_summary is not None:  # pragma: no cover
+            warnings.warn(
+                '`openai_reasoning_generate_summary` is deprecated, use `openai_reasoning_summary` instead',
+                DeprecationWarning,
+            )
+            reasoning_summary = reasoning_generate_summary
+
+        if reasoning_effort is None and reasoning_summary is None:
             return NOT_GIVEN
-        return Reasoning(effort=reasoning_effort, generate_summary=reasoning_generate_summary)
+        return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
@@ -690,15 +752,15 @@ class OpenAIResponsesModel(Model):
             tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> responses.FunctionToolParam:
+    def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
         return {
             'name': f.name,
             'parameters': f.parameters_json_schema,
             'type': 'function',
             'description': f.description,
-            # NOTE: f.strict should already be a boolean thanks to customize_request_parameters
-            'strict': f.strict or False,
+            'strict': bool(
+                f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
+            ),
         }
 
     async def _map_messages(
@@ -738,11 +800,30 @@ class OpenAIResponsesModel(Model):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
+                # last_thinking_part_idx: int | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
+                    elif isinstance(item, ThinkingPart):
+                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
+                        # please open an issue. The below code is the code to send thinking to the provider.
+                        # if last_thinking_part_idx is not None:
+                        #     reasoning_item = cast(responses.ResponseReasoningItemParam, openai_messages[last_thinking_part_idx])  # fmt: skip
+                        #     if item.id == reasoning_item['id']:
+                        #         assert isinstance(reasoning_item['summary'], list)
+                        #         reasoning_item['summary'].append(Summary(text=item.content, type='summary_text'))
+                        #         continue
+                        # last_thinking_part_idx = len(openai_messages)
+                        # openai_messages.append(
+                        #     responses.ResponseReasoningItemParam(
+                        #         id=item.id or generate_tool_call_id(),
+                        #         summary=[Summary(text=item.content, type='summary_text')],
+                        #         type='reasoning',
+                        #     )
+                        # )
+                        pass
                     else:
                         assert_never(item)
             else:
@@ -799,27 +880,21 @@ class OpenAIResponsesModel(Model):
                         responses.ResponseInputImageParam(image_url=item.url, type='input_image', detail='auto')
                     )
                 elif isinstance(item, AudioUrl):  # pragma: no cover
-                    client = cached_async_http_client()
-                    response = await client.get(item.url)
-                    response.raise_for_status()
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
+                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                     content.append(
                         responses.ResponseInputFileParam(
                             type='input_file',
-                            file_data=f'data:{item.media_type};base64,{base64_encoded}',
+                            file_data=downloaded_item['data'],
+                            filename=f'filename.{downloaded_item["data_type"]}',
                         )
                     )
                 elif isinstance(item, DocumentUrl):
-                    client = cached_async_http_client()
-                    response = await client.get(item.url)
-                    response.raise_for_status()
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    media_type = response.headers.get('content-type').split(';')[0]
+                    downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
                     content.append(
                         responses.ResponseInputFileParam(
                             type='input_file',
-                            file_data=f'data:{media_type};base64,{base64_encoded}',
-                            filename=f'filename.{item.format}',
+                            file_data=downloaded_item['data'],
+                            filename=f'filename.{downloaded_item["data_type"]}',
                         )
                     )
                 elif isinstance(item, VideoUrl):  # pragma: no cover
@@ -922,12 +997,42 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         vendor_part_id=chunk.item.id,
                         tool_name=chunk.item.name,
                         args=chunk.item.arguments,
-                        tool_call_id=chunk.item.id,
+                        tool_call_id=chunk.item.call_id,
+                    )
+                elif isinstance(chunk.item, responses.ResponseReasoningItem):
+                    content = chunk.item.summary[0].text if chunk.item.summary else ''
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id=chunk.item.id,
+                        content=content,
+                        signature=chunk.item.id,
+                    )
+                elif isinstance(chunk.item, responses.ResponseOutputMessage):
+                    pass
+                else:
+                    warnings.warn(  # pragma: no cover
+                        f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
+                        UserWarning,
                     )
 
             elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
                 # NOTE: We only need this if the tool call deltas don't include the final info.
                 pass
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryTextDoneEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=chunk.item_id,
+                    content=chunk.delta,
+                    signature=chunk.item_id,
+                )
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 yield self._parts_manager.handle_text_delta(vendor_part_id=chunk.content_index, content=chunk.delta)
@@ -980,142 +1085,3 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             total_tokens=response_usage.total_tokens,
             details=details,
         )
-
-
-_STRICT_INCOMPATIBLE_KEYS = [
-    'minLength',
-    'maxLength',
-    'pattern',
-    'format',
-    'minimum',
-    'maximum',
-    'multipleOf',
-    'patternProperties',
-    'unevaluatedProperties',
-    'propertyNames',
-    'minProperties',
-    'maxProperties',
-    'unevaluatedItems',
-    'contains',
-    'minContains',
-    'maxContains',
-    'minItems',
-    'maxItems',
-    'uniqueItems',
-]
-
-_sentinel = object()
-
-
-@dataclass
-class _OpenAIJsonSchema(WalkJsonSchema):
-    """Recursively handle the schema to make it compatible with OpenAI strict mode.
-
-    See https://platform.openai.com/docs/guides/function-calling?api-mode=responses#strict-mode for more details,
-    but this basically just requires:
-    * `additionalProperties` must be set to false for each object in the parameters
-    * all fields in properties must be marked as required
-    """
-
-    def __init__(self, schema: JsonSchema, strict: bool | None):
-        super().__init__(schema)
-        self.strict = strict
-        self.is_strict_compatible = True
-        self.root_ref = schema.get('$ref')
-
-    def walk(self) -> JsonSchema:
-        # Note: OpenAI does not support anyOf at the root in strict mode
-        # However, we don't need to check for it here because we ensure in pydantic_ai._utils.check_object_json_schema
-        # that the root schema either has type 'object' or is recursive.
-        result = super().walk()
-
-        # For recursive models, we need to tweak the schema to make it compatible with strict mode.
-        # Because the following should never change the semantics of the schema we apply it unconditionally.
-        if self.root_ref is not None:
-            result.pop('$ref', None)  # We replace references to the self.root_ref with just '#' in the transform method
-            root_key = re.sub(r'^#/\$defs/', '', self.root_ref)
-            result.update(self.defs.get(root_key) or {})
-
-        return result
-
-    def transform(self, schema: JsonSchema) -> JsonSchema:  # noqa C901
-        # Remove unnecessary keys
-        schema.pop('title', None)
-        schema.pop('default', None)
-        schema.pop('$schema', None)
-        schema.pop('discriminator', None)
-
-        if schema_ref := schema.get('$ref'):
-            if schema_ref == self.root_ref:
-                schema['$ref'] = '#'
-            if len(schema) > 1:
-                # OpenAI Strict mode doesn't support siblings to "$ref", but _does_ allow siblings to "anyOf".
-                # So if there is a "description" field or any other extra info, we move the "$ref" into an "anyOf":
-                schema['anyOf'] = [{'$ref': schema.pop('$ref')}]
-
-        # Track strict-incompatible keys
-        incompatible_values: dict[str, Any] = {}
-        for key in _STRICT_INCOMPATIBLE_KEYS:
-            value = schema.get(key, _sentinel)
-            if value is not _sentinel:
-                incompatible_values[key] = value
-        description = schema.get('description')
-        if incompatible_values:
-            if self.strict is True:
-                notes: list[str] = []
-                for key, value in incompatible_values.items():
-                    schema.pop(key)
-                    notes.append(f'{key}={value}')
-                notes_string = ', '.join(notes)
-                schema['description'] = notes_string if not description else f'{description} ({notes_string})'
-            elif self.strict is None:  # pragma: no branch
-                self.is_strict_compatible = False
-
-        schema_type = schema.get('type')
-        if 'oneOf' in schema:
-            # OpenAI does not support oneOf in strict mode
-            if self.strict is True:
-                schema['anyOf'] = schema.pop('oneOf')
-            else:
-                self.is_strict_compatible = False
-
-        if schema_type == 'object':
-            if self.strict is True:
-                # additional properties are disallowed
-                schema['additionalProperties'] = False
-
-                # all properties are required
-                if 'properties' not in schema:
-                    schema['properties'] = dict[str, Any]()
-                schema['required'] = list(schema['properties'].keys())
-
-            elif self.strict is None:
-                if (
-                    schema.get('additionalProperties') is not False
-                    or 'properties' not in schema
-                    or 'required' not in schema
-                ):
-                    self.is_strict_compatible = False
-                else:
-                    required = schema['required']
-                    for k in schema['properties'].keys():
-                        if k not in required:
-                            self.is_strict_compatible = False
-        return schema
-
-
-def _customize_request_parameters(model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
-    """Customize the request parameters for OpenAI models."""
-
-    def _customize_tool_def(t: ToolDefinition):
-        schema_transformer = _OpenAIJsonSchema(t.parameters_json_schema, strict=t.strict)
-        parameters_json_schema = schema_transformer.walk()
-        if t.strict is None:
-            t = replace(t, strict=schema_transformer.is_strict_compatible)
-        return replace(t, parameters_json_schema=parameters_json_schema)
-
-    return ModelRequestParameters(
-        function_tools=[_customize_tool_def(tool) for tool in model_request_parameters.function_tools],
-        allow_text_output=model_request_parameters.allow_text_output,
-        output_tools=[_customize_tool_def(tool) for tool in model_request_parameters.output_tools],
-    )
