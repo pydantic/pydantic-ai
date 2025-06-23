@@ -19,3 +19,4 @@ examples/pydantic_ai_examples/.chat_app_messages.sqlite
 node_modules/
 **.idea/
 .coverage*
+/test_tmp/
