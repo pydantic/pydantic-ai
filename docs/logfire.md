@@ -306,7 +306,7 @@ agent = Agent('gpt-4o', instrument=instrumentation_settings)
 Agent.instrument_all(instrumentation_settings)
 ```
 
-### Excluding sensitive content
+### Excluding prompts and completions
 
 For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. PydanticAI allows you to exclude the actual content from instrumentation events while preserving the structural information needed for debugging and monitoring.
 

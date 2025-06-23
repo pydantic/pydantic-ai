@@ -698,7 +698,7 @@ async def process_function_tools(  # noqa C901
 
     user_parts: list[_messages.UserPromptPart] = []
 
-    include_tool_args = (
+    include_content = (
         ctx.deps.instrumentation_settings is not None and ctx.deps.instrumentation_settings.include_content
     )
 
@@ -712,7 +712,7 @@ async def process_function_tools(  # noqa C901
         },
     ):
         tasks = [
-            asyncio.create_task(tool.run(call, run_context, ctx.deps.tracer, include_tool_args), name=call.tool_name)
+            asyncio.create_task(tool.run(call, run_context, ctx.deps.tracer, include_content), name=call.tool_name)
             for tool, call in calls_to_run
         ]
 
