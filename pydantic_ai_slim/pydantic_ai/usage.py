@@ -2,14 +2,14 @@ from __future__ import annotations as _annotations
 
 from copy import copy
 from dataclasses import dataclass
+from typing import cast
 
-from . import _utils
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'Usage', 'UsageLimits'
 
 
-@dataclass(repr=False)
+@dataclass
 class Usage:
     """LLM usage associated with a request or run.
 
@@ -29,6 +29,16 @@ class Usage:
     details: dict[str, int] | None = None
     """Any extra details returned by the model."""
 
+    def __post_init__(self):
+        if not self.details:
+            return
+        for key, value in self.details.copy().items():
+            if not value:
+                self.details[key] = 0
+            elif isinstance(value, list) and isinstance(value[0], dict):
+                items = cast(list[dict[str, int]], value)
+                self.details[key] = sum([item.get('token_count', 0) for item in items])
+
     def incr(self, incr_usage: Usage) -> None:
         """Increment the usage in place.
 
@@ -42,9 +52,13 @@ class Usage:
                 setattr(self, f, (self_value or 0) + (other_value or 0))
 
         if incr_usage.details:
-            self.details = self.details or {}
+            if self.details is None:
+                self.details = {}
             for key, value in incr_usage.details.items():
-                self.details[key] = self.details.get(key, 0) + value
+                value = value or 0
+                if key not in self.details:
+                    self.details[key] = 0
+                self.details[key] += value
 
     def __add__(self, other: Usage) -> Usage:
         """Add two Usages together.
