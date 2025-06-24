@@ -19,6 +19,7 @@ from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import ParamSpec, TypeAlias, TypeGuard, TypeIs, is_typeddict
 
 from pydantic_graph._utils import AbstractSpan
+from . import exceptions
 
 AbstractSpan = AbstractSpan
 
@@ -327,3 +328,17 @@ def is_async_callable(obj: Any) -> Any:
         obj = obj.func
 
     return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))  # type: ignore
+
+
+def validate_no_deprecated_kwargs(_deprecated_kwargs: dict[str, Any]) -> None:
+    """Validate that no unknown deprecated kwargs remain after processing.
+    
+    Args:
+        _deprecated_kwargs: Dictionary of remaining deprecated kwargs after specific ones have been processed.
+        
+    Raises:
+        UserError: If any unknown kwargs remain.
+    """
+    if _deprecated_kwargs:
+        unknown_kwargs = ', '.join(f'`{k}`' for k in _deprecated_kwargs.keys())
+        raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')

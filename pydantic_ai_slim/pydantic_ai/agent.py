@@ -324,11 +324,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning)
             output_retries = result_retries
 
-        if _deprecated_kwargs:
-            from .exceptions import UserError
-
-            unknown_kwargs = ', '.join(f'`{k}`' for k in _deprecated_kwargs.keys())
-            raise UserError(f'Unknown keyword arguments: {unknown_kwargs}')
+        _utils.validate_no_deprecated_kwargs(_deprecated_kwargs)
 
         self._output_schema = _output.OutputSchema[OutputDataT].build(
             output_type, self._deprecated_result_tool_name, self._deprecated_result_tool_description
@@ -469,11 +465,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
             output_type = _deprecated_kwargs.pop('result_type')
 
-        if _deprecated_kwargs:
-            from .exceptions import UserError
-
-            unknown_kwargs = ', '.join(f'`{k}`' for k in _deprecated_kwargs.keys())
-            raise UserError(f'Unknown keyword arguments: {unknown_kwargs}')
+        _utils.validate_no_deprecated_kwargs(_deprecated_kwargs)
 
         async with self.iter(
             user_prompt=user_prompt,
@@ -641,11 +633,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
             output_type = _deprecated_kwargs.pop('result_type')
 
-        if _deprecated_kwargs:
-            from .exceptions import UserError
-
-            unknown_kwargs = ', '.join(f'`{k}`' for k in _deprecated_kwargs.keys())
-            raise UserError(f'Unknown keyword arguments: {unknown_kwargs}')
+        _utils.validate_no_deprecated_kwargs(_deprecated_kwargs)
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
@@ -877,11 +865,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
             output_type = _deprecated_kwargs.pop('result_type')
 
-        if _deprecated_kwargs:
-            from .exceptions import UserError
-
-            unknown_kwargs = ', '.join(f'`{k}`' for k in _deprecated_kwargs.keys())
-            raise UserError(f'Unknown keyword arguments: {unknown_kwargs}')
+        _utils.validate_no_deprecated_kwargs(_deprecated_kwargs)
 
         return get_event_loop().run_until_complete(
             self.run(
@@ -999,11 +983,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
             output_type = _deprecated_kwargs.pop('result_type')
 
-        if _deprecated_kwargs:
-            from .exceptions import UserError
-
-            unknown_kwargs = ', '.join(f'`{k}`' for k in _deprecated_kwargs.keys())
-            raise UserError(f'Unknown keyword arguments: {unknown_kwargs}')
+        _utils.validate_no_deprecated_kwargs(_deprecated_kwargs)
 
         yielded = False
         async with self.iter(
