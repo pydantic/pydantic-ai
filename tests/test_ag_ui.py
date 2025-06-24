@@ -18,12 +18,6 @@ from asgi_lifespan import LifespanManager
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.ag_ui import (
-    SSE_CONTENT_TYPE,
-    Adapter,
-    Role,
-    StateDeps,
-)
 from pydantic_ai.models.test import TestModel, TestNode, TestToolCallPart
 
 has_ag_ui: bool = False
@@ -42,6 +36,13 @@ with contextlib.suppress(ImportError):
         ToolCall,
         ToolMessage,
         UserMessage,
+    )
+
+    from pydantic_ai.ag_ui import (
+        SSE_CONTENT_TYPE,
+        Adapter,
+        Role,
+        StateDeps,
     )
 
     has_ag_ui = True
@@ -122,7 +123,7 @@ async def create_adapter(
                 call_tools=call_tools,
                 tool_call_deltas={'get_weather_parts', 'current_time'},
             ),
-            deps_type=StateDeps[StateInt],
+            deps_type=StateDeps[StateInt],  # type: ignore[reportUnknownArgumentType]
             tools=[send_snapshot, send_custom, current_time],
         )
     )
@@ -171,11 +172,12 @@ def mock_uuid(monkeypatch: pytest.MonkeyPatch) -> _MockUUID:
 def assert_events(events: list[str], expected_events: list[str], *, loose: bool = False) -> None:
     expected: str
     event: str
-    for event, expected in zip(events, expected_events, strict=True):
+    for event, expected in zip(events, expected_events):
         if loose:
             expected = normalize_uuids(expected)
             event = normalize_uuids(event)
         assert event == f'data: {expected}\n\n'
+    assert len(events) == len(expected_events)
 
 
 def normalize_uuids(text: str) -> str:
@@ -291,7 +293,7 @@ class AdapterRunTest:
 # Test parameter data
 def tc_parameters() -> list[AdapterRunTest]:
     if not has_ag_ui:  # pragma: no branch
-        return [AdapterRunTest(id='skipped', runs=[])]  # pragma: no cover
+        return [AdapterRunTest(id='skipped', runs=[])]
 
     return [
         AdapterRunTest(
@@ -763,7 +765,7 @@ async def test_run_method(mock_uuid: _MockUUID, tc: AdapterRunTest) -> None:
     events: list[str] = []
     thread_id: str = f'{THREAD_ID_PREFIX}{mock_uuid()}'
     adapter: Adapter[StateDeps[StateInt], str] = await create_adapter(tc.call_tools)
-    deps: StateDeps[StateInt] = StateDeps[StateInt](state_type=StateInt)
+    deps: StateDeps[StateInt] = StateDeps[StateInt](state_type=StateInt)  # type: ignore[reportUnknownArgumentType]
     for run in tc.runs:
         if run.nodes is not None:
             assert isinstance(adapter.agent.model, TestModel), 'Agent model is not TestModel'
@@ -774,11 +776,11 @@ async def test_run_method(mock_uuid: _MockUUID, tc: AdapterRunTest) -> None:
             run_id=f'{RUN_ID_PREFIX}{mock_uuid()}',
         )
 
-        events.extend([event async for event in adapter.run(run_input, deps=deps)])
+        events.extend([event async for event in adapter.run(run_input, deps=deps)])  # type: ignore[reportUnknownArgumentType]
 
     assert_events(events, tc.expected_events)
     if tc.expected_state is not None:
-        assert deps.state.value == tc.expected_state
+        assert deps.state.value == tc.expected_state  # type: ignore[reportUnknownArgumentType]
 
 
 async def test_concurrent_runs(mock_uuid: _MockUUID, adapter: Adapter[None, str]) -> None:

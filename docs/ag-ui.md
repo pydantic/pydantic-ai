@@ -225,7 +225,7 @@ def custom_events() -> list[CustomEvent]:
 ### Examples
 
 For more examples of how to use [`Adapter`][pydantic_ai.ag_ui.Adapter] see
-[`pydantic_ai.ag_ui_examples`](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai.ag_ui_examples),
+[`pydantic_ai_ag_ui_examples`](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_ag_ui_examples),
 which includes working server for the with the
 [AG-UI Dojo](https://docs.ag-ui.com/tutorials/debugging#the-ag-ui-dojo) which
 can be run from a clone of the repo or with the `pydantic-ai-examples` package
@@ -238,7 +238,7 @@ pip/uv-add pydantic-ai-examples
 Direct, which supports command line flags:
 
 ```shell
-python -m pydantic_ai.ag_ui_examples.dojo_server --help
+python -m pydantic_ai_ag_ui_examples.dojo_server --help
 usage: dojo_server.py [-h] [--port PORT] [--reload] [--no-reload] [--log-level {critical,error,warning,info,debug,trace}]
 
 PydanticAI AG-UI Dojo server
