@@ -238,6 +238,24 @@ print(result.output)
 #> Paris
 ```
 
+### Alternative Observability backends
+
+Because Pydantic AI uses OpenTelemetry for observability, you can easily configure it to send data to any OpenTelemetry-compatible backend, not just our observability platform [Pydantic Logfire](#pydantic-logfire).
+
+The following providers have dedicated documentation on Pydantic AI:
+
+<!--Feel free to add other platforms here. They MUST be added to the bottom of the list, and may only be a name with link.-->
+
+- [Langfuse](https://langfuse.com/docs/integrations/pydantic-ai)
+- [W&B Weave](https://weave-docs.wandb.ai/guides/integrations/pydantic_ai/)
+- [Arize](https://arize.com/docs/ax/observe/tracing-integrations-auto/pydantic-ai)
+- [Openlayer](https://www.openlayer.com/docs/integrations/pydantic-ai)
+- [OpenLIT](https://docs.openlit.io/latest/integrations/pydantic)
+- [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
+- [Patronus AI](https://docs.patronus.ai/docs/percival/pydantic)
+- [Opik](https://www.comet.com/docs/opik/tracing/integrations/pydantic-ai)
+- [mlflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
+
 ## Advanced usage
 
 ### Configuring data format
