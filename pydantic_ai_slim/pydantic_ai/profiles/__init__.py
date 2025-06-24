@@ -16,13 +16,13 @@ class ModelProfile:
 
     supports_tools: bool = True
     """Whether the model supports tools."""
-    supports_structured_output: bool = False
+    supports_json_schema_output: bool = False
     """Whether the model supports JSON schema output."""
-    supports_json_output: bool = False
+    supports_json_object_output: bool = False
     """Whether the model supports JSON object output."""
     default_structured_output_mode: StructuredOutputMode = 'tool'
     """The default structured output mode to use for the model."""
-    prompted_structured_output_template: str = dedent(
+    prompted_output_template: str = dedent(
         """
         Always respond with a JSON object that's compatible with this schema:
 

@@ -256,7 +256,7 @@ class GoogleModel(Model):
 
         response_mime_type = None
         response_schema = None
-        if model_request_parameters.output_mode == 'model_structured':
+        if model_request_parameters.output_mode == 'native':
             if tools:
                 raise UserError('Gemini does not support structured output and tools at the same time.')
 
@@ -265,7 +265,7 @@ class GoogleModel(Model):
             output_object = model_request_parameters.output_object
             assert output_object is not None
             response_schema = self._map_response_schema(output_object)
-        elif model_request_parameters.output_mode == 'prompted_structured' and not tools:
+        elif model_request_parameters.output_mode == 'prompted' and not tools:
             response_mime_type = 'application/json'
 
         tool_config = self._get_tool_config(model_request_parameters, tools)

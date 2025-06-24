@@ -11,8 +11,8 @@ from .tools import RunContext
 __all__ = (
     # classes
     'ToolOutput',
-    'ModelStructuredOutput',
-    'PromptedStructuredOutput',
+    'NativeOutput',
+    'PromptedOutput',
     'TextOutput',
     # types
     'OutputDataT',
@@ -27,11 +27,11 @@ T = TypeVar('T')
 T_co = TypeVar('T_co', covariant=True)
 
 OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
-"""Covariant type variable for the result data type of a run."""
+"""Covariant type variable for the output data type of a run."""
 
-OutputMode = Literal['text', 'tool', 'model_structured', 'prompted_structured', 'tool_or_text']
+OutputMode = Literal['text', 'tool', 'native', 'prompted', 'tool_or_text']
 """All output modes."""
-StructuredOutputMode = Literal['tool', 'model_structured', 'prompted_structured']
+StructuredOutputMode = Literal['tool', 'native', 'prompted']
 """Output modes that can be used for structured output. Used by ModelProfile.default_structured_output_mode"""
 
 
@@ -124,19 +124,19 @@ class ToolOutput(Generic[OutputDataT]):
 
 
 @dataclass(init=False)
-class ModelStructuredOutput(Generic[OutputDataT]):
-    """Marker class to use the model's built-in structured outputs functionality for outputs and optionally customize the name and description.
+class NativeOutput(Generic[OutputDataT]):
+    """Marker class to use the model's native structured outputs functionality for outputs and optionally customize the name and description.
 
     Example:
-    ```python {title="model_structured_output.py" requires="tool_output.py"}
+    ```python {title="native_output.py" requires="tool_output.py"}
     from tool_output import Fruit, Vehicle
 
-    from pydantic_ai import Agent, ModelStructuredOutput
+    from pydantic_ai import Agent, NativeOutput
 
 
     agent = Agent(
         'openai:gpt-4o',
-        output_type=ModelStructuredOutput(
+        output_type=NativeOutput(
             [Fruit, Vehicle],
             name='Fruit or vehicle',
             description='Return a fruit or vehicle.'
@@ -168,15 +168,15 @@ class ModelStructuredOutput(Generic[OutputDataT]):
 
 
 @dataclass(init=False)
-class PromptedStructuredOutput(Generic[OutputDataT]):
+class PromptedOutput(Generic[OutputDataT]):
     """Marker class to use a prompt to tell the model what to output and optionally customize the prompt.
 
     Example:
-    ```python {title="prompted_structured_output.py" requires="tool_output.py"}
+    ```python {title="prompted_output.py" requires="tool_output.py"}
     from pydantic import BaseModel
     from tool_output import Vehicle
 
-    from pydantic_ai import Agent, PromptedStructuredOutput
+    from pydantic_ai import Agent, PromptedOutput
 
 
     class Device(BaseModel):
@@ -186,7 +186,7 @@ class PromptedStructuredOutput(Generic[OutputDataT]):
 
     agent = Agent(
         'openai:gpt-4o',
-        output_type=PromptedStructuredOutput(
+        output_type=PromptedOutput(
             [Vehicle, Device],
             name='Vehicle or device',
             description='Return a vehicle or device.'
@@ -198,7 +198,7 @@ class PromptedStructuredOutput(Generic[OutputDataT]):
 
     agent = Agent(
         'openai:gpt-4o',
-        output_type=PromptedStructuredOutput(
+        output_type=PromptedOutput(
             [Vehicle, Device],
             template='Gimme some JSON: {schema}'
         ),
@@ -267,8 +267,8 @@ OutputSpec = TypeAliasType(
     Union[
         OutputTypeOrFunction[T_co],
         ToolOutput[T_co],
-        ModelStructuredOutput[T_co],
-        PromptedStructuredOutput[T_co],
+        NativeOutput[T_co],
+        PromptedOutput[T_co],
         TextOutput[T_co],
         Sequence[Union[OutputTypeOrFunction[T_co], ToolOutput[T_co], TextOutput[T_co]]],
     ],
@@ -278,8 +278,8 @@ OutputSpec = TypeAliasType(
 
 This can be a single type, a function, a sequence of types and/or functions, or an instance of one of the output mode marker classes:
 - [`ToolOutput`][pydantic_ai.output.ToolOutput]
-- [`ModelStructuredOutput`][pydantic_ai.output.ModelStructuredOutput]
-- [`PromptedStructuredOutput`][pydantic_ai.output.PromptedStructuredOutput]
+- [`NativeOutput`][pydantic_ai.output.NativeOutput]
+- [`PromptedOutput`][pydantic_ai.output.PromptedOutput]
 - [`TextOutput`][pydantic_ai.output.TextOutput]
 
 You should not need to import or use this type directly.

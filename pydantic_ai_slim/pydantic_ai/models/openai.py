@@ -286,12 +286,12 @@ class OpenAIModel(Model):
         openai_messages = await self._map_messages(messages)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
-        if model_request_parameters.output_mode == 'model_structured':
+        if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object
             assert output_object is not None
             response_format = self._map_json_schema(output_object)
         elif (
-            model_request_parameters.output_mode == 'prompted_structured' and self.profile.supports_json_output
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
@@ -716,12 +716,12 @@ class OpenAIResponsesModel(Model):
         reasoning = self._get_reasoning(model_settings)
 
         text: responses.ResponseTextConfigParam | None = None
-        if model_request_parameters.output_mode == 'model_structured':
+        if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object
             assert output_object is not None
             text = {'format': self._map_json_schema(output_object)}
         elif (
-            model_request_parameters.output_mode == 'prompted_structured' and self.profile.supports_json_output
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
         ):  # pragma: no branch
             text = {'format': {'type': 'json_object'}}
 

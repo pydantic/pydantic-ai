@@ -6,6 +6,6 @@
         members:
             - OutputDataT
             - ToolOutput
-            - ModelStructuredOutput
-            - PromptedStructuredOutput
+            - NativeOutput
+            - PromptedOutput
             - TextOutput

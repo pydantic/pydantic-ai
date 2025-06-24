@@ -15,12 +15,12 @@ from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, UserError
 from .output import (
-    ModelStructuredOutput,
+    NativeOutput,
     OutputDataT,
     OutputMode,
     OutputSpec,
     OutputTypeOrFunction,
-    PromptedStructuredOutput,
+    PromptedOutput,
     StructuredOutputMode,
     TextOutput,
     TextOutputFunc,
@@ -176,16 +176,16 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
         if output_spec is str:
             return PlainTextOutputSchema()
 
-        if isinstance(output_spec, ModelStructuredOutput):
-            return ModelStructuredOutputSchema(
+        if isinstance(output_spec, NativeOutput):
+            return NativeOutputSchema(
                 cls._build_processor(
                     _flatten_output_spec(output_spec.outputs),
                     name=output_spec.name,
                     description=output_spec.description,
                 )
             )
-        elif isinstance(output_spec, PromptedStructuredOutput):
-            return PromptedStructuredOutputSchema(
+        elif isinstance(output_spec, PromptedOutput):
+            return PromptedOutputSchema(
                 cls._build_processor(
                     _flatten_output_spec(output_spec.outputs),
                     name=output_spec.name,
@@ -324,10 +324,10 @@ class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
         self._tools = tools
 
     def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
-        if mode == 'model_structured':
-            return ModelStructuredOutputSchema(self.processor)
-        elif mode == 'prompted_structured':
-            return PromptedStructuredOutputSchema(self.processor)
+        if mode == 'native':
+            return NativeOutputSchema(self.processor)
+        elif mode == 'prompted':
+            return PromptedOutputSchema(self.processor)
         elif mode == 'tool':
             return ToolOutputSchema(self.tools)
         else:
@@ -401,14 +401,14 @@ class StructuredTextOutputSchema(TextOutputSchema[OutputDataT], ABC):
 
 
 @dataclass
-class ModelStructuredOutputSchema(StructuredTextOutputSchema[OutputDataT]):
+class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode:
-        return 'model_structured'
+        return 'native'
 
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
         """Raise an error if the mode is not supported by the model."""
-        if not profile.supports_structured_output:
+        if not profile.supports_json_schema_output:
             raise UserError('Structured output is not supported by the model.')
 
     async def process(
@@ -435,12 +435,12 @@ class ModelStructuredOutputSchema(StructuredTextOutputSchema[OutputDataT]):
 
 
 @dataclass
-class PromptedStructuredOutputSchema(StructuredTextOutputSchema[OutputDataT]):
+class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
     template: str | None = None
 
     @property
     def mode(self) -> OutputMode:
-        return 'prompted_structured'
+        return 'prompted'
 
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
         """Raise an error if the mode is not supported by the model."""

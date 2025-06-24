@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import PromptedStructuredOutput, TextOutput
+from pydantic_ai.output import PromptedOutput, TextOutput
 from pydantic_ai.result import AgentStream, FinalResult, Usage
 from pydantic_graph import End
 
@@ -1059,14 +1059,14 @@ async def test_output_tool_validation_failure_events():
     )
 
 
-async def test_stream_prompted_structured_output():
+async def test_stream_prompted_output():
     class CityLocation(BaseModel):
         city: str
         country: str | None = None
 
     m = TestModel(custom_output_text='{"city": "Mexico City", "country": "Mexico"}')
 
-    agent = Agent(m, output_type=PromptedStructuredOutput(CityLocation))
+    agent = Agent(m, output_type=PromptedOutput(CityLocation))
 
     async with agent.run_stream('') as result:
         assert not result.is_complete

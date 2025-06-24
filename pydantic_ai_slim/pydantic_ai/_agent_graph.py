@@ -291,10 +291,10 @@ async def _prepare_request_parameters(
     output_object = None
     if isinstance(output_schema, _output.ToolOutputSchema):
         output_tools = output_schema.tool_defs()
-    elif isinstance(output_schema, _output.ModelStructuredOutputSchema):
+    elif isinstance(output_schema, _output.NativeOutputSchema):
         output_object = output_schema.object_def
 
-    # ToolOrTextOutputSchema, ModelStructuredOutputSchema, and PromptedStructuredOutputSchema all inherit from TextOutputSchema
+    # ToolOrTextOutputSchema, NativeOutputSchema, and PromptedOutputSchema all inherit from TextOutputSchema
     allow_text_output = isinstance(output_schema, _output.TextOutputSchema)
 
     return models.ModelRequestParameters(

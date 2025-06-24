@@ -688,8 +688,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             ]
 
             model_profile = model_used.profile
-            if isinstance(output_schema, _output.PromptedStructuredOutputSchema):
-                instructions = output_schema.instructions(model_profile.prompted_structured_output_template)
+            if isinstance(output_schema, _output.PromptedOutputSchema):
+                instructions = output_schema.instructions(model_profile.prompted_output_template)
                 parts.append(instructions)
 
             parts = [p for p in parts if p]
