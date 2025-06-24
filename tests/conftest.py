@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import importlib.util
+import logging
 import os
 import re
 import secrets
@@ -28,6 +29,11 @@ from pydantic_ai.models import Model, cached_async_http_client
 
 __all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'IsInstance', 'TestEnv', 'ClientWithHandler', 'try_import'
 
+# Configure VCR logger to WARNING as it is too verbose by default
+# specifically, it logs every request and response including binary
+# content in Cassette.append, which is causing log downloads from
+# GitHub action to fail.
+logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 

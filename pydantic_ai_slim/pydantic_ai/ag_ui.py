@@ -10,11 +10,21 @@ import json
 import logging
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import InitVar, dataclass, field
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Final, Generic, Protocol, TypeVar, cast, runtime_checkable
-
-from starlette.responses import Response, StreamingResponse
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Final,
+    Generic,
+    NoReturn,
+    Protocol,
+    TypeVar,
+    Union,
+    cast,
+    runtime_checkable,
+)
 
 try:
     from ag_ui.core import (
@@ -68,7 +78,6 @@ from . import Agent, models
 from ._agent_graph import ModelRequestNode
 from ._parts_manager import ModelResponsePartsManager
 from .agent import RunOutputDataT
-from .mcp import ToolResult
 from .messages import (
     AgentStreamEvent,
     FinalResultEvent,
@@ -312,7 +321,7 @@ def agent_to_ag_ui(
     )
 
 
-@dataclass(kw_only=True, repr=False)
+@dataclass(repr=False)
 class Adapter(Generic[AgentDepsT, OutputDataT]):
     """An agent adapter providing AG-UI protocol support for PydanticAI agents.
 
@@ -520,20 +529,19 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
 
         # Tool calls were made, so we need to create a snapshot.
         for msg in new_messages:
-            match msg:
-                case ModelRequest():
-                    for request_part in msg.parts:
-                        if isinstance(request_part, ToolReturnPart):  # pragma: no branch
-                            messages.append(
-                                ToolMessage(
-                                    id='result-' + request_part.tool_call_id,
-                                    role=Role.TOOL,
-                                    content=request_part.content,
-                                    tool_call_id=request_part.tool_call_id,
-                                )
+            if isinstance(msg, ModelRequest):
+                for request_part in msg.parts:
+                    if isinstance(request_part, ToolReturnPart):  # pragma: no branch
+                        messages.append(
+                            ToolMessage(
+                                id='result-' + request_part.tool_call_id,
+                                role=Role.TOOL,
+                                content=request_part.content,
+                                tool_call_id=request_part.tool_call_id,
                             )
-                case ModelResponse():  # pragma: no branch
-                    self._convert_response_parts(msg.parts, messages)
+                        )
+            elif isinstance(msg, ModelResponse):  # pragma: no branch
+                self._convert_response_parts(msg.parts, messages)
 
         self._convert_response_parts(parts_manager.get_parts(), messages)
 
@@ -551,41 +559,40 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
         """
         response_part: ModelResponsePart
         for response_part in parts:
-            match response_part:
-                case TextPart():  # pragma: no cover
-                    # This is not expected, but we handle it gracefully.
-                    messages.append(
-                        AssistantMessage(
-                            id=uuid.uuid4().hex,
-                            role=Role.ASSISTANT,
-                            content=response_part.content,
-                        )
+            if isinstance(response_part, TextPart):  # pragma: no cover
+                # This is not expected, but we handle it gracefully.
+                messages.append(
+                    AssistantMessage(
+                        id=uuid.uuid4().hex,
+                        role=Role.ASSISTANT,
+                        content=response_part.content,
                     )
-                case ToolCallPart():
-                    args: str = (
-                        json.dumps(response_part.args)
-                        if isinstance(response_part.args, dict)
-                        else response_part.args or '{}'
-                    )
-                    messages.append(
-                        AssistantMessage(
-                            id=uuid.uuid4().hex,
-                            role=Role.ASSISTANT,
-                            tool_calls=[
-                                ToolCall(
-                                    id=response_part.tool_call_id,
-                                    type='function',
-                                    function=FunctionCall(
-                                        name=response_part.tool_name,
-                                        arguments=args,
-                                    ),
-                                )
-                            ],
-                        ),
-                    )
-                case ThinkingPart():  # pragma: no cover
-                    # No AG-UI equivalent for thinking parts, so we skip them.
-                    pass
+                )
+            elif isinstance(response_part, ToolCallPart):
+                args: str = (
+                    json.dumps(response_part.args)
+                    if isinstance(response_part.args, dict)
+                    else response_part.args or '{}'
+                )
+                messages.append(
+                    AssistantMessage(
+                        id=uuid.uuid4().hex,
+                        role=Role.ASSISTANT,
+                        tool_calls=[
+                            ToolCall(
+                                id=response_part.tool_call_id,
+                                type='function',
+                                function=FunctionCall(
+                                    name=response_part.tool_name,
+                                    arguments=args,
+                                ),
+                            )
+                        ],
+                    ),
+                )
+            elif isinstance(response_part, ThinkingPart):  # pragma: no cover
+                # No AG-UI equivalent for thinking parts, so we skip them.
+                pass
 
     async def _tool_events(self, parts: list[ModelRequestPart]) -> AsyncGenerator[BaseEvent | None, None]:
         """Check for tool call results that are AG-UI events.
@@ -606,21 +613,22 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                 continue
 
             iter: Iterable[Any]
-            match part.content:
-                case BaseEvent():
-                    self.logger.debug('ag-ui event: %s', part.content)
-                    yield part.content
-                case str() | bytes():
-                    # Avoid strings and bytes being checked as iterable.
-                    pass
-                case Iterable() as iter:
-                    for item in iter:
-                        if isinstance(item, BaseEvent):  # pragma: no branch
-                            self.logger.debug('ag-ui event: %s', item)
-                            yield item
-                case _:  # pragma: no cover
-                    # Not currently interested in other types.
-                    pass
+            if isinstance(part.content, BaseEvent):
+                self.logger.debug('ag-ui event: %s', part.content)
+                yield part.content
+            elif isinstance(part.content, (str, bytes)):
+                # Avoid strings and bytes being checked as iterable.
+                pass
+            elif isinstance(part.content, Iterable):
+                # Type: ignore to handle partially unknown type
+                iter = part.content  # type: ignore[assignment]
+                for item in iter:
+                    if isinstance(item, BaseEvent):  # pragma: no branch
+                        self.logger.debug('ag-ui event: %s', item)
+                        yield item
+            else:  # pragma: no cover
+                # Not currently interested in other types.
+                pass
 
     def _convert_tools(self, run_tools: list[ToolAGUI]) -> list[Tool[AgentDepsT]]:
         """Convert AG-UI tools to PydanticAI tools.
@@ -647,7 +655,7 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
             A PydanticAI `Tool` object that calls the AG-UI tool.
         """
 
-        def _tool_stub(*args: Any, **kwargs: Any) -> ToolResult:
+        def _tool_stub(*args: Any, **kwargs: Any) -> NoReturn:
             """Stub function which is never called.
 
             Returns:
@@ -658,7 +666,6 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
             """
             raise _UnexpectedToolCallError(tool_name=tool.name)  # pragma: no cover
 
-        # TODO(steve): See it we can avoid the cast here.
         return cast(
             'Tool[AgentDepsT]',
             Tool.from_schema(
@@ -729,97 +736,94 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
             AG-UI Server-Sent Events (SSE) based on the agent event.
         """
         self.logger.debug('agent_event: %s', agent_event)
-        match agent_event:
-            case PartStartEvent():
-                # If we have a previous part end it.
-                part_end: BaseEvent | None
-                for part_end in stream_ctx.part_ends:
-                    yield part_end
-                stream_ctx.part_ends.clear()
+        if isinstance(agent_event, PartStartEvent):
+            # If we have a previous part end it.
+            part_end: BaseEvent | None
+            for part_end in stream_ctx.part_ends:
+                yield part_end
+            stream_ctx.part_ends.clear()
 
-                match agent_event.part:
-                    case TextPart():
-                        message_id: str = stream_ctx.new_message_id()
-                        yield TextMessageStartEvent(
-                            type=EventType.TEXT_MESSAGE_START,
-                            message_id=message_id,
-                            role=Role.ASSISTANT.value,
-                        )
-                        stream_ctx.part_ends = [
-                            TextMessageEndEvent(
-                                type=EventType.TEXT_MESSAGE_END,
-                                message_id=message_id,
-                            ),
-                        ]
-                        if agent_event.part.content:
-                            yield TextMessageContentEvent(  # pragma: no cover
-                                type=EventType.TEXT_MESSAGE_CONTENT,
-                                message_id=message_id,
-                                delta=agent_event.part.content,
-                            )
-                    case ToolCallPart():  # pragma: no branch
-                        tool_name: str | None = tool_names.get(agent_event.part.tool_name)
-                        if not tool_name:
-                            # Local tool calls are not sent as events to the UI.
-                            stream_ctx.local_tool_calls.add(agent_event.part.tool_call_id)
-                            return
+            if isinstance(agent_event.part, TextPart):
+                message_id: str = stream_ctx.new_message_id()
+                yield TextMessageStartEvent(
+                    type=EventType.TEXT_MESSAGE_START,
+                    message_id=message_id,
+                    role=Role.ASSISTANT.value,
+                )
+                stream_ctx.part_ends = [
+                    TextMessageEndEvent(
+                        type=EventType.TEXT_MESSAGE_END,
+                        message_id=message_id,
+                    ),
+                ]
+                if agent_event.part.content:
+                    yield TextMessageContentEvent(  # pragma: no cover
+                        type=EventType.TEXT_MESSAGE_CONTENT,
+                        message_id=message_id,
+                        delta=agent_event.part.content,
+                    )
+            elif isinstance(agent_event.part, ToolCallPart):  # pragma: no branch
+                tool_name: str | None = tool_names.get(agent_event.part.tool_name)
+                if not tool_name:
+                    # Local tool calls are not sent as events to the UI.
+                    stream_ctx.local_tool_calls.add(agent_event.part.tool_call_id)
+                    return
 
-                        parts_manager.handle_tool_call_part(
-                            vendor_part_id=None,
-                            tool_name=agent_event.part.tool_name,
-                            args=agent_event.part.args,
-                            tool_call_id=agent_event.part.tool_call_id,
-                        )
-                        stream_ctx.last_tool_call_id = agent_event.part.tool_call_id
-                        yield ToolCallStartEvent(
-                            type=EventType.TOOL_CALL_START,
-                            tool_call_id=agent_event.part.tool_call_id,
-                            tool_call_name=tool_name or agent_event.part.tool_name,
-                        )
-                        stream_ctx.part_ends = [
-                            ToolCallEndEvent(
-                                type=EventType.TOOL_CALL_END,
-                                tool_call_id=agent_event.part.tool_call_id,
-                            ),
-                            None,  # Signal continuation of the stream.
-                        ]
-                    case ThinkingPart():  # pragma: no cover
-                        # No equivalent AG-UI event yet.
-                        pass
-            case PartDeltaEvent():
-                match agent_event.delta:
-                    case TextPartDelta():
-                        yield TextMessageContentEvent(
-                            type=EventType.TEXT_MESSAGE_CONTENT,
-                            message_id=stream_ctx.message_id,
-                            delta=agent_event.delta.content_delta,
-                        )
-                    case ToolCallPartDelta():  # pragma: no branch
-                        if agent_event.delta.tool_call_id in stream_ctx.local_tool_calls:
-                            # Local tool calls are not sent as events to the UI.
-                            return
-
-                        parts_manager.handle_tool_call_delta(
-                            vendor_part_id=None,
-                            tool_name=None,
-                            args=agent_event.delta.args_delta,
-                            tool_call_id=agent_event.delta.tool_call_id,
-                        )
-                        yield ToolCallArgsEvent(
-                            type=EventType.TOOL_CALL_ARGS,
-                            tool_call_id=agent_event.delta.tool_call_id
-                            or stream_ctx.last_tool_call_id
-                            or 'unknown',  # Should never be unknown, but just in case.
-                            delta=agent_event.delta.args_delta
-                            if isinstance(agent_event.delta.args_delta, str)
-                            else json.dumps(agent_event.delta.args_delta),
-                        )
-                    case ThinkingPartDelta():  # pragma: no cover
-                        # No equivalent AG-UI event yet.
-                        pass
-            case FinalResultEvent():
+                parts_manager.handle_tool_call_part(
+                    vendor_part_id=None,
+                    tool_name=agent_event.part.tool_name,
+                    args=agent_event.part.args,
+                    tool_call_id=agent_event.part.tool_call_id,
+                )
+                stream_ctx.last_tool_call_id = agent_event.part.tool_call_id
+                yield ToolCallStartEvent(
+                    type=EventType.TOOL_CALL_START,
+                    tool_call_id=agent_event.part.tool_call_id,
+                    tool_call_name=tool_name or agent_event.part.tool_name,
+                )
+                stream_ctx.part_ends = [
+                    ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=agent_event.part.tool_call_id,
+                    ),
+                    None,  # Signal continuation of the stream.
+                ]
+            elif isinstance(agent_event.part, ThinkingPart):  # pragma: no cover
                 # No equivalent AG-UI event yet.
                 pass
+        elif isinstance(agent_event, PartDeltaEvent):
+            if isinstance(agent_event.delta, TextPartDelta):
+                yield TextMessageContentEvent(
+                    type=EventType.TEXT_MESSAGE_CONTENT,
+                    message_id=stream_ctx.message_id,
+                    delta=agent_event.delta.content_delta,
+                )
+            elif isinstance(agent_event.delta, ToolCallPartDelta):  # pragma: no branch
+                if agent_event.delta.tool_call_id in stream_ctx.local_tool_calls:
+                    # Local tool calls are not sent as events to the UI.
+                    return
+
+                parts_manager.handle_tool_call_delta(
+                    vendor_part_id=None,
+                    tool_name=None,
+                    args=agent_event.delta.args_delta,
+                    tool_call_id=agent_event.delta.tool_call_id,
+                )
+                yield ToolCallArgsEvent(
+                    type=EventType.TOOL_CALL_ARGS,
+                    tool_call_id=agent_event.delta.tool_call_id
+                    or stream_ctx.last_tool_call_id
+                    or 'unknown',  # Should never be unknown, but just in case.
+                    delta=agent_event.delta.args_delta
+                    if isinstance(agent_event.delta.args_delta, str)
+                    else json.dumps(agent_event.delta.args_delta),
+                )
+            elif isinstance(agent_event.delta, ThinkingPartDelta):  # pragma: no cover
+                # No equivalent AG-UI event yet.
+                pass
+        elif isinstance(agent_event, FinalResultEvent):
+            # No equivalent AG-UI event yet.
+            pass
 
 
 def _convert_history(messages: list[Message]) -> list[ModelMessage]:
@@ -835,47 +839,46 @@ def _convert_history(messages: list[Message]) -> list[ModelMessage]:
     result: list[ModelMessage] = []
     tool_calls: dict[str, str] = {}
     for msg in messages:
-        match msg:
-            case UserMessage():
-                result.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
-            case AssistantMessage():
-                if msg.tool_calls:
-                    for tool_call in msg.tool_calls:
-                        tool_calls[tool_call.id] = tool_call.function.name
+        if isinstance(msg, UserMessage):
+            result.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
+        elif isinstance(msg, AssistantMessage):
+            if msg.tool_calls:
+                for tool_call in msg.tool_calls:
+                    tool_calls[tool_call.id] = tool_call.function.name
 
-                    result.append(
-                        ModelResponse(
-                            parts=[
-                                ToolCallPart(
-                                    tool_name=tool_call.function.name,
-                                    tool_call_id=tool_call.id,
-                                    args=tool_call.function.arguments,
-                                )
-                                for tool_call in msg.tool_calls
-                            ]
-                        )
-                    )
-
-                if msg.content:
-                    result.append(ModelResponse(parts=[TextPart(content=msg.content)]))
-            case SystemMessage():
-                # TODO(steve): Should we handle as instructions instead of system prompt?
-                result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
-            case ToolMessage():
                 result.append(
-                    ModelRequest(
+                    ModelResponse(
                         parts=[
-                            ToolReturnPart(
-                                tool_name=tool_calls.get(msg.tool_call_id, 'unknown'),
-                                content=msg.content,
-                                tool_call_id=msg.tool_call_id,
+                            ToolCallPart(
+                                tool_name=tool_call.function.name,
+                                tool_call_id=tool_call.id,
+                                args=tool_call.function.arguments,
                             )
+                            for tool_call in msg.tool_calls
                         ]
                     )
                 )
-            case DeveloperMessage():  # pragma: no branch
-                # TODO(steve): Should these be handled differently?
-                result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
+
+            if msg.content:
+                result.append(ModelResponse(parts=[TextPart(content=msg.content)]))
+        elif isinstance(msg, SystemMessage):
+            # TODO(steve): Should we handle as instructions instead of system prompt?
+            result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
+        elif isinstance(msg, ToolMessage):
+            result.append(
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name=tool_calls.get(msg.tool_call_id, 'unknown'),
+                            content=msg.content,
+                            tool_call_id=msg.tool_call_id,
+                        )
+                    ]
+                )
+            )
+        elif isinstance(msg, DeveloperMessage):  # pragma: no branch
+            # TODO(steve): Should these be handled differently?
+            result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
 
     return result
 
@@ -914,21 +917,19 @@ class _RunError(Exception):
         return self.message
 
 
-@dataclass(kw_only=True)
 class _UnexpectedToolCallError(_RunError):
     """Exception raised when an unexpected tool call is encountered."""
 
-    tool_name: InitVar[str]
-    message: str = ''
-    code: str = 'unexpected_tool_call'
-
-    def __post_init__(self, tool_name: str) -> None:
-        """Set the message for the unexpected tool call.
+    def __init__(self, *, tool_name: str) -> None:
+        """Initialize the unexpected tool call error.
 
         Args:
             tool_name: The name of the tool that was unexpectedly called.
         """
-        self.message = f'unexpected tool call name={tool_name}'  # pragma: no cover
+        super().__init__(
+            message=f'unexpected tool call name={tool_name}',  # pragma: no cover
+            code='unexpected_tool_call',
+        )
 
 
 @dataclass
@@ -971,7 +972,7 @@ StateT = TypeVar('StateT', bound=BaseModel, contravariant=True)
 """Type variable for the state type, which must be a subclass of `BaseModel`."""
 
 
-@dataclass(kw_only=True)
+@dataclass
 class StateDeps(Generic[StateT]):
     """Provides AG-UI state management.
 
@@ -1016,7 +1017,7 @@ class _RequestStreamContext:
 
     message_id: str = ''
     last_tool_call_id: str | None = None
-    part_ends: list[BaseEvent | None] = field(default_factory=lambda: list[BaseEvent | None]())
+    part_ends: list[BaseEvent | None] = field(default_factory=lambda: list[Union[BaseEvent, None]]())
     local_tool_calls: set[str] = field(default_factory=set)
 
     def new_message_id(self) -> str:

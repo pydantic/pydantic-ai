@@ -7,34 +7,36 @@ Implementation of the AG-UI protocol for PydanticAI.
 This example uses a PydanticAI agent using an OpenAI model and the AG-UI dojo.
 
 1. An [OpenAI API key](https://help.openai.com/en/articles/4936850-where-do-i-find-my-openai-api-key)
-2. A clone of this repository
-3. A clone of the [AG-UI protocol repository](https://github.com/ag-ui-protocol/ag-ui)
+2. A clone of the [AG-UI protocol repository](https://github.com/ag-ui-protocol/ag-ui)
 
 ## Running
 
 To run this integration you need to:
 
-1. Make a copy of `jobs-agent/.env.local-example` as `.env`
+1. Make a copy of `.env-sample` as `.env` in the `typescript-sdk/integrations/pydantic-ai` directory
 2. Open it in your editor and set `OPENAI_API_KEY` to a valid OpenAI key
-3. Open terminal in the root directory of this repository clone
-4. Install the required modules and run the server
+3. Open terminal in the `typescript-sdk/integrations/pydantic-ai` of the `ag-ui` repo
+4. Install the `pydantic-ai-examples` package
 
     ```shell
-    cd jobs-agent
-    just install-deps
-    source .venv/bin/activate
-    python -m examples.pydantic_ai_ag_ui_examples.dojo_server
+    pip/uv-add pydantic-ai-examples
     ```
 
-5. Open another terminal in root directory of the `ag-ui` repository clone
-6. Start the integration ag-ui dojo:
+5. Run the example dojo server
+
+    ```shell
+    python -m pydantic_ai_ag_ui_examples.dojo_server
+    ```
+
+6. Open another terminal in root directory of the `ag-ui` repository clone
+7. Start the integration ag-ui dojo:
 
     ```shell
     cd typescript-sdk
     pnpm install && pnpm run dev
     ```
 
-7. Finally visit [http://localhost:3000/pydantic-ai](http://localhost:3000/pydantic-ai)
+8. Finally visit [http://localhost:3000/pydantic-ai](http://localhost:3000/pydantic-ai)
 
 ## Feature Demos
 
@@ -97,7 +99,8 @@ Generate a list of steps for cleaning a car for me to review
 ### [Predictive State Updates](http://localhost:3000/pydantic-ai/feature/predictive_state_updates)
 
 Demonstrates how to use the predictive state updates feature to update the state
-of the UI based on agent responses, including user interaction via git aconfirmation.
+of the UI based on agent responses, including user interaction via user
+confirmation.
 
 #### Story Tools
 
