@@ -18,7 +18,7 @@ from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
-from .result import OutputDataT
+from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, Tool, ToolDefinition, ToolsPrepareFunc
 
@@ -102,7 +102,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     end_strategy: EndStrategy
     get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
 
-    output_schema: _output.OutputSchema[OutputDataT] | None
+    output_schema: _output.OutputSchema[OutputDataT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
 
     history_processors: Sequence[HistoryProcessor[DepsT]]
@@ -286,10 +286,23 @@ async def _prepare_request_parameters(
         function_tool_defs = await ctx.deps.prepare_tools(run_context, function_tool_defs) or []
 
     output_schema = ctx.deps.output_schema
+
+    output_tools = []
+    output_object = None
+    if isinstance(output_schema, _output.ToolOutputSchema):
+        output_tools = output_schema.tool_defs()
+    elif isinstance(output_schema, _output.NativeOutputSchema):
+        output_object = output_schema.object_def
+
+    # ToolOrTextOutputSchema, NativeOutputSchema, and PromptedOutputSchema all inherit from TextOutputSchema
+    allow_text_output = isinstance(output_schema, _output.TextOutputSchema)
+
     return models.ModelRequestParameters(
         function_tools=function_tool_defs,
-        allow_text_output=_output.allow_text_output(output_schema),
-        output_tools=output_schema.tool_defs() if output_schema is not None else [],
+        output_mode=output_schema.mode,
+        output_tools=output_tools,
+        output_object=output_object,
+        allow_text_output=allow_text_output,
     )
 
 
@@ -484,7 +497,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # when the model has already returned text along side tool calls
                     # in this scenario, if text responses are allowed, we return text from the most recent model
                     # response, if any
-                    if _output.allow_text_output(ctx.deps.output_schema):
+                    if isinstance(ctx.deps.output_schema, _output.TextOutputSchema):
                         for message in reversed(ctx.state.message_history):
                             if isinstance(message, _messages.ModelResponse):
                                 last_texts = [p.content for p in message.parts if isinstance(p, _messages.TextPart)]
@@ -507,10 +520,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_schema = ctx.deps.output_schema
         run_context = build_run_context(ctx)
 
-        # first, look for the output tool call
         final_result: result.FinalResult[NodeRunEndT] | None = None
         parts: list[_messages.ModelRequestPart] = []
-        if output_schema is not None:
+
+        # first, look for the output tool call
+        if isinstance(output_schema, _output.ToolOutputSchema):
             for call, output_tool in output_schema.find_tool(tool_calls):
                 try:
                     result_data = await output_tool.process(call, run_context)
@@ -568,9 +582,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         text = '\n\n'.join(texts)
         try:
-            if _output.allow_text_output(output_schema):
-                # The following cast is safe because we know `str` is an allowed result type
-                result_data = cast(NodeRunEndT, text)
+            if isinstance(output_schema, _output.TextOutputSchema):
+                run_context = build_run_context(ctx)
+                result_data = await output_schema.process(text, run_context)
             else:
                 m = _messages.RetryPromptPart(
                     content='Plain text responses are not permitted, please include your response in a tool call',
@@ -669,7 +683,7 @@ async def process_function_tools(  # noqa C901
                 yield event
                 call_index_to_event_id[len(calls_to_run)] = event.call_id
                 calls_to_run.append((mcp_tool, call))
-        elif output_schema is not None and call.tool_name in output_schema.tools:
+        elif call.tool_name in output_schema.tools:
             # if tool_name is in output_schema, it means we found a output tool but an error occurred in
             # validation, we don't add another part here
             if output_tool_name is not None:
@@ -809,7 +823,9 @@ def _unknown_tool(
 ) -> _messages.RetryPromptPart:
     ctx.state.increment_retries(ctx.deps.max_result_retries)
     tool_names = list(ctx.deps.function_tools.keys())
-    if output_schema := ctx.deps.output_schema:
+
+    output_schema = ctx.deps.output_schema
+    if isinstance(output_schema, _output.ToolOutputSchema):
         tool_names.extend(output_schema.tool_names())
 
     if tool_names:
@@ -886,7 +902,7 @@ def get_captured_run_messages() -> _RunMessages:
 def build_agent_graph(
     name: str | None,
     deps_type: type[DepsT],
-    output_type: _output.OutputType[OutputT],
+    output_type: OutputSpec[OutputT],
 ) -> Graph[GraphAgentState, GraphAgentDeps[DepsT, result.FinalResult[OutputT]], result.FinalResult[OutputT]]:
     """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
     nodes = (

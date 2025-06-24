@@ -64,6 +64,7 @@ nav:
       - api/agent.md
       - api/tools.md
       - api/common_tools.md
+      - api/output.md
       - api/result.md
       - api/messages.md
       - api/exceptions.md

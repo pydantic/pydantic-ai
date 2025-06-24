@@ -13,6 +13,14 @@ from pydantic_core import to_json
 from typing_extensions import Self
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
+from pydantic_ai._output import (
+    NativeOutput,
+    OutputSpec,
+    PromptedOutput,
+    TextOutput,
+    TextOutputSchema,
+    ToolOutputSchema,
+)
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.messages import (
     BinaryContent,
@@ -30,7 +38,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.result import ToolOutput, Usage
+from pydantic_ai.output import ToolOutput
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
 
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
@@ -261,7 +271,7 @@ def test_plain_response_then_tuple():
             args_json = '{"response": ["foo", "bar"]}'
             return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    agent = Agent(FunctionModel(return_tuple), output_type=tuple[str, str])
+    agent = Agent(FunctionModel(return_tuple), output_type=ToolOutput(tuple[str, str]))
 
     result = agent.run_sync('Hello')
     assert result.output == ('foo', 'bar')
@@ -353,7 +363,7 @@ def test_response_tuple():
     m = TestModel()
 
     agent = Agent(m, output_type=tuple[str, str])
-    assert agent._output_schema.allow_text_output is False  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
+    assert isinstance(agent._output_schema, ToolOutputSchema)  # pyright: ignore[reportPrivateUsage]
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(('a', 'a'))
@@ -388,10 +398,28 @@ def test_response_tuple():
     )
 
 
+def upcase(text: str) -> str:
+    return text.upper()
+
+
 @pytest.mark.parametrize(
     'input_union_callable',
-    [lambda: Union[str, Foo], lambda: Union[Foo, str], lambda: str | Foo, lambda: Foo | str, lambda: [Foo, str]],
-    ids=['Union[str, Foo]', 'Union[Foo, str]', 'str | Foo', 'Foo | str', '[Foo, str]'],
+    [
+        lambda: Union[str, Foo],
+        lambda: Union[Foo, str],
+        lambda: str | Foo,
+        lambda: Foo | str,
+        lambda: [Foo, str],
+        lambda: [TextOutput(upcase), ToolOutput(Foo)],
+    ],
+    ids=[
+        'Union[str, Foo]',
+        'Union[Foo, str]',
+        'str | Foo',
+        'Foo | str',
+        '[Foo, str]',
+        '[TextOutput(upcase), ToolOutput(Foo)]',
+    ],
 )
 def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     try:
@@ -410,10 +438,11 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         got_tool_call_name = ctx.tool_name
         return o
 
-    assert agent._output_schema.allow_text_output is True  # pyright: ignore[reportPrivateUsage,reportOptionalMemberAccess]
+    assert isinstance(agent._output_schema, TextOutputSchema)  # pyright: ignore[reportPrivateUsage]
 
     result = agent.run_sync('Hello')
-    assert result.output == snapshot('success (no tool calls)')
+    assert isinstance(result.output, str)
+    assert result.output.lower() == snapshot('success (no tool calls)')
     assert got_tool_call_name == snapshot(None)
 
     assert m.last_model_request_parameters is not None
@@ -448,6 +477,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
     [
         pytest.param('OutputType = Union[Foo, Bar]'),
         pytest.param('OutputType = [Foo, Bar]'),
+        pytest.param('OutputType = [ToolOutput(Foo), ToolOutput(Bar)]'),
         pytest.param('OutputType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='3.10+')),
         pytest.param(
             'OutputType: TypeAlias = Foo | Bar',
@@ -846,6 +876,83 @@ def test_output_type_function_with_retry():
     )
 
 
+def test_output_type_text_output_function_with_retry():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    def get_weather(ctx: RunContext[None], city: str) -> Weather:
+        assert ctx is not None
+        if city != 'Mexico City':
+            raise ModelRetry('City not found, I only know Mexico City')
+        return Weather(temperature=28.7, description='sunny')
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        if len(messages) == 1:
+            city = 'New York City'
+        else:
+            city = 'Mexico City'
+
+        return ModelResponse(parts=[TextPart(content=city)])
+
+    agent = Agent(FunctionModel(call_tool), output_type=TextOutput(get_weather))
+    result = agent.run_sync('New York City')
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='New York City',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='New York City')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=3, total_tokens=56),
+                model_name='function:call_tool:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='City not found, I only know Mexico City',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Mexico City')],
+                usage=Usage(requests=1, request_tokens=68, response_tokens=5, total_tokens=73),
+                model_name='function:call_tool:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'output_type',
+    [[str, str], [str, TextOutput(upcase)], [TextOutput(upcase), TextOutput(upcase)]],
+)
+def test_output_type_multiple_text_output(output_type: OutputSpec[str]):
+    with pytest.raises(UserError, match='Only one text output is allowed.'):
+        Agent('test', output_type=output_type)
+
+
+def test_output_type_text_output_invalid():
+    def int_func(x: int) -> str:
+        return str(int)  # pragma: no cover
+
+    with pytest.raises(UserError, match='TextOutput must take a function taking a `str`'):
+        output_type: TextOutput[str] = TextOutput(int_func)  # type: ignore
+        Agent('test', output_type=output_type)
+
+
 def test_output_type_async_function():
     class Weather(BaseModel):
         temperature: float
@@ -965,6 +1072,33 @@ def test_output_type_function_or_model():
                     'title': 'Weather',
                     'type': 'object',
                 },
+            ),
+        ]
+    )
+
+
+def test_output_type_text_output_function():
+    def say_world(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='world')])
+
+    agent = Agent(FunctionModel(say_world), output_type=TextOutput(upcase))
+    result = agent.run_sync('hello')
+    assert result.output == snapshot('WORLD')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=1, total_tokens=52),
+                model_name='function:say_world:',
+                timestamp=IsDatetime(),
             ),
         ]
     )
@@ -1124,6 +1258,321 @@ def test_output_type_multiple_custom_tools():
                     'title': 'Weather',
                     'type': 'object',
                 },
+            ),
+        ]
+    )
+
+
+def test_default_structured_output_mode():
+    def hello(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='hello')])  # pragma: no cover
+
+    tool_model = FunctionModel(hello, profile=ModelProfile(default_structured_output_mode='tool'))
+    native_model = FunctionModel(
+        hello,
+        profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),
+    )
+    prompted_model = FunctionModel(
+        hello,
+        profile=ModelProfile(default_structured_output_mode='prompted'),
+    )
+
+    class Foo(BaseModel):
+        bar: str
+
+    tool_agent = Agent(tool_model, output_type=Foo)
+    assert tool_agent._output_schema.mode == 'tool'  # type: ignore[reportPrivateUsage]
+
+    native_agent = Agent(native_model, output_type=Foo)
+    assert native_agent._output_schema.mode == 'native'  # type: ignore[reportPrivateUsage]
+
+    prompted_agent = Agent(prompted_model, output_type=Foo)
+    assert prompted_agent._output_schema.mode == 'prompted'  # type: ignore[reportPrivateUsage]
+
+
+def test_prompted_output():
+    def return_city_location(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        text = CityLocation(city='Mexico City', country='Mexico').model_dump_json()
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    m = FunctionModel(return_city_location)
+
+    class CityLocation(BaseModel):
+        """Description from docstring."""
+
+        city: str
+        country: str
+
+    agent = Agent(
+        m,
+        output_type=PromptedOutput(CityLocation, name='City & Country', description='Description from PromptedOutput'),
+    )
+
+    result = agent.run_sync('What is the capital of Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "City & Country", "type": "object", "description": "Description from PromptedOutput. Description from docstring."}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
+                usage=Usage(requests=1, request_tokens=56, response_tokens=7, total_tokens=63),
+                model_name='function:return_city_location:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+def test_prompted_output_with_template():
+    def return_foo(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        text = Foo(bar='baz').model_dump_json()
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    m = FunctionModel(return_foo)
+
+    class Foo(BaseModel):
+        bar: str
+
+    agent = Agent(m, output_type=PromptedOutput(Foo, template='Gimme some JSON:'))
+
+    result = agent.run_sync('What is the capital of Mexico?')
+    assert result.output == snapshot(Foo(bar='baz'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Gimme some JSON:
+
+{"properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Foo", "type": "object"}\
+""",
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"bar":"baz"}')],
+                usage=Usage(requests=1, request_tokens=56, response_tokens=4, total_tokens=60),
+                model_name='function:return_foo:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+def test_prompted_output_with_defs():
+    class Foo(BaseModel):
+        """Foo description"""
+
+        foo: str
+
+    class Bar(BaseModel):
+        """Bar description"""
+
+        bar: str
+
+    class Baz(BaseModel):
+        """Baz description"""
+
+        baz: str
+
+    class FooBar(BaseModel):
+        """FooBar description"""
+
+        foo: Foo
+        bar: Bar
+
+    class FooBaz(BaseModel):
+        """FooBaz description"""
+
+        foo: Foo
+        baz: Baz
+
+    def return_foo_bar(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        text = '{"result": {"kind": "FooBar", "data": {"foo": {"foo": "foo"}, "bar": {"bar": "bar"}}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    m = FunctionModel(return_foo_bar)
+
+    agent = Agent(
+        m,
+        output_type=PromptedOutput(
+            [FooBar, FooBaz], name='FooBar or FooBaz', description='FooBar or FooBaz description'
+        ),
+    )
+
+    result = agent.run_sync('What is foo?')
+    assert result.output == snapshot(FooBar(foo=Foo(foo='foo'), bar=Bar(bar='bar')))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is foo?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "FooBar"}, "data": {"properties": {"foo": {"$ref": "#/$defs/Foo"}, "bar": {"$ref": "#/$defs/Bar"}}, "required": ["foo", "bar"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "FooBar", "description": "FooBar description"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "FooBaz"}, "data": {"properties": {"foo": {"$ref": "#/$defs/Foo"}, "baz": {"$ref": "#/$defs/Baz"}}, "required": ["foo", "baz"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "FooBaz", "description": "FooBaz description"}]}}, "required": ["result"], "additionalProperties": false, "$defs": {"Bar": {"description": "Bar description", "properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Bar", "type": "object"}, "Foo": {"description": "Foo description", "properties": {"foo": {"type": "string"}}, "required": ["foo"], "title": "Foo", "type": "object"}, "Baz": {"description": "Baz description", "properties": {"baz": {"type": "string"}}, "required": ["baz"], "title": "Baz", "type": "object"}}, "title": "FooBar or FooBaz", "description": "FooBaz description"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='{"result": {"kind": "FooBar", "data": {"foo": {"foo": "foo"}, "bar": {"bar": "bar"}}}}'
+                    )
+                ],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=17, total_tokens=70),
+                model_name='function:return_foo_bar:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+def test_native_output():
+    def return_city_location(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            text = '{"city": "Mexico City"}'
+        else:
+            text = '{"city": "Mexico City", "country": "Mexico"}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    m = FunctionModel(return_city_location, profile=ModelProfile(supports_json_schema_output=True))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(
+        m,
+        output_type=NativeOutput(CityLocation),
+    )
+
+    result = agent.run_sync('What is the capital of Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city": "Mexico City"}')],
+                usage=Usage(requests=1, request_tokens=56, response_tokens=5, total_tokens=61),
+                model_name='function:return_city_location:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'missing',
+                                'loc': ('country',),
+                                'msg': 'Field required',
+                                'input': {'city': 'Mexico City'},
+                            }
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
+                usage=Usage(requests=1, request_tokens=85, response_tokens=12, total_tokens=97),
+                model_name='function:return_city_location:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+def test_prompted_output_function_with_retry():
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+    def get_weather(city: str) -> Weather:
+        if city != 'Mexico City':
+            raise ModelRetry('City not found, I only know Mexico City')
+        return Weather(temperature=28.7, description='sunny')
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        if len(messages) == 1:
+            args_json = '{"city": "New York City"}'
+        else:
+            args_json = '{"city": "Mexico City"}'
+
+        return ModelResponse(parts=[TextPart(content=args_json)])
+
+    agent = Agent(FunctionModel(call_tool), output_type=PromptedOutput(get_weather))
+    result = agent.run_sync('New York City')
+    assert result.output == snapshot(Weather(temperature=28.7, description='sunny'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='New York City',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"additionalProperties": false, "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object", "title": "get_weather"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city": "New York City"}')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=6, total_tokens=59),
+                model_name='function:call_tool:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='City not found, I only know Mexico City',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city": "Mexico City"}')],
+                usage=Usage(requests=1, request_tokens=68, response_tokens=11, total_tokens=79),
+                model_name='function:call_tool:',
+                timestamp=IsDatetime(),
             ),
         ]
     )
@@ -2526,6 +2975,7 @@ def test_instructions_parameter_with_sequence():
             parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
             instructions="""\
 You are a helpful assistant.
+
 You are a potato.\
 """,
         )
@@ -2657,3 +3107,23 @@ def test_tool_call_with_validation_value_error_serializable():
             'kind': 'request',
         }
     )
+
+
+def test_unsupported_output_mode():
+    class Foo(BaseModel):
+        bar: str
+
+    def hello(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('hello')])  # pragma: no cover
+
+    model = FunctionModel(hello, profile=ModelProfile(supports_tools=False, supports_json_schema_output=False))
+
+    agent = Agent(model, output_type=NativeOutput(Foo))
+
+    with pytest.raises(UserError, match='Structured output is not supported by the model.'):
+        agent.run_sync('Hello')
+
+    agent = Agent(model, output_type=ToolOutput(Foo))
+
+    with pytest.raises(UserError, match='Output tools are not supported by the model.'):
+        agent.run_sync('Hello')

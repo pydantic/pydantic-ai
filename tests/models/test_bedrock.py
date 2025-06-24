@@ -87,7 +87,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     )
 
 
-async def test_bedrock_model_structured_response(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_bedrock_model_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', retries=5)
 
@@ -712,7 +712,6 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
     assert event_parts == snapshot(
         [
             PartStartEvent(index=0, part=ThinkingPart(content='Okay')),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', so')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' user is')),
@@ -1136,6 +1135,7 @@ Also\
 """
                 ),
             ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Crossing the')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' street safely involves')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' careful')),
@@ -1448,7 +1448,7 @@ async def test_bedrock_anthropic_no_tool_choice(bedrock_provider: BedrockProvide
         'This is my tool',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
     )
-    mrp = ModelRequestParameters(function_tools=[my_tool], allow_text_output=False, output_tools=[])
+    mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=False, output_tools=[])
 
     # Models other than Anthropic support tool_choice
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
