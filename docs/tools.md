@@ -293,7 +293,7 @@ _(This example is complete, it can be run "as is")_
 
 For more complex scenarios where you need custom user prompts and tool return messages, you can use [`MultiModalToolResponse`][pydantic_ai.messages.MultiModalToolResponse]:
 
-```python {title="computer_use_example.py" test="skip"}
+```python {title="computer_use_example.py" test="skip" lint="skip"}
 import time
 from pydantic_ai import Agent
 from pydantic_ai.messages import MultiModalToolResponse, BinaryContent
