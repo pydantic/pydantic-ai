@@ -486,7 +486,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         final_result: result.FinalResult[NodeRunEndT] | None = None
         parts: list[_messages.ModelRequestPart] = []
 
-        toolset = await CombinedToolset([ctx.deps.toolset, ctx.deps.output_toolset]).prepare_for_run(run_context)
+        toolset = CombinedToolset([ctx.deps.toolset, ctx.deps.output_toolset])
 
         unknown_calls: list[_messages.ToolCallPart] = []
         tool_calls_by_kind: dict[ToolKind, list[_messages.ToolCallPart]] = defaultdict(list)
