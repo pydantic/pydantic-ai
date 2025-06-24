@@ -1,0 +1,89 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '234'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What day is today in Utrecht?
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      tools:
+      - codeExecution: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1462'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=7674
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |+
+              To determine the current day in Utrecht, I need to know the current date and time. I will use a tool to get this information.
+
+          - executableCode:
+              code: |
+                import datetime
+                import pytz
+
+                utrecht_timezone = pytz.timezone('Europe/Amsterdam')
+                now_utrecht = datetime.datetime.now(utrecht_timezone)
+                print(now_utrecht.strftime("%A, %Y-%m-%d"))
+              language: PYTHON
+          - codeExecutionResult:
+              outcome: OUTCOME_OK
+              output: |
+                Wednesday, 2025-05-28
+          - text: |
+              Today is Wednesday, May 28, 2025 in Utrecht.
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: 8ww3aLDxJY24qsMP97vYeA
+      usageMetadata:
+        candidatesTokenCount: 119
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 119
+        promptTokenCount: 13
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 13
+        toolUsePromptTokenCount: 114
+        toolUsePromptTokensDetails:
+        - modality: TEXT
+          tokenCount: 114
+        totalTokenCount: 246
+    status:
+      code: 200
+      message: OK
+version: 1
