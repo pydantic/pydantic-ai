@@ -734,7 +734,19 @@ async def process_function_tools(  # noqa C901
 
                     processed_contents: list[Any] = []
                     for content in contents:
-                        if isinstance(content, _messages.MultiModalContentTypes):
+                        if isinstance(content, _messages.MultiModalToolResponse):
+                            # Handle new wrapper class with custom content and tool return
+                            user_parts.append(
+                                _messages.UserPromptPart(
+                                    content=list(content.content),
+                                    timestamp=result.timestamp,
+                                    part_kind='user-prompt',
+                                )
+                            )
+                            processed_contents.append(content.tool_return)
+
+                        elif isinstance(content, _messages.MultiModalContentTypes):
+                            # Handle direct multimodal content
                             if isinstance(content, _messages.BinaryContent):
                                 identifier = multi_modal_content_identifier(content.data)
                             else:
@@ -749,6 +761,7 @@ async def process_function_tools(  # noqa C901
                             )
                             processed_contents.append(f'See file {identifier}')
                         else:
+                            # Handle regular content
                             processed_contents.append(content)
 
                     if single_content:

@@ -303,6 +303,24 @@ class BinaryContent:
 
 UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
 
+
+@dataclass(repr=False)
+class MultiModalToolResponse:
+    """A wrapper for multi-modal content with customizable prompt and tool return value.
+
+    This allows tools to return multi-modal content with custom user prompts and tool return messages,
+    providing more flexibility than the default "This is file {identifier}:" format.
+    """
+
+    content: Sequence[UserContent]
+    """The content sequence to be sent to the model as a UserPromptPart."""
+
+    tool_return: Any
+    """The return value to be used in the tool response."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 # Ideally this would be a Union of types, but Python 3.9 requires it to be a string, and strings don't work with `isinstance``.
 MultiModalContentTypes = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
 _document_format_lookup: dict[str, DocumentFormat] = {
