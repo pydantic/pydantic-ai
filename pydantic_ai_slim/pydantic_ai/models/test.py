@@ -6,10 +6,10 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, Union
 
 import pydantic_core
-from typing_extensions import assert_never
+from typing_extensions import TypeAlias, assert_never
 
 from .. import _utils
 from ..messages import (
@@ -49,6 +49,9 @@ class _WrappedToolOutput:
 class TestToolCallPart:
     """Represents a tool call in the test model."""
 
+    # NOTE: Avoid test discovery by pytest.
+    __test__ = False
+
     call_tools: list[str] | Literal['all'] = 'all'
     deltas: bool = False
 
@@ -57,16 +60,22 @@ class TestToolCallPart:
 class TestTextPart:
     """Represents a text part in the test model."""
 
+    # NOTE: Avoid test discovery by pytest.
+    __test__ = False
+
     text: str
 
 
-TestPart = TestTextPart | TestToolCallPart
+TestPart: TypeAlias = Union[TestTextPart, TestToolCallPart]
 """A part of the test model response."""
 
 
 @dataclass
 class TestNode:
     """A node in the test model."""
+
+    # NOTE: Avoid test discovery by pytest.
+    __test__ = False
 
     parts: list[TestPart]
     id: str = field(default_factory=_utils.generate_tool_call_id)
@@ -175,14 +184,14 @@ class TestModel(Model):
 
             if k := output_tool.outer_typed_dict_key:
                 return _WrappedToolOutput({k: self.custom_output_args})
-            else:
-                return _WrappedToolOutput(self.custom_output_args)
+
+            return _WrappedToolOutput(self.custom_output_args)
         elif model_request_parameters.allow_text_output:
             return _WrappedTextOutput(None)
-        elif model_request_parameters.output_tools:
+        elif model_request_parameters.output_tools:  # pragma: no branch
             return _WrappedToolOutput(None)
         else:
-            return _WrappedTextOutput(None)
+            return _WrappedTextOutput(None)  # pragma: no cover
 
     def _node_response(
         self,
@@ -302,8 +311,7 @@ class TestModel(Model):
             output_tool = output_tools[self.seed % len(output_tools)]
             if custom_output_args is not None:
                 return ModelResponse(
-                    parts=[ToolCallPart(output_tool.name, custom_output_args)],
-                    model_name=self._model_name,
+                    parts=[ToolCallPart(output_tool.name, custom_output_args)], model_name=self._model_name
                 )
             else:
                 response_args = self.gen_tool_args(output_tool)
