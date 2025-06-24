@@ -17,7 +17,17 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, overlo
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import ParamSpec, TypeAlias, TypeGuard, TypeIs, is_typeddict
+from typing_extensions import (
+    ParamSpec,
+    TypeAlias,
+    TypeGuard,
+    TypeIs,
+    get_args,
+    get_origin,
+    is_typeddict,
+)
+from typing_inspection import typing_objects
+from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import AbstractSpan
 
@@ -415,3 +425,15 @@ def strip_markdown_fences(text: str) -> str:
         return match.group(1)
 
     return text
+
+
+def get_union_args(tp: Any) -> tuple[Any, ...]:
+    """Extract the arguments of a Union type if `tp` is a union, otherwise return an empty tuple."""
+    if typing_objects.is_typealiastype(tp):
+        tp = tp.__value__
+
+    origin = get_origin(tp)
+    if is_union_origin(origin):
+        return get_args(tp)
+    else:
+        return ()

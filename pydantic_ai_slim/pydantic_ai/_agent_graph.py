@@ -142,6 +142,8 @@ def is_agent_node(
 
 @dataclasses.dataclass
 class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
+    """The node that handles the user prompt and instructions."""
+
     user_prompt: str | Sequence[_messages.UserContent] | None
 
     instructions: str | None
@@ -254,10 +256,10 @@ async def _prepare_request_parameters(
 
     output_schema = ctx.deps.output_schema
     output_object = None
-    if isinstance(output_schema, _output.ModelStructuredOutputSchema):
+    if isinstance(output_schema, _output.NativeOutputSchema):
         output_object = output_schema.object_def
 
-    # ToolOrTextOutputSchema, ModelStructuredOutputSchema, and PromptedStructuredOutputSchema all inherit from TextOutputSchema
+    # ToolOrTextOutputSchema, NativeOutputSchema, and PromptedOutputSchema all inherit from TextOutputSchema
     allow_text_output = isinstance(output_schema, _output.TextOutputSchema)
 
     return models.ModelRequestParameters(
@@ -271,7 +273,7 @@ async def _prepare_request_parameters(
 
 @dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
-    """Make a request to the model using the last message in state.message_history."""
+    """The node that makes a request to the model using the last message in state.message_history."""
 
     request: _messages.ModelRequest
 
@@ -390,7 +392,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
 @dataclasses.dataclass
 class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
-    """Process a model response, and decide whether to end the run or make a new request."""
+    """The node that processes a model response, and decides whether to end the run or make a new request."""
 
     model_response: _messages.ModelResponse
 

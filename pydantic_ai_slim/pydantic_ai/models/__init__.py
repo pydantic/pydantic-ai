@@ -20,6 +20,7 @@ from typing_extensions import Literal, TypeAliasType, TypedDict
 
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 
+from .. import _utils
 from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
@@ -302,7 +303,7 @@ KnownModelName = TypeAliasType(
 """
 
 
-@dataclass
+@dataclass(repr=False)
 class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
@@ -312,6 +313,8 @@ class ModelRequestParameters:
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list)
     allow_text_output: bool = True
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 class Model(ABC):

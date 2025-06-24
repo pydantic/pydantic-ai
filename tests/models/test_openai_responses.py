@@ -20,7 +20,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.output import ModelStructuredOutput, PromptedStructuredOutput, TextOutput, ToolOutput
+from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import Usage
@@ -678,7 +678,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
 
 
 @pytest.mark.vcr()
-async def test_model_structured_output(allow_model_requests: None, openai_api_key: str):
+async def test_native_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
     class CityLocation(BaseModel):
@@ -687,7 +687,7 @@ async def test_model_structured_output(allow_model_requests: None, openai_api_ke
         city: str
         country: str
 
-    agent = Agent(m, output_type=ModelStructuredOutput(CityLocation))
+    agent = Agent(m, output_type=NativeOutput(CityLocation))
 
     @agent.tool_plain
     async def get_user_country() -> str:
@@ -748,7 +748,7 @@ async def test_model_structured_output(allow_model_requests: None, openai_api_ke
 
 
 @pytest.mark.vcr()
-async def test_model_structured_output_multiple(allow_model_requests: None, openai_api_key: str):
+async def test_native_output_multiple(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
     class CityLocation(BaseModel):
@@ -759,7 +759,7 @@ async def test_model_structured_output_multiple(allow_model_requests: None, open
         country: str
         language: str
 
-    agent = Agent(m, output_type=ModelStructuredOutput([CityLocation, CountryLanguage]))
+    agent = Agent(m, output_type=NativeOutput([CityLocation, CountryLanguage]))
 
     @agent.tool_plain
     async def get_user_country() -> str:
@@ -824,14 +824,14 @@ async def test_model_structured_output_multiple(allow_model_requests: None, open
 
 
 @pytest.mark.vcr()
-async def test_prompted_structured_output(allow_model_requests: None, openai_api_key: str):
+async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
     class CityLocation(BaseModel):
         city: str
         country: str
 
-    agent = Agent(m, output_type=PromptedStructuredOutput(CityLocation))
+    agent = Agent(m, output_type=PromptedOutput(CityLocation))
 
     @agent.tool_plain
     async def get_user_country() -> str:
@@ -906,7 +906,7 @@ Don't include any text or Markdown fencing before or after.\
 
 
 @pytest.mark.vcr()
-async def test_prompted_structured_output_multiple(allow_model_requests: None, openai_api_key: str):
+async def test_prompted_output_multiple(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
     class CityLocation(BaseModel):
@@ -917,7 +917,7 @@ async def test_prompted_structured_output_multiple(allow_model_requests: None, o
         country: str
         language: str
 
-    agent = Agent(m, output_type=PromptedStructuredOutput([CityLocation, CountryLanguage]))
+    agent = Agent(m, output_type=PromptedOutput([CityLocation, CountryLanguage]))
 
     @agent.tool_plain
     async def get_user_country() -> str:

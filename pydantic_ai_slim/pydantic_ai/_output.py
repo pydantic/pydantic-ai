@@ -16,18 +16,16 @@ from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, UserError
 from .output import (
     DeferredToolCalls,
-    ModelStructuredOutput,
+    NativeOutput,
     OutputDataT,
     OutputMode,
     OutputSpec,
     OutputTypeOrFunction,
-    PromptedStructuredOutput,
+    PromptedOutput,
     StructuredOutputMode,
     TextOutput,
-    TextOutputFunction,
+    TextOutputFunc,
     ToolOutput,
-    ToolRetryError,
-    _flatten_output_spec,  # pyright: ignore[reportPrivateUsage]
 )
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 
@@ -67,6 +65,14 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
+
+
+class ToolRetryError(Exception):
+    """Exception used to signal a `ToolRetry` message should be returned to the LLM."""
+
+    def __init__(self, tool_retry: _messages.RetryPromptPart):
+        self.tool_retry = tool_retry
+        super().__init__()
 
 
 @dataclass
@@ -184,25 +190,25 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
 
         outputs = [output for output in raw_outputs if output is not DeferredToolCalls]
         deferred_tool_calls = len(outputs) < len(raw_outputs)
-        if output := next((output for output in outputs if isinstance(output, ModelStructuredOutput)), None):
+        if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):
             if len(outputs) > 1:
-                raise UserError('ModelStructuredOutput cannot be mixed with other output types.')
+                raise UserError('NativeOutput cannot be mixed with other output types.')
 
-            return ModelStructuredOutputSchema(
+            return NativeOutputSchema(
                 processor=cls._build_processor(
-                    output.outputs,
+                    _flatten_output_spec(output.outputs),
                     name=output.name,
                     description=output.description,
                 ),
                 deferred_tool_calls=deferred_tool_calls,
             )
-        elif output := next((output for output in outputs if isinstance(output, PromptedStructuredOutput)), None):
+        elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):
             if len(outputs) > 1:
-                raise UserError('PromptedStructuredOutput cannot be mixed with other output types.')
+                raise UserError('PromptedOutput cannot be mixed with other output types.')
 
-            return PromptedStructuredOutputSchema(
+            return PromptedOutputSchema(
                 processor=cls._build_processor(
-                    output.outputs,
+                    _flatten_output_spec(output.outputs),
                     name=output.name,
                     description=output.description,
                 ),
@@ -220,11 +226,9 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                 text_outputs.append(output)
             elif isinstance(output, ToolOutput):
                 tool_outputs.append(output)
-            elif isinstance(output, (ModelStructuredOutput, PromptedStructuredOutput)):
+            elif isinstance(output, (NativeOutput, PromptedOutput)):
                 # We can never get here because these are checked for above.
-                raise UserError(
-                    'ModelStructuredOutput and PromptedStructuredOutput must be the only output types.'
-                )  # pragma: no cover
+                raise UserError('NativeOutput and PromptedOutput must be the only output types.')  # pragma: no cover
             else:
                 other_outputs.append(output)
 
@@ -350,12 +354,10 @@ class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
         self._tools = tools
 
     def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
-        if mode == 'model_structured':
-            return ModelStructuredOutputSchema(processor=self.processor, deferred_tool_calls=self.deferred_tool_calls)
-        elif mode == 'prompted_structured':
-            return PromptedStructuredOutputSchema(
-                processor=self.processor, deferred_tool_calls=self.deferred_tool_calls
-            )
+        if mode == 'native':
+            return NativeOutputSchema(processor=self.processor, deferred_tool_calls=self.deferred_tool_calls)
+        elif mode == 'prompted':
+            return PromptedOutputSchema(processor=self.processor, deferred_tool_calls=self.deferred_tool_calls)
         elif mode == 'tool':
             return ToolOutputSchema(tools=self.tools, deferred_tool_calls=self.deferred_tool_calls)
         else:
@@ -364,6 +366,7 @@ class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
     @property
     def tools(self) -> dict[str, OutputTool[OutputDataT]]:
         """Get the tools for this output schema."""
+        # TODO: Update for toolsets
         # We return tools here as they're checked in Agent._register_tool.
         # At that point we may don't know yet what output mode we're going to use if no model was provided or it was deferred until agent.run time.
         return self._tools
@@ -429,15 +432,15 @@ class StructuredTextOutputSchema(TextOutputSchema[OutputDataT], ABC):
 
 
 @dataclass
-class ModelStructuredOutputSchema(StructuredTextOutputSchema[OutputDataT]):
+class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
     @property
     def mode(self) -> OutputMode:
-        return 'model_structured'
+        return 'native'
 
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
         """Raise an error if the mode is not supported by the model."""
-        if not profile.supports_structured_output:
-            raise UserError('Structured output is not supported by the model.')
+        if not profile.supports_json_schema_output:
+            raise UserError('Native structured output is not supported by the model.')
 
     async def process(
         self,
@@ -463,12 +466,12 @@ class ModelStructuredOutputSchema(StructuredTextOutputSchema[OutputDataT]):
 
 
 @dataclass
-class PromptedStructuredOutputSchema(StructuredTextOutputSchema[OutputDataT]):
+class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
     template: str | None = None
 
     @property
     def mode(self) -> OutputMode:
-        return 'prompted_structured'
+        return 'prompted'
 
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
         """Raise an error if the mode is not supported by the model."""
@@ -848,7 +851,7 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
 
     def __init__(
         self,
-        output_function: TextOutputFunction[OutputDataT],
+        output_function: TextOutputFunc[OutputDataT],
     ):
         self._function_schema = _function_schema.function_schema(output_function, GenerateToolJsonSchema)
 
@@ -955,3 +958,19 @@ class OutputTool(Generic[OutputDataT]):
                 raise  # pragma: lax no cover
         else:
             return output
+
+
+def _flatten_output_spec(output_spec: T | Sequence[T]) -> list[T]:
+    outputs: Sequence[T]
+    if isinstance(output_spec, Sequence):
+        outputs = output_spec
+    else:
+        outputs = (output_spec,)
+
+    outputs_flat: list[T] = []
+    for output in outputs:
+        if union_types := _utils.get_union_args(output):
+            outputs_flat.extend(union_types)
+        else:
+            outputs_flat.append(output)
+    return outputs_flat

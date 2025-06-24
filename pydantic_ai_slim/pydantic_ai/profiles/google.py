@@ -12,8 +12,8 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     return ModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
-        supports_structured_output=True,
-        supports_json_output=True,
+        supports_json_schema_output=True,
+        supports_json_object_output=True,
     )
 
 

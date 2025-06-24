@@ -366,6 +366,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         # This will raise errors for any name conflicts
         CombinedToolset[AgentDepsT]([self._output_toolset, self._function_toolset])
 
+        # TODO: Set max_retries on MCPServer
         toolset = CombinedToolset[AgentDepsT]([self._function_toolset, *toolsets, *mcp_servers])
         if prepare_tools:
             toolset = PreparedToolset[AgentDepsT](toolset, prepare_tools)
@@ -717,8 +718,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             ]
 
             model_profile = model_used.profile
-            if isinstance(output_schema, _output.PromptedStructuredOutputSchema):
-                instructions = output_schema.instructions(model_profile.prompted_structured_output_template)
+            if isinstance(output_schema, _output.PromptedOutputSchema):
+                instructions = output_schema.instructions(model_profile.prompted_output_template)
                 parts.append(instructions)
 
             parts = [p for p in parts if p]

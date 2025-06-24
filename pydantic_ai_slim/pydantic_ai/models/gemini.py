@@ -231,7 +231,7 @@ class GeminiModel(Model):
             request_data['toolConfig'] = tool_config
 
         generation_config = _settings_to_generation_config(model_settings)
-        if model_request_parameters.output_mode == 'model_structured':
+        if model_request_parameters.output_mode == 'native':
             if tools:
                 raise UserError('Gemini does not support structured output and tools at the same time.')
 
@@ -240,7 +240,7 @@ class GeminiModel(Model):
             output_object = model_request_parameters.output_object
             assert output_object is not None
             generation_config['response_schema'] = self._map_response_schema(output_object)
-        elif model_request_parameters.output_mode == 'prompted_structured' and not tools:
+        elif model_request_parameters.output_mode == 'prompted' and not tools:
             generation_config['response_mime_type'] = 'application/json'
 
         if generation_config:
