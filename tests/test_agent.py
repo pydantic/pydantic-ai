@@ -16,11 +16,13 @@ from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, 
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.messages import (
     BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    MultiModalToolResponse,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -2656,4 +2658,82 @@ def test_tool_call_with_validation_value_error_serializable():
             'instructions': None,
             'kind': 'request',
         }
+    )
+
+
+def test_multimodal_tool_response():
+    """Test MultiModalToolResponse with custom content and tool return."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Analysis completed'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def analyze_data() -> MultiModalToolResponse:
+        return MultiModalToolResponse(
+            content=[
+                'Here are the analysis results:',
+                ImageUrl('https://example.com/chart.jpg'),
+                'The chart shows positive trends.',
+            ],
+            tool_return='Data analysis completed successfully',
+        )
+
+    result = agent.run_sync('Please analyze the data')
+
+    # Verify final output
+    assert result.output == 'Analysis completed'
+
+    # Verify message history contains the expected parts
+
+    # Verify the complete message structure using snapshot
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Please analyze the data', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Starting analysis'),
+                    ToolCallPart(
+                        tool_name='analyze_data',
+                        args={},
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=Usage(requests=1, request_tokens=54, response_tokens=4, total_tokens=58),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='analyze_data',
+                        content='Data analysis completed successfully',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'Here are the analysis results:',
+                            ImageUrl(url='https://example.com/chart.jpg'),
+                            'The chart shows positive trends.',
+                        ],
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Analysis completed')],
+                usage=Usage(requests=1, request_tokens=70, response_tokens=6, total_tokens=76),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
     )
