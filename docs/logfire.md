@@ -19,7 +19,7 @@ LLM Observability tools that just let you understand how your model is performin
 
 !!! tip "Pydantic Logfire is a commercial product"
     Logfire is a commercially supported, hosted platform with an extremely generous and perpetual [free tier](https://pydantic.dev/pricing/).
-    You can sign up and start using Logfire in a couple of minutes.
+    You can sign up and start using Logfire in a couple of minutes. Logfire can also be self-hosted on the enterprise tier.
 
 PydanticAI has built-in (but optional) support for Logfire. That means if the `logfire` package is installed and configured and agent instrumentation is enabled then detailed information about agent runs is sent to Logfire. Otherwise there's virtually no overhead and nothing is sent.
 
