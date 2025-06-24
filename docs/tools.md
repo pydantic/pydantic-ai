@@ -291,6 +291,43 @@ print(result.output)
 ```
 _(This example is complete, it can be run "as is")_
 
+For more complex scenarios where you need custom user prompts and tool return messages, you can use [`MultiModalToolResponse`][pydantic_ai.messages.MultiModalToolResponse]:
+
+```python {title="computer_use_example.py" test="skip"}
+import time
+from pydantic_ai import Agent
+from pydantic_ai.messages import MultiModalToolResponse, BinaryContent
+
+agent = Agent('openai:gpt-4o')
+
+@agent.tool_plain
+def click_and_compare(x: int, y: int) -> MultiModalToolResponse:
+    """Click at coordinates and show before/after screenshots."""
+    # Take screenshot before action
+    before_screenshot = capture_screen()
+
+    # Perform click operation
+    perform_click(x, y)
+    time.sleep(0.5)  # Wait for UI to update
+
+    # Take screenshot after action
+    after_screenshot = capture_screen()
+
+    return MultiModalToolResponse(
+        content=[
+            f"Clicked at coordinates ({x}, {y}). Here's the comparison:",
+            "Before:",
+            BinaryContent(data=before_screenshot, media_type="image/png"),
+            "After:",
+            BinaryContent(data=after_screenshot, media_type="image/png"),
+            "Please analyze the changes and suggest next steps."
+        ],
+        tool_return=f"Successfully clicked at ({x}, {y}) - before/after screenshots captured"
+    )
+```
+
+This allows you to provide custom context and descriptions for multi-modal content, rather than using the default `"This is file {identifier}:"` format.
+
 Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
 
 ## Function Tools vs. Structured Outputs
