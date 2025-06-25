@@ -3227,7 +3227,7 @@ def test_many_multimodal_tool_response():
     agent = Agent(FunctionModel(llm))
 
     @agent.tool_plain
-    def analyze_data() -> list[ToolReturn | str]:
+    def analyze_data() -> list[Any]:
         return [
             ToolReturn(
                 return_value='Data analysis completed successfully',
