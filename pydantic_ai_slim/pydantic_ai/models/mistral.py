@@ -11,6 +11,8 @@ import pydantic_core
 from httpx import Timeout
 from typing_extensions import assert_never
 
+from pydantic_ai._thinking_part import split_content_into_text_and_thinking
+
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..messages import (
@@ -25,6 +27,7 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -250,6 +253,7 @@ class MistralModel(Model):
             )
 
         elif model_request_parameters.output_tools:
+            # TODO: Port to native "manual JSON" mode
             # Json Mode
             parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_parameters.output_tools]
             user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
@@ -258,7 +262,9 @@ class MistralModel(Model):
             response = await self.client.chat.stream_async(
                 model=str(self._model_name),
                 messages=mistral_messages,
-                response_format={'type': 'json_object'},
+                response_format={
+                    'type': 'json_object'
+                },  # TODO: Should be able to use json_schema now: https://docs.mistral.ai/capabilities/structured-output/custom_structured_output/, https://github.com/mistralai/client-python/blob/bc4adf335968c8a272e1ab7da8461c9943d8e701/src/mistralai/extra/utils/response_format.py#L9
                 stream=True,
                 http_headers={'User-Agent': get_user_agent()},
             )
@@ -322,7 +328,7 @@ class MistralModel(Model):
 
         parts: list[ModelResponsePart] = []
         if text := _map_content(content):
-            parts.append(TextPart(content=text))
+            parts.extend(split_content_into_text_and_thinking(text))
 
         if isinstance(tool_calls, list):
             for tool_call in tool_calls:
@@ -484,6 +490,11 @@ class MistralModel(Model):
                 for part in message.parts:
                     if isinstance(part, TextPart):
                         content_chunks.append(MistralTextChunk(text=part.content))
+                    elif isinstance(part, ThinkingPart):
+                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
+                        # please open an issue. The below code is the code to send thinking to the provider.
+                        # content_chunks.append(MistralTextChunk(text=f'<think>{part.content}</think>'))
+                        pass
                     elif isinstance(part, ToolCallPart):
                         tool_calls.append(self._map_tool_call(part))
                     else:
@@ -566,6 +577,7 @@ class MistralStreamedResponse(StreamedResponse):
                 # Attempt to produce an output tool call from the received text
                 if self._output_tools:
                     self._delta_content += text
+                    # TODO: Port to native "manual JSON" mode
                     maybe_tool_call_part = self._try_get_output_tool_from_text(self._delta_content, self._output_tools)
                     if maybe_tool_call_part:
                         yield self._parts_manager.handle_tool_call_part(

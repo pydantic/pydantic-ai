@@ -80,7 +80,7 @@ Here we have a function that takes a list of `#!python (user_prompt, user_id)` t
 
 Here's how we would write tests using [`TestModel`][pydantic_ai.models.test.TestModel]:
 
-```python {title="test_weather_app.py" call_name="test_forecast"}
+```python {title="test_weather_app.py" call_name="test_forecast" requires="weather_app.py"}
 from datetime import timezone
 import pytest
 
@@ -197,7 +197,7 @@ To fully exercise `weather_forecast`, we need to use [`FunctionModel`][pydantic_
 
 Here's an example of using `FunctionModel` to test the `weather_forecast` tool with custom inputs
 
-```python {title="test_weather_app2.py" call_name="test_forecast_future"}
+```python {title="test_weather_app2.py" call_name="test_forecast_future" requires="weather_app.py"}
 import re
 
 import pytest
@@ -256,7 +256,7 @@ If you're writing lots of tests that all require model to be overridden, you can
 
 Here's an example of a fixture that overrides the model with `TestModel`:
 
-```python {title="tests.py"}
+```python {title="test_agent.py" requires="weather_app.py"}
 import pytest
 from weather_app import weather_agent
 

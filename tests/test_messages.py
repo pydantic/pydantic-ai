@@ -2,7 +2,14 @@ import sys
 
 import pytest
 
-from pydantic_ai.messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, VideoUrl
+from pydantic_ai.messages import (
+    AudioUrl,
+    BinaryContent,
+    DocumentUrl,
+    ImageUrl,
+    ThinkingPartDelta,
+    VideoUrl,
+)
 
 
 def test_image_url():
@@ -17,6 +24,22 @@ def test_video_url():
         video_url.media_type
 
     video_url = VideoUrl(url='https://example.com/video.mp4')
+    assert video_url.media_type == 'video/mp4'
+    assert video_url.format == 'mp4'
+
+
+@pytest.mark.parametrize(
+    'url,is_youtube',
+    [
+        pytest.param('https://youtu.be/lCdaVNyHtjU', True, id='youtu.be'),
+        pytest.param('https://www.youtube.com/lCdaVNyHtjU', True, id='www.youtube.com'),
+        pytest.param('https://youtube.com/lCdaVNyHtjU', True, id='youtube.com'),
+        pytest.param('https://dummy.com/video.mp4', False, id='dummy.com'),
+    ],
+)
+def test_youtube_video_url(url: str, is_youtube: bool):
+    video_url = VideoUrl(url=url)
+    assert video_url.is_youtube is is_youtube
     assert video_url.media_type == 'video/mp4'
     assert video_url.format == 'mp4'
 
@@ -260,3 +283,25 @@ def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
 def test_video_url_invalid():
     with pytest.raises(ValueError, match='Unknown video file extension: foobar.potato'):
         VideoUrl('foobar.potato').media_type
+
+
+def test_thinking_part_delta_apply_to_thinking_part_delta():
+    """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
+    original_delta = ThinkingPartDelta(content_delta='original', signature_delta='sig1')
+
+    # Test applying delta with no content or signature - should raise error
+    empty_delta = ThinkingPartDelta()
+    with pytest.raises(ValueError, match='Cannot apply ThinkingPartDelta with no content or signature'):
+        empty_delta.apply(original_delta)
+
+    # Test applying delta with signature_delta
+    sig_delta = ThinkingPartDelta(signature_delta='new_sig')
+    result = sig_delta.apply(original_delta)
+    assert isinstance(result, ThinkingPartDelta)
+    assert result.signature_delta == 'new_sig'
+
+    # Test applying delta with content_delta
+    content_delta = ThinkingPartDelta(content_delta='new_content')
+    result = content_delta.apply(original_delta)
+    assert isinstance(result, ThinkingPartDelta)
+    assert result.content_delta == 'new_content'

@@ -171,7 +171,7 @@ def test_logfire(
     )
     chat_span_attributes = summary.attributes[1]
     if instrument is True or instrument.event_mode == 'attributes':
-        if hasattr(capfire, 'get_collected_metrics'):
+        if hasattr(capfire, 'get_collected_metrics'):  # pragma: no branch
             assert capfire.get_collected_metrics() == snapshot(
                 [
                     {
@@ -291,8 +291,10 @@ def test_logfire(
                                 'strict': None,
                             }
                         ],
-                        'allow_text_output': True,
+                        'output_mode': 'text',
                         'output_tools': [],
+                        'output_object': None,
+                        'allow_text_output': True,
                     }
                 )
             ),
@@ -472,7 +474,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'test',
                     'gen_ai.request.model': 'test',
-                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',
                     'gen_ai.usage.input_tokens': 51,
@@ -494,8 +496,8 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 51,
-                    'gen_ai.usage.output_tokens': 4,
                     'all_messages_events': '[{"content": "Hello", "role": "user", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}, {"role": "assistant", "content": "success (no tool calls)", "gen_ai.message.index": 1, "event.name": "gen_ai.assistant.message"}]',
+                    'gen_ai.usage.output_tokens': 4,
                     'final_result': 'success (no tool calls)',
                     'logfire.json_schema': '{"type": "object", "properties": {"all_messages_events": {"type": "array"}, "final_result": {"type": "object"}}}',
                 },

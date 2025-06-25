@@ -24,21 +24,26 @@ import pydantic_ai.models
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
 
-__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'TestEnv', 'ClientWithHandler', 'try_import'
+__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'IsInstance', 'TestEnv', 'ClientWithHandler', 'try_import'
 
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 if TYPE_CHECKING:
+    from typing import TypeVar
+
     from pydantic_ai.providers.bedrock import BedrockProvider
 
+    T = TypeVar('T')
+
+    def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
     def IsInt(*args: Any, **kwargs: Any) -> int: ...
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
 else:
-    from dirty_equals import IsDatetime, IsFloat, IsInt, IsNow as _IsNow, IsStr
+    from dirty_equals import IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
@@ -244,6 +249,11 @@ def video_content(assets_path: Path) -> BinaryContent:
 def document_content(assets_path: Path) -> BinaryContent:
     pdf_bytes = assets_path.joinpath('dummy.pdf').read_bytes()
     return BinaryContent(data=pdf_bytes, media_type='application/pdf')
+
+
+@pytest.fixture(scope='session')
+def deepseek_api_key() -> str:
+    return os.getenv('DEEPSEEK_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')

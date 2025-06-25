@@ -247,7 +247,7 @@ jobs:
 
       - run: make lint-js
 
-      - run: uv run --package mcp-run-python pytest mcp-run-python -v
+      - run: uv run --package mcp-run-python pytest mcp-run-python -v --durations=100
 
       - run: deno task dev warmup
         working-directory: mcp-run-python

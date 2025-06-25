@@ -14,6 +14,7 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
+from pydantic_ai.profiles import ModelProfile
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
 
@@ -28,8 +29,10 @@ from . import (
     result,
     usage as _usage,
 )
+from ._agent_graph import HistoryProcessor
 from .models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
-from .result import FinalResult, OutputDataT, StreamedRunResult
+from .output import OutputDataT, OutputSpec
+from .result import FinalResult, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDepsT,
@@ -90,7 +93,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM.
 
     Agents are generic in the dependency type they take [`AgentDepsT`][pydantic_ai.tools.AgentDepsT]
-    and the result data type they return, [`OutputDataT`][pydantic_ai.result.OutputDataT].
+    and the output type they return, [`OutputDataT`][pydantic_ai.output.OutputDataT].
 
     By default, if neither generic parameter is customised, agents have type `Agent[None, str]`.
 
@@ -127,7 +130,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     be merged with this value, with the runtime argument taking priority.
     """
 
-    output_type: _output.OutputType[OutputDataT]
+    output_type: OutputSpec[OutputDataT]
     """
     The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`.
     """
@@ -140,7 +143,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _deprecated_result_tool_name: str | None = dataclasses.field(repr=False)
     _deprecated_result_tool_description: str | None = dataclasses.field(repr=False)
-    _output_schema: _output.OutputSchema[OutputDataT] | None = dataclasses.field(repr=False)
+    _output_schema: _output.BaseOutputSchema[OutputDataT] = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
     _instructions: str | None = dataclasses.field(repr=False)
     _instructions_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
@@ -162,7 +165,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
-        output_type: _output.OutputType[OutputDataT] = str,
+        output_type: OutputSpec[OutputDataT] = str,
         instructions: str
         | _system_prompt.SystemPromptFunc[AgentDepsT]
         | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
@@ -179,6 +182,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
     ) -> None: ...
 
     @overload
@@ -208,6 +212,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
     ) -> None: ...
 
     def __init__(
@@ -232,6 +237,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -275,6 +281,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 [`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all]
                 will be used, which defaults to False.
                 See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+            history_processors: Optional list of callables to process the message history before sending it to the model.
+                Each processor takes a list of messages and returns a modified list of messages.
+                Processors can be sync or async and are applied in sequence.
         """
         if model is None or defer_model_check:
             self.model = model
@@ -317,8 +326,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning)
             output_retries = result_retries
 
+        default_output_mode = (
+            self.model.profile.default_structured_output_mode if isinstance(self.model, models.Model) else None
+        )
         self._output_schema = _output.OutputSchema[OutputDataT].build(
-            output_type, self._deprecated_result_tool_name, self._deprecated_result_tool_description
+            output_type,
+            default_mode=default_output_mode,
+            name=self._deprecated_result_tool_name,
+            description=self._deprecated_result_tool_description,
         )
         self._output_validators = []
 
@@ -343,6 +358,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._mcp_servers = mcp_servers
         self._prepare_tools = prepare_tools
+        self.history_processors = history_processors or []
         for tool in tools:
             if isinstance(tool, Tool):
                 self._register_tool(tool)
@@ -374,7 +390,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: _output.OutputType[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -404,7 +420,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: _output.OutputType[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -492,7 +508,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None,
         *,
-        output_type: _output.OutputType[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -524,7 +540,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: _output.OutputType[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -623,7 +639,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
-        output_schema = self._prepare_output_schema(output_type)
+        output_schema = self._prepare_output_schema(output_type, model_used.profile)
 
         output_type_ = output_type or self.output_type
 
@@ -666,13 +682,20 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         )
 
         async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            if self._instructions is None and not self._instructions_functions:
-                return None
+            parts = [
+                self._instructions,
+                *[await func.run(run_context) for func in self._instructions_functions],
+            ]
 
-            instructions = self._instructions or ''
-            for instructions_runner in self._instructions_functions:
-                instructions += '\n' + await instructions_runner.run(run_context)
-            return instructions.strip()
+            model_profile = model_used.profile
+            if isinstance(output_schema, _output.PromptedOutputSchema):
+                instructions = output_schema.instructions(model_profile.prompted_output_template)
+                parts.append(instructions)
+
+            parts = [p for p in parts if p]
+            if not parts:
+                return None
+            return '\n\n'.join(parts).strip()
 
         # Copy the function tools so that retry state is agent-run-specific
         # Note that the retry count is reset to 0 when this happens due to the `default=0` and `init=False`.
@@ -689,6 +712,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             end_strategy=self.end_strategy,
             output_schema=output_schema,
             output_validators=output_validators,
+            history_processors=self.history_processors,
             function_tools=run_function_tools,
             mcp_servers=self._mcp_servers,
             default_retries=self._default_retries,
@@ -769,7 +793,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: _output.OutputType[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -799,7 +823,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: _output.OutputType[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -882,7 +906,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent],
         *,
-        output_type: _output.OutputType[RunOutputDataT],
+        output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -913,7 +937,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
-        output_type: _output.OutputType[RunOutputDataT] | None = None,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
@@ -992,10 +1016,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                             async for maybe_part_event in streamed_response:
                                 if isinstance(maybe_part_event, _messages.PartStartEvent):
                                     new_part = maybe_part_event.part
-                                    if isinstance(new_part, _messages.TextPart):
-                                        if _output.allow_text_output(output_schema):
-                                            return FinalResult(s, None, None)
-                                    elif isinstance(new_part, _messages.ToolCallPart) and output_schema:
+                                    if isinstance(new_part, _messages.TextPart) and isinstance(
+                                        output_schema, _output.TextOutputSchema
+                                    ):
+                                        return FinalResult(s, None, None)
+                                    elif isinstance(new_part, _messages.ToolCallPart) and isinstance(
+                                        output_schema, _output.ToolOutputSchema
+                                    ):  # pragma: no branch
                                         for call, _ in output_schema.find_tool([new_part]):
                                             return FinalResult(s, call.tool_name, call.tool_call_id)
                             return None
@@ -1551,8 +1578,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if tool.name in self._function_tools:
             raise exceptions.UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
 
-        if self._output_schema and tool.name in self._output_schema.tools:
-            raise exceptions.UserError(f'Tool name conflicts with result schema name: {tool.name!r}')
+        if tool.name in self._output_schema.tools:
+            raise exceptions.UserError(f'Tool name conflicts with output tool name: {tool.name!r}')
 
         self._function_tools[tool.name] = tool
 
@@ -1627,18 +1654,23 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         raise AttributeError('The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.')
 
     def _prepare_output_schema(
-        self, output_type: _output.OutputType[RunOutputDataT] | None
-    ) -> _output.OutputSchema[RunOutputDataT] | None:
+        self, output_type: OutputSpec[RunOutputDataT] | None, model_profile: ModelProfile
+    ) -> _output.OutputSchema[RunOutputDataT]:
         if output_type is not None:
             if self._output_validators:
                 raise exceptions.UserError('Cannot set a custom run `output_type` when the agent has output validators')
-            return _output.OutputSchema[RunOutputDataT].build(
+            schema = _output.OutputSchema[RunOutputDataT].build(
                 output_type,
-                self._deprecated_result_tool_name,
-                self._deprecated_result_tool_description,
+                name=self._deprecated_result_tool_name,
+                description=self._deprecated_result_tool_description,
+                default_mode=model_profile.default_structured_output_mode,
             )
         else:
-            return self._output_schema  # pyright: ignore[reportReturnType]
+            schema = self._output_schema.with_default_mode(model_profile.default_structured_output_mode)
+
+        schema.raise_if_unsupported(model_profile)
+
+        return schema  # pyright: ignore[reportReturnType]
 
     @staticmethod
     def is_model_request_node(
@@ -1681,14 +1713,23 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         return isinstance(node, End)
 
     @asynccontextmanager
-    async def run_mcp_servers(self) -> AsyncIterator[None]:
+    async def run_mcp_servers(
+        self, model: models.Model | models.KnownModelName | str | None = None
+    ) -> AsyncIterator[None]:
         """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] so they can be used by the agent.
 
         Returns: a context manager to start and shutdown the servers.
         """
+        try:
+            sampling_model: models.Model | None = self._get_model(model)
+        except exceptions.UserError:  # pragma: no cover
+            sampling_model = None
+
         exit_stack = AsyncExitStack()
         try:
             for mcp_server in self._mcp_servers:
+                if sampling_model is not None:  # pragma: no branch
+                    mcp_server.sampling_model = sampling_model
                 await exit_stack.enter_async_context(mcp_server)
             yield
         finally:

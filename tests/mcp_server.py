@@ -3,7 +3,10 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP, Image
-from mcp.types import BlobResourceContents, EmbeddedResource, TextResourceContents
+from mcp.server.session import ServerSessionT
+from mcp.shared.context import LifespanContextT, RequestT
+from mcp.types import BlobResourceContents, EmbeddedResource, SamplingMessage, TextContent, TextResourceContents
+from pydantic import AnyUrl
 
 mcp = FastMCP('PydanticAI MCP Server')
 log_level = 'unset'
@@ -44,6 +47,19 @@ async def get_image_resource() -> EmbeddedResource:
             uri='resource://kiwi.png',  # type: ignore
             blob=base64.b64encode(data).decode('utf-8'),
             mimeType='image/png',
+        ),
+    )
+
+
+@mcp.tool()
+async def get_audio_resource() -> EmbeddedResource:
+    data = Path(__file__).parent.joinpath('assets/marcelo.mp3').read_bytes()
+    return EmbeddedResource(
+        type='resource',
+        resource=BlobResourceContents(
+            uri=AnyUrl('resource://marcelo.mp3'),
+            blob=base64.b64encode(data).decode('utf-8'),
+            mimeType='audio/mpeg',
         ),
     )
 
@@ -102,6 +118,39 @@ async def get_log_level(ctx: Context) -> str:  # type: ignore
     """
     await ctx.info('this is a log message')
     return log_level
+
+
+@mcp.tool()
+async def echo_deps(ctx: Context[ServerSessionT, LifespanContextT, RequestT]) -> dict[str, Any]:
+    """Echo the run context.
+
+    Args:
+        ctx: Context object containing request and session information.
+
+    Returns:
+        Dictionary with an echo message and the deps.
+    """
+    await ctx.info('This is an info message')
+
+    deps: Any = getattr(ctx.request_context.meta, 'deps')
+    return {'echo': 'This is an echo message', 'deps': deps}
+
+
+@mcp.tool()
+async def use_sampling(ctx: Context, foo: str) -> str:  # type: ignore
+    """Use sampling callback."""
+
+    result = await ctx.session.create_message(
+        [
+            SamplingMessage(role='assistant', content=TextContent(type='text', text='')),
+            SamplingMessage(role='user', content=TextContent(type='text', text=foo)),
+        ],
+        max_tokens=1_024,
+        system_prompt='this is a test of MCP sampling',
+        temperature=0.5,
+        stop_sequences=['potato'],
+    )
+    return result.model_dump_json(indent=2)
 
 
 @mcp._mcp_server.set_logging_level()  # pyright: ignore[reportPrivateUsage]

@@ -1,0 +1,69 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '168'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the main content of this URL?
+        - fileData:
+            fileUri: https://youtu.be/lCdaVNyHtjU
+            mimeType: video/mp4
+        role: user
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1059'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=5843
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.2758338186475966
+        content:
+          parts:
+          - text: The main content of the URL is an analysis of recent 404 HTTP responses. The analysis identifies several
+              patterns, including the most common endpoints with 404 errors, request patterns (such as all requests being
+              GET requests), timeline-related issues, and configuration/authentication problems. The analysis also provides
+              recommendations for addressing the 404 errors.
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      usageMetadata:
+        candidatesTokenCount: 72
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 72
+        promptTokenCount: 9
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 9
+        - modality: VIDEO
+        - modality: AUDIO
+        totalTokenCount: 81
+    status:
+      code: 200
+      message: OK
+version: 1
