@@ -17,7 +17,15 @@ from pydantic_ai._utils import is_async_callable, run_in_executor
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
-from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from . import (
+    _output,
+    _system_prompt,
+    exceptions,
+    messages as _messages,
+    models,
+    result,
+    usage as _usage,
+)
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, Tool, ToolDefinition, ToolsPrepareFunc
@@ -53,7 +61,8 @@ _HistoryProcessorSync = Callable[[list[_messages.ModelMessage]], list[_messages.
 _HistoryProcessorAsync = Callable[[list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]]
 _HistoryProcessorSyncWithCtx = Callable[[RunContext[DepsT], list[_messages.ModelMessage]], list[_messages.ModelMessage]]
 _HistoryProcessorAsyncWithCtx = Callable[
-    [RunContext[DepsT], list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]
+    [RunContext[DepsT], list[_messages.ModelMessage]],
+    Awaitable[list[_messages.ModelMessage]],
 ]
 HistoryProcessor = Union[
     _HistoryProcessorSync,
@@ -124,7 +133,7 @@ class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.Fin
 
 
 def is_agent_node(
-    node: BaseNode[GraphAgentState, GraphAgentDeps[T, Any], result.FinalResult[S]] | End[result.FinalResult[S]],
+    node: (BaseNode[GraphAgentState, GraphAgentDeps[T, Any], result.FinalResult[S]] | End[result.FinalResult[S]]),
 ) -> TypeGuard[AgentNode[T, S]]:
     """Check if the provided node is an instance of `AgentNode`.
 
@@ -162,7 +171,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> _messages.ModelRequest:
         run_context = build_run_context(ctx)
         history, next_message = await self._prepare_messages(
-            self.user_prompt, ctx.state.message_history, ctx.deps.get_instructions, run_context
+            self.user_prompt,
+            ctx.state.message_history,
+            ctx.deps.get_instructions,
+            run_context,
         )
         ctx.state.message_history = history
         run_context.messages = history
@@ -306,7 +318,9 @@ async def _prepare_request_parameters(
     )
 
 
-def get_current_token_comsumption(message_history: list[_messages.ModelMessage]) -> int | None:
+def get_current_token_comsumption(
+    message_history: list[_messages.ModelMessage],
+) -> int | None:
     current_token_comsumption = None
     for msg in reversed(message_history):
         if isinstance(msg, _messages.ModelResponse) and msg.usage.total_tokens:
@@ -366,7 +380,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
         message_history = await _process_message_history(
-            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
+            ctx.state.message_history,
+            ctx.deps.history_processors,
+            build_run_context(ctx),
         )
         async with ctx.deps.model.request_stream(
             message_history, model_settings, model_request_parameters
@@ -392,7 +408,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
         message_history = await _process_message_history(
-            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
+            ctx.state.message_history,
+            ctx.deps.history_processors,
+            build_run_context(ctx),
         )
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.incr(_usage.Usage())
@@ -429,7 +447,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     ctx.deps.model.profile.context_window_size - current_token_comsumption
                 )
 
-        model_settings = merge_model_settings(ctx.deps.model_settings, patch_model_settings)
+        model_settings = merge_model_settings(
+            ctx.deps.model_settings,
+            patch_model_settings or None,  # backwards compatible
+        )
         model_request_parameters = await _prepare_request_parameters(ctx)
         return model_settings, model_request_parameters
 
@@ -626,7 +647,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             return self._handle_final_result(ctx, result.FinalResult(result_data, None, None), [])
 
 
-def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
+def build_run_context(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+) -> RunContext[DepsT]:
     """Build a `RunContext` object from the current agent graph run context."""
     return RunContext[DepsT](
         deps=ctx.deps.user_deps,
@@ -839,7 +862,12 @@ async def _tool_from_mcp_server(
     for server in ctx.deps.mcp_servers:
         tools = await server.list_tools()
         if tool_name in {tool.name for tool in tools}:  # pragma: no branch
-            return Tool(name=tool_name, function=run_tool, takes_ctx=True, max_retries=ctx.deps.default_retries)
+            return Tool(
+                name=tool_name,
+                function=run_tool,
+                takes_ctx=True,
+                max_retries=ctx.deps.default_retries,
+            )
     return None
 
 
@@ -930,7 +958,11 @@ def build_agent_graph(
     name: str | None,
     deps_type: type[DepsT],
     output_type: OutputSpec[OutputT],
-) -> Graph[GraphAgentState, GraphAgentDeps[DepsT, result.FinalResult[OutputT]], result.FinalResult[OutputT]]:
+) -> Graph[
+    GraphAgentState,
+    GraphAgentDeps[DepsT, result.FinalResult[OutputT]],
+    result.FinalResult[OutputT],
+]:
     """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
     nodes = (
         UserPromptNode[DepsT],
