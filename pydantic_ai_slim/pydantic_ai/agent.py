@@ -294,7 +294,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self.name = name
         self.model_settings = model_settings
 
-        if 'result_type' in _deprecated_kwargs: # pragma: no cover
+        if 'result_type' in _deprecated_kwargs:  # pragma: no cover
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
             warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning)
