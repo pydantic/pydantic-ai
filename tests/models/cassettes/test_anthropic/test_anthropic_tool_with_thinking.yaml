@@ -1,0 +1,171 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '388'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the largest city in the user country?
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_user_country
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1690'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - signature: EqIECkYIBBgCKkC3YeluAxT1ZvKgL7zILjOUS+XrvAMrNCGhYQkSWCLo5jQ4hXNnnht77qVzdcdMu0YoXmEM/vTGZ2ibi8FSim41EgyvPwDsa4PKH+ZFuzEaDDNjzy/pLEbhbHFgqSIwEba/zTH5lZ6umMgWI/XKQwINUpqIRf2n6DCPpppSbV1VaZJRepT+hCJbPriicNDMKokDakK6RapHz23G6iWyJON4/PLfhUgjLgAxjk8kuVM3pH/i/m2ZpYndCJoIDX2q/UffytbMl8tb4h1bQW7XqOCERGHoF6yXiqgYs+aFaUBRqM6NvWXzPBqSUkX2zvr4FP0fEKbiAawu7JuBGXq5TuXlpRlJKEimlGDySFb5o4mW6jd60NTZaO5ULCdZUleBfnDsosHqDMJohUKyIE5kNEamEw4ZAjdGi3IkJ79L3CBaWUvnRh4e4z2UMqpztFKHvozcziMl0D1dhLI1omF+9RA8ZZYeA+vA2jgIQz6UlSe7rmcZYM0msrLZGNqu5FNYTuU+OMbYsLC6CkRnT6gvcG/7W7QlKFDYY5fpq72LoSyMrXSKJKKlA9q3PEcDvKfGOau3rxjrmEQY9y9WU+Sl/pUHMVME/VfgAPKPPGKiDiMkOa87LqN2FN1mmNVIP9H8c2sSdWmRtssR8t0EKqP2844kTEZKyJImGT/OsSUVuAMeaZkZlEbBXHowqHO5nL0UEdNPPjqwA634CEA/GAE=
+        thinking: |-
+          The user is asking about the largest city in "the user country". To answer this question, I need to first determine what country the user is in. I have a function called "get_user_country" that can help me find out the user's country. Once I have that information, I can then tell them what the largest city in that country is.
+
+          Let me call the get_user_country function first.
+        type: thinking
+      - text: I'll help you find the largest city in your country. Let me first determine which country you're in.
+        type: text
+      - id: toolu_01S1p6wo8sLNhu2gNHJMRk7D
+        input: {}
+        name: get_user_country
+        type: tool_use
+      id: msg_0171WD3hcwFRMzBbm5CNZ8sR
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 397
+        output_tokens: 157
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1944'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the largest city in the user country?
+          type: text
+        role: user
+      - content:
+        - signature: EqIECkYIBBgCKkC3YeluAxT1ZvKgL7zILjOUS+XrvAMrNCGhYQkSWCLo5jQ4hXNnnht77qVzdcdMu0YoXmEM/vTGZ2ibi8FSim41EgyvPwDsa4PKH+ZFuzEaDDNjzy/pLEbhbHFgqSIwEba/zTH5lZ6umMgWI/XKQwINUpqIRf2n6DCPpppSbV1VaZJRepT+hCJbPriicNDMKokDakK6RapHz23G6iWyJON4/PLfhUgjLgAxjk8kuVM3pH/i/m2ZpYndCJoIDX2q/UffytbMl8tb4h1bQW7XqOCERGHoF6yXiqgYs+aFaUBRqM6NvWXzPBqSUkX2zvr4FP0fEKbiAawu7JuBGXq5TuXlpRlJKEimlGDySFb5o4mW6jd60NTZaO5ULCdZUleBfnDsosHqDMJohUKyIE5kNEamEw4ZAjdGi3IkJ79L3CBaWUvnRh4e4z2UMqpztFKHvozcziMl0D1dhLI1omF+9RA8ZZYeA+vA2jgIQz6UlSe7rmcZYM0msrLZGNqu5FNYTuU+OMbYsLC6CkRnT6gvcG/7W7QlKFDYY5fpq72LoSyMrXSKJKKlA9q3PEcDvKfGOau3rxjrmEQY9y9WU+Sl/pUHMVME/VfgAPKPPGKiDiMkOa87LqN2FN1mmNVIP9H8c2sSdWmRtssR8t0EKqP2844kTEZKyJImGT/OsSUVuAMeaZkZlEbBXHowqHO5nL0UEdNPPjqwA634CEA/GAE=
+          thinking: |-
+            The user is asking about the largest city in "the user country". To answer this question, I need to first determine what country the user is in. I have a function called "get_user_country" that can help me find out the user's country. Once I have that information, I can then tell them what the largest city in that country is.
+
+            Let me call the get_user_country function first.
+          type: thinking
+        - text: I'll help you find the largest city in your country. Let me first determine which country you're in.
+          type: text
+        - id: toolu_01S1p6wo8sLNhu2gNHJMRk7D
+          input: {}
+          name: get_user_country
+          type: tool_use
+        role: assistant
+      - content:
+        - content: Mexico
+          is_error: false
+          tool_use_id: toolu_01S1p6wo8sLNhu2gNHJMRk7D
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_user_country
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '769'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: "Based on the information that you're in Mexico, the largest city in your country is **Mexico City** (Ciudad
+          de México). \n\nMexico City is not only the largest city in Mexico but also one of the largest metropolitan areas
+          in the world, with a metropolitan population of over 21 million people. The city proper has a population of approximately
+          9 million people and serves as the capital and political, cultural, and economic center of Mexico."
+        type: text
+      id: msg_01GrmzEM2LkXfRpLSjXSNMDa
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 567
+        output_tokens: 94
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
