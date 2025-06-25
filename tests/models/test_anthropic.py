@@ -1356,7 +1356,6 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     assert len(anthropic_messages) == 0  # No messages should be added
 
 
-@pytest.mark.vcr()
 async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
 
@@ -1451,7 +1450,6 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
     )
 
 
-@pytest.mark.vcr()
 async def test_anthropic_text_output_function(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
 
@@ -1540,7 +1538,6 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
     )
 
 
-@pytest.mark.vcr()
 async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
 
@@ -1635,7 +1632,6 @@ Don't include any text or Markdown fencing before or after.\
     )
 
 
-@pytest.mark.vcr()
 async def test_anthropic_prompted_output_multiple(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
 
@@ -1695,7 +1691,6 @@ Don't include any text or Markdown fencing before or after.\
     )
 
 
-@pytest.mark.vcr()
 async def test_anthropic_native_output(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
 
@@ -1707,3 +1702,24 @@ async def test_anthropic_native_output(allow_model_requests: None, anthropic_api
 
     with pytest.raises(UserError, match='Structured output is not supported by the model.'):
         await agent.run('What is the largest city in the user country?')
+
+
+async def test_anthropic_tool_with_thinking(allow_model_requests: None, anthropic_api_key: str):
+    """When using thinking with tool calls in Anthropic, we need to send the thinking part back to the provider.
+
+    This tests the issue raised in https://github.com/pydantic/pydantic-ai/issues/2040.
+    """
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    agent = Agent(m, model_settings=settings)
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run('What is the largest city in the user country?')
+    assert result.output == snapshot("""\
+Based on the information that you're in Mexico, the largest city in your country is **Mexico City** (Ciudad de México). \n\
+
+Mexico City is not only the largest city in Mexico but also one of the largest metropolitan areas in the world, with a metropolitan population of over 21 million people. The city proper has a population of approximately 9 million people and serves as the capital and political, cultural, and economic center of Mexico.\
+""")
