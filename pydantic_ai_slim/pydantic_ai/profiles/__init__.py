@@ -34,6 +34,8 @@ class ModelProfile:
     """The instructions template to use for prompted structured output. The '{schema}' placeholder will be replaced with the JSON schema for the output."""
     json_schema_transformer: type[JsonSchemaTransformer] | None = None
     """The transformer to use to make JSON schemas for tools and structured output compatible with the model."""
+    context_window_size: int | None = None
+    """Context window size to use for the model."""
 
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:

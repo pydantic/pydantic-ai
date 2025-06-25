@@ -306,6 +306,15 @@ async def _prepare_request_parameters(
     )
 
 
+def get_current_token_comsumption(message_history: list[_messages.ModelMessage]) -> int | None:
+    current_token_comsumption = None
+    for msg in reversed(message_history):
+        if isinstance(msg, _messages.ModelResponse) and msg.usage.total_tokens:
+            current_token_comsumption = msg.usage.total_tokens
+            break
+    return current_token_comsumption
+
+
 @dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
@@ -402,7 +411,25 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Increment run_step
         ctx.state.run_step += 1
 
-        model_settings = merge_model_settings(ctx.deps.model_settings, None)
+        # Fix max_tokens
+        patch_model_settings: ModelSettings = {}
+        current_token_comsumption = get_current_token_comsumption(ctx.state.message_history)
+        if (
+            ctx.deps.model_settings
+            and ctx.deps.model_settings.get('max_tokens')
+            and ctx.deps.model.profile.context_window_size
+        ):
+            max_tokens: int = ctx.deps.model_settings['max_tokens']  # type: ignore
+            current_token_comsumption = get_current_token_comsumption(ctx.state.message_history)
+            if (
+                current_token_comsumption
+                and max_tokens + current_token_comsumption > ctx.deps.model.profile.context_window_size
+            ):
+                patch_model_settings['max_tokens'] = (
+                    ctx.deps.model.profile.context_window_size - current_token_comsumption
+                )
+
+        model_settings = merge_model_settings(ctx.deps.model_settings, patch_model_settings)
         model_request_parameters = await _prepare_request_parameters(ctx)
         return model_settings, model_request_parameters
 
