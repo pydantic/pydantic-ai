@@ -431,7 +431,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Fix max_tokens
         patch_model_settings: ModelSettings = {}
-        current_token_comsumption = get_current_token_comsumption(ctx.state.message_history)
         if (
             ctx.deps.model_settings
             and ctx.deps.model_settings.get('max_tokens')
