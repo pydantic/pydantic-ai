@@ -748,6 +748,7 @@ async def process_function_tools(  # noqa C901
                                 part_kind='user-prompt',
                             )
                         )
+                        results_by_index[index] = result
                         continue
                     contents: list[Any]
                     single_content: bool
