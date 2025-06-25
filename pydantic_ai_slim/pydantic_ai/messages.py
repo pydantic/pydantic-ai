@@ -420,7 +420,7 @@ class ToolReturnPart:
     """The tool call identifier, this is used by some models including OpenAI."""
 
     metadata: Any = None
-    """Additional programmatic data that can be accessed by the application but is not sent to the LLM."""
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
