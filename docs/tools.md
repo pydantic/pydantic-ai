@@ -333,7 +333,7 @@ def click_and_capture(x: int, y: int) -> ToolReturn:
             BinaryContent(data=after_screenshot, media_type="image/png"),
             "Please analyze the changes and suggest next steps."
         ],
-        extra_data={
+        metadata={
             "coordinates": {"x": x, "y": y},
             "action_type": "click_and_capture",
             "timestamp": time.time()
@@ -341,7 +341,7 @@ def click_and_capture(x: int, y: int) -> ToolReturn:
     )
 
 # The model receives the rich visual content for analysis
-# while your application can access the structured return_value and extra_data
+# while your application can access the structured return_value and metadata
 result = agent.run_sync("Click on the submit button and tell me what happened")
 print(result.output)
 # The model can analyze the screenshots and provide detailed feedback
@@ -349,7 +349,7 @@ print(result.output)
 
 - **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result.
 - **`content`**: A sequence of content (text, images, documents, etc.) that provides additional context to the model. This appears as a separate user message.
-- **`extra_data`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing.
+- **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing.
 
 This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic.
 

@@ -752,7 +752,7 @@ async def process_function_tools(  # noqa C901
                                 f"{result.tool_name}'s `return_value` contains invalid nested MultiModalContentTypes objects. "
                                 f'Please use `content` instead.'
                             )
-                        result.extra_data = tool_return.extra_data
+                        result.metadata = tool_return.metadata
                         user_parts.append(
                             _messages.UserPromptPart(
                                 content=list(tool_return.content),

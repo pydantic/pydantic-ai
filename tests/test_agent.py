@@ -3155,7 +3155,7 @@ def test_multimodal_tool_response():
                 ImageUrl('https://example.com/chart.jpg'),
                 'The chart shows positive trends.',
             ],
-            extra_data={'foo': 'bar'},
+            metadata={'foo': 'bar'},
         )
 
     result = agent.run_sync('Please analyze the data')
@@ -3188,7 +3188,7 @@ def test_multimodal_tool_response():
                         tool_name='analyze_data',
                         content='Data analysis completed successfully',
                         tool_call_id=IsStr(),
-                        extra_data={'foo': 'bar'},
+                        metadata={'foo': 'bar'},
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                     UserPromptPart(
@@ -3236,13 +3236,13 @@ def test_many_multimodal_tool_response():
                     ImageUrl('https://example.com/chart.jpg'),
                     'The chart shows positive trends.',
                 ],
-                extra_data={'foo': 'bar'},
+                metadata={'foo': 'bar'},
             ),
             'Something else',
         ]
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        UserError,
         match="analyze_data's return contains invalid nested ToolReturn objects. ToolReturn should be used directly.",
     ):
         agent.run_sync('Please analyze the data')
@@ -3272,11 +3272,11 @@ def test_multimodal_tool_response_nested():
                 ImageUrl('https://example.com/chart.jpg'),
                 'The chart shows positive trends.',
             ],
-            extra_data={'foo': 'bar'},
+            metadata={'foo': 'bar'},
         )
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        UserError,
         match="analyze_data's `return_value` contains invalid nested MultiModalContentTypes objects. Please use `content` instead.",
     ):
         agent.run_sync('Please analyze the data')
