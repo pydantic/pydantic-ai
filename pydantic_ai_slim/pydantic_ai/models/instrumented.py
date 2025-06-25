@@ -110,7 +110,8 @@ class InstrumentationSettings:
                 Calling `logfire.configure()` sets the global event logger provider, so most users don't need this.
                 This is only used if `event_mode='logs'`.
             include_binary_content: Whether to include binary content in the instrumentation events.
-            include_content: Whether to include prompt and completion messages in the instrumentation events.
+            include_content: Whether to include prompts, completions, and tool call arguments and responses
+                in the instrumentation events.
         """
         from pydantic_ai import __version__
 
