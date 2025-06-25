@@ -3209,3 +3209,74 @@ def test_multimodal_tool_response():
             ),
         ]
     )
+
+
+def test_many_multimodal_tool_response():
+    """Test ToolReturn with custom content and tool return."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Analysis completed'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def analyze_data() -> list[ToolReturn | str]:
+        return [
+            ToolReturn(
+                return_value='Data analysis completed successfully',
+                content=[
+                    'Here are the analysis results:',
+                    ImageUrl('https://example.com/chart.jpg'),
+                    'The chart shows positive trends.',
+                ],
+                extra_data={'foo': 'bar'},
+            ),
+            'Something else',
+        ]
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match="analyze_data's return contains invalid nested ToolReturn objects. ToolReturn should be used directly.",
+    ):
+        agent.run_sync('Please analyze the data')
+
+
+def test_multimodal_tool_response_nested():
+    """Test ToolReturn with custom content and tool return."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Analysis completed'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def analyze_data() -> ToolReturn:
+        return ToolReturn(
+            return_value=ImageUrl('https://example.com/chart.jpg'),
+            content=[
+                'Here are the analysis results:',
+                ImageUrl('https://example.com/chart.jpg'),
+                'The chart shows positive trends.',
+            ],
+            extra_data={'foo': 'bar'},
+        )
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match="analyze_data's `return_value` contains invalid nested MultiModalContentTypes objects. Please use `content` instead.",
+    ):
+        agent.run_sync('Please analyze the data')

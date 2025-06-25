@@ -740,6 +740,18 @@ async def process_function_tools(  # noqa C901
                     if isinstance(result.content, _messages.ToolReturn):
                         tool_return = result.content
                         result.content = tool_return.return_value
+                        if (
+                            isinstance(result.content, _messages.MultiModalContentTypes)
+                            or isinstance(result.content, list)
+                            and any(
+                                isinstance(content, _messages.MultiModalContentTypes)
+                                for content in result.content  # type: ignore
+                            )
+                        ):
+                            raise exceptions.UnexpectedModelBehavior(
+                                f"{result.tool_name}'s `return_value` contains invalid nested MultiModalContentTypes objects. "
+                                f'Please use `content` instead.'
+                            )
                         result.extra_data = tool_return.extra_data
                         user_parts.append(
                             _messages.UserPromptPart(
@@ -748,11 +760,9 @@ async def process_function_tools(  # noqa C901
                                 part_kind='user-prompt',
                             )
                         )
-                        results_by_index[index] = result
-                        continue
                     contents: list[Any]
                     single_content: bool
-                    if isinstance(result.content, list):
+                    if isinstance(result.content, list):  # type: ignore
                         contents = result.content  # type: ignore
                         single_content = False
                     else:
@@ -764,7 +774,7 @@ async def process_function_tools(  # noqa C901
                         if isinstance(content, _messages.ToolReturn):
                             raise exceptions.UnexpectedModelBehavior(
                                 f"{result.tool_name}'s return contains invalid nested ToolReturn objects. "
-                                f'ToolReturn should be used as the direct content of ToolReturnPart.'
+                                f'ToolReturn should be used directly.'
                             )
                         elif isinstance(content, _messages.MultiModalContentTypes):
                             # Handle direct multimodal content
