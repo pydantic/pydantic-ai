@@ -748,7 +748,7 @@ async def process_function_tools(  # noqa C901
                                 for content in result.content  # type: ignore
                             )
                         ):
-                            raise exceptions.UnexpectedModelBehavior(
+                            raise exceptions.UserError(
                                 f"{result.tool_name}'s `return_value` contains invalid nested MultiModalContentTypes objects. "
                                 f'Please use `content` instead.'
                             )
