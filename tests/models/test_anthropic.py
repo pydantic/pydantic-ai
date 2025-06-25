@@ -11,8 +11,10 @@ from typing import Any, Callable, TypeVar, Union, cast
 import httpx
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
@@ -32,6 +34,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
@@ -1074,7 +1077,6 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
     assert event_parts == snapshot(
         [
             PartStartEvent(index=0, part=ThinkingPart(content='', signature='')),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
@@ -1085,6 +1087,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartStartEvent(index=1, part=IsInstance(TextPart)),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
                 index=1,
                 delta=TextPartDelta(
@@ -1351,3 +1354,356 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     ]
     _, anthropic_messages = await model._map_message(messages_resp)  # type: ignore[attr-defined]
     assert len(anthropic_messages) == 0  # No messages should be added
+
+
+@pytest.mark.vcr()
+async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=ToolOutput(CityLocation))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run('What is the largest city in the user country?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_019pMboNVRg5jkw4PKkofQ6Y')
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=445,
+                    response_tokens=23,
+                    total_tokens=468,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 445,
+                        'output_tokens': 23,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_01EnfsDTixCmHjqvk9QarBj4',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id='toolu_019pMboNVRg5jkw4PKkofQ6Y',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'city': 'Mexico City', 'country': 'Mexico'},
+                        tool_call_id='toolu_01V4d2H4EWp5LDM2aXaeyR6W',
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=497,
+                    response_tokens=56,
+                    total_tokens=553,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 497,
+                        'output_tokens': 56,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_01Hbm5BtKzfVtWs8Eb7rCNNx',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='toolu_01V4d2H4EWp5LDM2aXaeyR6W',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_text_output_function(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    def upcase(text: str) -> str:
+        return text.upper()
+
+    agent = Agent(m, output_type=TextOutput(upcase))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run(
+        'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.'
+    )
+    assert result.output == snapshot(
+        "BASED ON THE RESULT, YOU ARE LOCATED IN MEXICO. THE LARGEST CITY IN MEXICO IS MEXICO CITY (CIUDAD DE MÉXICO), WHICH IS ALSO THE NATION'S CAPITAL. MEXICO CITY HAS A POPULATION OF APPROXIMATELY 9.2 MILLION PEOPLE IN THE CITY PROPER, AND OVER 21 MILLION PEOPLE IN ITS METROPOLITAN AREA, MAKING IT ONE OF THE LARGEST URBAN AGGLOMERATIONS IN THE WORLD. IT IS BOTH THE POLITICAL AND ECONOMIC CENTER OF MEXICO, LOCATED IN THE VALLEY OF MEXICO IN THE CENTRAL PART OF THE COUNTRY."
+    )
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="I'll help you find the largest city in your country. Let me first check your country using the get_user_country tool."
+                    ),
+                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01EZuxfc6MsPsPgrAKQohw3e'),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=383,
+                    response_tokens=66,
+                    total_tokens=449,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 383,
+                        'output_tokens': 66,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_014NE4yfV1Yz2vLAJzapxxef',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id='toolu_01EZuxfc6MsPsPgrAKQohw3e',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="Based on the result, you are located in Mexico. The largest city in Mexico is Mexico City (Ciudad de México), which is also the nation's capital. Mexico City has a population of approximately 9.2 million people in the city proper, and over 21 million people in its metropolitan area, making it one of the largest urban agglomerations in the world. It is both the political and economic center of Mexico, located in the Valley of Mexico in the central part of the country."
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=461,
+                    response_tokens=107,
+                    total_tokens=568,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 461,
+                        'output_tokens': 107,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_0193srwo7TCx49h97wDwc7K7',
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run(
+        'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.'
+    )
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_017UryVwtsKsjonhFV3cgV3X')
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=459,
+                    response_tokens=38,
+                    total_tokens=497,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 459,
+                        'output_tokens': 38,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_014CpBKzioMqUyLWrMihpvsz',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id='toolu_017UryVwtsKsjonhFV3cgV3X',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=510,
+                    response_tokens=17,
+                    total_tokens=527,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 510,
+                        'output_tokens': 17,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_014JeWCouH6DpdqzMTaBdkpJ',
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_prompted_output_multiple(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    class CountryLanguage(BaseModel):
+        country: str
+        language: str
+
+    agent = Agent(m, output_type=PromptedOutput([CityLocation, CountryLanguage]))
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='{"result": {"kind": "CityLocation", "data": {"city": "Mexico City", "country": "Mexico"}}}'
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=281,
+                    response_tokens=31,
+                    total_tokens=312,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 281,
+                        'output_tokens': 31,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_013ttUi3HCcKt7PkJpoWs5FT',
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_native_output(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=NativeOutput(CityLocation))
+
+    with pytest.raises(UserError, match='Structured output is not supported by the model.'):
+        await agent.run('What is the largest city in the user country?')
