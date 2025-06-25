@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
 import pydantic
 import pydantic_core
 from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import TypeAlias
+from typing_extensions import TypeAlias, deprecated
 
 from . import _utils
 from ._utils import (
@@ -979,12 +979,9 @@ class FunctionToolCallEvent:
         return self.part.tool_call_id
 
     @property
+    @deprecated('`call_id` is deprecated, use `tool_call_id` instead.')
     def call_id(self) -> str:
-        """An ID used for matching details about the call to its result.
-
-        .. deprecated::
-            Use `tool_call_id` instead. This is kept for backward compatibility.
-        """
+        """An ID used for matching details about the call to its result."""
         return self.part.tool_call_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
