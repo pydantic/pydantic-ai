@@ -1,0 +1,74 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '521'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in Mexico?
+        role: user
+      generationConfig:
+        response_mime_type: application/json
+      systemInstruction:
+        parts:
+        - text: |-
+            Always respond with a JSON object that's compatible with this schema:
+
+            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+            Don't include any text or Markdown fencing before or after.
+        role: user
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '880'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=841
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.007913463882037572
+        content:
+          parts:
+          - text: '{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"],
+              "title": "CityLocation", "type": "object", "city": "Mexico City", "country": "Mexico"}'
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: 2zxIaIiLE4CK7dcP3OzRiQQ
+      usageMetadata:
+        candidatesTokenCount: 56
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 56
+        promptTokenCount: 80
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 80
+        totalTokenCount: 136
+    status:
+      code: 200
+      message: OK
+version: 1

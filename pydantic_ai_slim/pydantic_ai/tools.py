@@ -4,7 +4,7 @@ import dataclasses
 import json
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union
+from typing import Any, Callable, Generic, Literal, Union
 
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
@@ -13,11 +13,8 @@ from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import Concatenate, ParamSpec, Self, TypeAlias, TypeVar
 
 from . import _function_schema, _utils, messages as _messages
+from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, UnexpectedModelBehavior
-
-if TYPE_CHECKING:
-    from .models import Model
-    from .result import Usage
 
 __all__ = (
     'AgentDepsT',
@@ -34,48 +31,6 @@ __all__ = (
     'ObjectJsonSchema',
     'ToolDefinition',
 )
-
-AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
-"""Type variable for agent dependencies."""
-
-
-@dataclasses.dataclass(repr=False)
-class RunContext(Generic[AgentDepsT]):
-    """Information about the current call."""
-
-    deps: AgentDepsT
-    """Dependencies for the agent."""
-    model: Model
-    """The model used in this run."""
-    usage: Usage
-    """LLM usage associated with the run."""
-    prompt: str | Sequence[_messages.UserContent] | None
-    """The original user prompt passed to the run."""
-    messages: list[_messages.ModelMessage] = field(default_factory=list)
-    """Messages exchanged in the conversation so far."""
-    tool_call_id: str | None = None
-    """The ID of the tool call."""
-    tool_name: str | None = None
-    """Name of the tool being called."""
-    retry: int = 0
-    """Number of retries so far."""
-    run_step: int = 0
-    """The current step in the run."""
-
-    def replace_with(
-        self,
-        retry: int | None = None,
-        tool_name: str | None | _utils.Unset = _utils.UNSET,
-    ) -> RunContext[AgentDepsT]:
-        # Create a new `RunContext` a new `retry` value and `tool_name`.
-        kwargs = {}
-        if retry is not None:
-            kwargs['retry'] = retry
-        if tool_name is not _utils.UNSET:  # pragma: no branch
-            kwargs['tool_name'] = tool_name
-        return dataclasses.replace(self, **kwargs)
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 ToolParams = ParamSpec('ToolParams', default=...)

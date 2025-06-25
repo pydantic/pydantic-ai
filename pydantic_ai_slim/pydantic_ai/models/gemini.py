@@ -16,6 +16,8 @@ from typing_extensions import NotRequired, TypedDict, assert_never
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._output import OutputObjectDefinition
+from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
     FileUrl,
@@ -203,12 +205,10 @@ class GeminiModel(Model):
     def _get_tool_config(
         self, model_request_parameters: ModelRequestParameters, tools: _GeminiTools | None
     ) -> _GeminiToolConfig | None:
-        if model_request_parameters.allow_text_output:
-            return None
-        elif tools:
+        if not model_request_parameters.allow_text_output and tools:
             return _tool_config([t['name'] for t in tools['function_declarations']])
         else:
-            return _tool_config([])  # pragma: no cover
+            return None
 
     @asynccontextmanager
     async def _make_request(
@@ -231,6 +231,18 @@ class GeminiModel(Model):
             request_data['toolConfig'] = tool_config
 
         generation_config = _settings_to_generation_config(model_settings)
+        if model_request_parameters.output_mode == 'native':
+            if tools:
+                raise UserError('Gemini does not support structured output and tools at the same time.')
+
+            generation_config['response_mime_type'] = 'application/json'
+
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            generation_config['response_schema'] = self._map_response_schema(output_object)
+        elif model_request_parameters.output_mode == 'prompted' and not tools:
+            generation_config['response_mime_type'] = 'application/json'
+
         if generation_config:
             request_data['generationConfig'] = generation_config
 
@@ -375,6 +387,15 @@ class GeminiModel(Model):
                 else:
                     assert_never(item)
         return content
+
+    def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
+        response_schema = o.json_schema.copy()
+        if o.name:
+            response_schema['title'] = o.name
+        if o.description:
+            response_schema['description'] = o.description
+
+        return response_schema
 
 
 def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _GeminiGenerationConfig:
@@ -577,6 +598,8 @@ class _GeminiGenerationConfig(TypedDict, total=False):
     frequency_penalty: float
     stop_sequences: list[str]
     thinking_config: ThinkingConfig
+    response_mime_type: str
+    response_schema: dict[str, Any]
 
 
 class _GeminiContent(TypedDict):

@@ -25,8 +25,13 @@ class OpenAIModelProfile(ModelProfile):
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
     is_reasoning_model = model_name.startswith('o')
+    # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18, and gpt-4o-2024-08-06 model snapshots and later.
+    # We leave it in here for all models because the `default_structured_output_mode` is `'tool'`, so `native` is only used
+    # when the user specifically uses the `NativeOutput` marker, so an error from the API is acceptable.
     return OpenAIModelProfile(
         json_schema_transformer=OpenAIJsonSchemaTransformer,
+        supports_json_schema_output=True,
+        supports_json_object_output=True,
         openai_supports_sampling_settings=not is_reasoning_model,
     )
 
