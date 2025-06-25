@@ -772,7 +772,7 @@ async def process_function_tools(  # noqa C901
                     processed_contents: list[Any] = []
                     for content in contents:
                         if isinstance(content, _messages.ToolReturn):
-                            raise exceptions.UnexpectedModelBehavior(
+                            raise exceptions.UserError(
                                 f"{result.tool_name}'s return contains invalid nested ToolReturn objects. "
                                 f'ToolReturn should be used directly.'
                             )
