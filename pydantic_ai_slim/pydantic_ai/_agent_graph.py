@@ -438,11 +438,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             and ctx.deps.model.profile.context_window_size
         ):
             max_tokens: int = ctx.deps.model_settings['max_tokens']  # type: ignore
-            current_token_comsumption = get_current_token_comsumption(ctx.state.message_history)
-            if (
-                current_token_comsumption
-                and max_tokens + current_token_comsumption > ctx.deps.model.profile.context_window_size
-            ):
+            current_token_comsumption = get_current_token_comsumption(ctx.state.message_history) or 0
+            if max_tokens + current_token_comsumption > ctx.deps.model.profile.context_window_size:
+                # Prevent max_tokens from being exceeded
                 patch_model_settings['max_tokens'] = (
                     ctx.deps.model.profile.context_window_size - current_token_comsumption
                 )

@@ -3127,3 +3127,15 @@ def test_unsupported_output_mode():
 
     with pytest.raises(UserError, match='Output tools are not supported by the model.'):
         agent.run_sync('Hello')
+
+
+async def test_auto_max_tokens():
+    def return_settings(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(to_json(info.model_settings).decode())])
+
+    my_agent = Agent(
+        FunctionModel(return_settings, profile=ModelProfile(context_window_size=100)),
+        model_settings={'max_tokens': 200},
+    )
+    assert (await my_agent.run('Hello')).output == IsJson({'max_tokens': 100})
+    assert (await my_agent.run('Hello', model_settings={'max_tokens': 50})).output == IsJson({'max_tokens': 50})
