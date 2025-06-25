@@ -547,14 +547,11 @@ def test_include_tool_args_span_attributes(
 
     summary = get_logfire_summary()
 
-    tool_spans = [
+   [tool_attributes] = [
         attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'add_numbers'
     ]
-    assert len(tool_spans) == 1
 
-    tool_attributes = tool_spans[0]
     if include_content:
-        assert 'tool_arguments' in tool_attributes
         assert tool_attributes['tool_arguments'] == snapshot('{"x":42,"y":42}')
     else:
         assert 'tool_arguments' not in tool_attributes
