@@ -294,7 +294,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self.name = name
         self.model_settings = model_settings
 
-        if 'result_type' in _deprecated_kwargs:  # pragma: no cover
+        if 'result_type' in _deprecated_kwargs:
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
             warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning)
@@ -307,20 +307,20 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._deps_type = deps_type
 
         self._deprecated_result_tool_name = _deprecated_kwargs.pop('result_tool_name', None)
-        if self._deprecated_result_tool_name is not None:  # pragma: no cover
+        if self._deprecated_result_tool_name is not None:
             warnings.warn(
                 '`result_tool_name` is deprecated, use `output_type` with `ToolOutput` instead',
                 DeprecationWarning,
             )
 
         self._deprecated_result_tool_description = _deprecated_kwargs.pop('result_tool_description', None)
-        if self._deprecated_result_tool_description is not None:  # pragma: no cover
+        if self._deprecated_result_tool_description is not None:
             warnings.warn(
                 '`result_tool_description` is deprecated, use `output_type` with `ToolOutput` instead',
                 DeprecationWarning,
             )
         result_retries = _deprecated_kwargs.pop('result_retries', None)
-        if result_retries is not None:  # pragma: no cover
+        if result_retries is not None:
             if output_retries is not None:
                 raise TypeError('`output_retries` and `result_retries` cannot be set at the same time.')
             warnings.warn('`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning)
