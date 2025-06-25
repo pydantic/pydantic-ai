@@ -176,7 +176,7 @@ def try_import() -> Iterator[Callable[[], bool]]:
 
 
 @pytest.fixture(autouse=True)
-def set_event_loop(anyio_backend) -> Iterator[None]:  # type: ignore[reportUnknownParameterType]
+def set_event_loop(anyio_backend: str) -> Iterator[None]:
     new_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(new_loop)
     yield
@@ -205,7 +205,7 @@ def vcr_config():
 
 
 @pytest.fixture(autouse=True)
-async def close_cached_httpx_client(anyio_backend) -> AsyncIterator[None]:  # type: ignore[reportUnknownParameterType]
+async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
     yield
     for provider in [
         'openai',
