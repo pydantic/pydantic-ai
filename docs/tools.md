@@ -291,17 +291,27 @@ print(result.output)
 ```
 _(This example is complete, it can be run "as is")_
 
-For more complex scenarios where you need custom user prompts and tool return messages, you can use [`MultiModalToolResponse`][pydantic_ai.messages.MultiModalToolResponse]:
+Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
 
-```python {title="computer_use_example.py" test="skip" lint="skip"}
+### Advanced Tool Returns
+
+For scenarios where you need more control over both the tool's return value and the content sent to the model, you can use [`ToolReturn`][pydantic_ai.messages.ToolReturn]. This is particularly useful when you want to:
+
+- Provide rich multi-modal content (images, documents, etc.) to the model as context
+- Separate the programmatic return value from the model's context
+- Include additional metadata that shouldn't be sent to the LLM
+
+Here's an example of a computer automation tool that captures screenshots and provides visual feedback:
+
+```python {title="advanced_tool_return.py" test="skip" lint="skip"}
 import time
 from pydantic_ai import Agent
-from pydantic_ai.messages import MultiModalToolResponse, BinaryContent
+from pydantic_ai.messages import ToolReturn, BinaryContent
 
 agent = Agent('openai:gpt-4o')
 
 @agent.tool_plain
-def click_and_compare(x: int, y: int) -> MultiModalToolResponse:
+def click_and_capture(x: int, y: int) -> ToolReturn:
     """Click at coordinates and show before/after screenshots."""
     # Take screenshot before action
     before_screenshot = capture_screen()
@@ -313,7 +323,8 @@ def click_and_compare(x: int, y: int) -> MultiModalToolResponse:
     # Take screenshot after action
     after_screenshot = capture_screen()
 
-    return MultiModalToolResponse(
+    return ToolReturn(
+        return_value=f"Successfully clicked at ({x}, {y})",
         content=[
             f"Clicked at coordinates ({x}, {y}). Here's the comparison:",
             "Before:",
@@ -322,13 +333,25 @@ def click_and_compare(x: int, y: int) -> MultiModalToolResponse:
             BinaryContent(data=after_screenshot, media_type="image/png"),
             "Please analyze the changes and suggest next steps."
         ],
-        tool_return=f"Successfully clicked at ({x}, {y}) - before/after screenshots captured"
+        extra_data={
+            "coordinates": {"x": x, "y": y},
+            "action_type": "click_and_capture",
+            "timestamp": time.time()
+        }
     )
+
+# The model receives the rich visual content for analysis
+# while your application can access the structured return_value and extra_data
+result = agent.run_sync("Click on the submit button and tell me what happened")
+print(result.output)
+# The model can analyze the screenshots and provide detailed feedback
 ```
 
-This allows you to provide custom context and descriptions for multi-modal content, rather than using the default `"This is file {identifier}:"` format.
+- **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result.
+- **`content`**: A sequence of content (text, images, documents, etc.) that provides additional context to the model. This appears as a separate user message.
+- **`extra_data`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing.
 
-Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
+This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic.
 
 ## Function Tools vs. Structured Outputs
 

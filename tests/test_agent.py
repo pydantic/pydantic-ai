@@ -30,11 +30,11 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
-    MultiModalToolResponse,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -3111,8 +3111,28 @@ def test_tool_call_with_validation_value_error_serializable():
     )
 
 
+def test_unsupported_output_mode():
+    class Foo(BaseModel):
+        bar: str
+
+    def hello(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('hello')])  # pragma: no cover
+
+    model = FunctionModel(hello, profile=ModelProfile(supports_tools=False, supports_json_schema_output=False))
+
+    agent = Agent(model, output_type=NativeOutput(Foo))
+
+    with pytest.raises(UserError, match='Structured output is not supported by the model.'):
+        agent.run_sync('Hello')
+
+    agent = Agent(model, output_type=ToolOutput(Foo))
+
+    with pytest.raises(UserError, match='Output tools are not supported by the model.'):
+        agent.run_sync('Hello')
+
+
 def test_multimodal_tool_response():
-    """Test MultiModalToolResponse with custom content and tool return."""
+    """Test ToolReturn with custom content and tool return."""
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -3127,14 +3147,15 @@ def test_multimodal_tool_response():
     agent = Agent(FunctionModel(llm))
 
     @agent.tool_plain
-    def analyze_data() -> MultiModalToolResponse:
-        return MultiModalToolResponse(
+    def analyze_data() -> ToolReturn:
+        return ToolReturn(
+            return_value='Data analysis completed successfully',
             content=[
                 'Here are the analysis results:',
                 ImageUrl('https://example.com/chart.jpg'),
                 'The chart shows positive trends.',
             ],
-            tool_return='Data analysis completed successfully',
+            extra_data={'foo': 'bar'},
         )
 
     result = agent.run_sync('Please analyze the data')
@@ -3167,6 +3188,7 @@ def test_multimodal_tool_response():
                         tool_name='analyze_data',
                         content='Data analysis completed successfully',
                         tool_call_id=IsStr(),
+                        extra_data={'foo': 'bar'},
                         timestamp=IsNow(tz=timezone.utc),
                     ),
                     UserPromptPart(
@@ -3187,23 +3209,3 @@ def test_multimodal_tool_response():
             ),
         ]
     )
-
-
-def test_unsupported_output_mode():
-    class Foo(BaseModel):
-        bar: str
-
-    def hello(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('hello')])  # pragma: no cover
-
-    model = FunctionModel(hello, profile=ModelProfile(supports_tools=False, supports_json_schema_output=False))
-
-    agent = Agent(model, output_type=NativeOutput(Foo))
-
-    with pytest.raises(UserError, match='Structured output is not supported by the model.'):
-        agent.run_sync('Hello')
-
-    agent = Agent(model, output_type=ToolOutput(Foo))
-
-    with pytest.raises(UserError, match='Output tools are not supported by the model.'):
-        agent.run_sync('Hello')

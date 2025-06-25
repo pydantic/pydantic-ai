@@ -737,6 +737,18 @@ async def process_function_tools(  # noqa C901
                 if isinstance(result, _messages.RetryPromptPart):
                     results_by_index[index] = result
                 elif isinstance(result, _messages.ToolReturnPart):
+                    if isinstance(result.content, _messages.ToolReturn):
+                        tool_return = result.content
+                        result.content = tool_return.return_value
+                        result.extra_data = tool_return.extra_data
+                        user_parts.append(
+                            _messages.UserPromptPart(
+                                content=list(tool_return.content),
+                                timestamp=result.timestamp,
+                                part_kind='user-prompt',
+                            )
+                        )
+                        continue
                     contents: list[Any]
                     single_content: bool
                     if isinstance(result.content, list):
@@ -748,17 +760,11 @@ async def process_function_tools(  # noqa C901
 
                     processed_contents: list[Any] = []
                     for content in contents:
-                        if isinstance(content, _messages.MultiModalToolResponse):
-                            # Handle new wrapper class with custom content and tool return
-                            user_parts.append(
-                                _messages.UserPromptPart(
-                                    content=list(content.content),
-                                    timestamp=result.timestamp,
-                                    part_kind='user-prompt',
-                                )
+                        if isinstance(content, _messages.ToolReturn):
+                            raise exceptions.UnexpectedModelBehavior(
+                                f"{result.tool_name}'s return contains invalid nested ToolReturn objects. "
+                                f'ToolReturn should be used as the direct content of ToolReturnPart.'
                             )
-                            processed_contents.append(content.tool_return)
-
                         elif isinstance(content, _messages.MultiModalContentTypes):
                             # Handle direct multimodal content
                             if isinstance(content, _messages.BinaryContent):

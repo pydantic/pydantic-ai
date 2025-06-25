@@ -305,18 +305,17 @@ UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | B
 
 
 @dataclass(repr=False)
-class MultiModalToolResponse:
-    """A wrapper for multi-modal content with customizable prompt and tool return value.
+class ToolReturn:
+    """A wrapper for multi-modal content with customizable prompt and tool return value."""
 
-    This allows tools to return multi-modal content with custom user prompts and tool return messages,
-    providing more flexibility than the default "This is file {identifier}:" format.
-    """
+    return_value: Any
+    """The return value to be used in the tool response."""
 
     content: Sequence[UserContent]
     """The content sequence to be sent to the model as a UserPromptPart."""
 
-    tool_return: Any
-    """The return value to be used in the tool response."""
+    extra_data: Any = None
+    """Additional programmatic data that can be accessed by the application but is not sent to the LLM."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -410,6 +409,9 @@ class ToolReturnPart:
 
     tool_call_id: str
     """The tool call identifier, this is used by some models including OpenAI."""
+
+    extra_data: Any = None
+    """Additional programmatic data that can be accessed by the application but is not sent to the LLM."""
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
