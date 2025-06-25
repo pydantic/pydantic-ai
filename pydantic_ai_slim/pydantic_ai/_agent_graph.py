@@ -17,15 +17,7 @@ from pydantic_ai._utils import is_async_callable, run_in_executor
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
-from . import (
-    _output,
-    _system_prompt,
-    exceptions,
-    messages as _messages,
-    models,
-    result,
-    usage as _usage,
-)
+from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, Tool, ToolDefinition, ToolsPrepareFunc
@@ -62,8 +54,7 @@ _HistoryProcessorSync = Callable[[list[_messages.ModelMessage]], list[_messages.
 _HistoryProcessorAsync = Callable[[list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]]
 _HistoryProcessorSyncWithCtx = Callable[[RunContext[DepsT], list[_messages.ModelMessage]], list[_messages.ModelMessage]]
 _HistoryProcessorAsyncWithCtx = Callable[
-    [RunContext[DepsT], list[_messages.ModelMessage]],
-    Awaitable[list[_messages.ModelMessage]],
+    [RunContext[DepsT], list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]
 ]
 HistoryProcessor = Union[
     _HistoryProcessorSync,
@@ -379,9 +370,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
         message_history = await _process_message_history(
-            ctx.state.message_history,
-            ctx.deps.history_processors,
-            build_run_context(ctx),
+            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
         )
         async with ctx.deps.model.request_stream(
             message_history, model_settings, model_request_parameters
@@ -407,9 +396,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
         message_history = await _process_message_history(
-            ctx.state.message_history,
-            ctx.deps.history_processors,
-            build_run_context(ctx),
+            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
         )
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.incr(_usage.Usage())
