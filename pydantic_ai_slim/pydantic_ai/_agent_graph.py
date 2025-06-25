@@ -135,7 +135,7 @@ class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.Fin
 
 
 def is_agent_node(
-    node: (BaseNode[GraphAgentState, GraphAgentDeps[T, Any], result.FinalResult[S]] | End[result.FinalResult[S]]),
+    node: BaseNode[GraphAgentState, GraphAgentDeps[T, Any], result.FinalResult[S]] | End[result.FinalResult[S]],
 ) -> TypeGuard[AgentNode[T, S]]:
     """Check if the provided node is an instance of `AgentNode`.
 
@@ -173,10 +173,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> _messages.ModelRequest:
         run_context = build_run_context(ctx)
         history, next_message = await self._prepare_messages(
-            self.user_prompt,
-            ctx.state.message_history,
-            ctx.deps.get_instructions,
-            run_context,
+            self.user_prompt, ctx.state.message_history, ctx.deps.get_instructions, run_context
         )
         ctx.state.message_history = history
         run_context.messages = history
@@ -320,7 +317,7 @@ async def _prepare_request_parameters(
     )
 
 
-def get_current_token_comsumption(
+def get_current_token_consumption(
     message_history: list[_messages.ModelMessage],
 ) -> int | None:
     current_token_comsumption = None
@@ -435,16 +432,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         patch_model_settings: ModelSettings = {}
         if (
             ctx.deps.model_settings
-            and ctx.deps.model_settings.get('max_tokens')
-            and ctx.deps.model.profile.context_window_size
+            and (max_tokens := ctx.deps.model_settings.get('max_tokens'))
+            and (context_window_size := ctx.deps.model.profile.context_window_size)
         ):
-            max_tokens: int = ctx.deps.model_settings['max_tokens']  # type: ignore
-            current_token_comsumption = get_current_token_comsumption(ctx.state.message_history) or 0
-            if max_tokens + current_token_comsumption > ctx.deps.model.profile.context_window_size:
+            current_token_comsumption = (
+                ctx.state.usage.total_tokens or get_current_token_consumption(ctx.state.message_history) or 0
+            )
+            if max_tokens + current_token_comsumption > context_window_size:
                 # Prevent max_tokens from being exceeded
-                patch_model_settings['max_tokens'] = (
-                    ctx.deps.model.profile.context_window_size - current_token_comsumption
-                )
+                patch_model_settings['max_tokens'] = context_window_size - current_token_comsumption
 
         model_settings = merge_model_settings(
             ctx.deps.model_settings,
@@ -646,9 +642,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             return self._handle_final_result(ctx, result.FinalResult(result_data, None, None), [])
 
 
-def build_run_context(
-    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
-) -> RunContext[DepsT]:
+def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
     """Build a `RunContext` object from the current agent graph run context."""
     return RunContext[DepsT](
         deps=ctx.deps.user_deps,
@@ -865,12 +859,7 @@ async def _tool_from_mcp_server(
     for server in ctx.deps.mcp_servers:
         tools = await server.list_tools()
         if tool_name in {tool.name for tool in tools}:  # pragma: no branch
-            return Tool(
-                name=tool_name,
-                function=run_tool,
-                takes_ctx=True,
-                max_retries=ctx.deps.default_retries,
-            )
+            return Tool(name=tool_name, function=run_tool, takes_ctx=True, max_retries=ctx.deps.default_retries)
     return None
 
 
@@ -961,11 +950,7 @@ def build_agent_graph(
     name: str | None,
     deps_type: type[DepsT],
     output_type: OutputSpec[OutputT],
-) -> Graph[
-    GraphAgentState,
-    GraphAgentDeps[DepsT, result.FinalResult[OutputT]],
-    result.FinalResult[OutputT],
-]:
+) -> Graph[GraphAgentState, GraphAgentDeps[DepsT, result.FinalResult[OutputT]], result.FinalResult[OutputT]]:
     """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
     nodes = (
         UserPromptNode[DepsT],
