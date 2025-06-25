@@ -342,15 +342,13 @@ class AnthropicModel(Model):
                         if response_part.content:  # Only add non-empty text
                             assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
                     elif isinstance(response_part, ThinkingPart):
-                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
-                        # please open an issue. The below code is the code to send thinking to the provider.
-                        # assert response_part.signature is not None, 'Thinking part must have a signature'
-                        # assistant_content_params.append(
-                        #     BetaThinkingBlockParam(
-                        #         thinking=response_part.content, signature=response_part.signature, type='thinking'
-                        #     )
-                        # )
-                        pass
+                        # NOTE: We only send thinking part back for Anthropic, otherwise they raise an error.
+                        if response_part.signature is not None:  # pragma: no branch
+                            assistant_content_params.append(
+                                BetaThinkingBlockParam(
+                                    thinking=response_part.content, signature=response_part.signature, type='thinking'
+                                )
+                            )
                     else:
                         tool_use_block_param = BetaToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),

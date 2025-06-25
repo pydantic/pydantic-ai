@@ -32,6 +32,7 @@ from .tools import RunContext, Tool, ToolDefinition, ToolsPrepareFunc
 
 if TYPE_CHECKING:
     from .mcp import MCPServer
+    from .models.instrumented import InstrumentationSettings
 
 __all__ = (
     'GraphAgentState',
@@ -121,6 +122,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     default_retries: int
 
     tracer: Tracer
+    instrumentation_settings: InstrumentationSettings | None = None
 
     prepare_tools: ToolsPrepareFunc[DepsT] | None = None
 
@@ -759,6 +761,10 @@ async def process_function_tools(  # noqa C901
 
     user_parts: list[_messages.UserPromptPart] = []
 
+    include_content = (
+        ctx.deps.instrumentation_settings is not None and ctx.deps.instrumentation_settings.include_content
+    )
+
     # Run all tool tasks in parallel
     results_by_index: dict[int, _messages.ModelRequestPart] = {}
     with ctx.deps.tracer.start_as_current_span(
@@ -769,7 +775,7 @@ async def process_function_tools(  # noqa C901
         },
     ):
         tasks = [
-            asyncio.create_task(tool.run(call, run_context, ctx.deps.tracer), name=call.tool_name)
+            asyncio.create_task(tool.run(call, run_context, ctx.deps.tracer, include_content), name=call.tool_name)
             for tool, call in calls_to_run
         ]
 
