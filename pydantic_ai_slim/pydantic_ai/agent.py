@@ -294,8 +294,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self.name = name
         self.model_settings = model_settings
 
-        if 'result_type' in _deprecated_kwargs:  # pragma: no cover
-            if output_type is not str:
+        if 'result_type' in _deprecated_kwargs:
+            if output_type is not str:  # pragma: no cover
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
             warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning)
             output_type = _deprecated_kwargs.pop('result_type')
@@ -320,8 +320,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 DeprecationWarning,
             )
         result_retries = _deprecated_kwargs.pop('result_retries', None)
-        if result_retries is not None:  # pragma: no cover
-            if output_retries is not None:
+        if result_retries is not None:
+            if output_retries is not None:  # pragma: no cover
                 raise TypeError('`output_retries` and `result_retries` cannot be set at the same time.')
             warnings.warn('`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning)
             output_retries = result_retries
