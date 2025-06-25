@@ -837,3 +837,88 @@ def test_messages_to_otel_events_without_binary_content(document_content: Binary
             }
         ]
     )
+
+
+def test_messages_without_content(document_content: BinaryContent):
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('system_prompt')]),
+        ModelResponse(parts=[TextPart('text1')]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'user_prompt1',
+                        VideoUrl('https://example.com/video.mp4'),
+                        ImageUrl('https://example.com/image.png'),
+                        AudioUrl('https://example.com/audio.mp3'),
+                        DocumentUrl('https://example.com/document.pdf'),
+                        document_content,
+                    ]
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart('text2'), ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4})]),
+        ModelRequest(parts=[ToolReturnPart('tool', 'tool_return_content', 'tool_call_1')]),
+        ModelRequest(parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')]),
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])]),
+    ]
+    settings = InstrumentationSettings(include_content=False)
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+        [
+            {
+                'role': 'system',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.system.message',
+            },
+            {
+                'role': 'assistant',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'content': [
+                    {'kind': 'text'},
+                    {'kind': 'video-url'},
+                    {'kind': 'image-url'},
+                    {'kind': 'audio-url'},
+                    {'kind': 'document-url'},
+                    {'kind': 'binary', 'media_type': 'application/pdf'},
+                ],
+                'role': 'user',
+                'gen_ai.message.index': 2,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'role': 'assistant',
+                'tool_calls': [
+                    {
+                        'id': IsStr(),
+                        'type': 'function',
+                        'function': {'name': 'my_tool', 'arguments': {'a': 13, 'b': 4}},
+                    }
+                ],
+                'gen_ai.message.index': 3,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'tool',
+                'id': 'tool_call_1',
+                'name': 'tool',
+                'gen_ai.message.index': 4,
+                'event.name': 'gen_ai.tool.message',
+            },
+            {
+                'role': 'tool',
+                'id': 'tool_call_2',
+                'name': 'tool',
+                'gen_ai.message.index': 5,
+                'event.name': 'gen_ai.tool.message',
+            },
+            {
+                'content': [{'kind': 'text'}, {'kind': 'binary', 'media_type': 'application/pdf'}],
+                'role': 'user',
+                'gen_ai.message.index': 6,
+                'event.name': 'gen_ai.user.message',
+            },
+        ]
+    )
