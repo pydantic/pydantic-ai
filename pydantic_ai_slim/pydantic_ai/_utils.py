@@ -416,31 +416,6 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
 
     return rewritten_schemas, all_defs
 
-
-def strip_markdown_fences(text: str) -> str:
-    if text.startswith('{'):
-        return text
-
-    regex = r'```(?:\w+)?\n(\{.*\})\n```'
-    match = re.search(regex, text, re.DOTALL)
-    if match:
-        return match.group(1)
-
-    return text
-
-
-def get_union_args(tp: Any) -> tuple[Any, ...]:
-    """Extract the arguments of a Union type if `tp` is a union, otherwise return an empty tuple."""
-    if typing_objects.is_typealiastype(tp):
-        tp = tp.__value__
-
-    origin = get_origin(tp)
-    if is_union_origin(origin):
-        return get_args(tp)
-    else:
-        return ()
-
-
 def validate_no_deprecated_kwargs(_deprecated_kwargs: dict[str, Any]) -> None:
     """Validate that no unknown deprecated kwargs remain after processing.
 
@@ -455,18 +430,6 @@ def validate_no_deprecated_kwargs(_deprecated_kwargs: dict[str, Any]) -> None:
         raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
 
-def validate_no_deprecated_kwargs(_deprecated_kwargs: dict[str, Any]) -> None:
-    """Validate that no unknown deprecated kwargs remain after processing.
-
-    Args:
-        _deprecated_kwargs: Dictionary of remaining deprecated kwargs after specific ones have been processed.
-
-    Raises:
-        UserError: If any unknown kwargs remain.
-    """
-    if _deprecated_kwargs:
-        unknown_kwargs = ', '.join(f'`{k}`' for k in _deprecated_kwargs.keys())
-        raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
     """Update $refs in a schema to use the new names from name_mapping."""
     if '$ref' in s:
