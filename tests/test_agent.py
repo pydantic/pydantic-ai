@@ -3139,3 +3139,14 @@ async def test_auto_max_tokens():
     )
     assert (await my_agent.run('Hello')).output == IsJson({'max_tokens': 100})
     assert (await my_agent.run('Hello', model_settings={'max_tokens': 50})).output == IsJson({'max_tokens': 50})
+    assert (
+        await my_agent.run(
+            'Hello',
+            message_history=[
+                ModelRequest(parts=[UserPromptPart(content='Hello')]),
+                ModelResponse(
+                    parts=[], usage=Usage(requests=1, request_tokens=53, response_tokens=10, total_tokens=63)
+                ),
+            ],
+        )
+    ).output == IsJson({'max_tokens': 37})
