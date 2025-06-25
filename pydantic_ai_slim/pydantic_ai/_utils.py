@@ -416,6 +416,7 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
 
     return rewritten_schemas, all_defs
 
+
 def validate_no_deprecated_kwargs(_deprecated_kwargs: dict[str, Any]) -> None:
     """Validate that no unknown deprecated kwargs remain after processing.
 
@@ -428,6 +429,7 @@ def validate_no_deprecated_kwargs(_deprecated_kwargs: dict[str, Any]) -> None:
     if _deprecated_kwargs:
         unknown_kwargs = ', '.join(f'`{k}`' for k in _deprecated_kwargs.keys())
         raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
+
 
 def strip_markdown_fences(text: str) -> str:
     if text.startswith('{'):
