@@ -3218,7 +3218,7 @@ def test_many_multimodal_tool_response():
         if len(messages) == 1:
             return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
         else:
-            return ModelResponse(
+            return ModelResponse(  # pragma: no cover
                 parts=[
                     TextPart('Analysis completed'),
                 ]
@@ -3255,7 +3255,7 @@ def test_multimodal_tool_response_nested():
         if len(messages) == 1:
             return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
         else:
-            return ModelResponse(
+            return ModelResponse(  # pragma: no cover
                 parts=[
                     TextPart('Analysis completed'),
                 ]
