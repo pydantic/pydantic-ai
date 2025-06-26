@@ -113,6 +113,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 'Invalid response, unable to process text output'
             )
 
+        # TODO: Possibly return DeferredToolCalls here?
+
         for validator in self._output_validators:
             result_data = await validator.validate(result_data, call, self._run_ctx)
         return result_data
@@ -380,6 +382,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             pass
         message = self._stream_response.get()
         await self._marked_completed(message)
+        # TODO: Possibly return DeferredToolCalls here?
         return await self.validate_structured_output(message)
 
     @deprecated('`get_data` is deprecated, use `get_output` instead.')

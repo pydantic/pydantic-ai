@@ -480,109 +480,21 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         async for event in self._events_iterator:
             yield event
 
-    async def _handle_tool_calls(  # noqa: C901
+    async def _handle_tool_calls(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         tool_calls: list[_messages.ToolCallPart],
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         run_context = build_run_context(ctx)
 
-        final_result: result.FinalResult[NodeRunEndT] | None = None
         parts: list[_messages.ModelRequestPart] = []
+        final_result_holder: list[result.FinalResult[NodeRunEndT]] = []
 
-        toolset = ctx.deps.toolset
+        async for event in process_function_tools(ctx.deps.toolset, tool_calls, None, ctx, parts, final_result_holder):
+            yield event
 
-        unknown_calls: list[_messages.ToolCallPart] = []
-        tool_calls_by_kind: dict[ToolKind, list[_messages.ToolCallPart]] = defaultdict(list)
-        # TODO: Make Toolset.tool_defs a dict
-        tool_defs_by_name: dict[str, ToolDefinition] = {tool_def.name: tool_def for tool_def in toolset.tool_defs}
-        for call in tool_calls:
-            try:
-                tool_def = tool_defs_by_name[call.tool_name]
-                tool_calls_by_kind[tool_def.kind].append(call)
-            except KeyError:
-                unknown_calls.append(call)
-
-        # first, look for the output tool call
-        for call in tool_calls_by_kind['output']:
-            if final_result:
-                part = _messages.ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content='Output tool not used - a final result was already processed.',
-                    tool_call_id=call.tool_call_id,
-                )
-                parts.append(part)
-            else:
-                try:
-                    result_data = await _call_tool(toolset, call, run_context)
-                except _output.ToolRetryError as e:
-                    parts.append(e.tool_retry)
-                else:
-                    part = _messages.ToolReturnPart(
-                        tool_name=call.tool_name,
-                        content='Final result processed.',
-                        tool_call_id=call.tool_call_id,
-                    )
-                    parts.append(part)
-                    final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
-
-        # Then build the other request parts based on end strategy
-        if final_result and ctx.deps.end_strategy == 'early':
-            for call in tool_calls_by_kind['function']:
-                parts.append(
-                    _messages.ToolReturnPart(
-                        tool_name=call.tool_name,
-                        content='Tool not executed - a final result was already processed.',
-                        tool_call_id=call.tool_call_id,
-                    )
-                )
-        else:
-            async for event in process_function_tools(
-                toolset,
-                tool_calls_by_kind['function'],
-                ctx,
-                parts,
-            ):
-                yield event
-
-        if unknown_calls:
-            ctx.state.increment_retries(ctx.deps.max_result_retries)
-            async for event in process_function_tools(
-                toolset,
-                unknown_calls,
-                ctx,
-                parts,
-            ):
-                yield event
-
-        deferred_calls: list[_messages.ToolCallPart] = []
-        for call in tool_calls_by_kind['deferred']:
-            if final_result:
-                parts.append(
-                    _messages.ToolReturnPart(
-                        tool_name=call.tool_name,
-                        content='Tool not executed - a final result was already processed.',
-                        tool_call_id=call.tool_call_id,
-                    )
-                )
-            else:
-                yield _messages.FunctionToolCallEvent(call)
-                deferred_calls.append(call)
-
-        if deferred_calls:
-            if not ctx.deps.output_schema.deferred_tool_calls:
-                raise exceptions.UserError(
-                    'There are pending tool calls but DeferredToolCalls is not among output types.'
-                )
-
-            deferred_tool_names = [call.tool_name for call in deferred_calls]
-            deferred_tool_defs = {
-                tool_def.name: tool_def for tool_def in toolset.tool_defs if tool_def.name in deferred_tool_names
-            }
-            output_data = cast(NodeRunEndT, DeferredToolCalls(deferred_calls, deferred_tool_defs))
-            final_result = result.FinalResult(output_data)
-
-        if final_result:
+        if final_result_holder:
+            final_result = final_result_holder[0]
             self._next_node = self._handle_final_result(ctx, final_result, parts)
         else:
             instructions = await ctx.deps.get_instructions(run_context)
@@ -652,24 +564,85 @@ def multi_modal_content_identifier(identifier: str | bytes) -> str:
 async def process_function_tools(
     toolset: AbstractToolset[DepsT],
     tool_calls: list[_messages.ToolCallPart],
+    final_result: result.FinalResult[NodeRunEndT] | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-    output_parts: list[_messages.ModelRequestPart],
+    parts: list[_messages.ModelRequestPart],
+    final_result_holder: list[result.FinalResult[NodeRunEndT]] = [],
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     """Process function (i.e., non-result) tool calls in parallel.
 
     Also add stub return parts for any other tools that need it.
 
-    Because async iterators can't have return values, we use `output_parts` as an output argument.
+    Because async iterators can't have return values, we use `parts` as an output argument.
     """
     run_context = build_run_context(ctx)
 
-    calls_to_run: list[_messages.ToolCallPart] = []
-    call_index_to_event_id: dict[int, str] = {}
+    unknown_calls: list[_messages.ToolCallPart] = []
+    tool_calls_by_kind: dict[ToolKind, list[_messages.ToolCallPart]] = defaultdict(list)
+    # TODO: Make Toolset.tool_defs a dict
+    tool_defs_by_name: dict[str, ToolDefinition] = {tool_def.name: tool_def for tool_def in toolset.tool_defs}
     for call in tool_calls:
-        event = _messages.FunctionToolCallEvent(call)
-        yield event
-        call_index_to_event_id[len(calls_to_run)] = event.call_id
-        calls_to_run.append(call)
+        try:
+            tool_def = tool_defs_by_name[call.tool_name]
+            tool_calls_by_kind[tool_def.kind].append(call)
+        except KeyError:
+            unknown_calls.append(call)
+
+    # first, look for the output tool call
+    for call in tool_calls_by_kind['output']:
+        if final_result:
+            if final_result.tool_call_id == call.tool_call_id:
+                part = _messages.ToolReturnPart(
+                    tool_name=call.tool_name,
+                    content='Final result processed.',
+                    tool_call_id=call.tool_call_id,
+                )
+            else:
+                yield _messages.FunctionToolCallEvent(call)
+                part = _messages.ToolReturnPart(
+                    tool_name=call.tool_name,
+                    content='Output tool not used - a final result was already processed.',
+                    tool_call_id=call.tool_call_id,
+                )
+                yield _messages.FunctionToolResultEvent(part, tool_call_id=call.tool_call_id)
+
+            parts.append(part)
+        else:
+            try:
+                result_data = await _call_tool(toolset, call, run_context)
+            except _output.ToolRetryError as e:
+                yield _messages.FunctionToolCallEvent(call)
+                parts.append(e.tool_retry)
+                yield _messages.FunctionToolResultEvent(e.tool_retry, tool_call_id=call.tool_call_id)
+            else:
+                part = _messages.ToolReturnPart(
+                    tool_name=call.tool_name,
+                    content='Final result processed.',
+                    tool_call_id=call.tool_call_id,
+                )
+                parts.append(part)
+                final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
+
+    calls_to_run: list[_messages.ToolCallPart] = []
+    # Then build the other request parts based on end strategy
+    if final_result and ctx.deps.end_strategy == 'early':
+        for call in tool_calls_by_kind['function']:
+            parts.append(
+                _messages.ToolReturnPart(
+                    tool_name=call.tool_name,
+                    content='Tool not executed - a final result was already processed.',
+                    tool_call_id=call.tool_call_id,
+                )
+            )
+    else:
+        calls_to_run.extend(tool_calls_by_kind['function'])
+
+    if unknown_calls:
+        ctx.state.increment_retries(ctx.deps.max_result_retries)
+        calls_to_run.extend(unknown_calls)
+
+    for call in calls_to_run:
+        yield _messages.FunctionToolCallEvent(call)
 
     user_parts: list[_messages.UserPromptPart] = []
 
@@ -698,12 +671,12 @@ async def process_function_tools(
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 index = tasks.index(task)
-                result = task.result()
-                yield _messages.FunctionToolResultEvent(result, tool_call_id=call_index_to_event_id[index])
+                tool_result = task.result()
+                yield _messages.FunctionToolResultEvent(tool_result, tool_call_id=tool_result.tool_call_id)
 
-                if isinstance(result, _messages.RetryPromptPart):
-                    results_by_index[index] = result
-                elif isinstance(result, _messages.ToolReturnPart):
+                if isinstance(tool_result, _messages.RetryPromptPart):
+                    results_by_index[index] = tool_result
+                elif isinstance(tool_result, _messages.ToolReturnPart):
 
                     def process_content(content: Any) -> Any:
                         if isinstance(content, _messages.MultiModalContentTypes):
@@ -715,7 +688,7 @@ async def process_function_tools(
                             user_parts.append(
                                 _messages.UserPromptPart(
                                     content=[f'This is file {identifier}:', content],
-                                    timestamp=result.timestamp,
+                                    timestamp=tool_result.timestamp,
                                     part_kind='user-prompt',
                                 )
                             )
@@ -723,22 +696,50 @@ async def process_function_tools(
                         else:
                             return content
 
-                    if isinstance(result.content, list):
-                        contents = cast(list[Any], result.content)  # type: ignore
-                        result.content = [process_content(content) for content in contents]
+                    if isinstance(tool_result.content, list):
+                        contents = cast(list[Any], tool_result.content)  # type: ignore
+                        tool_result.content = [process_content(content) for content in contents]
                     else:
-                        result.content = process_content(result.content)
+                        tool_result.content = process_content(tool_result.content)
 
-                    results_by_index[index] = result
+                    results_by_index[index] = tool_result
                 else:
-                    assert_never(result)
+                    assert_never(tool_result)
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
     # This is mostly just to simplify testing
     for k in sorted(results_by_index):
-        output_parts.append(results_by_index[k])
+        parts.append(results_by_index[k])
 
-    output_parts.extend(user_parts)
+    deferred_calls: list[_messages.ToolCallPart] = []
+    for call in tool_calls_by_kind['deferred']:
+        if final_result:
+            parts.append(
+                _messages.ToolReturnPart(
+                    tool_name=call.tool_name,
+                    content='Tool not executed - a final result was already processed.',
+                    tool_call_id=call.tool_call_id,
+                )
+            )
+        else:
+            yield _messages.FunctionToolCallEvent(call)
+            deferred_calls.append(call)
+
+    if deferred_calls:
+        if not ctx.deps.output_schema.deferred_tool_calls:
+            raise exceptions.UserError('There are pending tool calls but DeferredToolCalls is not among output types.')
+
+        deferred_tool_names = [call.tool_name for call in deferred_calls]
+        deferred_tool_defs = {
+            tool_def.name: tool_def for tool_def in toolset.tool_defs if tool_def.name in deferred_tool_names
+        }
+        output_data = cast(NodeRunEndT, DeferredToolCalls(deferred_calls, deferred_tool_defs))
+        final_result = result.FinalResult(output_data)
+
+    parts.extend(user_parts)
+
+    if final_result:
+        final_result_holder.append(final_result)
 
 
 async def _call_function_tool(

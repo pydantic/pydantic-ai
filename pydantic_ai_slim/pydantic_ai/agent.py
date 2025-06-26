@@ -1046,10 +1046,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                     ):  # pragma: no branch
                                         for call, _ in output_schema.find_tool([new_part]):
                                             return FinalResult(s, call.tool_name, call.tool_call_id)
+                                    # TODO: Handle DeferredToolCalls
                             return None
 
-                        final_result_details = await stream_to_final(streamed_response)
-                        if final_result_details is not None:
+                        final_result = await stream_to_final(streamed_response)
+                        if final_result is not None:
                             if yielded:
                                 raise exceptions.AgentRunError('Agent run produced final results')  # pragma: no cover
                             yielded = True
@@ -1068,19 +1069,16 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                     part for part in last_message.parts if isinstance(part, _messages.ToolCallPart)
                                 ]
 
+                                # TODO: Should we move on to the CallToolsNode here, instead of doing this ourselves?
                                 parts: list[_messages.ModelRequestPart] = []
-                                # TODO: Make this work again. We may have pulled too much out of process_function_tools :)
                                 async for _event in _agent_graph.process_function_tools(
                                     graph_ctx.deps.toolset,
                                     tool_calls,
+                                    final_result,
                                     graph_ctx,
                                     parts,
                                 ):
                                     pass
-                                # TODO: Should we do something here related to the retry count?
-                                #   Maybe we should move the incrementing of the retry count to where we actually make a request?
-                                # if any(isinstance(part, _messages.RetryPromptPart) for part in parts):
-                                #     ctx.state.increment_retries(ctx.deps.max_result_retries)
                                 if parts:
                                     messages.append(_messages.ModelRequest(parts))
 
@@ -1092,10 +1090,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                 graph_ctx.deps.output_schema,
                                 _agent_graph.build_run_context(graph_ctx),
                                 graph_ctx.deps.output_validators,
-                                final_result_details.tool_name,
+                                final_result.tool_name,
                                 on_complete,
                             )
                             break
+                        # TODO: There may be deferred tool calls, process those.
                 next_node = await agent_run.next(node)
                 if not isinstance(next_node, _agent_graph.AgentNode):
                     raise exceptions.AgentRunError(  # pragma: no cover
