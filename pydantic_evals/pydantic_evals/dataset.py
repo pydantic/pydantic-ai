@@ -9,7 +9,6 @@ a task function to produce an evaluation report.
 
 from __future__ import annotations as _annotations
 
-import asyncio
 import functools
 import inspect
 import sys
@@ -271,7 +270,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 If omitted, the name of the task function will be used.
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
-            progress: Whether to show a progress bar for the evaluation. Defaults to True.
+            progress: Whether to show a progress bar for the evaluation. Defaults to `True`.
 
         Returns:
             A report containing the results of the evaluation.
@@ -279,7 +278,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         name = name or get_unwrapped_function_name(task)
         total_cases = len(self.cases)
         progress_bar = Progress() if progress else None
-        progress_lock = asyncio.Lock() if progress else None
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
 
@@ -289,9 +287,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
                 async with limiter:
                     result = await _run_task_and_evaluators(task, case, report_case_name, self.evaluators)
-                    if progress_bar and progress_lock and task_id is not None:  # pragma: no branch
-                        async with progress_lock:
-                            progress_bar.update(task_id, advance=1)
+                    if progress_bar and task_id is not None:  # pragma: no branch
+                        progress_bar.update(task_id, advance=1)
                     return result
 
             report = EvaluationReport(
