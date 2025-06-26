@@ -311,12 +311,12 @@ async def _prepare_request_parameters(
 def get_current_token_consumption(
     message_history: list[_messages.ModelMessage],
 ) -> int | None:
-    current_token_comsumption = None
+    current_token_consumption = None
     for msg in reversed(message_history):
         if isinstance(msg, _messages.ModelResponse) and msg.usage.total_tokens:
-            current_token_comsumption = msg.usage.total_tokens
+            current_token_consumption = msg.usage.total_tokens
             break
-    return current_token_comsumption
+    return current_token_consumption
 
 
 @dataclasses.dataclass
@@ -422,9 +422,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             and (max_tokens := ctx.deps.model_settings.get('max_tokens'))
             and (context_window_size := ctx.deps.model.profile.context_window_size)
         ):
-            current_token_comsumption = (
-                ctx.state.usage.total_tokens or get_current_token_consumption(ctx.state.message_history) or 0
-            )
+            current_token_comsumption = get_current_token_consumption(ctx.state.message_history) or 0
             if max_tokens + current_token_comsumption > context_window_size:
                 # Prevent max_tokens from being exceeded
                 patch_model_settings['max_tokens'] = context_window_size - current_token_comsumption
