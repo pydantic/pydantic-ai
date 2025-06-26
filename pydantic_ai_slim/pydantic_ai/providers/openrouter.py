@@ -8,6 +8,17 @@ from openai import AsyncOpenAI
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles.amazon import amazon_model_profile
+from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.cohere import cohere_model_profile
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -33,6 +44,31 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
     @property
     def client(self) -> AsyncOpenAI:
         return self._client
+
+    def model_profile(self, model_name: str) -> ModelProfile | None:
+        provider_to_profile = {
+            'google': google_model_profile,
+            'openai': openai_model_profile,
+            'anthropic': anthropic_model_profile,
+            'mistralai': mistral_model_profile,
+            'qwen': qwen_model_profile,
+            'x-ai': grok_model_profile,
+            'cohere': cohere_model_profile,
+            'amazon': amazon_model_profile,
+            'deepseek': deepseek_model_profile,
+            'meta-llama': meta_model_profile,
+        }
+
+        profile = None
+
+        provider, model_name = model_name.split('/', 1)
+        if provider in provider_to_profile:
+            model_name, *_ = model_name.split(':', 1)  # drop tags
+            profile = provider_to_profile[provider](model_name)
+
+        # As OpenRouterProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # we need to maintain that behavior unless json_schema_transformer is set explicitly
+        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
 
     @overload
     def __init__(self) -> None: ...

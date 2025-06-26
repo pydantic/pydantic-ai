@@ -4,20 +4,17 @@ import dataclasses
 import json
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union
+from typing import Any, Callable, Generic, Literal, Union
 
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
-from pydantic_core import core_schema
-from typing_extensions import Concatenate, ParamSpec, TypeAlias, TypeVar
+from pydantic_core import SchemaValidator, core_schema
+from typing_extensions import Concatenate, ParamSpec, Self, TypeAlias, TypeVar
 
 from . import _function_schema, _utils, messages as _messages
+from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, UnexpectedModelBehavior
-
-if TYPE_CHECKING:
-    from .models import Model
-    from .result import Usage
 
 __all__ = (
     'AgentDepsT',
@@ -34,46 +31,6 @@ __all__ = (
     'ObjectJsonSchema',
     'ToolDefinition',
 )
-
-AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
-"""Type variable for agent dependencies."""
-
-
-@dataclasses.dataclass(repr=False)
-class RunContext(Generic[AgentDepsT]):
-    """Information about the current call."""
-
-    deps: AgentDepsT
-    """Dependencies for the agent."""
-    model: Model
-    """The model used in this run."""
-    usage: Usage
-    """LLM usage associated with the run."""
-    prompt: str | Sequence[_messages.UserContent] | None
-    """The original user prompt passed to the run."""
-    messages: list[_messages.ModelMessage] = field(default_factory=list)
-    """Messages exchanged in the conversation so far."""
-    tool_call_id: str | None = None
-    """The ID of the tool call."""
-    tool_name: str | None = None
-    """Name of the tool being called."""
-    retry: int = 0
-    """Number of retries so far."""
-    run_step: int = 0
-    """The current step in the run."""
-
-    def replace_with(
-        self, retry: int | None = None, tool_name: str | None | _utils.Unset = _utils.UNSET
-    ) -> RunContext[AgentDepsT]:
-        # Create a new `RunContext` a new `retry` value and `tool_name`.
-        kwargs = {}
-        if retry is not None:
-            kwargs['retry'] = retry
-        if tool_name is not _utils.UNSET:  # pragma: no branch
-            kwargs['tool_name'] = tool_name
-        return dataclasses.replace(self, **kwargs)
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 ToolParams = ParamSpec('ToolParams', default=...)
@@ -215,8 +172,10 @@ class Tool(Generic[AgentDepsT]):
     This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
     """
 
-    # TODO: Move this state off the Tool class, which is otherwise stateless.
-    #   This should be tracked inside a specific agent run, not the tool.
+    # TODO: Consider moving this current_retry state to live on something other than the tool.
+    #   We've worked around this for now by copying instances of the tool when creating new runs,
+    #   but this is a bit fragile. Moving the tool retry counts to live on the agent run state would likely clean things
+    #   up, though is also likely a larger effort to refactor.
     current_retry: int = field(default=0, init=False)
 
     def __init__(
@@ -304,6 +263,45 @@ class Tool(Generic[AgentDepsT]):
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
 
+    @classmethod
+    def from_schema(
+        cls,
+        function: Callable[..., Any],
+        name: str,
+        description: str,
+        json_schema: JsonSchemaValue,
+    ) -> Self:
+        """Creates a Pydantic tool from a function and a JSON schema.
+
+        Args:
+            function: The function to call.
+                This will be called with keywords only, and no validation of
+                the arguments will be performed.
+            name: The unique name of the tool that clearly communicates its purpose
+            description: Used to tell the model how/when/why to use the tool.
+                You can provide few-shot examples as a part of the description.
+            json_schema: The schema for the function arguments
+
+        Returns:
+            A Pydantic tool that calls the function
+        """
+        function_schema = _function_schema.FunctionSchema(
+            function=function,
+            description=description,
+            validator=SchemaValidator(schema=core_schema.any_schema()),
+            json_schema=json_schema,
+            takes_ctx=False,
+            is_async=_utils.is_async_callable(function),
+        )
+
+        return cls(
+            function,
+            takes_ctx=False,
+            name=name,
+            description=description,
+            function_schema=function_schema,
+        )
+
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
 
@@ -325,7 +323,11 @@ class Tool(Generic[AgentDepsT]):
             return tool_def
 
     async def run(
-        self, message: _messages.ToolCallPart, run_context: RunContext[AgentDepsT], tracer: Tracer
+        self,
+        message: _messages.ToolCallPart,
+        run_context: RunContext[AgentDepsT],
+        tracer: Tracer,
+        include_content: bool = False,
     ) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
         """Run the tool function asynchronously.
 
@@ -337,14 +339,14 @@ class Tool(Generic[AgentDepsT]):
             'gen_ai.tool.name': self.name,
             # NOTE: this means `gen_ai.tool.call.id` will be included even if it was generated by pydantic-ai
             'gen_ai.tool.call.id': message.tool_call_id,
-            'tool_arguments': message.args_as_json_str(),
+            **({'tool_arguments': message.args_as_json_str()} if include_content else {}),
             'logfire.msg': f'running tool: {self.name}',
             # add the JSON schema so these attributes are formatted nicely in Logfire
             'logfire.json_schema': json.dumps(
                 {
                     'type': 'object',
                     'properties': {
-                        'tool_arguments': {'type': 'object'},
+                        **({'tool_arguments': {'type': 'object'}} if include_content else {}),
                         'gen_ai.tool.name': {},
                         'gen_ai.tool.call.id': {},
                     },
@@ -392,7 +394,7 @@ class Tool(Generic[AgentDepsT]):
             raise UnexpectedModelBehavior(f'Tool exceeded max retries count of {self.max_retries}') from exc
         else:
             if isinstance(exc, ValidationError):
-                content = exc.errors(include_url=False)
+                content = exc.errors(include_url=False, include_context=False)
             else:
                 content = exc.message
             return _messages.RetryPromptPart(

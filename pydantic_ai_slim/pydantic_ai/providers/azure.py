@@ -8,6 +8,13 @@ from openai import AsyncOpenAI
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles.cohere import cohere_model_profile
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -37,6 +44,33 @@ class AzureProvider(Provider[AsyncOpenAI]):
     @property
     def client(self) -> AsyncOpenAI:
         return self._client
+
+    def model_profile(self, model_name: str) -> ModelProfile | None:
+        model_name = model_name.lower()
+
+        prefix_to_profile = {
+            'llama': meta_model_profile,
+            'meta-': meta_model_profile,
+            'deepseek': deepseek_model_profile,
+            'mistralai-': mistral_model_profile,
+            'mistral': mistral_model_profile,
+            'cohere-': cohere_model_profile,
+            'grok': grok_model_profile,
+        }
+
+        for prefix, profile_func in prefix_to_profile.items():
+            if model_name.startswith(prefix):
+                if prefix.endswith('-'):
+                    model_name = model_name[len(prefix) :]
+
+                profile = profile_func(model_name)
+
+                # As AzureProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+                # we need to maintain that behavior unless json_schema_transformer is set explicitly
+                return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+
+        # OpenAI models are unprefixed
+        return openai_model_profile(model_name)
 
     @overload
     def __init__(self, *, openai_client: AsyncAzureOpenAI) -> None: ...

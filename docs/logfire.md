@@ -19,7 +19,7 @@ LLM Observability tools that just let you understand how your model is performin
 
 !!! tip "Pydantic Logfire is a commercial product"
     Logfire is a commercially supported, hosted platform with an extremely generous and perpetual [free tier](https://pydantic.dev/pricing/).
-    You can sign up and start using Logfire in a couple of minutes.
+    You can sign up and start using Logfire in a couple of minutes. Logfire can also be self-hosted on the enterprise tier.
 
 PydanticAI has built-in (but optional) support for Logfire. That means if the `logfire` package is installed and configured and agent instrumentation is enabled then detailed information about agent runs is sent to Logfire. Otherwise there's virtually no overhead and nothing is sent.
 
@@ -238,6 +238,24 @@ print(result.output)
 #> Paris
 ```
 
+### Alternative Observability backends
+
+Because Pydantic AI uses OpenTelemetry for observability, you can easily configure it to send data to any OpenTelemetry-compatible backend, not just our observability platform [Pydantic Logfire](#pydantic-logfire).
+
+The following providers have dedicated documentation on Pydantic AI:
+
+<!--Feel free to add other platforms here. They MUST be added to the bottom of the list, and may only be a name with link.-->
+
+- [Langfuse](https://langfuse.com/docs/integrations/pydantic-ai)
+- [W&B Weave](https://weave-docs.wandb.ai/guides/integrations/pydantic_ai/)
+- [Arize](https://arize.com/docs/ax/observe/tracing-integrations-auto/pydantic-ai)
+- [Openlayer](https://www.openlayer.com/docs/integrations/pydantic-ai)
+- [OpenLIT](https://docs.openlit.io/latest/integrations/pydantic)
+- [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
+- [Patronus AI](https://docs.patronus.ai/docs/percival/pydantic)
+- [Opik](https://www.comet.com/docs/opik/tracing/integrations/pydantic-ai)
+- [mlflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
+
 ## Advanced usage
 
 ### Configuring data format
@@ -305,3 +323,22 @@ agent = Agent('gpt-4o', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
+
+### Excluding prompts and completions
+
+For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. PydanticAI allows you to exclude the actual content from instrumentation events while preserving the structural information needed for debugging and monitoring.
+
+When `include_content=False` is set, PydanticAI will exclude sensitive content from OpenTelemetry events, including user prompts and model completions, tool call arguments and responses, and any other message content.
+
+```python {title="excluding_sensitive_content.py"}
+from pydantic_ai.agent import Agent
+from pydantic_ai.models.instrumented import InstrumentationSettings
+
+instrumentation_settings = InstrumentationSettings(include_content=False)
+
+agent = Agent('gpt-4o', instrument=instrumentation_settings)
+# or to instrument all agents:
+Agent.instrument_all(instrumentation_settings)
+```
+
+This setting is particularly useful in production environments where compliance requirements or data sensitivity concerns make it necessary to limit what content is sent to your observability platform.
