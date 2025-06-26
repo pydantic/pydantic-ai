@@ -529,7 +529,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize('include_content', [True, False])
-def test_include_tool_args_span_attributes(
+def test_include_tool_content_span_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
