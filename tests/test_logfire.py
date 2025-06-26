@@ -555,6 +555,6 @@ def test_include_tool_args_span_attributes(
 
     if include_content:
         assert tool_attributes['tool_arguments'] == snapshot('{"x":42,"y":42}')
-        assert tool_attributes['gen_ai.tool.call.response'] == snapshot(84)
+        assert tool_attributes['gen_ai.tool.call.response'] == snapshot('84')
     else:
         assert 'tool_arguments' not in tool_attributes
