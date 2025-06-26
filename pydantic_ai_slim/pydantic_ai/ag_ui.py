@@ -32,9 +32,7 @@ try:
         BaseEvent,
         DeveloperMessage,
         EventType,
-        FunctionCall,
         Message,
-        MessagesSnapshotEvent,
         RunAgentInput,
         RunErrorEvent,
         RunFinishedEvent,
@@ -44,10 +42,13 @@ try:
         TextMessageContentEvent,
         TextMessageEndEvent,
         TextMessageStartEvent,
+        ThinkingTextMessageContentEvent,
+        ThinkingTextMessageEndEvent,
+        ThinkingTextMessageStartEvent,
         Tool as ToolAGUI,
-        ToolCall,
         ToolCallArgsEvent,
         ToolCallEndEvent,
+        ToolCallResultEvent,
         ToolCallStartEvent,
         ToolMessage,
         UserMessage,
@@ -76,7 +77,6 @@ from pydantic import BaseModel, ValidationError
 
 from . import Agent, models
 from ._agent_graph import ModelRequestNode
-from ._parts_manager import ModelResponsePartsManager
 from .agent import RunOutputDataT
 from .messages import (
     AgentStreamEvent,
@@ -85,7 +85,6 @@ from .messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
-    ModelResponsePart,
     PartDeltaEvent,
     PartStartEvent,
     SystemPromptPart,
@@ -448,11 +447,13 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
             if isinstance(deps, StateHandler):
                 deps.set_state(run_input.state)
 
+            history: _History = _convert_history(run_input.messages)
+
             run: AgentRun[AgentDepsT, Any]
             async with self.agent.iter(
                 user_prompt=None,
                 output_type=output_type,
-                message_history=_convert_history(run_input.messages),
+                message_history=history.messages,
                 model=model,
                 deps=deps,
                 model_settings=model_settings,
@@ -461,21 +462,10 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                 infer_name=infer_name,
                 additional_tools=run_tools,
             ) as run:
-                parts_manager: ModelResponsePartsManager = ModelResponsePartsManager()
-                async for event in self._agent_stream(tool_names, run, parts_manager):
+                async for event in self._agent_stream(tool_names, run, history.prompt_message_id):
                     if event is None:
                         # Tool call signals early return, so we stop processing.
                         self.logger.debug('tool call early return')
-
-                        # TODO(steve): Remove this workaround, it's only needed as AG-UI doesn't
-                        # currently have a way to add server side tool calls to the message history
-                        # via events. To workaround this we create a full snapshot of the messages
-                        # and send that.
-                        snapshot: MessagesSnapshotEvent | None = self._message_snapshot(
-                            run, run_input.messages, parts_manager
-                        )
-                        if snapshot is not None:
-                            yield encoder.encode(snapshot)
                         break
 
                     yield encoder.encode(event)
@@ -500,135 +490,49 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
 
         self.logger.info('done thread_id=%s run_id=%s', run_input.thread_id, run_input.run_id)
 
-    def _message_snapshot(
-        self, run: AgentRun[AgentDepsT, Any], messages: list[Message], parts_manager: ModelResponsePartsManager
-    ) -> MessagesSnapshotEvent | None:
-        """Create a message snapshot to replicate the current state of the run.
-
-        This method collects all messages from the run's state and the parts
-        manager, converting them into AG-UI messages.
-
-        Args:
-            run: The agent run instance.
-            messages: The initial messages from the run input.
-            parts_manager: The parts manager containing the response parts.
-
-        Returns:
-            A full snapshot of the messages so far in the run if local tool
-            calls were made, otherwise `None`.
-        """
-        new_messages: list[ModelMessage] = run.ctx.state.message_history[len(messages) :]
-        if not any(
-            isinstance(request_part, ToolReturnPart)
-            for msg in new_messages
-            if isinstance(msg, ModelRequest)
-            for request_part in msg.parts
-        ):
-            # No tool calls were made, so we don't need a snapshot.
-            return None
-
-        # Tool calls were made, so we need to create a snapshot.
-        for msg in new_messages:
-            if isinstance(msg, ModelRequest):
-                for request_part in msg.parts:
-                    if isinstance(request_part, ToolReturnPart):  # pragma: no branch
-                        messages.append(
-                            ToolMessage(
-                                id='result-' + request_part.tool_call_id,
-                                role=Role.TOOL,
-                                content=request_part.content,
-                                tool_call_id=request_part.tool_call_id,
-                            )
-                        )
-            elif isinstance(msg, ModelResponse):  # pragma: no branch
-                self._convert_response_parts(msg.parts, messages)
-
-        self._convert_response_parts(parts_manager.get_parts(), messages)
-
-        return MessagesSnapshotEvent(
-            type=EventType.MESSAGES_SNAPSHOT,
-            messages=messages,
-        )
-
-    def _convert_response_parts(self, parts: list[ModelResponsePart], messages: list[Message]) -> None:
-        """Convert model response parts to AG-UI messages.
-
-        Args:
-            parts: The list of model response parts to convert.
-            messages: The list of messages to append the converted parts to.
-        """
-        response_part: ModelResponsePart
-        for response_part in parts:
-            if isinstance(response_part, TextPart):  # pragma: no cover
-                # This is not expected, but we handle it gracefully.
-                messages.append(
-                    AssistantMessage(
-                        id=uuid.uuid4().hex,
-                        role=Role.ASSISTANT,
-                        content=response_part.content,
-                    )
-                )
-            elif isinstance(response_part, ToolCallPart):
-                args: str = (
-                    json.dumps(response_part.args)
-                    if isinstance(response_part.args, dict)
-                    else response_part.args or '{}'
-                )
-                messages.append(
-                    AssistantMessage(
-                        id=uuid.uuid4().hex,
-                        role=Role.ASSISTANT,
-                        tool_calls=[
-                            ToolCall(
-                                id=response_part.tool_call_id,
-                                type='function',
-                                function=FunctionCall(
-                                    name=response_part.tool_name,
-                                    arguments=args,
-                                ),
-                            )
-                        ],
-                    ),
-                )
-            elif isinstance(response_part, ThinkingPart):  # pragma: no cover
-                # No AG-UI equivalent for thinking parts, so we skip them.
-                pass
-
-    async def _tool_events(self, parts: list[ModelRequestPart]) -> AsyncGenerator[BaseEvent | None, None]:
+    async def _tool_events(
+        self,
+        parts: list[ModelRequestPart],
+        prompt_message_id: str,
+    ) -> AsyncGenerator[BaseEvent | None, None]:
         """Check for tool call results that are AG-UI events.
 
         Args:
             encoder: The event encoder to use for encoding events.
             parts: The list of request parts to check for tool event returns.
+            prompt_message_id: The message ID of the user prompt to use for tool call results.
 
         Yields:
             AG-UI Server-Sent Events (SSE).
         """
-        # TODO(steve): Determine how to handle multiple parts. Currently
-        # AG-UI only supports a single tool call per request, but that
-        # may change in the future.
         part: ModelRequestPart
         for part in parts:
             if not isinstance(part, ToolReturnPart):
                 continue
 
+            yield ToolCallResultEvent(
+                message_id=prompt_message_id,
+                type=EventType.TOOL_CALL_RESULT,
+                role=Role.TOOL.value,
+                tool_call_id=part.tool_call_id,
+                content=part.model_response_str(),
+            )
+
+            # Now check for  AG-UI events returned by the tool calls.
             iter: Iterable[Any]
             if isinstance(part.content, BaseEvent):
                 self.logger.debug('ag-ui event: %s', part.content)
                 yield part.content
-            elif isinstance(part.content, (str, bytes)):
-                # Avoid strings and bytes being checked as iterable.
+            elif isinstance(part.content, (str, bytes)):  # pragma: no branch
+                # Avoid iterable check for strings and bytes.
                 pass
-            elif isinstance(part.content, Iterable):
+            elif isinstance(part.content, Iterable):  # pragma: no branch
                 # Type: ignore to handle partially unknown type
                 iter = part.content  # type: ignore[assignment]
                 for item in iter:
                     if isinstance(item, BaseEvent):  # pragma: no branch
                         self.logger.debug('ag-ui event: %s', item)
                         yield item
-            else:  # pragma: no cover
-                # Not currently interested in other types.
-                pass
 
     def _convert_tools(self, run_tools: list[ToolAGUI]) -> list[Tool[AgentDepsT]]:
         """Convert AG-UI tools to PydanticAI tools.
@@ -680,14 +584,14 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
         self,
         tool_names: dict[str, str],
         run: AgentRun[AgentDepsT, Any],
-        parts_manager: ModelResponsePartsManager,
+        prompt_message_id: str,
     ) -> AsyncGenerator[BaseEvent | None, None]:
         """Run the agent streaming responses using AG-UI protocol events.
 
         Args:
             tool_names: A mapping of tool names to their AG-UI names.
             run: The agent run to process.
-            parts_manager: The parts manager to handle tool call parts.
+            prompt_message_id: The message ID of the user prompt to use for tool call results.
 
         Yields:
             AG-UI Server-Sent Events (SSE).
@@ -700,17 +604,16 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                 # Not interested UserPromptNode, CallToolsNode or End.
                 continue
 
-            # Check for state updates.
-            snapshot: BaseEvent | None
-            async for snapshot in self._tool_events(node.request.parts):
-                yield snapshot
+            # Check for tool results.
+            async for msg in self._tool_events(node.request.parts, prompt_message_id):
+                yield msg
 
             stream_ctx: _RequestStreamContext = _RequestStreamContext()
             request_stream: AgentStream[AgentDepsT]
             async with node.stream(run.ctx) as request_stream:
                 agent_event: AgentStreamEvent
                 async for agent_event in request_stream:
-                    async for msg in self._handle_agent_event(tool_names, stream_ctx, agent_event, parts_manager):
+                    async for msg in self._handle_agent_event(tool_names, stream_ctx, agent_event):
                         yield msg
 
                 for part_end in stream_ctx.part_ends:
@@ -721,7 +624,6 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
         tool_names: dict[str, str],
         stream_ctx: _RequestStreamContext,
         agent_event: AgentStreamEvent,
-        parts_manager: ModelResponsePartsManager,
     ) -> AsyncGenerator[BaseEvent | None, None]:
         """Handle an agent event and yield AG-UI protocol events.
 
@@ -730,7 +632,6 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
             tool_names: A mapping of tool names to their AG-UI names.
             stream_ctx: The request stream context to manage state.
             agent_event: The agent event to process.
-            parts_manager: The parts manager to handle tool call parts.
 
         Yields:
             AG-UI Server-Sent Events (SSE) based on the agent event.
@@ -764,17 +665,6 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                     )
             elif isinstance(agent_event.part, ToolCallPart):  # pragma: no branch
                 tool_name: str | None = tool_names.get(agent_event.part.tool_name)
-                if not tool_name:
-                    # Local tool calls are not sent as events to the UI.
-                    stream_ctx.local_tool_calls.add(agent_event.part.tool_call_id)
-                    return
-
-                parts_manager.handle_tool_call_part(
-                    vendor_part_id=None,
-                    tool_name=agent_event.part.tool_name,
-                    args=agent_event.part.args,
-                    tool_call_id=agent_event.part.tool_call_id,
-                )
                 stream_ctx.last_tool_call_id = agent_event.part.tool_call_id
                 yield ToolCallStartEvent(
                     type=EventType.TOOL_CALL_START,
@@ -786,11 +676,25 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                         type=EventType.TOOL_CALL_END,
                         tool_call_id=agent_event.part.tool_call_id,
                     ),
-                    None,  # Signal continuation of the stream.
                 ]
-            elif isinstance(agent_event.part, ThinkingPart):  # pragma: no cover
-                # No equivalent AG-UI event yet.
-                pass
+                if tool_name:
+                    # AG-UI tool, signal continuation of the stream.
+                    stream_ctx.part_ends.append(None)
+
+            elif isinstance(agent_event.part, ThinkingPart):  # pragma: no branch
+                yield ThinkingTextMessageStartEvent(
+                    type=EventType.THINKING_TEXT_MESSAGE_START,
+                )
+                if agent_event.part.content:  # pragma: no branch
+                    yield ThinkingTextMessageContentEvent(
+                        type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
+                        delta=agent_event.part.content,
+                    )
+                stream_ctx.part_ends = [
+                    ThinkingTextMessageEndEvent(
+                        type=EventType.THINKING_TEXT_MESSAGE_END,
+                    ),
+                ]
         elif isinstance(agent_event, PartDeltaEvent):
             if isinstance(agent_event.delta, TextPartDelta):
                 yield TextMessageContentEvent(
@@ -799,16 +703,6 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                     delta=agent_event.delta.content_delta,
                 )
             elif isinstance(agent_event.delta, ToolCallPartDelta):  # pragma: no branch
-                if agent_event.delta.tool_call_id in stream_ctx.local_tool_calls:
-                    # Local tool calls are not sent as events to the UI.
-                    return
-
-                parts_manager.handle_tool_call_delta(
-                    vendor_part_id=None,
-                    tool_name=None,
-                    args=agent_event.delta.args_delta,
-                    tool_call_id=agent_event.delta.tool_call_id,
-                )
                 yield ToolCallArgsEvent(
                     type=EventType.TOOL_CALL_ARGS,
                     tool_call_id=agent_event.delta.tool_call_id
@@ -819,14 +713,24 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                     else json.dumps(agent_event.delta.args_delta),
                 )
             elif isinstance(agent_event.delta, ThinkingPartDelta):  # pragma: no cover
-                # No equivalent AG-UI event yet.
-                pass
+                yield ThinkingTextMessageContentEvent(
+                    type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
+                    delta=agent_event.delta.content_delta or '',
+                )
         elif isinstance(agent_event, FinalResultEvent):
             # No equivalent AG-UI event yet.
             pass
 
 
-def _convert_history(messages: list[Message]) -> list[ModelMessage]:
+@dataclass
+class _History:
+    """A simple history representation for AG-UI protocol."""
+
+    prompt_message_id: str  # The ID of the last user message.
+    messages: list[ModelMessage]
+
+
+def _convert_history(messages: list[Message]) -> _History:
     """Convert a AG-UI history to a PydanticAI one.
 
     Args:
@@ -836,10 +740,12 @@ def _convert_history(messages: list[Message]) -> list[ModelMessage]:
         List of PydanticAI model messages.
     """
     msg: Message
+    prompt_message_id: str = ''
     result: list[ModelMessage] = []
     tool_calls: dict[str, str] = {}
     for msg in messages:
         if isinstance(msg, UserMessage):
+            prompt_message_id = msg.id
             result.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
         elif isinstance(msg, AssistantMessage):
             if msg.tool_calls:
@@ -880,7 +786,10 @@ def _convert_history(messages: list[Message]) -> list[ModelMessage]:
             # TODO(steve): Should these be handled differently?
             result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
 
-    return result
+    return _History(
+        prompt_message_id=prompt_message_id,
+        messages=result,
+    )
 
 
 __all__ = [
@@ -1018,7 +927,6 @@ class _RequestStreamContext:
     message_id: str = ''
     last_tool_call_id: str | None = None
     part_ends: list[BaseEvent | None] = field(default_factory=lambda: list[Union[BaseEvent, None]]())
-    local_tool_calls: set[str] = field(default_factory=set)
 
     def new_message_id(self) -> str:
         """Generate a new message ID for the request stream.

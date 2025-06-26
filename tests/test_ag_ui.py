@@ -18,7 +18,7 @@ from asgi_lifespan import LifespanManager
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel, TestNode, TestToolCallPart
+from pydantic_ai.models.test import TestModel, TestNode, TestThinkingPart, TestToolCallPart
 
 has_ag_ui: bool = False
 with contextlib.suppress(ImportError):
@@ -424,6 +424,7 @@ def tc_parameters() -> list[AdapterRunTest]:
                 '{"type":"TOOL_CALL_END","toolCallId":"pyd_ai_00000000000000000000000000000003"}',
                 '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
                 '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000004"}',
+                '{"type":"TOOL_CALL_RESULT","messageId":"msg_1","toolCallId":"pyd_ai_00000000000000000000000000000003","content":"Tool result","role":"tool"}',
                 '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000005","role":"assistant"}',
                 '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000005","delta":"{\\"get_weather\\":\\"Tool "}',
                 '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000005","delta":"result\\"}"}',
@@ -502,6 +503,7 @@ def tc_parameters() -> list[AdapterRunTest]:
                 '{"type":"TOOL_CALL_END","toolCallId":"pyd_ai_00000000000000000000000000000003"}',
                 '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
                 '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000005"}',
+                '{"type":"TOOL_CALL_RESULT","messageId":"msg_1","toolCallId":"pyd_ai_00000000000000000000000000000003","content":"Tool result","role":"tool"}',
                 '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000006","role":"assistant"}',
                 '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000006","delta":"{\\"get_weather\\":\\"Tool "}',
                 '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000006","delta":"result\\",\\"get_weather_parts\\":\\"Tool "}',
@@ -562,6 +564,7 @@ def tc_parameters() -> list[AdapterRunTest]:
                 '{"type":"TOOL_CALL_END","toolCallId":"pyd_ai_00000000000000000000000000000003"}',
                 '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
                 '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000004"}',
+                '{"type":"TOOL_CALL_RESULT","messageId":"msg_1","toolCallId":"pyd_ai_00000000000000000000000000000003","content":"Tool result","role":"tool"}',
                 '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000005","role":"assistant"}',
                 '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000005","delta":"{\\"get_weather_parts\\":\\"Tool "}',
                 '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000005","delta":"result\\"}"}',
@@ -585,6 +588,9 @@ def tc_parameters() -> list[AdapterRunTest]:
             ],
             expected_events=[
                 '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"TOOL_CALL_START","toolCallId":"pyd_ai_00000000000000000000000000000003","toolCallName":"send_snapshot"}',
+                '{"type":"TOOL_CALL_END","toolCallId":"pyd_ai_00000000000000000000000000000003"}',
+                '{"type":"TOOL_CALL_RESULT","messageId":"msg_1","toolCallId":"pyd_ai_00000000000000000000000000000003","content":"{\\"type\\":\\"STATE_SNAPSHOT\\",\\"timestamp\\":null,\\"raw_event\\":null,\\"snapshot\\":{\\"key\\":\\"value\\"}}","role":"tool"}',
                 '{"type":"STATE_SNAPSHOT","snapshot":{"key":"value"}}',
                 '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000004","role":"assistant"}',
                 '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000004","delta":"{\\"send_snapshot\\":{\\"type\\":\\"STATE_SNAPSHOT\\",\\"timestam"}',
@@ -609,6 +615,9 @@ def tc_parameters() -> list[AdapterRunTest]:
             ],
             expected_events=[
                 '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"TOOL_CALL_START","toolCallId":"pyd_ai_00000000000000000000000000000003","toolCallName":"send_custom"}',
+                '{"type":"TOOL_CALL_END","toolCallId":"pyd_ai_00000000000000000000000000000003"}',
+                '{"type":"TOOL_CALL_RESULT","messageId":"msg_1","toolCallId":"pyd_ai_00000000000000000000000000000003","content":"[{\\"type\\":\\"CUSTOM\\",\\"timestamp\\":null,\\"raw_event\\":null,\\"name\\":\\"custom_event1\\",\\"value\\":{\\"key1\\":\\"value1\\"}},{\\"type\\":\\"CUSTOM\\",\\"timestamp\\":null,\\"raw_event\\":null,\\"name\\":\\"custom_event2\\",\\"value\\":{\\"key2\\":\\"value2\\"}}]","role":"tool"}',
                 '{"type":"CUSTOM","name":"custom_event1","value":{"key1":"value1"}}',
                 '{"type":"CUSTOM","name":"custom_event2","value":{"key2":"value2"}}',
                 '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000004","role":"assistant"}',
@@ -634,6 +643,10 @@ def tc_parameters() -> list[AdapterRunTest]:
             ],
             expected_events=[
                 '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"TOOL_CALL_START","toolCallId":"pyd_ai_00000000000000000000000000000003","toolCallName":"current_time"}',
+                '{"type":"TOOL_CALL_ARGS","toolCallId":"pyd_ai_00000000000000000000000000000003","delta":"{}"}',
+                '{"type":"TOOL_CALL_END","toolCallId":"pyd_ai_00000000000000000000000000000003"}',
+                '{"type":"TOOL_CALL_RESULT","messageId":"msg_1","toolCallId":"pyd_ai_00000000000000000000000000000003","content":"21T12:08:45.485981+00:00","role":"tool"}',
                 '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000004","role":"assistant"}',
                 '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000004","delta":"{\\"current_time\\":\\"21T1"}',
                 '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000004","delta":"2:08:45.485981+00:00\\"}"}',
@@ -648,7 +661,10 @@ def tc_parameters() -> list[AdapterRunTest]:
                 Run(
                     nodes=[
                         TestNode(
-                            parts=[TestToolCallPart(call_tools=['current_time'])],
+                            parts=[
+                                TestToolCallPart(call_tools=['current_time']),
+                                TestThinkingPart(content='Thinking about the weather'),
+                            ],
                         ),
                         TestNode(
                             parts=[TestToolCallPart(call_tools=['get_weather'])],
@@ -716,21 +732,24 @@ def tc_parameters() -> list[AdapterRunTest]:
             ],
             expected_events=[
                 '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"TOOL_CALL_START","toolCallId":"pyd_ai_00000000000000000000000000000003","toolCallName":"current_time"}',
+                '{"type":"TOOL_CALL_ARGS","toolCallId":"pyd_ai_00000000000000000000000000000003","delta":"{}"}',
+                '{"type":"TOOL_CALL_END","toolCallId":"pyd_ai_00000000000000000000000000000003"}',
+                '{"type":"THINKING_TEXT_MESSAGE_START"}',
+                '{"type":"THINKING_TEXT_MESSAGE_CONTENT","delta":"Thinking about the weather"}',
+                '{"type":"THINKING_TEXT_MESSAGE_END"}',
+                '{"type":"TOOL_CALL_RESULT","messageId":"msg_1","toolCallId":"pyd_ai_00000000000000000000000000000003","content":"21T12:08:45.485981+00:00","role":"tool"}',
                 '{"type":"TOOL_CALL_START","toolCallId":"pyd_ai_00000000000000000000000000000004","toolCallName":"get_weather"}',
                 '{"type":"TOOL_CALL_END","toolCallId":"pyd_ai_00000000000000000000000000000004"}',
-                '{"type":"MESSAGES_SNAPSHOT","messages":[{"id":"msg_1","role":"user","content":"Please tell me the time and then call get_weather for Paris"},'
-                + '{"id":"00000000000000000000000000000005","role":"assistant","toolCalls":[{"id":"pyd_ai_00000000000000000000000000000003","type":"function",'
-                + '"function":{"name":"current_time","arguments":"{}"}}]},{"id":"result-pyd_ai_00000000000000000000000000000003","role":"tool","content":'
-                + '"21T12:08:45.485981+00:00","toolCallId":"pyd_ai_00000000000000000000000000000003"},{"id":"00000000000000000000000000000006","role":"assistant",'
-                + '"toolCalls":[{"id":"pyd_ai_00000000000000000000000000000004","type":"function","function":{"name":"get_weather","arguments":"{\\"location\\": \\"a\\"}"}}]}]}',
                 '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
-                '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000007"}',
-                '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000008","role":"assistant"}',
-                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000008","delta":"{\\"current_time\\":\\"Tool "}',
-                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000008","delta":"result\\",\\"get_weather\\":\\"Tool "}',
-                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000008","delta":"result\\"}"}',
-                '{"type":"TEXT_MESSAGE_END","messageId":"00000000-0000-0000-0000-000000000008"}',
-                '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000007"}',
+                '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000005"}',
+                '{"type":"TOOL_CALL_RESULT","messageId":"msg_1","toolCallId":"pyd_ai_00000000000000000000000000000004","content":"Tool result","role":"tool"}',
+                '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000006","role":"assistant"}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000006","delta":"{\\"current_time\\":\\"Tool "}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000006","delta":"result\\",\\"get_weather\\":\\"Tool "}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000006","delta":"result\\"}"}',
+                '{"type":"TEXT_MESSAGE_END","messageId":"00000000-0000-0000-0000-000000000006"}',
+                '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000005"}',
             ],
         ),
         AdapterRunTest(
@@ -768,7 +787,10 @@ async def test_run_method(mock_uuid: _MockUUID, tc: AdapterRunTest) -> None:
     deps: StateDeps[StateInt] = StateDeps[StateInt](state_type=StateInt)  # type: ignore[reportUnknownArgumentType]
     for run in tc.runs:
         if run.nodes is not None:
-            assert isinstance(adapter.agent.model, TestModel), 'Agent model is not TestModel'
+            assert isinstance(adapter.agent.model, TestModel), (
+                'Agent model is not TestModel'
+                'data: {"type":"TOOL_CALL_RESULT","messageId":"msg_1","toolCallId":"pyd_ai_00000000000000000000000000000003","content":"21T12:08:45.485981+00:00","role":"tool"}\n\n'
+            )
             adapter.agent.model.custom_response_nodes = run.nodes
 
         run_input: RunAgentInput = run.run_input(

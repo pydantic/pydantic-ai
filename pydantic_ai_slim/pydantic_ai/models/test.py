@@ -67,7 +67,20 @@ class TestTextPart:
     text: str
 
 
-TestPart: TypeAlias = Union[TestTextPart, TestToolCallPart]
+@dataclass
+class TestThinkingPart:
+    """Represents a thinking part in the test model.
+
+    This is used to simulate the model thinking about the response.
+    """
+
+    # NOTE: Avoid test discovery by pytest.
+    __test__ = False
+
+    content: str = 'Thinking...'
+
+
+TestPart: TypeAlias = Union[TestTextPart, TestToolCallPart, TestThinkingPart]
 """A part of the test model response."""
 
 
@@ -261,6 +274,8 @@ class TestModel(Model):
                             for name, args in tool_calls
                             if name in part.call_tools
                         )
+                elif isinstance(part, TestThinkingPart):  # pragma: no branch
+                    parts.append(ThinkingPart(content=part.content))
             return ModelResponse(vendor_id=node.id, parts=parts, model_name=self._model_name)
 
     def _request(
@@ -393,9 +408,8 @@ class TestStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_tool_call_part(
                         vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
                     )
-            elif isinstance(part, ThinkingPart):  # pragma: no cover
-                # NOTE: There's no way to reach this part of the code, since we don't generate ThinkingPart on TestModel.
-                assert False, "This should be unreachable — we don't generate ThinkingPart on TestModel."
+            elif isinstance(part, ThinkingPart):
+                yield self._parts_manager.handle_thinking_delta(vendor_part_id=i, content=part.content)
             else:
                 assert_never(part)
 
