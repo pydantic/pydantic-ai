@@ -417,17 +417,17 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
     return rewritten_schemas, all_defs
 
 
-def validate_no_deprecated_kwargs(_deprecated_kwargs: dict[str, Any]) -> None:
-    """Validate that no unknown deprecated kwargs remain after processing.
+def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
+    """Validate that no unknown kwargs remain after processing.
 
     Args:
-        _deprecated_kwargs: Dictionary of remaining deprecated kwargs after specific ones have been processed.
+        _kwargs: Dictionary of remaining kwargs after specific ones have been processed.
 
     Raises:
         UserError: If any unknown kwargs remain.
     """
-    if _deprecated_kwargs:
-        unknown_kwargs = ', '.join(f'`{k}`' for k in _deprecated_kwargs.keys())
+    if _kwargs:
+        unknown_kwargs = ', '.join(f'`{k}`' for k in _kwargs.keys())
         raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
 

@@ -329,7 +329,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         default_output_mode = (
             self.model.profile.default_structured_output_mode if isinstance(self.model, models.Model) else None
         )
-        _utils.validate_no_deprecated_kwargs(_deprecated_kwargs)
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         self._output_schema = _output.OutputSchema[OutputDataT].build(
             output_type,
@@ -473,7 +473,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
             output_type = _deprecated_kwargs.pop('result_type')
 
-        _utils.validate_no_deprecated_kwargs(_deprecated_kwargs)
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         async with self.iter(
             user_prompt=user_prompt,
@@ -641,7 +641,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
             output_type = _deprecated_kwargs.pop('result_type')
 
-        _utils.validate_no_deprecated_kwargs(_deprecated_kwargs)
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
@@ -879,7 +879,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
             output_type = _deprecated_kwargs.pop('result_type')
 
-        _utils.validate_no_deprecated_kwargs(_deprecated_kwargs)
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         return get_event_loop().run_until_complete(
             self.run(
@@ -997,7 +997,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
             output_type = _deprecated_kwargs.pop('result_type')
 
-        _utils.validate_no_deprecated_kwargs(_deprecated_kwargs)
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         yielded = False
         async with self.iter(
