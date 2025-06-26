@@ -379,7 +379,10 @@ class Tool(Generic[AgentDepsT]):
             response_content = await self.function_schema.call(args_dict, ctx)
             current_span = get_current_span()
             if current_span.is_recording() and include_content:
-                current_span.set_attribute('gen_ai.tool.call.response', response_content)
+                current_span.set_attribute(
+                    'gen_ai.tool.call.response',
+                    response_content if isinstance(response_content, str) else str(response_content),
+                )
         except ModelRetry as e:
             return self._on_error(e, message)
 
