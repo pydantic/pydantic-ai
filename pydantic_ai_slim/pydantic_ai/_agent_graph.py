@@ -7,9 +7,11 @@ from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
 from opentelemetry.trace import Tracer
+from temporalio import workflow
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
@@ -17,7 +19,7 @@ from pydantic_ai._utils import is_async_callable, run_in_executor
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
-from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from . import _output, _system_prompt, exceptions, messages as _messages, models, result, temporal, usage as _usage
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, Tool, ToolDefinition, ToolsPrepareFunc
@@ -387,7 +389,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         message_history = await _process_message_history(
             ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
         )
-        model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
+        model_response = await workflow.execute_activity_method(
+            temporal.TemporalActivities.make_temporal_request,
+            args=[message_history, model_settings, model_request_parameters],
+            start_to_close_timeout=timedelta(minutes=2),
+        )
         ctx.state.usage.incr(_usage.Usage())
 
         return self._finish_handling(ctx, model_response)

@@ -27,6 +27,7 @@ from . import (
     messages as _messages,
     models,
     result,
+    temporal,
     usage as _usage,
 )
 from ._agent_graph import HistoryProcessor
@@ -1831,6 +1832,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         ```
         """
         return get_event_loop().run_until_complete(self.to_cli(deps=deps, prog_name=prog_name))
+
+    def get_temporal_activities(self):
+        if self.model is None:
+            raise ValueError('Model is not set')
+        if isinstance(self.model, str):
+            raise ValueError('Model is not set')
+        return [temporal.TemporalActivities(self.model).make_temporal_request]
 
 
 @dataclasses.dataclass(repr=False)
