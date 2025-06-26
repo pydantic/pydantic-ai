@@ -30,14 +30,14 @@ members = [
 
 [[package]]
 name = "ag-ui-protocol"
-version = "0.1.5"
+version = "0.1.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/90/26/1d5530e3fa84da37a8b58300f7a4352f763be43b2c393b0fad4d119f8653/ag_ui_protocol-0.1.5.tar.gz", hash = "sha256:48757afe82a4ee88eb078f31ef9672e09df624573d82045054f5a5b5dc021832", size = 4175, upload-time = "2025-05-20T11:37:06.835Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/c0/f2d24d92be950dd6b12f66dbde5fb839dd01e8af34d3a0305b2309a68907/ag_ui_protocol-0.1.7.tar.gz", hash = "sha256:0e93fd9f7c74d52afbd824d6e9738bd3422e859503905ba7582481cbc3c67ab2", size = 4446, upload-time = "2025-06-26T09:37:08.895Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/db/39/c488044d3195f82e35102c190f92b605a8af1ad63f26b9166e9be460e1c1/ag_ui_protocol-0.1.5-py3-none-any.whl", hash = "sha256:d51a0ad9635059b629b4cb57a9a2ec425b4cc8220e91d50a8f9d559571737ae9", size = 5819, upload-time = "2025-05-20T11:37:05.521Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/c3/c216f5ad4d78f4030a63fec23f00a71f984f10275ccfc7d3902c3c34b7cd/ag_ui_protocol-0.1.7-py3-none-any.whl", hash = "sha256:8c821662ca6e9852569022f449b9f7aeb3f16aa75390fa8c28ceae2cce642baa", size = 6165, upload-time = "2025-06-26T09:37:07.755Z" },
 ]
 
 [[package]]
@@ -3087,7 +3087,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.5" },
+    { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.7" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.52.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.37.24" },
