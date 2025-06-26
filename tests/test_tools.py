@@ -1171,7 +1171,7 @@ def test_tool_retries():
         call_retries.append(ctx.retry)
         raise ModelRetry('Please try again.')
 
-    with pytest.raises(UnexpectedModelBehavior, match='Tool exceeded max retries count of 5'):
+    with pytest.raises(UnexpectedModelBehavior, match="Tool 'infinite_retry_tool' exceeded max retries count of 5"):
         agent.run_sync('Begin infinite retry loop!')
 
     # There are extra 0s here because the toolset is prepared once ahead of the graph run, before the user prompt part is added in.

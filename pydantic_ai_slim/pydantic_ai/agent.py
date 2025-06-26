@@ -686,11 +686,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             run_step=state.run_step,
         )
 
-        run_toolset = await self._toolset.prepare_for_run(run_context)
-        run_output_toolset = await output_toolset.prepare_for_run(run_context)
-
-        # This will raise errors for any name conflicts
-        CombinedToolset([run_output_toolset, run_toolset])
+        toolset = CombinedToolset([output_toolset, self._toolset])
+        run_toolset = await toolset.prepare_for_run(run_context)
 
         model_settings = merge_model_settings(self.model_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
@@ -738,7 +735,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             end_strategy=self.end_strategy,
             output_schema=output_schema,
             output_validators=output_validators,
-            output_toolset=run_output_toolset,
             history_processors=self.history_processors,
             toolset=run_toolset,
             tracer=tracer,

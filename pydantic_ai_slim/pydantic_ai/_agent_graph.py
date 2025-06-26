@@ -17,7 +17,7 @@ from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._utils import is_async_callable, run_in_executor
-from pydantic_ai.toolset import AbstractToolset, CombinedToolset, RunToolset
+from pydantic_ai.toolset import AbstractToolset, RunToolset
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
@@ -107,7 +107,6 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
 
     output_schema: _output.OutputSchema[OutputDataT]
-    output_toolset: RunToolset[DepsT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
 
     history_processors: Sequence[HistoryProcessor[DepsT]]
@@ -249,11 +248,7 @@ async def _prepare_request_parameters(
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     run_context = build_run_context(ctx)
-    ctx.deps.toolset = toolset = await ctx.deps.toolset.prepare_for_run(run_context)
-    ctx.deps.output_toolset = output_toolset = await ctx.deps.output_toolset.prepare_for_run(run_context)
-
-    # This will raise errors for any name conflicts
-    CombinedToolset[DepsT]([output_toolset, toolset])
+    ctx.deps.toolset = await ctx.deps.toolset.prepare_for_run(run_context)
 
     output_schema = ctx.deps.output_schema
     output_object = None
@@ -263,10 +258,18 @@ async def _prepare_request_parameters(
     # ToolOrTextOutputSchema, NativeOutputSchema, and PromptedOutputSchema all inherit from TextOutputSchema
     allow_text_output = isinstance(output_schema, _output.TextOutputSchema)
 
+    function_tools: list[ToolDefinition] = []
+    output_tools: list[ToolDefinition] = []
+    for tool_def in ctx.deps.toolset.tool_defs:
+        if tool_def.kind == 'output':
+            output_tools.append(tool_def)
+        else:
+            function_tools.append(tool_def)
+
     return models.ModelRequestParameters(
-        function_tools=toolset.tool_defs,
+        function_tools=function_tools,
         output_mode=output_schema.mode,
-        output_tools=output_toolset.tool_defs,
+        output_tools=output_tools,
         output_object=output_object,
         allow_text_output=allow_text_output,
     )
@@ -487,7 +490,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         final_result: result.FinalResult[NodeRunEndT] | None = None
         parts: list[_messages.ModelRequestPart] = []
 
-        toolset = CombinedToolset([ctx.deps.toolset, ctx.deps.output_toolset])
+        toolset = ctx.deps.toolset
 
         unknown_calls: list[_messages.ToolCallPart] = []
         tool_calls_by_kind: dict[ToolKind, list[_messages.ToolCallPart]] = defaultdict(list)

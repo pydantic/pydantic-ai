@@ -368,6 +368,11 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
         return self._toolset_for_tool_name(name).get_tool_args_validator(ctx, name)
 
+    def validate_tool_args(
+        self, ctx: RunContext[AgentDepsT], name: str, args: str | dict[str, Any] | None, allow_partial: bool = False
+    ) -> dict[str, Any]:
+        return self._toolset_for_tool_name(name).validate_tool_args(ctx, name, args, allow_partial)
+
     def max_retries_for_tool(self, name: str) -> int:
         return self._toolset_for_tool_name(name).max_retries_for_tool(name)
 
@@ -678,9 +683,9 @@ class RunToolset(WrapperToolset[AgentDepsT]):
         max_retries = self.max_retries_for_tool(name)
         current_retry = self._retries.get(name, 0)
         if current_retry == max_retries:
-            raise UnexpectedModelBehavior(f'Tool exceeded max retries count of {max_retries}') from e
+            raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from e
         else:
-            self._retries[name] = current_retry + 1
+            self._retries[name] = current_retry + 1  # TODO: Reset on successful call!
             raise e
 
     def _validate_tool_name(self, name: str) -> None:

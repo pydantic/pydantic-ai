@@ -2293,7 +2293,7 @@ class TestMultipleToolCalls:
                             tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                         ),
                         RetryPromptPart(
-                            content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
+                            content="Unknown tool name: 'unknown_tool'. Available tools: final_result, regular_tool, another_tool",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
@@ -2380,7 +2380,7 @@ class TestMultipleToolCalls:
                         ),
                         RetryPromptPart(
                             tool_name='unknown_tool',
-                            content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
+                            content="Unknown tool name: 'unknown_tool'. Available tools: final_result, regular_tool, another_tool",
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
                         ),

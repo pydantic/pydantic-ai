@@ -157,7 +157,7 @@ def test_output_tool_retry_error_handled():
         call_count += 1
         raise ModelRetry('Fail')
 
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+    with pytest.raises(UnexpectedModelBehavior, match="Tool 'final_result' exceeded max retries count of 2"):
         agent.run_sync('Hello', model=TestModel())
 
     assert call_count == 3
@@ -200,7 +200,7 @@ def test_output_tool_retry_error_handled_with_custom_args(set_event_loop: None):
 
     agent = Agent('test', output_type=ResultModel, retries=2)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+    with pytest.raises(UnexpectedModelBehavior, match="Tool 'final_result' exceeded max retries count of 2"):
         agent.run_sync('Hello', model=TestModel(custom_output_args={'foo': 'a', 'bar': 1}))
 
 
