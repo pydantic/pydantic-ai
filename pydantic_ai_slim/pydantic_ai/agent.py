@@ -743,6 +743,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             toolset=run_toolset,
             tracer=tracer,
             get_instructions=get_instructions,
+            instrumentation_settings=instrumentation_settings,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
