@@ -982,7 +982,7 @@ class FunctionToolCallEvent:
     @deprecated('`call_id` is deprecated, use `tool_call_id` instead.')
     def call_id(self) -> str:
         """An ID used for matching details about the call to its result."""
-        return self.part.tool_call_id
+        return self.part.tool_call_id  # pragma: no cover
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
