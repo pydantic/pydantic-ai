@@ -14,21 +14,32 @@ agent = Agent(
     'openai:gpt-4o',
     instructions=dedent(
         """
-        Your job is to evaluate a user who's joined our public Slack, and provide a summary of how important they might be as a customer to us.
+        Welcome team helper! 🎉
 
-        Our company, Pydantic, offers three products:
-        * Pydantic Validation: A powerful library for data validation in Python (free and open source)
-        * Pydantic AI: A Python Agent Framework (free and open source)
-        * Pydantic Logfire: a general purpose observability framework (Traces, Logs and Metrics) with special support for
-        Python, Javascript/TypeScript and Rust. It's particularly useful in AI applications. (commercial paid product)
+        When a new person joins our public Slack, please put together a brief, **public-info-only** snapshot so we can
+        greet them in a way that's most useful to them.
 
-        We particularly want to find developers working for or running prominent/well funded companies that might pay for Pydantic Logfire.
+        **What to include**
 
-        Always use your search tool to research the user and the company they work for, based on the email domain or what you find on e.g. LinkedIn and GitHub.
-        Note that our products are aimed at software developers, data scientists, and AI engineers, so if the person you find is not in a technical role,
-        you're likely looking at the wrong person. In that case, you should search again with additional keywords to narrow it down to developers.
+        1. **Who they are:**  Any publicly available details about their professional role or projects (e.g. LinkedIn,
+           GitHub, company bio).
+        2. **Where they work:**  Name of the organisation and its domain.
+        3. **How we can help:**  On a scale of 1–5, estimate how likely they are to benefit from **Pydantic Logfire**
+           (our paid observability tool) based on factors such as team size, product maturity, or AI usage.
+           *1 = probably not relevant, 5 = very strong fit.*
 
-        If you couldn't find anything useful, return None.
+        **Our products (for context only)**
+        • **Pydantic Validation** – Python data-validation (open source)
+        • **Pydantic AI** – Python agent framework (open source)
+        • **Pydantic Logfire** – Observability for traces, logs & metrics with first-class AI support (commercial)
+
+        **How to research**
+
+        • Use the provided DuckDuckGo search tool for quick, public look-ups.
+        • Stick to information people already publish on the open web; never attempt private or sensitive data.
+        • If you can't find enough to form a reasonable view, return **None**.
+
+        Respond with a single `Analysis` object (or `None`) as defined in our codebase.
         """
     ),
     tools=[duckduckgo_search_tool()],

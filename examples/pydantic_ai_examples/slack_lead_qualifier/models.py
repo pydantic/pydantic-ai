@@ -26,9 +26,9 @@ class Analysis(BaseModel):  ### [/analysis-intro]
     organization_domain: str
     job_title: str
     relevance: Annotated[int, Ge(1), Le(5)]
-    """Relevance as a sales lead on a scale of 1 to 5"""
+    """Estimated fit for Pydantic Logfire: 1 = low, 5 = high"""
     summary: str
-    """Short summary of the user and their relevance."""  ### [/analysis]
+    """One-sentence welcome note summarising who they are and how we might help"""  ### [/analysis]
 
     ### [analysis-as_slack_blocks]
     def as_slack_blocks(self, include_relevance: bool = False) -> list[dict[str, Any]]:
