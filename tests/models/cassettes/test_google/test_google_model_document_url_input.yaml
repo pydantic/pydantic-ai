@@ -252,7 +252,7 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '427557'
+      - '264068'
       alt-svc:
       - h3=":443"; ma=86400
       cache-control:
@@ -268,7 +268,7 @@ interactions:
       etag:
       - '"33d0-438b181451e00"'
       expires:
-      - Tue, 13 May 2025 21:19:22 GMT
+      - Tue, 24 Jun 2025 13:27:15 GMT
       last-modified:
       - Mon, 27 Aug 2007 17:15:36 GMT
       strict-transport-security:
@@ -312,11 +312,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '751'
+      - '776'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1704
+      - gfet4t7; dur=1228
       transfer-encoding:
       - chunked
       vary:
@@ -325,26 +325,27 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.27702528635660806
+      - avgLogprobs: -0.28572704394658405
         content:
           parts:
           - text: |
-              The main content of the document is the phrase "Dummy PDF file".
+              The document appears to be a "Dummy PDF file".
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
+      responseId: 4FpeaJWYOLq3nvgP0vasuQk
       usageMetadata:
-        candidatesTokenCount: 15
+        candidatesTokenCount: 12
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 15
+          tokenCount: 12
         promptTokenCount: 1305
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 15
         - modality: DOCUMENT
           tokenCount: 1290
-        totalTokenCount: 1320
+        totalTokenCount: 1317
     status:
       code: 200
       message: OK

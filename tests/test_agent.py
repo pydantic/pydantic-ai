@@ -2096,8 +2096,6 @@ def foo():
 class TestMultipleToolCalls:
     """Tests for scenarios where multiple tool calls are made in a single response."""
 
-    pytestmark = pytest.mark.usefixtures('set_event_loop')
-
     class OutputType(BaseModel):
         """Result type used by all tests."""
 

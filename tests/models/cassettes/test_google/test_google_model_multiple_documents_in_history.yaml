@@ -44,11 +44,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '731'
+      - '797'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1163
+      - gfet4t7; dur=1353
       transfer-encoding:
       - chunked
       vary:
@@ -57,25 +57,26 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.10509344339370727
+      - avgLogprobs: -0.10110493968514835
         content:
           parts:
-          - text: Both documents contain the text "Dummy PDF file".
+          - text: Both documents contain the text "Dummy PDF file" at the top of the page.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
+      responseId: 5FpeaMCpH_DZx_APsLvzqAM
       usageMetadata:
-        candidatesTokenCount: 10
+        candidatesTokenCount: 17
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 10
+          tokenCount: 17
         promptTokenCount: 542
         promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 26
         - modality: DOCUMENT
           tokenCount: 516
-        totalTokenCount: 552
+        - modality: TEXT
+          tokenCount: 26
+        totalTokenCount: 559
     status:
       code: 200
       message: OK
