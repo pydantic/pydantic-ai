@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '658'
+      - '710'
       content-type:
       - application/json
       host:
@@ -33,17 +33,20 @@ interactions:
       - functionDeclarations:
         - description: ''
           name: get_user_country
+          parameters:
+            properties: {}
+            type: OBJECT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '653'
+      - '639'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3776
+      - gfet4t7; dur=4253
       transfer-encoding:
       - chunked
       vary:
@@ -60,16 +63,16 @@ interactions:
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro-preview-05-06
-      responseId: FnpHaOqcKrzQz7IPkuLo8QE
+      modelVersion: models/gemini-2.5-pro
+      responseId: Q1teaJ7SLqejkdUPp_2_qQY
       usageMetadata:
         candidatesTokenCount: 12
         promptTokenCount: 123
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 123
-        thoughtsTokenCount: 266
-        totalTokenCount: 401
+        thoughtsTokenCount: 132
+        totalTokenCount: 267
     status:
       code: 200
       message: OK
@@ -82,7 +85,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '967'
+      - '1019'
       content-type:
       - application/json
       host:
@@ -96,12 +99,12 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_479a74a75212414fb3c7bd2242e9b669
+            id: pyd_ai_091a167f1bfb4ed0ac689961ea5c264a
             name: get_user_country
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_479a74a75212414fb3c7bd2242e9b669
+            id: pyd_ai_091a167f1bfb4ed0ac689961ea5c264a
             name: get_user_country
             response:
               return_value: Mexico
@@ -120,17 +123,20 @@ interactions:
       - functionDeclarations:
         - description: ''
           name: get_user_country
+          parameters:
+            properties: {}
+            type: OBJECT
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '630'
+      - '603'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1888
+      - gfet4t7; dur=3536
       transfer-encoding:
       - chunked
       vary:
@@ -141,23 +147,20 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: |-
-              ```json
-              {"city": "Mexico City", "country": "Mexico"}
-              ```
+          - text: '{"city": "Mexico City", "country": "Mexico"}'
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro-preview-05-06
-      responseId: GHpHaOPkI43Qz7IPxt6T2Ac
+      modelVersion: models/gemini-2.5-pro
+      responseId: R1teaJezFJzqkdUPtrjmqQY
       usageMetadata:
-        candidatesTokenCount: 18
+        candidatesTokenCount: 13
         promptTokenCount: 154
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 154
-        thoughtsTokenCount: 94
-        totalTokenCount: 266
+        thoughtsTokenCount: 153
+        totalTokenCount: 320
     status:
       code: 200
       message: OK

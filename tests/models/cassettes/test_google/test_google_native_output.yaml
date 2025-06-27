@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '453'
+      - '409'
       content-type:
       - application/json
       host:
@@ -22,6 +22,7 @@ interactions:
       generationConfig:
         responseMimeType: application/json
         responseSchema:
+          description: A city and its country.
           properties:
             city:
               type: STRING
@@ -35,10 +36,6 @@ interactions:
           - country
           title: CityLocation
           type: OBJECT
-      toolConfig:
-        functionCallingConfig:
-          allowedFunctionNames: []
-          mode: ANY
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
@@ -49,7 +46,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=780
+      - gfet4t7; dur=402
       transfer-encoding:
       - chunked
       vary:
@@ -58,7 +55,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.0002309985226020217
+      - avgLogprobs: -0.00018302639946341515
         content:
           parts:
           - text: |-
@@ -69,17 +66,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: Gm9HaNr3KteI_NUPmYvnoA8
+      responseId: PVteaL2dMana1PIP8IqGiAI
       usageMetadata:
         candidatesTokenCount: 20
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 20
-        promptTokenCount: 19
+        promptTokenCount: 25
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 19
-        totalTokenCount: 39
+          tokenCount: 25
+        totalTokenCount: 45
     status:
       code: 200
       message: OK

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '568'
+      - '620'
       content-type:
       - application/json
       host:
@@ -30,6 +30,9 @@ interactions:
       - functionDeclarations:
         - description: ''
           name: get_user_country
+          parameters:
+            properties: {}
+            type: OBJECT
         - description: The final response which ends this conversation
           name: final_result
           parameters:
@@ -52,7 +55,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=644
+      - gfet4t7; dur=581
       transfer-encoding:
       - chunked
       vary:
@@ -70,17 +73,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: F21HaLmGI5m2nvgP-__7yAg
+      responseId: LlteaIDvD9m7nvgPz5Sb0Aw
       usageMetadata:
         candidatesTokenCount: 5
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 5
-        promptTokenCount: 32
+        promptTokenCount: 33
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 32
-        totalTokenCount: 37
+          tokenCount: 33
+        totalTokenCount: 38
     status:
       code: 200
       message: OK
@@ -93,7 +96,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '877'
+      - '929'
       content-type:
       - application/json
       host:
@@ -107,12 +110,12 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_9bbd9b896939438e8ff5aba64fed8674
+            id: pyd_ai_3fa5644dae1d4aad997ae39c70006fbd
             name: get_user_country
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_9bbd9b896939438e8ff5aba64fed8674
+            id: pyd_ai_3fa5644dae1d4aad997ae39c70006fbd
             name: get_user_country
             response:
               return_value: Mexico
@@ -128,6 +131,9 @@ interactions:
       - functionDeclarations:
         - description: ''
           name: get_user_country
+          parameters:
+            properties: {}
+            type: OBJECT
         - description: The final response which ends this conversation
           name: final_result
           parameters:
@@ -150,7 +156,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=531
+      - gfet4t7; dur=605
       transfer-encoding:
       - chunked
       vary:
@@ -159,7 +165,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -3.289666346972808e-05
+      - avgLogprobs: -9.877141565084457e-06
         content:
           parts:
           - functionCall:
@@ -170,17 +176,17 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: GG1HaMXtBoW8nvgPkaDy0Ag
+      responseId: LlteaOzCOPOdnvgPrJbnoQg
       usageMetadata:
         candidatesTokenCount: 8
         candidatesTokensDetails:
         - modality: TEXT
           tokenCount: 8
-        promptTokenCount: 46
+        promptTokenCount: 47
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 46
-        totalTokenCount: 54
+          tokenCount: 47
+        totalTokenCount: 55
     status:
       code: 200
       message: OK

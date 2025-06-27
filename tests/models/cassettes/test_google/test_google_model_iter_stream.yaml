@@ -52,7 +52,8 @@ interactions:
       string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_capital\",\"args\":
         {\"country\": \"France\"}}}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\":
         52,\"candidatesTokenCount\": 5,\"totalTokenCount\": 57,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        52}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 5}]},\"modelVersion\": \"gemini-2.0-flash\"}\r\n\r\n"
+        52}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 5}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\":
+        \"1lpeaMTxIpW1nvgP-O3vwQY\"}\r\n\r\n"
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -61,7 +62,7 @@ interactions:
       content-type:
       - text/event-stream
       server-timing:
-      - gfet4t7; dur=586
+      - gfet4t7; dur=477
       transfer-encoding:
       - chunked
       vary:
@@ -95,12 +96,12 @@ interactions:
         - functionCall:
             args:
               country: France
-            id: pyd_ai_f9d7afaf87104cf88c261926103e7898
+            id: pyd_ai_0e1a07b3c2b64d2ab3ad2efbe18e1b97
             name: get_capital
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_f9d7afaf87104cf88c261926103e7898
+            id: pyd_ai_0e1a07b3c2b64d2ab3ad2efbe18e1b97
             name: get_capital
             response:
               return_value: Paris
@@ -138,7 +139,8 @@ interactions:
       string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_temperature\",\"args\":
         {\"city\": \"Paris\"}}}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\":
         64,\"candidatesTokenCount\": 5,\"totalTokenCount\": 69,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        64}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 5}]},\"modelVersion\": \"gemini-2.0-flash\"}\r\n\r\n"
+        64}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 5}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\":
+        \"11peaOXwBPH_2PgPh_z--AY\"}\r\n\r\n"
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -147,7 +149,7 @@ interactions:
       content-type:
       - text/event-stream
       server-timing:
-      - gfet4t7; dur=488
+      - gfet4t7; dur=493
       transfer-encoding:
       - chunked
       vary:
@@ -181,12 +183,12 @@ interactions:
         - functionCall:
             args:
               country: France
-            id: pyd_ai_f9d7afaf87104cf88c261926103e7898
+            id: pyd_ai_0e1a07b3c2b64d2ab3ad2efbe18e1b97
             name: get_capital
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_f9d7afaf87104cf88c261926103e7898
+            id: pyd_ai_0e1a07b3c2b64d2ab3ad2efbe18e1b97
             name: get_capital
             response:
               return_value: Paris
@@ -195,12 +197,12 @@ interactions:
         - functionCall:
             args:
               city: Paris
-            id: pyd_ai_c289a95a512d462b9cd2bc9c7b24f07b
+            id: pyd_ai_98b25d994c5648df82f683188629229d
             name: get_temperature
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_c289a95a512d462b9cd2bc9c7b24f07b
+            id: pyd_ai_98b25d994c5648df82f683188629229d
             name: get_temperature
             response:
               return_value: 30°C
@@ -235,12 +237,13 @@ interactions:
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse
   response:
     body:
-      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The temperature in\"}],\"role\": \"model\"}}],\"usageMetadata\":
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The temperature in Paris\"}],\"role\": \"model\"}}],\"usageMetadata\":
         {\"promptTokenCount\": 169,\"totalTokenCount\": 169,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        169}]},\"modelVersion\": \"gemini-2.0-flash\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\":
-        \" Paris is 30°C.\\n\"}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\":
-        79,\"candidatesTokenCount\": 12,\"totalTokenCount\": 91,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
-        79}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 12}]},\"modelVersion\": \"gemini-2.0-flash\"}\r\n\r\n"
+        169}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\": \"11peaI_ZJLq3nvgP0vasuQk\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \" is 30°C.\\n\"}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\":
+        {\"promptTokenCount\": 79,\"candidatesTokenCount\": 12,\"totalTokenCount\": 91,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 79}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 12}]},\"modelVersion\":
+        \"gemini-2.0-flash\",\"responseId\": \"11peaI_ZJLq3nvgP0vasuQk\"}\r\n\r\n"
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
@@ -249,7 +252,7 @@ interactions:
       content-type:
       - text/event-stream
       server-timing:
-      - gfet4t7; dur=383
+      - gfet4t7; dur=404
       transfer-encoding:
       - chunked
       vary:
