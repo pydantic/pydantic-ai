@@ -289,6 +289,7 @@ def test_logfire(
                                 },
                                 'outer_typed_dict_key': None,
                                 'strict': None,
+                                'kind': 'function',
                             }
                         ],
                         'output_mode': 'text',

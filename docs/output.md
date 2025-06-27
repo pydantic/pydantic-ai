@@ -139,7 +139,6 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.output import ToolRetryError
 
 
 class Row(BaseModel):

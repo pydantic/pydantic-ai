@@ -1700,7 +1700,7 @@ async def test_anthropic_native_output(allow_model_requests: None, anthropic_api
 
     agent = Agent(m, output_type=NativeOutput(CityLocation))
 
-    with pytest.raises(UserError, match='Structured output is not supported by the model.'):
+    with pytest.raises(UserError, match='Native structured output is not supported by the model.'):
         await agent.run('What is the largest city in the user country?')
 
 

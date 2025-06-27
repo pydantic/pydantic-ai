@@ -613,17 +613,17 @@ async def test_exhaustive_strategy_executes_all_tools():
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     ),
-                    RetryPromptPart(
-                        tool_name='unknown_tool',
-                        content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
-                        timestamp=IsNow(tz=timezone.utc),
-                        tool_call_id=IsStr(),
-                    ),
                     ToolReturnPart(
                         tool_name='regular_tool', content=42, timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                     ),
                     ToolReturnPart(
                         tool_name='another_tool', content=2, timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
+                    ),
+                    RetryPromptPart(
+                        content="Unknown tool name: 'unknown_tool'. Available tools: final_result, regular_tool, another_tool",
+                        tool_name='unknown_tool',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
                     ),
                 ]
             ),
@@ -712,15 +712,15 @@ async def test_early_strategy_with_final_result_in_middle():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='regular_tool',
-                        content='Tool not executed - a final result was already processed.',
+                        tool_name='final_result',
+                        content='Final result processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='tool-return',
                     ),
                     ToolReturnPart(
-                        tool_name='final_result',
-                        content='Final result processed.',
+                        tool_name='regular_tool',
+                        content='Tool not executed - a final result was already processed.',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=datetime.timezone.utc),
                         part_kind='tool-return',
@@ -733,10 +733,7 @@ async def test_early_strategy_with_final_result_in_middle():
                         part_kind='tool-return',
                     ),
                     RetryPromptPart(
-                        content='Unknown tool name: '
-                        "'unknown_tool'. Available tools: "
-                        'regular_tool, another_tool, '
-                        'final_result',
+                        content="Unknown tool name: 'unknown_tool'. Available tools: final_result, regular_tool, another_tool",
                         tool_name='unknown_tool',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=datetime.timezone.utc),
@@ -977,6 +974,13 @@ async def test_unknown_tool_call_events():
         [
             FunctionToolCallEvent(
                 part=ToolCallPart(
+                    tool_name='known_tool',
+                    args={'x': 5},
+                    tool_call_id=IsStr(),
+                )
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
                     tool_name='unknown_tool',
                     args={'arg': 'value'},
                     tool_call_id=IsStr(),
@@ -991,9 +995,6 @@ async def test_unknown_tool_call_events():
                 ),
                 tool_call_id=IsStr(),
             ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='known_tool', args={'x': 5}, tool_call_id=IsStr()),
-            ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='known_tool',
@@ -1002,13 +1003,6 @@ async def test_unknown_tool_call_events():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 tool_call_id=IsStr(),
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(
-                    tool_name='unknown_tool',
-                    args={'arg': 'value'},
-                    tool_call_id=IsStr(),
-                ),
             ),
         ]
     )
@@ -1029,15 +1023,15 @@ async def test_output_tool_validation_failure_events():
 
     agent = Agent(FunctionModel(call_final_result_with_bad_data), output_type=OutputType)
 
-    event_parts: list[Any] = []
+    events: list[Any] = []
     async with agent.iter('test') as agent_run:
         async for node in agent_run:
             if Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as event_stream:
                     async for event in event_stream:
-                        event_parts.append(event)
+                        events.append(event)
 
-    assert event_parts == snapshot(
+    assert events == snapshot(
         [
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -1047,9 +1041,16 @@ async def test_output_tool_validation_failure_events():
                 ),
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                result=RetryPromptPart(
+                    content=[
+                        {
+                            'type': 'missing',
+                            'loc': ('value',),
+                            'msg': 'Field required',
+                            'input': {'bad_value': 'invalid'},
+                        }
+                    ],
                     tool_name='final_result',
-                    content='Output tool not used - result failed validation.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),

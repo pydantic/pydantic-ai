@@ -561,7 +561,7 @@ def multi_modal_content_identifier(identifier: str | bytes) -> str:
     return hashlib.sha1(identifier).hexdigest()[:6]
 
 
-async def process_function_tools(
+async def process_function_tools(  # noqa: C901
     toolset: AbstractToolset[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     final_result: result.FinalResult[NodeRunEndT] | None,
@@ -646,70 +646,72 @@ async def process_function_tools(
 
     user_parts: list[_messages.UserPromptPart] = []
 
-    include_content = (
-        ctx.deps.instrumentation_settings is not None and ctx.deps.instrumentation_settings.include_content
-    )
+    if calls_to_run:
+        include_content = (
+            ctx.deps.instrumentation_settings is not None and ctx.deps.instrumentation_settings.include_content
+        )
 
-    # Run all tool tasks in parallel
-    results_by_index: dict[int, _messages.ModelRequestPart] = {}
-    with ctx.deps.tracer.start_as_current_span(
-        'running tools',
-        attributes={
-            'tools': [call.tool_name for call in calls_to_run],
-            'logfire.msg': f'running {len(calls_to_run)} tool{"" if len(calls_to_run) == 1 else "s"}',
-        },
-    ):
-        tasks = [
-            asyncio.create_task(
-                _call_function_tool(toolset, call, run_context, ctx.deps.tracer, include_content), name=call.tool_name
-            )
-            for call in calls_to_run
-        ]
+        # Run all tool tasks in parallel
+        results_by_index: dict[int, _messages.ModelRequestPart] = {}
+        with ctx.deps.tracer.start_as_current_span(
+            'running tools',
+            attributes={
+                'tools': [call.tool_name for call in calls_to_run],
+                'logfire.msg': f'running {len(calls_to_run)} tool{"" if len(calls_to_run) == 1 else "s"}',
+            },
+        ):
+            tasks = [
+                asyncio.create_task(
+                    _call_function_tool(toolset, call, run_context, ctx.deps.tracer, include_content),
+                    name=call.tool_name,
+                )
+                for call in calls_to_run
+            ]
 
-        pending = tasks
-        while pending:
-            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
-                index = tasks.index(task)
-                tool_result = task.result()
-                yield _messages.FunctionToolResultEvent(tool_result, tool_call_id=tool_result.tool_call_id)
+            pending = tasks
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    index = tasks.index(task)
+                    tool_result = task.result()
+                    yield _messages.FunctionToolResultEvent(tool_result, tool_call_id=tool_result.tool_call_id)
 
-                if isinstance(tool_result, _messages.RetryPromptPart):
-                    results_by_index[index] = tool_result
-                elif isinstance(tool_result, _messages.ToolReturnPart):
+                    if isinstance(tool_result, _messages.RetryPromptPart):
+                        results_by_index[index] = tool_result
+                    elif isinstance(tool_result, _messages.ToolReturnPart):
 
-                    def process_content(content: Any) -> Any:
-                        if isinstance(content, _messages.MultiModalContentTypes):
-                            if isinstance(content, _messages.BinaryContent):
-                                identifier = multi_modal_content_identifier(content.data)
-                            else:
-                                identifier = multi_modal_content_identifier(content.url)
+                        def process_content(content: Any) -> Any:
+                            if isinstance(content, _messages.MultiModalContentTypes):
+                                if isinstance(content, _messages.BinaryContent):
+                                    identifier = multi_modal_content_identifier(content.data)
+                                else:
+                                    identifier = multi_modal_content_identifier(content.url)
 
-                            user_parts.append(
-                                _messages.UserPromptPart(
-                                    content=[f'This is file {identifier}:', content],
-                                    timestamp=tool_result.timestamp,
-                                    part_kind='user-prompt',
+                                user_parts.append(
+                                    _messages.UserPromptPart(
+                                        content=[f'This is file {identifier}:', content],
+                                        timestamp=tool_result.timestamp,
+                                        part_kind='user-prompt',
+                                    )
                                 )
-                            )
-                            return f'See file {identifier}'
+                                return f'See file {identifier}'
+                            else:
+                                return content
+
+                        if isinstance(tool_result.content, list):
+                            contents = cast(list[Any], tool_result.content)  # type: ignore
+                            tool_result.content = [process_content(content) for content in contents]
                         else:
-                            return content
+                            tool_result.content = process_content(tool_result.content)
 
-                    if isinstance(tool_result.content, list):
-                        contents = cast(list[Any], tool_result.content)  # type: ignore
-                        tool_result.content = [process_content(content) for content in contents]
+                        results_by_index[index] = tool_result
                     else:
-                        tool_result.content = process_content(tool_result.content)
+                        assert_never(tool_result)
 
-                    results_by_index[index] = tool_result
-                else:
-                    assert_never(tool_result)
-
-    # We append the results at the end, rather than as they are received, to retain a consistent ordering
-    # This is mostly just to simplify testing
-    for k in sorted(results_by_index):
-        parts.append(results_by_index[k])
+        # We append the results at the end, rather than as they are received, to retain a consistent ordering
+        # This is mostly just to simplify testing
+        for k in sorted(results_by_index):
+            parts.append(results_by_index[k])
 
     deferred_calls: list[_messages.ToolCallPart] = []
     for call in tool_calls_by_kind['deferred']:
@@ -739,6 +741,7 @@ async def process_function_tools(
     parts.extend(user_parts)
 
     if final_result:
+        # TODO: Use some better "box" object
         final_result_holder.append(final_result)
 
 
