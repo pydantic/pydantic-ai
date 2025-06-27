@@ -488,7 +488,7 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                 ),
             )
 
-        self.logger.info('done thread_id=%s run_id=%s', run_input.thread_id, run_input.run_id)
+        self.logger.debug('done thread_id=%s run_id=%s', run_input.thread_id, run_input.run_id)
 
     async def _tool_events(
         self,
