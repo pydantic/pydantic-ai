@@ -1880,8 +1880,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     def to_ag_ui(
         self,
-        *,
         # Adapter parameters.
+        path: str = '/',
+        *,
         tool_prefix: str = '',
         logger: logging.Logger | None = None,
         # Agent.iter parameters
@@ -1902,6 +1903,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         Args:
             logger: Optional logger to use for the adapter.
+            path: Path to expose the agent at, defaults to the root path.
             tool_prefix: Optional prefix to add to tool names in the AG-UI.
 
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
@@ -1927,6 +1929,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         return agent_to_ag_ui(
             agent=self,
+            path=path,
             tool_prefix=tool_prefix,
             logger=logger,
             # Agent.iter parameters
