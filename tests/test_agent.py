@@ -3211,6 +3211,73 @@ def test_multimodal_tool_response():
     )
 
 
+def test_plain_tool_response():
+    """Test ToolReturn with custom content and tool return."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Analysis completed'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def analyze_data() -> ToolReturn:
+        return ToolReturn(
+            return_value='Data analysis completed successfully',
+            metadata={'foo': 'bar'},
+        )
+
+    result = agent.run_sync('Please analyze the data')
+
+    # Verify final output
+    assert result.output == 'Analysis completed'
+
+    # Verify message history contains the expected parts
+
+    # Verify the complete message structure using snapshot
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Please analyze the data', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Starting analysis'),
+                    ToolCallPart(
+                        tool_name='analyze_data',
+                        args={},
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=Usage(requests=1, request_tokens=54, response_tokens=4, total_tokens=58),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='analyze_data',
+                        content='Data analysis completed successfully',
+                        tool_call_id=IsStr(),
+                        metadata={'foo': 'bar'},
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Analysis completed')],
+                usage=Usage(requests=1, request_tokens=58, response_tokens=6, total_tokens=64),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+
+
 def test_many_multimodal_tool_response():
     """Test ToolReturn with custom content and tool return."""
 
