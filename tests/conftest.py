@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any, Callable
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
-from google import genai
 from pytest_mock import MockerFixture
 from typing_extensions import TypeAlias
 from vcr import VCR
@@ -349,6 +348,8 @@ async def vertex_provider():
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
+        from google import genai
+
         from pydantic_ai.providers.google import GoogleProvider
     except ImportError:
         pytest.skip('google is not installed')
