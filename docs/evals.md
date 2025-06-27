@@ -55,7 +55,7 @@ Evaluators are the components that analyze and score the results of your task wh
 
 Pydantic Evals includes several built-in evaluators and allows you to create custom evaluators:
 
-```python {title="simple_eval_evaluator.py"}
+```python {title="simple_eval_evaluator.py" requires="simple_eval_dataset.py"}
 from dataclasses import dataclass
 
 from simple_eval_dataset import dataset
@@ -616,7 +616,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 You can also write datasets as JSON files:
 
-```python {title="generate_dataset_example_json.py"}
+```python {title="generate_dataset_example_json.py" requires="generate_dataset_example.py"}
 from pathlib import Path
 
 from generate_dataset_example import AnswerOutput, MetadataType, QuestionInputs

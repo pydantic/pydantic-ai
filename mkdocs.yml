@@ -64,6 +64,7 @@ nav:
       - api/agent.md
       - api/tools.md
       - api/common_tools.md
+      - api/output.md
       - api/result.md
       - api/messages.md
       - api/exceptions.md
@@ -86,6 +87,7 @@ nav:
       - api/models/function.md
       - api/models/fallback.md
       - api/models/wrapper.md
+      - api/models/mcp-sampling.md
       - api/profiles.md
       - api/providers.md
       - api/pydantic_graph/graph.md

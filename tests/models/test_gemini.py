@@ -53,6 +53,7 @@ from pydantic_ai.models.gemini import (
     _GeminiTools,
     _GeminiUsageMetaData,
 )
+from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
@@ -68,7 +69,9 @@ async def test_model_simple(allow_model_requests: None):
     assert m.model_name == 'gemini-1.5-flash'
     assert 'x-goog-api-key' in m.client.headers
 
-    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[])
+    mrp = ModelRequestParameters(
+        function_tools=[], allow_text_output=True, output_tools=[], output_mode='text', output_object=None
+    )
     mrp = m.customize_request_parameters(mrp)
     tools = m._get_tools(mrp)
     tool_config = m._get_tool_config(mrp, tools)
@@ -101,7 +104,13 @@ async def test_model_tools(allow_model_requests: None):
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}, 'required': ['spam']},
     )
 
-    mrp = ModelRequestParameters(function_tools=tools, allow_text_output=True, output_tools=[output_tool])
+    mrp = ModelRequestParameters(
+        function_tools=tools,
+        allow_text_output=True,
+        output_tools=[output_tool],
+        output_mode='text',
+        output_object=None,
+    )
     mrp = m.customize_request_parameters(mrp)
     tools = m._get_tools(mrp)
     tool_config = m._get_tool_config(mrp, tools)
@@ -143,7 +152,13 @@ async def test_require_response_tool(allow_model_requests: None):
         'This is the tool for the final Result',
         {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
     )
-    mrp = ModelRequestParameters(function_tools=[], allow_text_output=False, output_tools=[output_tool])
+    mrp = ModelRequestParameters(
+        function_tools=[],
+        allow_text_output=False,
+        output_tools=[output_tool],
+        output_mode='tool',
+        output_object=None,
+    )
     mrp = m.customize_request_parameters(mrp)
     tools = m._get_tools(mrp)
     tool_config = m._get_tool_config(mrp, tools)
@@ -224,7 +239,13 @@ async def test_json_def_replaced(allow_model_requests: None):
         'This is the tool for the final Result',
         json_schema,
     )
-    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+    mrp = ModelRequestParameters(
+        function_tools=[],
+        allow_text_output=True,
+        output_tools=[output_tool],
+        output_mode='text',
+        output_object=None,
+    )
     mrp = m.customize_request_parameters(mrp)
     assert m._get_tools(mrp) == snapshot(
         {
@@ -303,7 +324,13 @@ async def test_json_def_enum(allow_model_requests: None):
         'This is the tool for the final Result',
         json_schema,
     )
-    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+    mrp = ModelRequestParameters(
+        function_tools=[],
+        output_mode='text',
+        allow_text_output=True,
+        output_tools=[output_tool],
+        output_object=None,
+    )
     mrp = m.customize_request_parameters(mrp)
 
     # This tests that the enum values are properly converted to strings for Gemini
@@ -345,7 +372,13 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
         'This is the tool for the final Result',
         json_schema,
     )
-    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+    mrp = ModelRequestParameters(
+        function_tools=[],
+        allow_text_output=True,
+        output_tools=[output_tool],
+        output_mode='text',
+        output_object=None,
+    )
     mrp = m.customize_request_parameters(mrp)
     assert m._get_tools(mrp) == snapshot(
         _GeminiTools(
@@ -409,7 +442,13 @@ async def test_json_def_recursive(allow_model_requests: None):
         json_schema,
     )
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
-        mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+        mrp = ModelRequestParameters(
+            function_tools=[],
+            allow_text_output=True,
+            output_tools=[output_tool],
+            output_mode='text',
+            output_object=None,
+        )
         mrp = m.customize_request_parameters(mrp)
 
 
@@ -441,7 +480,13 @@ async def test_json_def_date(allow_model_requests: None):
         'This is the tool for the final Result',
         json_schema,
     )
-    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True, output_tools=[output_tool])
+    mrp = ModelRequestParameters(
+        function_tools=[],
+        allow_text_output=True,
+        output_tools=[output_tool],
+        output_mode='text',
+        output_object=None,
+    )
     mrp = m.customize_request_parameters(mrp)
     assert m._get_tools(mrp) == snapshot(
         _GeminiTools(
@@ -1613,6 +1658,465 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ]
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=ToolOutput(CityLocation))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run('What is the largest city in the user country?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=32,
+                    response_tokens=5,
+                    total_tokens=37,
+                    details={'text_prompt_tokens': 32, 'text_candidates_tokens': 5},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'country': 'Mexico', 'city': 'Mexico City'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=46,
+                    response_tokens=8,
+                    total_tokens=54,
+                    details={'text_prompt_tokens': 46, 'text_candidates_tokens': 8},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_gemini_text_output_function(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-2.5-pro-preview-05-06', provider=GoogleGLAProvider(api_key=gemini_api_key))
+
+    def upcase(text: str) -> str:
+        return text.upper()
+
+    agent = Agent(m, output_type=TextOutput(upcase))
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot("""\
+THE LARGEST CITY IN MEXICO IS **MEXICO CITY (CIUDAD DE MÉXICO, CDMX)**.
+
+IT'S THE CAPITAL OF MEXICO AND ONE OF THE LARGEST METROPOLITAN AREAS IN THE WORLD, BOTH BY POPULATION AND LAND AREA.\
+""")
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+The largest city in Mexico is **Mexico City (Ciudad de México, CDMX)**.
+
+It's the capital of Mexico and one of the largest metropolitan areas in the world, both by population and land area.\
+"""
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=9,
+                    response_tokens=44,
+                    total_tokens=598,
+                    details={'thoughts_tokens': 545, 'text_prompt_tokens': 9},
+                ),
+                model_name='models/gemini-2.5-pro-preview-05-06',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id='TT9IaNfGN_DmqtsPzKnE4AE',
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_gemini_native_output_with_tools(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=NativeOutput(CityLocation))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'  # pragma: no cover
+
+    with pytest.raises(UserError, match='Gemini does not support structured output and tools at the same time.'):
+        await agent.run('What is the largest city in the user country?')
+
+
+@pytest.mark.vcr()
+async def test_gemini_native_output(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+
+    class CityLocation(BaseModel):
+        """A city and its country."""
+
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=NativeOutput(CityLocation))
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+{
+  "city": "Mexico City",
+  "country": "Mexico"
+}\
+"""
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=17,
+                    response_tokens=20,
+                    total_tokens=37,
+                    details={'text_prompt_tokens': 17, 'text_candidates_tokens': 20},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_gemini_native_output_multiple(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    class CountryLanguage(BaseModel):
+        country: str
+        language: str
+
+    agent = Agent(m, output_type=NativeOutput([CityLocation, CountryLanguage]))
+
+    result = await agent.run('What is the primarily language spoken in Mexico?')
+    assert result.output == snapshot(CountryLanguage(country='Mexico', language='Spanish'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the primarily language spoken in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+{
+  "result": {
+    "data": {
+      "country": "Mexico",
+      "language": "Spanish"
+    },
+    "kind": "CountryLanguage"
+  }
+}\
+"""
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=46,
+                    response_tokens=46,
+                    total_tokens=92,
+                    details={'text_prompt_tokens': 46, 'text_candidates_tokens': 46},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_gemini_prompted_output(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation))
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object", "city": "Mexico City", "country": "Mexico"}'
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=80,
+                    response_tokens=56,
+                    total_tokens=136,
+                    details={'text_prompt_tokens': 80, 'text_candidates_tokens': 56},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-2.5-pro-preview-05-06', provider=GoogleGLAProvider(api_key=gemini_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run(
+        'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.'
+    )
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=123,
+                    response_tokens=12,
+                    total_tokens=453,
+                    details={'thoughts_tokens': 318, 'text_prompt_tokens': 123},
+                ),
+                model_name='models/gemini-2.5-pro-preview-05-06',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=154,
+                    response_tokens=13,
+                    total_tokens=261,
+                    details={'thoughts_tokens': 94, 'text_prompt_tokens': 154},
+                ),
+                model_name='models/gemini-2.5-pro-preview-05-06',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_gemini_prompted_output_multiple(allow_model_requests: None, gemini_api_key: str):
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    class CountryLanguage(BaseModel):
+        country: str
+        language: str
+
+    agent = Agent(m, output_type=PromptedOutput([CityLocation, CountryLanguage]))
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='{"result": {"kind": "CityLocation", "data": {"city": "Mexico City", "country": "Mexico"}}}'
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=253,
+                    response_tokens=27,
+                    total_tokens=280,
+                    details={'text_prompt_tokens': 253, 'text_candidates_tokens': 27},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+                vendor_id=IsStr(),
             ),
         ]
     )

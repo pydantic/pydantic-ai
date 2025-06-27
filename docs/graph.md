@@ -167,7 +167,7 @@ _(This example is complete, it can be run "as is" with Python 3.10+)_
 
 A [mermaid diagram](#mermaid-diagrams) for this graph can be generated with the following code:
 
-```py {title="graph_example_diagram.py" py="3.10"}
+```py {title="graph_example_diagram.py" py="3.10" requires="graph_example.py"}
 from graph_example import DivisibleBy5, fives_graph
 
 fives_graph.mermaid_code(start_node=DivisibleBy5)
@@ -308,7 +308,7 @@ _(This example is complete, it can be run "as is" with Python 3.10+ — you'll n
 
 A [mermaid diagram](#mermaid-diagrams) for this graph can be generated with the following code:
 
-```py {title="vending_machine_diagram.py" py="3.10"}
+```py {title="vending_machine_diagram.py" py="3.10" requires="vending_machine.py"}
 from vending_machine import InsertCoin, vending_machine_graph
 
 vending_machine_graph.mermaid_code(start_node=InsertCoin)
@@ -524,7 +524,7 @@ Alternatively, you can drive iteration manually with the [`GraphRun.next`][pydan
 
 Below is a contrived example that stops whenever the counter is at 2, ignoring any node runs beyond that:
 
-```python {title="count_down_next.py" noqa="I001" py="3.10"}
+```python {title="count_down_next.py" noqa="I001" py="3.10" requires="count_down.py"}
 from pydantic_graph import End, FullStatePersistence
 from count_down import CountDown, CountDownState, count_down_graph
 
@@ -593,7 +593,7 @@ We can run the `count_down_graph` from [above](#iterating-over-a-graph), using [
 
 As you can see in this code, `run_node` requires no external application state (apart from state persistence) to be run, meaning graphs can easily be executed by distributed execution and queueing systems.
 
-```python {title="count_down_from_persistence.py" noqa="I001" py="3.10"}
+```python {title="count_down_from_persistence.py" noqa="I001" py="3.10" requires="count_down.py"}
 from pathlib import Path
 
 from pydantic_graph import End
@@ -746,7 +746,7 @@ Instead of running the entire graph in a single process invocation, we run the g
 
     _(This example is complete, it can be run "as is" with Python 3.10+)_
 
-```python {title="ai_q_and_a_run.py" noqa="I001" py="3.10"}
+```python {title="ai_q_and_a_run.py" noqa="I001" py="3.10" requires="ai_q_and_a_graph.py"}
 import sys
 from pathlib import Path
 
@@ -965,7 +965,7 @@ You can specify the direction of the state diagram using one of the following va
 - `'BT'`: Bottom to top, the diagram flows vertically from bottom to top.
 
 Here is an example of how to do this using 'Left to Right' (LR) instead of the default 'Top to Bottom' (TB):
-```py {title="vending_machine_diagram.py" py="3.10"}
+```py {title="vending_machine_diagram.py" py="3.10" requires="vending_machine.py"}
 from vending_machine import InsertCoin, vending_machine_graph
 
 vending_machine_graph.mermaid_code(start_node=InsertCoin, direction='LR')
