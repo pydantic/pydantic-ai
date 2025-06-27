@@ -364,6 +364,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._function_toolset = FunctionToolset[AgentDepsT](tools, max_retries=retries)
 
         # This will raise errors for any name conflicts
+        # TODO: Also include toolsets (not mcp_serves as we won't have tool defs yet)
         CombinedToolset[AgentDepsT]([self._output_toolset, self._function_toolset])
 
         # TODO: Set max_retries on MCPServer

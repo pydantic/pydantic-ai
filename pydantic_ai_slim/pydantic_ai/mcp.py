@@ -182,14 +182,14 @@ class MCPServer(AbstractToolset[Any], ABC):
             for mcp_tool in mcp_tools
         ]
 
-    def get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> pydantic_core.SchemaValidator:
+    def _get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> pydantic_core.SchemaValidator:
         return pydantic_core.SchemaValidator(
             schema=pydantic_core.core_schema.dict_schema(
                 pydantic_core.core_schema.str_schema(), pydantic_core.core_schema.any_schema()
             )
         )
 
-    def max_retries_for_tool(self, name: str) -> int:
+    def _max_retries_for_tool(self, name: str) -> int:
         return 1
 
     def set_mcp_sampling_model(self, model: models.Model) -> None:

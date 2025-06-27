@@ -2,19 +2,20 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Sequence
-from contextlib import AsyncExitStack
+from collections.abc import Awaitable, Iterator, Sequence
+from contextlib import AsyncExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Protocol, overload
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Protocol, assert_never, overload
 
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic_core import SchemaValidator
-from typing_extensions import Never, Self
+from typing_extensions import Self
 
-from ._output import BaseOutputSchema, OutputValidator
+from . import messages as _messages
+from ._output import BaseOutputSchema, OutputValidator, ToolRetryError
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from .tools import (
@@ -70,21 +71,21 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         return [tool_def.name for tool_def in self.tool_defs]
 
     @abstractmethod
-    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
         raise NotImplementedError()
 
     def validate_tool_args(
         self, ctx: RunContext[AgentDepsT], name: str, args: str | dict[str, Any] | None, allow_partial: bool = False
     ) -> dict[str, Any]:
         pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
-        validator = self.get_tool_args_validator(ctx, name)
+        validator = self._get_tool_args_validator(ctx, name)
         if isinstance(args, str):
             return validator.validate_json(args or '{}', allow_partial=pyd_allow_partial)
         else:
             return validator.validate_python(args or {}, allow_partial=pyd_allow_partial)
 
     @abstractmethod
-    def max_retries_for_tool(self, name: str) -> int:
+    def _max_retries_for_tool(self, name: str) -> int:
         raise NotImplementedError()
 
     @abstractmethod
@@ -273,10 +274,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     def tool_defs(self) -> list[ToolDefinition]:
         return [tool.tool_def for tool in self.tools.values()]
 
-    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
         return self.tools[name].function_schema.validator
 
-    def max_retries_for_tool(self, name: str) -> int:
+    def _max_retries_for_tool(self, name: str) -> int:
         tool = self.tools[name]
         return tool.max_retries if tool.max_retries is not None else self.max_retries
 
@@ -298,10 +299,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     def tool_defs(self) -> list[ToolDefinition]:
         return [tool.tool_def for tool in self.output_schema.tools.values()]
 
-    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
         return self.output_schema.tools[name].processor.validator
 
-    def max_retries_for_tool(self, name: str) -> int:
+    def _max_retries_for_tool(self, name: str) -> int:
         return self.max_retries
 
     async def call_tool(
@@ -365,16 +366,16 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     def tool_names(self) -> list[str]:
         return list(self._toolset_per_tool_name.keys())
 
-    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        return self._toolset_for_tool_name(name).get_tool_args_validator(ctx, name)
+    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+        return self._toolset_for_tool_name(name)._get_tool_args_validator(ctx, name)
 
     def validate_tool_args(
         self, ctx: RunContext[AgentDepsT], name: str, args: str | dict[str, Any] | None, allow_partial: bool = False
     ) -> dict[str, Any]:
         return self._toolset_for_tool_name(name).validate_tool_args(ctx, name, args, allow_partial)
 
-    def max_retries_for_tool(self, name: str) -> int:
-        return self._toolset_for_tool_name(name).max_retries_for_tool(name)
+    def _max_retries_for_tool(self, name: str) -> int:
+        return self._toolset_for_tool_name(name)._max_retries_for_tool(name)
 
     async def call_tool(
         self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
@@ -419,11 +420,11 @@ class WrapperToolset(AbstractToolset[AgentDepsT], ABC):
     def tool_defs(self) -> list[ToolDefinition]:
         return self.wrapped.tool_defs
 
-    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        return self.wrapped.get_tool_args_validator(ctx, name)
+    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+        return self.wrapped._get_tool_args_validator(ctx, name)
 
-    def max_retries_for_tool(self, name: str) -> int:
-        return self.wrapped.max_retries_for_tool(name)
+    def _max_retries_for_tool(self, name: str) -> int:
+        return self.wrapped._max_retries_for_tool(name)
 
     async def call_tool(
         self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
@@ -452,11 +453,11 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
     def tool_defs(self) -> list[ToolDefinition]:
         return [replace(tool_def, name=self._prefixed_tool_name(tool_def.name)) for tool_def in super().tool_defs]
 
-    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        return super().get_tool_args_validator(ctx, self._unprefixed_tool_name(name))
+    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+        return super()._get_tool_args_validator(ctx, self._unprefixed_tool_name(name))
 
-    def max_retries_for_tool(self, name: str) -> int:
-        return super().max_retries_for_tool(self._unprefixed_tool_name(name))
+    def _max_retries_for_tool(self, name: str) -> int:
+        return super()._max_retries_for_tool(self._unprefixed_tool_name(name))
 
     async def call_tool(
         self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
@@ -519,11 +520,11 @@ class MappedToolset(WrapperToolset[AgentDepsT]):
     def tool_defs(self) -> list[ToolDefinition]:
         return self._tool_defs
 
-    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        return super().get_tool_args_validator(ctx, self._map_name(name))
+    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+        return super()._get_tool_args_validator(ctx, self._map_name(name))
 
-    def max_retries_for_tool(self, name: str) -> int:
-        return super().max_retries_for_tool(self._map_name(name))
+    def _max_retries_for_tool(self, name: str) -> int:
+        return super()._max_retries_for_tool(self._map_name(name))
 
     async def call_tool(
         self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
@@ -660,40 +661,66 @@ class RunToolset(WrapperToolset[AgentDepsT]):
     def validate_tool_args(
         self, ctx: RunContext[AgentDepsT], name: str, args: str | dict[str, Any] | None, allow_partial: bool = False
     ) -> dict[str, Any]:
-        try:
-            self._validate_tool_name(name)
-
-            ctx = replace(ctx, tool_name=name, retry=self._retries.get(name, 0))
+        with self._with_retry(name, ctx) as ctx:
             return super().validate_tool_args(ctx, name, args, allow_partial)
-        except ValidationError as e:
-            return self._on_error(name, e)
 
     async def call_tool(
         self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
     ) -> Any:
+        with self._with_retry(name, ctx) as ctx:
+            try:
+                output = await super().call_tool(ctx, name, tool_args, *args, **kwargs)
+            except Exception as e:
+                raise e
+            else:
+                self._retries.pop(name, None)
+                return output
+
+    @contextmanager
+    def _with_retry(self, name: str, ctx: RunContext[AgentDepsT]) -> Iterator[RunContext[AgentDepsT]]:
         try:
-            self._validate_tool_name(name)
+            if name not in self.tool_names:
+                if self.tool_names:
+                    msg = f'Available tools: {", ".join(self.tool_names)}'
+                else:
+                    msg = 'No tools available.'
+                raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
 
-            ctx = replace(ctx, tool_name=name, retry=self._retries.get(name, 0))
-            return await super().call_tool(ctx, name, tool_args, *args, **kwargs)
-        except ModelRetry as e:
-            return self._on_error(name, e)
+            ctx = replace(ctx, tool_name=name, retry=self._retries.get(name, 0), retries={})
+            yield ctx
+        except (ValidationError, ModelRetry, UnexpectedModelBehavior, ToolRetryError) as e:
+            if isinstance(e, ToolRetryError):
+                pass
+            elif isinstance(e, ValidationError):
+                if ctx.tool_call_id:
+                    m = _messages.RetryPromptPart(
+                        tool_name=name,
+                        content=e.errors(include_url=False, include_context=False),
+                        tool_call_id=ctx.tool_call_id,
+                    )
+                    e = ToolRetryError(m)
+            elif isinstance(e, ModelRetry):
+                if ctx.tool_call_id:
+                    m = _messages.RetryPromptPart(
+                        tool_name=name,
+                        content=e.message,
+                        tool_call_id=ctx.tool_call_id,
+                    )
+                    e = ToolRetryError(m)
+            elif isinstance(e, UnexpectedModelBehavior):
+                if e.__cause__ is not None:
+                    e = e.__cause__
+            else:
+                assert_never(e)
 
-    def _on_error(self, name: str, e: Exception) -> Never:
-        max_retries = self.max_retries_for_tool(name)
-        current_retry = self._retries.get(name, 0)
-        if current_retry == max_retries:
-            raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from e
-        else:
-            self._retries[name] = current_retry + 1  # TODO: Reset on successful call!
-            raise e
+            try:
+                max_retries = self._max_retries_for_tool(name)
+            except Exception:
+                max_retries = 1
+            current_retry = self._retries.get(name, 0)
 
-    def _validate_tool_name(self, name: str) -> None:
-        if name in self.tool_names:
-            return
-
-        if self.tool_names:
-            msg = f'Available tools: {", ".join(self.tool_names)}'
-        else:
-            msg = 'No tools available.'
-        raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
+            if current_retry == max_retries:
+                raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from e
+            else:
+                self._retries[name] = current_retry + 1
+                raise e

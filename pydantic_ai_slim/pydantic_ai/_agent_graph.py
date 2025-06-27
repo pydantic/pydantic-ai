@@ -12,7 +12,6 @@ from dataclasses import field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
 from opentelemetry.trace import Tracer
-from pydantic import ValidationError
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
@@ -610,7 +609,11 @@ async def process_function_tools(  # noqa: C901
         else:
             try:
                 result_data = await _call_tool(toolset, call, run_context)
+            except exceptions.UnexpectedModelBehavior as e:
+                ctx.state.increment_retries(ctx.deps.max_result_retries, e)
+                raise e
             except _output.ToolRetryError as e:
+                ctx.state.increment_retries(ctx.deps.max_result_retries, e)
                 yield _messages.FunctionToolCallEvent(call)
                 parts.append(e.tool_retry)
                 yield _messages.FunctionToolResultEvent(e.tool_retry, tool_call_id=call.tool_call_id)
@@ -792,26 +795,8 @@ async def _call_tool(
     toolset: AbstractToolset[DepsT], tool_call: _messages.ToolCallPart, run_context: RunContext[DepsT]
 ) -> Any:
     run_context = dataclasses.replace(run_context, tool_call_id=tool_call.tool_call_id)
-
-    try:
-        args_dict = toolset.validate_tool_args(run_context, tool_call.tool_name, tool_call.args)
-        response_content = await toolset.call_tool(run_context, tool_call.tool_name, args_dict)
-    except (ValidationError, exceptions.ModelRetry) as e:
-        if isinstance(e, ValidationError):
-            m = _messages.RetryPromptPart(
-                tool_name=tool_call.tool_name,
-                content=e.errors(include_url=False, include_context=False),
-                tool_call_id=tool_call.tool_call_id,
-            )
-        else:
-            m = _messages.RetryPromptPart(
-                tool_name=tool_call.tool_name,
-                content=e.message,
-                tool_call_id=tool_call.tool_call_id,
-            )
-        raise _output.ToolRetryError(m)
-
-    return response_content
+    args_dict = toolset.validate_tool_args(run_context, tool_call.tool_name, tool_call.args)
+    return await toolset.call_tool(run_context, tool_call.tool_name, args_dict)
 
 
 async def _validate_output(
