@@ -46,7 +46,7 @@ requires-python = ">=3.9"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,cli,mcp,evals,a2a]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,cli,mcp,evals,a2a,ag-ui]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -197,6 +197,8 @@ filterwarnings = [
     "error",
     # Issue with python-multipart - we don't want to bump the minimum version of starlette.
     "ignore::PendingDeprecationWarning:starlette",
+    # mistralai accesses model_fields on the instance, which is deprecated in Pydantic 2.11.
+    "ignore:Accessing the 'model_fields' attribute",
     # boto3
     "ignore::DeprecationWarning:botocore.*",
     "ignore::RuntimeWarning:pydantic_ai.mcp",
@@ -221,6 +223,15 @@ include = [
 ]
 omit = ["tests/test_live.py", "tests/example_modules/*.py"]
 branch = true
+disable_warnings = ["include-ignored"]
+
+[tool.coverage.paths]
+# Allow CI run assets to be downloaded an replicated locally.
+source = [
+    ".",
+    "/home/runner/work/pydantic-ai/pydantic-ai",
+    "/System/Volumes/Data/home/runner/work/pydantic-ai/pydantic-ai"
+]
 
 # https://coverage.readthedocs.io/en/latest/config.html#report
 [tool.coverage.report]
