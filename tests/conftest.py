@@ -344,14 +344,14 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 @pytest.fixture()
 async def vertex_provider():
     # NOTE: You need to comment out this line to rewrite the cassettes locally.
-    if not os.getenv('CI', False):
+    if not os.getenv('CI', False):  # pragma: lax no cover
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
         from google import genai
 
         from pydantic_ai.providers.google import GoogleProvider
-    except ImportError:
+    except ImportError:  # pragma: lax no cover
         pytest.skip('google is not installed')
 
     project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
