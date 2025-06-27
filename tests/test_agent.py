@@ -15,6 +15,7 @@ from typing_extensions import Self
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai._output import (
     NativeOutput,
+    NativeOutputSchema,
     OutputSpec,
     PromptedOutput,
     TextOutput,
@@ -1511,6 +1512,17 @@ def test_native_output():
             ),
         ]
     )
+
+
+def test_native_output_strict_mode():
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(output_type=NativeOutput(CityLocation, strict=True))
+    output_schema = agent._output_schema  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(output_schema, NativeOutputSchema)
+    assert output_schema.object_def.strict
 
 
 def test_prompted_output_function_with_retry():
