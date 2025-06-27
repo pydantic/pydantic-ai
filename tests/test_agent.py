@@ -15,6 +15,7 @@ from typing_extensions import Self
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai._output import (
     NativeOutput,
+    NativeOutputSchema,
     OutputSpec,
     PromptedOutput,
     TextOutput,
@@ -24,6 +25,7 @@ from pydantic_ai._output import (
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.messages import (
     BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -33,6 +35,7 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -1513,6 +1516,17 @@ def test_native_output():
     )
 
 
+def test_native_output_strict_mode():
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(output_type=NativeOutput(CityLocation, strict=True))
+    output_schema = agent._output_schema  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(output_schema, NativeOutputSchema)
+    assert output_schema.object_def.strict
+
+
 def test_prompted_output_function_with_retry():
     class Weather(BaseModel):
         temperature: float
@@ -2095,8 +2109,6 @@ def foo():
 
 class TestMultipleToolCalls:
     """Tests for scenarios where multiple tool calls are made in a single response."""
-
-    pytestmark = pytest.mark.usefixtures('set_event_loop')
 
     class OutputType(BaseModel):
         """Result type used by all tests."""
@@ -3127,3 +3139,297 @@ def test_unsupported_output_mode():
 
     with pytest.raises(UserError, match='Output tools are not supported by the model.'):
         agent.run_sync('Hello')
+
+
+def test_multimodal_tool_response():
+    """Test ToolReturn with custom content and tool return."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Analysis completed'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def analyze_data() -> ToolReturn:
+        return ToolReturn(
+            return_value='Data analysis completed successfully',
+            content=[
+                'Here are the analysis results:',
+                ImageUrl('https://example.com/chart.jpg'),
+                'The chart shows positive trends.',
+            ],
+            metadata={'foo': 'bar'},
+        )
+
+    result = agent.run_sync('Please analyze the data')
+
+    # Verify final output
+    assert result.output == 'Analysis completed'
+
+    # Verify message history contains the expected parts
+
+    # Verify the complete message structure using snapshot
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Please analyze the data', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Starting analysis'),
+                    ToolCallPart(
+                        tool_name='analyze_data',
+                        args={},
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=Usage(requests=1, request_tokens=54, response_tokens=4, total_tokens=58),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='analyze_data',
+                        content='Data analysis completed successfully',
+                        tool_call_id=IsStr(),
+                        metadata={'foo': 'bar'},
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'Here are the analysis results:',
+                            ImageUrl(url='https://example.com/chart.jpg'),
+                            'The chart shows positive trends.',
+                        ],
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Analysis completed')],
+                usage=Usage(requests=1, request_tokens=70, response_tokens=6, total_tokens=76),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+
+
+def test_plain_tool_response():
+    """Test ToolReturn with custom content and tool return."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Analysis completed'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def analyze_data() -> ToolReturn:
+        return ToolReturn(
+            return_value='Data analysis completed successfully',
+            metadata={'foo': 'bar'},
+        )
+
+    result = agent.run_sync('Please analyze the data')
+
+    # Verify final output
+    assert result.output == 'Analysis completed'
+
+    # Verify message history contains the expected parts
+
+    # Verify the complete message structure using snapshot
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Please analyze the data', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Starting analysis'),
+                    ToolCallPart(
+                        tool_name='analyze_data',
+                        args={},
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=Usage(requests=1, request_tokens=54, response_tokens=4, total_tokens=58),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='analyze_data',
+                        content='Data analysis completed successfully',
+                        tool_call_id=IsStr(),
+                        metadata={'foo': 'bar'},
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Analysis completed')],
+                usage=Usage(requests=1, request_tokens=58, response_tokens=6, total_tokens=64),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+
+
+def test_many_multimodal_tool_response():
+    """Test ToolReturn with custom content and tool return."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
+        else:
+            return ModelResponse(  # pragma: no cover
+                parts=[
+                    TextPart('Analysis completed'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def analyze_data() -> list[Any]:
+        return [
+            ToolReturn(
+                return_value='Data analysis completed successfully',
+                content=[
+                    'Here are the analysis results:',
+                    ImageUrl('https://example.com/chart.jpg'),
+                    'The chart shows positive trends.',
+                ],
+                metadata={'foo': 'bar'},
+            ),
+            'Something else',
+        ]
+
+    with pytest.raises(
+        UserError,
+        match="analyze_data's return contains invalid nested ToolReturn objects. ToolReturn should be used directly.",
+    ):
+        agent.run_sync('Please analyze the data')
+
+
+def test_multimodal_tool_response_nested():
+    """Test ToolReturn with custom content and tool return."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
+        else:
+            return ModelResponse(  # pragma: no cover
+                parts=[
+                    TextPart('Analysis completed'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def analyze_data() -> ToolReturn:
+        return ToolReturn(
+            return_value=ImageUrl('https://example.com/chart.jpg'),
+            content=[
+                'Here are the analysis results:',
+                ImageUrl('https://example.com/chart.jpg'),
+                'The chart shows positive trends.',
+            ],
+            metadata={'foo': 'bar'},
+        )
+
+    with pytest.raises(
+        UserError,
+        match="analyze_data's `return_value` contains invalid nested MultiModalContentTypes objects. Please use `content` instead.",
+    ):
+        agent.run_sync('Please analyze the data')
+
+
+def test_deprecated_kwargs_validation_agent_init():
+    """Test that invalid kwargs raise UserError in Agent constructor."""
+    with pytest.raises(UserError, match='Unknown keyword arguments: `usage_limits`'):
+        Agent('test', usage_limits='invalid')  # type: ignore[call-arg]
+
+    with pytest.raises(UserError, match='Unknown keyword arguments: `invalid_kwarg`'):
+        Agent('test', invalid_kwarg='value')  # type: ignore[call-arg]
+
+    with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
+        Agent('test', foo='value1', bar='value2')  # type: ignore[call-arg]
+
+
+def test_deprecated_kwargs_validation_agent_run():
+    """Test that invalid kwargs raise UserError in Agent.run method."""
+    agent = Agent('test')
+
+    with pytest.raises(UserError, match='Unknown keyword arguments: `invalid_kwarg`'):
+        agent.run_sync('test', invalid_kwarg='value')  # type: ignore[call-arg]
+
+    with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
+        agent.run_sync('test', foo='value1', bar='value2')  # type: ignore[call-arg]
+
+
+def test_deprecated_kwargs_still_work():
+    """Test that valid deprecated kwargs still work with warnings."""
+    import warnings
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+
+        agent = Agent('test', result_type=str)  # type: ignore[call-arg]
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert '`result_type` is deprecated' in str(w[0].message)
+        assert agent.output_type is str
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+
+        agent = Agent('test', result_tool_name='test_tool')  # type: ignore[call-arg]
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert '`result_tool_name` is deprecated' in str(w[0].message)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+
+        agent = Agent('test', result_tool_description='test description')  # type: ignore[call-arg]
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert '`result_tool_description` is deprecated' in str(w[0].message)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+
+        agent = Agent('test', result_retries=3)  # type: ignore[call-arg]
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert '`result_retries` is deprecated' in str(w[0].message)
+
+
+def test_deprecated_kwargs_mixed_valid_invalid():
+    """Test that mix of valid deprecated and invalid kwargs raises error for invalid ones."""
+    import warnings
+
+    with pytest.raises(UserError, match='Unknown keyword arguments: `usage_limits`'):
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', DeprecationWarning)  # Ignore the deprecation warning for result_type
+            Agent('test', result_type=str, usage_limits='invalid')  # type: ignore[call-arg]
+
+    with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', DeprecationWarning)  # Ignore the deprecation warning for result_tool_name
+            Agent('test', result_tool_name='test', foo='value1', bar='value2')  # type: ignore[call-arg]

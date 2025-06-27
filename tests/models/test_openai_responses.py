@@ -179,7 +179,6 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content=''),
                     ToolCallPart(
                         tool_name='get_location',
                         args='{"loc_name":"Londos"}',
@@ -264,10 +263,7 @@ async def test_image_as_binary_content_tool_response(
                 ]
             ),
             ModelResponse(
-                parts=[
-                    TextPart(content=''),
-                    ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_FLm3B1f8QAan0KpbUXhNY8bA'),
-                ],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
                 usage=Usage(
                     request_tokens=40,
                     response_tokens=11,
@@ -553,10 +549,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 ]
             ),
             ModelResponse(
-                parts=[
-                    TextPart(content=''),
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH'),
-                ],
+                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
                 usage=Usage(
                     request_tokens=62,
                     response_tokens=12,
@@ -579,12 +572,11 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content=''),
                     ToolCallPart(
                         tool_name='final_result',
                         args='{"city":"Mexico City","country":"Mexico"}',
                         tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
-                    ),
+                    )
                 ],
                 usage=Usage(
                     request_tokens=85,
@@ -638,8 +630,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content=''),
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr'),
+                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr')
                 ],
                 usage=Usage(
                     request_tokens=36,
@@ -707,10 +698,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 ]
             ),
             ModelResponse(
-                parts=[
-                    TextPart(content=''),
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_tTAThu8l2S9hNky2krdwijGP'),
-                ],
+                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
                 usage=Usage(
                     request_tokens=66,
                     response_tokens=12,
@@ -779,10 +767,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 ]
             ),
             ModelResponse(
-                parts=[
-                    TextPart(content=''),
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_UaLahjOtaM2tTyYZLxTCbOaP'),
-                ],
+                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
                 usage=Usage(
                     request_tokens=153,
                     response_tokens=12,
@@ -858,10 +843,7 @@ Don't include any text or Markdown fencing before or after.\
 """,
             ),
             ModelResponse(
-                parts=[
-                    TextPart(content=''),
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_FrlL4M0CbAy8Dhv4VqF1Shom'),
-                ],
+                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
                 usage=Usage(
                     request_tokens=107,
                     response_tokens=12,
@@ -944,10 +926,7 @@ Don't include any text or Markdown fencing before or after.\
 """,
             ),
             ModelResponse(
-                parts=[
-                    TextPart(content=''),
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_my4OyoVXRT0m7bLWmsxcaCQI'),
-                ],
+                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
                 usage=Usage(
                     request_tokens=283,
                     response_tokens=12,

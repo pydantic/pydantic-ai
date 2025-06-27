@@ -743,6 +743,30 @@ async def process_function_tools(  # noqa C901
                 if isinstance(result, _messages.RetryPromptPart):
                     results_by_index[index] = result
                 elif isinstance(result, _messages.ToolReturnPart):
+                    if isinstance(result.content, _messages.ToolReturn):
+                        tool_return = result.content
+                        if (
+                            isinstance(tool_return.return_value, _messages.MultiModalContentTypes)
+                            or isinstance(tool_return.return_value, list)
+                            and any(
+                                isinstance(content, _messages.MultiModalContentTypes)
+                                for content in tool_return.return_value  # type: ignore
+                            )
+                        ):
+                            raise exceptions.UserError(
+                                f"{result.tool_name}'s `return_value` contains invalid nested MultiModalContentTypes objects. "
+                                f'Please use `content` instead.'
+                            )
+                        result.content = tool_return.return_value  # type: ignore
+                        result.metadata = tool_return.metadata
+                        if tool_return.content:
+                            user_parts.append(
+                                _messages.UserPromptPart(
+                                    content=list(tool_return.content),
+                                    timestamp=result.timestamp,
+                                    part_kind='user-prompt',
+                                )
+                            )
                     contents: list[Any]
                     single_content: bool
                     if isinstance(result.content, list):
@@ -754,7 +778,13 @@ async def process_function_tools(  # noqa C901
 
                     processed_contents: list[Any] = []
                     for content in contents:
-                        if isinstance(content, _messages.MultiModalContentTypes):
+                        if isinstance(content, _messages.ToolReturn):
+                            raise exceptions.UserError(
+                                f"{result.tool_name}'s return contains invalid nested ToolReturn objects. "
+                                f'ToolReturn should be used directly.'
+                            )
+                        elif isinstance(content, _messages.MultiModalContentTypes):
+                            # Handle direct multimodal content
                             if isinstance(content, _messages.BinaryContent):
                                 identifier = multi_modal_content_identifier(content.data)
                             else:
@@ -769,6 +799,7 @@ async def process_function_tools(  # noqa C901
                             )
                             processed_contents.append(f'See file {identifier}')
                         else:
+                            # Handle regular content
                             processed_contents.append(content)
 
                     if single_content:

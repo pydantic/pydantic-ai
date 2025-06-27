@@ -47,7 +47,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2475
+      - gfet4t7; dur=6424
       transfer-encoding:
       - chunked
       vary:
@@ -62,19 +62,19 @@ interactions:
               args:
                 country: France
               name: get_capital
-            thought: true
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro-preview-05-06
+      modelVersion: models/gemini-2.5-pro
+      responseId: ylpeaP3yFtyokdUPiOXJwQg
       usageMetadata:
         candidatesTokenCount: 15
         promptTokenCount: 57
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 57
-        thoughtsTokenCount: 101
-        totalTokenCount: 173
+        thoughtsTokenCount: 155
+        totalTokenCount: 227
     status:
       code: 200
       message: OK
@@ -102,12 +102,12 @@ interactions:
         - functionCall:
             args:
               country: France
-            id: pyd_ai_8d96b47e83ef4bb59f9700c358038c90
+            id: pyd_ai_c9686c312aec46fca301d52554e47726
             name: get_capital
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_8d96b47e83ef4bb59f9700c358038c90
+            id: pyd_ai_c9686c312aec46fca301d52554e47726
             name: get_capital
             response:
               call_error: |-
@@ -139,11 +139,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '576'
+      - '647'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1017
+      - gfet4t7; dur=3889
       transfer-encoding:
       - chunked
       vary:
@@ -154,18 +154,20 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I am sorry, I cannot fulfill this request. The country you provided is not supported.
+          - text: I am sorry, I cannot fulfill this request. The country "France" is not supported by my system.
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro-preview-05-06
+      modelVersion: models/gemini-2.5-pro
+      responseId: zlpeaKvDEdK2nsEPq97emQ0
       usageMetadata:
-        candidatesTokenCount: 18
+        candidatesTokenCount: 22
         promptTokenCount: 104
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 104
-        totalTokenCount: 122
+        thoughtsTokenCount: 178
+        totalTokenCount: 304
     status:
       code: 200
       message: OK
