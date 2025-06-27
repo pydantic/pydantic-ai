@@ -1,11 +1,13 @@
 from textwrap import dedent
+from types import NoneType
 
 import logfire
 
+### [imports]
 from pydantic_ai import Agent, NativeOutput
-from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
+from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool  ### [/imports]
 
-from .models import Analysis, Profile, Unknown
+from .models import Analysis, Profile
 
 ### [agent]
 agent = Agent(
@@ -26,16 +28,16 @@ agent = Agent(
         Note that our products are aimed at software developers, data scientists, and AI engineers, so if the person you find is not in a technical role,
         you're likely looking at the wrong person. In that case, you should search again with additional keywords to narrow it down to developers.
 
-        If you couldn't find anything useful, return Unknown.
+        If you couldn't find anything useful, return None.
         """
     ),
     tools=[duckduckgo_search_tool()],
-    output_type=NativeOutput([Analysis, Unknown]),
+    output_type=NativeOutput([Analysis, NoneType]),
 )  ### [/agent]
 
 
 ### [analyze_profile]
 @logfire.instrument('Analyze profile')
-async def analyze_profile(profile: Profile) -> Analysis | Unknown:
+async def analyze_profile(profile: Profile) -> Analysis | None:
     result = await agent.run(profile.as_prompt())
     return result.output  ### [/analyze_profile]
