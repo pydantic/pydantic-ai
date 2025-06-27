@@ -745,30 +745,31 @@ async def process_function_tools(  # noqa C901
                 elif isinstance(result, _messages.ToolReturnPart):
                     if isinstance(result.content, _messages.ToolReturn):
                         tool_return = result.content
-                        result.content = tool_return.return_value
                         if (
-                            isinstance(result.content, _messages.MultiModalContentTypes)
-                            or isinstance(result.content, list)
+                            isinstance(tool_return.return_value, _messages.MultiModalContentTypes)
+                            or isinstance(tool_return.return_value, list)
                             and any(
                                 isinstance(content, _messages.MultiModalContentTypes)
-                                for content in result.content  # type: ignore
+                                for content in tool_return.return_value  # type: ignore
                             )
                         ):
                             raise exceptions.UserError(
                                 f"{result.tool_name}'s `return_value` contains invalid nested MultiModalContentTypes objects. "
                                 f'Please use `content` instead.'
                             )
+                        result.content = tool_return.return_value  # type: ignore
                         result.metadata = tool_return.metadata
-                        user_parts.append(
-                            _messages.UserPromptPart(
-                                content=list(tool_return.content),
-                                timestamp=result.timestamp,
-                                part_kind='user-prompt',
+                        if tool_return.content:
+                            user_parts.append(
+                                _messages.UserPromptPart(
+                                    content=list(tool_return.content),
+                                    timestamp=result.timestamp,
+                                    part_kind='user-prompt',
+                                )
                             )
-                        )
                     contents: list[Any]
                     single_content: bool
-                    if isinstance(result.content, list):  # type: ignore
+                    if isinstance(result.content, list):
                         contents = result.content  # type: ignore
                         single_content = False
                     else:

@@ -320,7 +320,7 @@ class ToolReturn:
     return_value: Any
     """The return value to be used in the tool response."""
 
-    content: Sequence[UserContent]
+    content: Sequence[UserContent] | None = None
     """The content sequence to be sent to the model as a UserPromptPart."""
 
     metadata: Any = None
