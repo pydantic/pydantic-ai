@@ -3358,6 +3358,7 @@ def test_multimodal_tool_response_nested():
     ):
         agent.run_sync('Please analyze the data')
 
+
 def test_deprecated_kwargs_validation_agent_init():
     """Test that invalid kwargs raise UserError in Agent constructor."""
     with pytest.raises(UserError, match='Unknown keyword arguments: `usage_limits`'):
