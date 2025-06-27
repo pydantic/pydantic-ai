@@ -1,18 +1,17 @@
 import logfire
 
-from .agent import agent
+from .agent import analyze_profile
 from .models import Analysis, Profile
 from .slack import send_slack_message
 from .store import AnalysisStore
 
+### [process_slack_member]
 NEW_LEAD_CHANNEL = '#hackathon-sales-qual-agent'
-DAILY_SUMMARY_CHANNEL = '#hackathon-sales-qual-agent'
 
 
 @logfire.instrument('Process Slack member')
 async def process_slack_member(profile: Profile):
-    result = await agent.run(profile.as_prompt())
-    analysis = result.output
+    analysis = await analyze_profile(profile)
     logfire.info('Analysis', analysis=analysis)
 
     if not isinstance(analysis, Analysis):
@@ -35,7 +34,11 @@ async def process_slack_member(profile: Profile):
             },
             *analysis.as_slack_blocks(),
         ],
-    )
+    )  ### [/process_slack_member]
+
+
+### [send_daily_summary]
+DAILY_SUMMARY_CHANNEL = '#hackathon-sales-qual-agent'
 
 
 @logfire.instrument('Send daily summary')
@@ -74,5 +77,4 @@ async def send_daily_summary():
         blocks,
     )
 
-    # with logfire.span('Clearing analyses'):
-    #     await AnalysisStore().clear()
+    await AnalysisStore().clear()  ### [/send_daily_summary]

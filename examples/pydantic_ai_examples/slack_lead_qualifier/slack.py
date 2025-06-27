@@ -4,6 +4,7 @@ from typing import Any
 import httpx
 import logfire
 
+### [send_slack_message]
 API_KEY = os.getenv('SLACK_API_KEY')
 assert API_KEY, 'SLACK_API_KEY is not set'
 
@@ -26,4 +27,4 @@ async def send_slack_message(channel: str, blocks: list[dict[str, Any]]):
     result = response.json()
     if not result.get('ok', False):
         error = result.get('error', 'Unknown error')
-        raise Exception(f'Failed to send to Slack: {error}')
+        raise Exception(f'Failed to send to Slack: {error}')  ### [/send_slack_message]

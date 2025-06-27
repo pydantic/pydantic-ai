@@ -4,16 +4,19 @@ import logfire
 from fastapi import FastAPI, HTTPException, status
 from logfire.propagate import get_context
 
-from .models import Analysis, Profile
-from .store import AnalysisStore
+from .models import Profile
 
 
+### [process_slack_member]
 def process_slack_member(profile: Profile):
     from .modal import process_slack_member as _process_slack_member
 
-    _process_slack_member.spawn(profile.model_dump(), logfire_ctx=get_context())
+    _process_slack_member.spawn(
+        profile.model_dump(), logfire_ctx=get_context()
+    )  ### [/process_slack_member]
 
 
+### [app]
 app = FastAPI()
 logfire.instrument_fastapi(app, capture_headers=True)
 
@@ -30,9 +33,4 @@ async def process_webhook(payload: dict[str, Any]) -> dict[str, Any]:
         process_slack_member(profile)
         return {'status': 'OK'}
 
-    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
-
-
-@app.get('/analyses')
-async def list_analyses() -> list[Analysis]:
-    return await AnalysisStore().list()
+    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)  ### [/app]

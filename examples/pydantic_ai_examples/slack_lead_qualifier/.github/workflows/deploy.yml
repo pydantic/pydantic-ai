@@ -1,0 +1,37 @@
+name: deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+
+      - name: setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          working-directory: examples/pydantic_ai_examples
+          activate-environment: true
+          enable-cache: true
+          python-version: 3.13
+
+      - name: install modal
+        working-directory: examples/pydantic_ai_examples
+        run: |
+          uv pip install pip
+          uv pip install modal
+
+      - name: deploy app
+        working-directory: examples/pydantic_ai_examples
+        run: |
+          uv run modal deploy -m slack_lead_qualifier.modal

@@ -4,6 +4,7 @@ from annotated_types import Ge, Le
 from pydantic import BaseModel
 
 
+### [profile]
 class Profile(BaseModel):
     first_name: str | None = None
     last_name: str | None = None
@@ -13,9 +14,10 @@ class Profile(BaseModel):
     def as_prompt(self) -> str:
         from pydantic_ai import format_as_xml
 
-        return format_as_xml(self, root_tag='profile')
+        return format_as_xml(self, root_tag='profile')  ### [/profile]
 
 
+### [analysis]
 class Analysis(BaseModel):
     profile: Profile
     organization_name: str
@@ -38,9 +40,10 @@ class Analysis(BaseModel):
                 'type': 'markdown',
                 'text': self.summary,
             },
-        ]
+        ]  ### [/analysis]
 
 
+### [unknown]
 class Unknown(BaseModel):
     reason: str
-    """Reason for why you couldn't find anything."""
+    """Reason for why you couldn't find anything."""  ### [/unknown]

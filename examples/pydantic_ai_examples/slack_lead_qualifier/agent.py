@@ -1,10 +1,13 @@
 from textwrap import dedent
 
+import logfire
+
 from pydantic_ai import Agent, NativeOutput
 from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 
-from .models import Analysis, Unknown
+from .models import Analysis, Profile, Unknown
 
+### [agent]
 agent = Agent(
     'openai:gpt-4o',
     instructions=dedent(
@@ -28,4 +31,11 @@ agent = Agent(
     ),
     tools=[duckduckgo_search_tool()],
     output_type=NativeOutput([Analysis, Unknown]),
-)
+)  ### [/agent]
+
+
+### [analyze_profile]
+@logfire.instrument('Analyze profile')
+async def analyze_profile(profile: Profile) -> Analysis | Unknown:
+    result = await agent.run(profile.as_prompt())
+    return result.output  ### [/analyze_profile]
