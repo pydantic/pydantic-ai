@@ -14,18 +14,14 @@ agent = Agent(
     'openai:gpt-4o',
     instructions=dedent(
         """
-        Welcome team helper! 🎉
-
-        When a new person joins our public Slack, please put together a brief, **public-info-only** snapshot so we can
-        greet them in a way that's most useful to them.
+        When a new person joins our public Slack, please put together a brief snapshot so we can be most useful to them.
 
         **What to include**
 
-        1. **Who they are:**  Any publicly available details about their professional role or projects (e.g. LinkedIn,
-           GitHub, company bio).
+        1. **Who they are:**  Any details about their professional role or projects (e.g. LinkedIn, GitHub, company bio).
         2. **Where they work:**  Name of the organisation and its domain.
         3. **How we can help:**  On a scale of 1–5, estimate how likely they are to benefit from **Pydantic Logfire**
-           (our paid observability tool) based on factors such as team size, product maturity, or AI usage.
+           (our paid observability tool) based on factors such as company size, product maturity, or AI usage.
            *1 = probably not relevant, 5 = very strong fit.*
 
         **Our products (for context only)**
@@ -35,11 +31,8 @@ agent = Agent(
 
         **How to research**
 
-        • Use the provided DuckDuckGo search tool for quick, public look-ups.
-        • Stick to information people already publish on the open web; never attempt private or sensitive data.
+        • Use the provided DuckDuckGo search tool to research the person and the organization they work for, based on the email domain or what you find on e.g. LinkedIn and GitHub.
         • If you can't find enough to form a reasonable view, return **None**.
-
-        Respond with a single `Analysis` object (or `None`) as defined in our codebase.
         """
     ),
     tools=[duckduckgo_search_tool()],
