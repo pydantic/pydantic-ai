@@ -51,6 +51,10 @@ img.index-header {
   font-style: italic;
 }
 
+.filename a:hover {
+  text-decoration: underline;
+}
+
 #version-notice {
   margin-bottom: 10px;
 }

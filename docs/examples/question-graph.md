@@ -16,9 +16,7 @@ python/uv-run -m pydantic_ai_examples.question_graph
 
 ## Example Code
 
-```python {title="question_graph.py"}
-#! examples/pydantic_ai_examples/question_graph.py
-```
+```snippet {path="/examples/pydantic_ai_examples/question_graph.py"}```
 
 The mermaid diagram generated in this example looks like this:
 
