@@ -95,7 +95,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             match = self._output_schema.find_named_tool(message.parts, output_tool_name)
             if match is None:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                    f'Invalid response, unable to find tool: {self._output_schema.tool_names()}'
+                    'Invalid response, unable to find tool'
                 )
 
             call, output_tool = match
@@ -112,6 +112,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                 'Invalid response, unable to process text output'
             )
+
+        # TODO: Possibly return DeferredToolCalls here?
 
         for validator in self._output_validators:
             result_data = await validator.validate(result_data, call, self._run_ctx)
@@ -380,6 +382,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             pass
         message = self._stream_response.get()
         await self._marked_completed(message)
+        # TODO: Possibly return DeferredToolCalls here?
         return await self.validate_structured_output(message)
 
     @deprecated('`get_data` is deprecated, use `get_output` instead.')
@@ -413,7 +416,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             match = self._output_schema.find_named_tool(message.parts, self._output_tool_name)
             if match is None:
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                    f'Invalid response, unable to find tool: {self._output_schema.tool_names()}'
+                    'Invalid response, unable to find tool'
                 )
 
             call, output_tool = match

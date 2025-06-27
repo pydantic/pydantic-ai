@@ -6,7 +6,8 @@ from typing import Callable, Generic, Literal, Union
 
 from typing_extensions import TypeAliasType, TypeVar
 
-from .tools import RunContext
+from .messages import ToolCallPart
+from .tools import RunContext, ToolDefinition
 
 __all__ = (
     # classes
@@ -286,3 +287,11 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
+
+
+@dataclass
+class DeferredToolCalls:
+    """Output type for calls to tools defined as pending."""
+
+    tool_calls: list[ToolCallPart]
+    tool_defs: dict[str, ToolDefinition]
