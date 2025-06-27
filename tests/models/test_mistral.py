@@ -364,7 +364,7 @@ async def test_no_delta(allow_model_requests: None):
 #####################
 
 
-async def test_request_model_structured_with_arguments_dict_response(allow_model_requests: None):
+async def test_request_native_with_arguments_dict_response(allow_model_requests: None):
     class CityLocation(BaseModel):
         city: str
         country: str
@@ -423,7 +423,7 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
     )
 
 
-async def test_request_model_structured_with_arguments_str_response(allow_model_requests: None):
+async def test_request_native_with_arguments_str_response(allow_model_requests: None):
     class CityLocation(BaseModel):
         city: str
         country: str

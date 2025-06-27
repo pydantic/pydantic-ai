@@ -1,0 +1,248 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '689'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: |-
+          Always respond with a JSON object that's compatible with this schema:
+
+          {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+          Don't include any text or Markdown fencing before or after.
+        role: system
+      - content: What is the largest city in the user country?
+        role: user
+      model: gpt-4o
+      stream: false
+      text:
+        format:
+          type: json_object
+      tool_choice: auto
+      tools:
+      - description: ''
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1408'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '8314'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1749561106
+      error: null
+      id: resp_68482f12d63881a1830201ed101ecfbf02f8ef7f2fb42b50
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - arguments: '{}'
+        call_id: call_FrlL4M0CbAy8Dhv4VqF1Shom
+        id: fc_68482f1b0ff081a1b37b9170ee740d1e02f8ef7f2fb42b50
+        name: get_user_country
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        summary: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: json_object
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 107
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 12
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 119
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '925'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=8a8rNQQYozQt3YjcA61k6KGe.AlrMMrtcIvKv.D1s1E-1749561115-1.0.1.1-OFcqg8xD2_HdbeO74bU2.mLTqDuiK.ploHeu3_ITPvDlGwrVkwk8erMkHagxk4UDxACCCAygnUs1HL.F4AGjQCaZm1m2eYiMVbLqp0iQh7g;
+        _cfuvid=wKTRRc2dbdYNYnYwA2vRxVjUvqqkQovvKDwULW0Xwns-1749561115173-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: |-
+          Always respond with a JSON object that's compatible with this schema:
+
+          {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+          Don't include any text or Markdown fencing before or after.
+        role: system
+      - content: What is the largest city in the user country?
+        role: user
+      - content: ''
+        role: assistant
+      - arguments: '{}'
+        call_id: call_FrlL4M0CbAy8Dhv4VqF1Shom
+        name: get_user_country
+        type: function_call
+      - call_id: call_FrlL4M0CbAy8Dhv4VqF1Shom
+        output: Mexico
+        type: function_call_output
+      model: gpt-4o
+      stream: false
+      text:
+        format:
+          type: json_object
+      tool_choice: auto
+      tools:
+      - description: ''
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1501'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1098'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1749561115
+      error: null
+      id: resp_68482f1b556081918d64c9088a470bf0044fdb7d019d4115
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          text: '{"city":"Mexico City","country":"Mexico"}'
+          type: output_text
+        id: msg_68482f1c159081918a2405f458009a6a044fdb7d019d4115
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        summary: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: json_object
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 130
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 12
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 142
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

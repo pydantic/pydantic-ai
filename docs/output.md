@@ -4,7 +4,7 @@ The output is wrapped in [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] or
 
 Both `AgentRunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
 
-A run ends when a plain text response is received (assuming no output type is specified or `str` is one of the allowed options), or when the model responds with one of the structured output types by calling a special output tool. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agents.md#usage-limits).
+A run ends when the model responds with one of the structured output types, or, if no output type is specified or `str` is one of the allowed options, when a plain text response is received. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agents.md#usage-limits).
 
 Here's an example using a Pydantic model as the `output_type`, forcing the model to respond with data matching our specification:
 
@@ -31,12 +31,12 @@ _(This example is complete, it can be run "as is")_
 
 ## Output data {#structured-output}
 
-The [`Agent`][pydantic_ai.Agent] class constructor takes an `output_type` argument that takes one or more types or [output functions](#output-functions). It supports both type unions and lists of types and functions.
+The [`Agent`][pydantic_ai.Agent] class constructor takes an `output_type` argument that takes one or more types or [output functions](#output-functions). It supports simple scalar types, list and dict types, dataclasses and Pydantic models, as well as type unions -- generally everything supported as type hints in a Pydantic model. You can also pass a list of multiple choices.
 
-When no output type is specified, or when the output type is `str` or a union or list of types including `str`, the model is allowed to respond with plain text, and this text is used as the output data.
-If `str` is not among the allowed output types, the model is not allowed to respond with plain text and is forced to return structured data (or arguments to an output function).
+By default, Pydantic AI leverages the model's tool calling capability to make it return structured data. When multiple output types are specified (in a union or list), each member is registered with the model as a separate output tool in order to reduce the complexity of the schema and maximise the chances a model will respond correctly. This has been shown to work well across a wide range of models. If you'd like to change the names of the output tools, use a model's native structured output feature, or pass the output schema to the model in its [instructions](agents.md#instructions), you can use an [output mode](#output-modes) marker class.
 
-If the output type is a union or list with multiple members, each member (except for `str`, if it is a member) is registered with the model as a separate output tool in order to reduce the complexity of the tool schemas and maximise the chances a model will respond correctly.
+When no output type is specified, or when `str` is among the output types, any plain text response from the model will be used as the output data.
+If `str` is not among the output types, the model is forced to return structured data or call an output function.
 
 If the output type schema is not of type `"object"` (e.g. it's `int` or `list[int]`), the output type is wrapped in a single element object, so the schema of all tools registered with the model are object schemas.
 
@@ -48,7 +48,8 @@ Structured outputs (like tools) use Pydantic to build the JSON schema used for t
     Static type checkers like pyright and mypy will do their best the infer the agent's output type from the `output_type` you've specified, but they're not always able to do so correctly when you provide functions or multiple types in a union or list, even though PydanticAI will behave correctly. When this happens, your type checker will complain even when you're confident you've passed a valid `output_type`, and you'll need to help the type checker by explicitly specifying the generic parameters on the `Agent` constructor. This is shown in the second example below and the output functions example further down.
 
     Specifically, there are three valid uses of `output_type` where you'll need to do this:
-    1. When using a union of types, e.g. `output_type=Foo | Bar` or in older Python, `output_type=Union[Foo, Bar]`. Until [PEP-747](https://peps.python.org/pep-0747/) "Annotating Type Forms" lands in Python 3.15, type checkers do not consider these a valid value for `output_type`. In addition to the generic parameters on the `Agent` constructor, you'll need to add `# type: ignore` to the line that passes the union to `output_type`.
+
+    1. When using a union of types, e.g. `output_type=Foo | Bar`, or in older Python, `output_type=Union[Foo, Bar]`. Until [PEP-747](https://peps.python.org/pep-0747/) "Annotating Type Forms" lands in Python 3.15, type checkers do not consider these a valid value for `output_type`. In addition to the generic parameters on the `Agent` constructor, you'll need to add `# type: ignore` to the line that passes the union to `output_type`. Alternatively, you can use a list: `output_type=[Foo, Bar]`.
     2. With mypy: When using a list, as a functionally equivalent alternative to a union, or because you're passing in [output functions](#output-functions). Pyright does handle this correctly, and we've filed [an issue](https://github.com/python/mypy/issues/19142) with mypy to try and get this fixed.
     3. With mypy: when using an async output function. Pyright does handle this correctly, and we've filed [an issue](https://github.com/python/mypy/issues/19143) with mypy to try and get this fixed.
 
@@ -70,7 +71,7 @@ class Box(BaseModel):
 
 agent = Agent(
     'openai:gpt-4o-mini',
-    output_type=[Box, str],
+    output_type=[Box, str], # (1)!
     system_prompt=(
         "Extract me the dimensions of a box, "
         "if you can't extract all data, ask the user to try again."
@@ -86,9 +87,11 @@ print(result.output)
 #> width=10 height=20 depth=30 units='cm'
 ```
 
+1. This could also have been a union: `output_type=Box | str` (or in older Python, `output_type=Union[Box, str]`). However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+
 _(This example is complete, it can be run "as is")_
 
-Here's an example of using a union return type, for which PydanticAI will register multiple tools and wraps non-object schemas in an object:
+Here's an example of using a union return type, which will register multiple output tools and wrap non-object schemas in an object:
 
 ```python {title="colors_or_sizes.py"}
 from typing import Union
@@ -97,7 +100,7 @@ from pydantic_ai import Agent
 
 agent = Agent[None, Union[list[str], list[int]]](
     'openai:gpt-4o-mini',
-    output_type=Union[list[str], list[int]],  # type: ignore
+    output_type=Union[list[str], list[int]],  # type: ignore # (1)!
     system_prompt='Extract either colors or sizes from the shapes provided.',
 )
 
@@ -110,7 +113,10 @@ print(result.output)
 #> [10, 20, 30]
 ```
 
+1. As explained in the "Type checking considerations" section above, using a union rather than a list requires explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+
 _(This example is complete, it can be run "as is")_
+
 
 ### Output functions
 
@@ -132,7 +138,6 @@ from typing import Union
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai._output import ToolRetryError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
 
@@ -195,7 +200,7 @@ async def hand_off_to_sql_agent(ctx: RunContext, query: str) -> list[Row]:
         return output
     except UnexpectedModelBehavior as e:
         # Bubble up potentially retryable errors to the router agent
-        if (cause := e.__cause__) and isinstance(cause, ToolRetryError):
+        if (cause := e.__cause__) and hasattr(cause, 'tool_retry'):
             raise ModelRetry(f'SQL agent failed: {cause.tool_retry.content}') from e
         else:
             raise
@@ -223,23 +228,171 @@ print(result.output)
 """
 
 result = router_agent.run_sync('Select all pets')
-print(result.output)
+print(repr(result.output))
 """
-explanation = "The requested table 'pets' does not exist in the database. The only available table is 'capital_cities', which does not contain data about pets."
+RouterFailure(explanation="The requested table 'pets' does not exist in the database. The only available table is 'capital_cities', which does not contain data about pets.")
 """
 
 result = router_agent.run_sync('How do I fly from Amsterdam to Mexico City?')
-print(result.output)
+print(repr(result.output))
 """
-explanation = 'I am not equipped to provide travel information, such as flights from Amsterdam to Mexico City.'
+RouterFailure(explanation='I am not equipped to provide travel information, such as flights from Amsterdam to Mexico City.')
 """
 ```
+
+#### Text output
+
+If you provide an output function that takes a string, Pydantic AI will by default create an output tool like for any other output function. If instead you'd like the model to provide the string using plain text output, you can wrap the function in the [`TextOutput`][pydantic_ai.output.TextOutput] marker class. If desired, this marker class can be used alongside one or more [`ToolOutput`](#tool-output) marker classes (or unmarked types or functions) in a list provided to `output_type`.
+
+```python {title="text_output_function.py"}
+from pydantic_ai import Agent, TextOutput
+
+
+def split_into_words(text: str) -> list[str]:
+    return text.split()
+
+
+agent = Agent(
+    'openai:gpt-4o',
+    output_type=TextOutput(split_into_words),
+)
+result = agent.run_sync('Who was Albert Einstein?')
+print(result.output)
+#> ['Albert', 'Einstein', 'was', 'a', 'German-born', 'theoretical', 'physicist.']
+```
+
+_(This example is complete, it can be run "as is")_
+
+### Output modes
+
+Pydantic AI implements three different methods to get a model to output structured data:
+
+1. [Tool Output](#tool-output), where tool calls are used to produce the output.
+2. [Native Output](#native-output), where the model is required to produce text content compliant with a provided JSON schema.
+3. [Prompted Output](#prompted-output), where a prompt is injected into the model instructions including the desired JSON schema, and we attempt to parse the model's plain-text response as appropriate.
+
+#### Tool Output
+
+In the default Tool Output mode, the output JSON schema of each output type (or function) is provided to the model as the parameters schema of a special output tool. This is the default as it's supported by virtually all models and has been shown to work very well.
+
+If you'd like to change the name of the output tool, pass a custom description to aid the model, or turn on or off strict mode, you can wrap the type(s) in the [`ToolOutput`][pydantic_ai.output.ToolOutput] marker class and provide the appropriate arguments. Note that by default, the description is taken from the docstring specified on a Pydantic model or output function, so specifying it using the marker class is typically not necessary.
+
+```python {title="tool_output.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, ToolOutput
+
+
+class Fruit(BaseModel):
+    name: str
+    color: str
+
+
+class Vehicle(BaseModel):
+    name: str
+    wheels: int
+
+
+agent = Agent(
+    'openai:gpt-4o',
+    output_type=[ # (1)!
+        ToolOutput(Fruit, name='return_fruit'),
+        ToolOutput(Vehicle, name='return_vehicle'),
+    ],
+)
+result = agent.run_sync('What is a banana?')
+print(repr(result.output))
+#> Fruit(name='banana', color='yellow')
+```
+
+1. If we were passing just `Fruit` and `Vehicle` without custom tool names, we could have used a union: `output_type=Fruit | Vehicle` (or in older Python, `output_type=Union[Fruit | Vehicle]`). However, as `ToolOutput` is an object rather than a type, we have to use a list.
+
+_(This example is complete, it can be run "as is")_
+
+#### Native Output
+
+Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, Anthropic does not support this at all, and Gemini cannot use tools at the same time as structured output, and attempting to do so will result in an error.
+
+To use this mode, you can wrap the output type(s) in the [`NativeOutput`][pydantic_ai.output.NativeOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient.
+
+```python {title="native_output.py" requires="tool_output.py"}
+from tool_output import Fruit, Vehicle
+
+from pydantic_ai import Agent, NativeOutput
+
+agent = Agent(
+    'openai:gpt-4o',
+    output_type=NativeOutput(
+        [Fruit, Vehicle], # (1)!
+        name='Fruit or vehicle',
+        description='Return a fruit or vehicle.'
+    ),
+)
+result = agent.run_sync('What is a Ford Explorer?')
+print(repr(result.output))
+#> Vehicle(name='Ford Explorer', wheels=4)
+```
+
+1. This could also have been a union: `output_type=Fruit | Vehicle` (or in older Python, `output_type=Union[Fruit, Vehicle]`). However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+
+_(This example is complete, it can be run "as is")_
+
+#### Prompted Output
+
+In this mode, the model is prompted to output text matching the provided JSON schema through its [instructions](agents.md#instructions) and it's up to the model to interpret those instructions correctly. This is usable with all models, but is often the least reliable approach as the model is not forced to match the schema.
+
+While we would generally suggest starting with tool or native output, in some cases this mode may result in higher quality outputs, and for models without native tool calling or structured output support it is the only option for producing structured outputs.
+
+If the model API supports the "JSON Mode" feature (aka "JSON Object response format") to force the model to output valid JSON, this is enabled, but it's still up to the model to abide by the schema. Pydantic AI will validate the returned structured data and tell the model to try again if validation fails, but if the model is not intelligent enough this may not be sufficient.
+
+To use this mode, you can wrap the output type(s) in the [`PromptedOutput`][pydantic_ai.output.PromptedOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient. Additionally, it supports an `template` argument lets you specify a custom instructions template to be used instead of the [default][pydantic_ai.profiles.ModelProfile.prompted_output_template].
+
+```python {title="prompted_output.py" requires="tool_output.py"}
+from pydantic import BaseModel
+from tool_output import Vehicle
+
+from pydantic_ai import Agent, PromptedOutput
+
+
+class Device(BaseModel):
+    name: str
+    kind: str
+
+
+agent = Agent(
+    'openai:gpt-4o',
+    output_type=PromptedOutput(
+        [Vehicle, Device], # (1)!
+        name='Vehicle or device',
+        description='Return a vehicle or device.'
+    ),
+)
+result = agent.run_sync('What is a MacBook?')
+print(repr(result.output))
+#> Device(name='MacBook', kind='laptop')
+
+agent = Agent(
+    'openai:gpt-4o',
+    output_type=PromptedOutput(
+        [Vehicle, Device],
+        template='Gimme some JSON: {schema}'
+    ),
+)
+result = agent.run_sync('What is a Ford Explorer?')
+print(repr(result.output))
+#> Vehicle(name='Ford Explorer', wheels=4)
+```
+
+1. This could also have been a union: `output_type=Vehicle | Device` (or in older Python, `output_type=Union[Vehicle, Device]`). However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+
+_(This example is complete, it can be run "as is")_
 
 ### Output validators {#output-validator-functions}
 
 Some validation is inconvenient or impossible to do in Pydantic validators, in particular when the validation requires IO and is asynchronous. PydanticAI provides a way to add validation functions via the [`agent.output_validator`][pydantic_ai.Agent.output_validator] decorator.
 
 If you want to implement separate validation logic for different output types, it's recommended to use [output functions](#output-functions) instead, to save you from having to do `isinstance` checks inside the output validator.
+If you want the model to output plain text, do your own processing or validation, and then have the agent's final output be the result of your function, it's recommended to use an [output function](#output-functions) with the [`TextOutput` marker class](#text-output).
 
 Here's a simplified variant of the [SQL Generation example](examples/sql-gen.md):
 
