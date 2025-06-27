@@ -1,0 +1,59 @@
+interactions:
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/nebius/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-length:
+      - '560'
+      content-type:
+      - application/json
+      cross-origin-opener-policy:
+      - same-origin
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          audio: null
+          content: Paris
+          function_call: null
+          reasoning_content: null
+          refusal: null
+          role: assistant
+          tool_calls: []
+        stop_reason: null
+      created: 1749475551
+      id: chatcmpl-6fa46f85f4f04beda9c936d5996b22a8
+      model: Qwen/Qwen2.5-72B-Instruct-fast
+      object: chat.completion
+      prompt_logprobs: null
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 2
+        completion_tokens_details: null
+        prompt_tokens: 26
+        prompt_tokens_details: null
+        total_tokens: 28
+    status:
+      code: 200
+      message: OK
+version: 1
