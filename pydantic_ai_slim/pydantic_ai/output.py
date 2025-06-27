@@ -155,7 +155,7 @@ class NativeOutput(Generic[OutputDataT]):
     description: str | None
     """The description of the structured output that will be passed to the model. If not specified and only one output is provided, the docstring of the output type or function will be used."""
     strict: bool | None
-    """Whether to use strict mode for the output."""
+    """Whether to use strict mode for the output, if the model supports it."""
 
     def __init__(
         self,
