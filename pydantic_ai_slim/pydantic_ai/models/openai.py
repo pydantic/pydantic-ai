@@ -652,7 +652,7 @@ class OpenAIResponsesModel(Model):
                     items.append(ThinkingPart(content=summary.text, id=item.id))
             elif item.type == 'message':
                 for content in item.content:
-                    if content.type == 'output_text':
+                    if content.type == 'output_text':  # pragma: no branch
                         items.append(TextPart(content.text))
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
