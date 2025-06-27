@@ -21,7 +21,7 @@ app = FastAPI()
 logfire.instrument_fastapi(app, capture_headers=True)
 
 
-@app.post('/webhook')
+@app.post('/')
 async def process_webhook(payload: dict[str, Any]) -> dict[str, Any]:
     if payload['type'] == 'url_verification':
         return {'challenge': payload['challenge']}

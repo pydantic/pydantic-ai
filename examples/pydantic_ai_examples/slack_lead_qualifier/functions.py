@@ -9,9 +9,11 @@ from .slack import send_slack_message
 from .store import AnalysisStore  ### [/imports,/imports-daily_summary]
 
 ### [constant-new_lead_channel]
-NEW_LEAD_CHANNEL = '#new-leads'  ### [/constant-new_lead_channel]
+NEW_LEAD_CHANNEL = '#new-slack-leads'
+### [/constant-new_lead_channel]
 ### [constant-daily_summary_channel]
-DAILY_SUMMARY_CHANNEL = '#daily-lead-summary'  ### [/constant-daily_summary_channel]
+DAILY_SUMMARY_CHANNEL = '#daily-slack-leads-summary'
+### [/constant-daily_summary_channel]
 
 
 ### [process_slack_member]
