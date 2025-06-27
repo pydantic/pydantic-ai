@@ -182,6 +182,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                     _flatten_output_spec(output_spec.outputs),
                     name=output_spec.name,
                     description=output_spec.description,
+                    strict=output_spec.strict,
                 )
             )
         elif isinstance(output_spec, PromptedOutput):

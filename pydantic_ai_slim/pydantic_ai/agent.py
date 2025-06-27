@@ -294,11 +294,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self.name = name
         self.model_settings = model_settings
 
-        if 'result_type' in _deprecated_kwargs:  # pragma: no cover
-            if output_type is not str:
+        if 'result_type' in _deprecated_kwargs:
+            if output_type is not str:  # pragma: no cover
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
             warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning)
-            output_type = _deprecated_kwargs['result_type']
+            output_type = _deprecated_kwargs.pop('result_type')
 
         self.output_type = output_type
 
@@ -306,22 +306,22 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         self._deps_type = deps_type
 
-        self._deprecated_result_tool_name = _deprecated_kwargs.get('result_tool_name')
-        if self._deprecated_result_tool_name is not None:  # pragma: no cover
+        self._deprecated_result_tool_name = _deprecated_kwargs.pop('result_tool_name', None)
+        if self._deprecated_result_tool_name is not None:
             warnings.warn(
                 '`result_tool_name` is deprecated, use `output_type` with `ToolOutput` instead',
                 DeprecationWarning,
             )
 
-        self._deprecated_result_tool_description = _deprecated_kwargs.get('result_tool_description')
-        if self._deprecated_result_tool_description is not None:  # pragma: no cover
+        self._deprecated_result_tool_description = _deprecated_kwargs.pop('result_tool_description', None)
+        if self._deprecated_result_tool_description is not None:
             warnings.warn(
                 '`result_tool_description` is deprecated, use `output_type` with `ToolOutput` instead',
                 DeprecationWarning,
             )
-        result_retries = _deprecated_kwargs.get('result_retries')
-        if result_retries is not None:  # pragma: no cover
-            if output_retries is not None:
+        result_retries = _deprecated_kwargs.pop('result_retries', None)
+        if result_retries is not None:
+            if output_retries is not None:  # pragma: no cover
                 raise TypeError('`output_retries` and `result_retries` cannot be set at the same time.')
             warnings.warn('`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning)
             output_retries = result_retries
@@ -329,6 +329,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         default_output_mode = (
             self.model.profile.default_structured_output_mode if isinstance(self.model, models.Model) else None
         )
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         self._output_schema = _output.OutputSchema[OutputDataT].build(
             output_type,
             default_mode=default_output_mode,
@@ -469,7 +471,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
-            output_type = _deprecated_kwargs['result_type']
+            output_type = _deprecated_kwargs.pop('result_type')
+
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         async with self.iter(
             user_prompt=user_prompt,
@@ -635,7 +639,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
-            output_type = _deprecated_kwargs['result_type']
+            output_type = _deprecated_kwargs.pop('result_type')
+
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
@@ -872,7 +878,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
-            output_type = _deprecated_kwargs['result_type']
+            output_type = _deprecated_kwargs.pop('result_type')
+
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         return get_event_loop().run_until_complete(
             self.run(
@@ -988,7 +996,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
             warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
-            output_type = _deprecated_kwargs['result_type']
+            output_type = _deprecated_kwargs.pop('result_type')
+
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         yielded = False
         async with self.iter(

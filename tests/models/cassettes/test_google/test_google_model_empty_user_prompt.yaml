@@ -30,11 +30,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '736'
+      - '701'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=361
+      - gfet4t7; dur=444
       transfer-encoding:
       - chunked
       vary:
@@ -43,25 +43,25 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.20726837430681502
+      - avgLogprobs: -0.11437161529765409
         content:
           parts:
           - text: |
-              Please provide me with a question or task. I need some information to be able to help you.
+              I'm ready to assist you.  Please tell me what you need.
           role: model
         finishReason: STOP
       modelVersion: gemini-1.5-flash
-      responseId: y5BBaPCQELGqmecP68OBiAc
+      responseId: 5lpeaN7wJ___698Pv8HGgAg
       usageMetadata:
-        candidatesTokenCount: 21
+        candidatesTokenCount: 17
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 21
+          tokenCount: 17
         promptTokenCount: 7
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 7
-        totalTokenCount: 28
+        totalTokenCount: 24
     status:
       code: 200
       message: OK

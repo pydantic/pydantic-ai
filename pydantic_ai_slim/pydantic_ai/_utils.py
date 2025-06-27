@@ -31,6 +31,8 @@ from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import AbstractSpan
 
+from . import exceptions
+
 AbstractSpan = AbstractSpan
 
 if TYPE_CHECKING:
@@ -413,6 +415,20 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
         rewritten_schemas.append(schema)
 
     return rewritten_schemas, all_defs
+
+
+def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
+    """Validate that no unknown kwargs remain after processing.
+
+    Args:
+        _kwargs: Dictionary of remaining kwargs after specific ones have been processed.
+
+    Raises:
+        UserError: If any unknown kwargs remain.
+    """
+    if _kwargs:
+        unknown_kwargs = ', '.join(f'`{k}`' for k in _kwargs.keys())
+        raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
 
 def strip_markdown_fences(text: str) -> str:
