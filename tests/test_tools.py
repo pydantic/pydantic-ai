@@ -846,7 +846,7 @@ def test_enforce_parameter_descriptions_noraise() -> None:
     agent.tool(require_parameter_descriptions=True)(complete_parameter_descriptions_docstring)
 
 
-def test_json_schema_required_parameters(set_event_loop: None):
+def test_json_schema_required_parameters():
     agent = Agent(FunctionModel(get_json_schema))
 
     @agent.tool
@@ -889,7 +889,7 @@ def test_json_schema_required_parameters(set_event_loop: None):
     )
 
 
-def test_call_tool_without_unrequired_parameters(set_event_loop: None):
+def test_call_tool_without_unrequired_parameters():
     async def call_tools_first(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(

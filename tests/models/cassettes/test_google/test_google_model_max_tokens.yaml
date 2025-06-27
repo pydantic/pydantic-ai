@@ -31,11 +31,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '634'
+      - '677'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=253
+      - gfet4t7; dur=703
       transfer-encoding:
       - chunked
       vary:
@@ -44,13 +44,14 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -7.873064605519175e-05
+      - avgLogprobs: -8.130469359457493e-05
         content:
           parts:
           - text: The capital of France is
           role: model
         finishReason: MAX_TOKENS
       modelVersion: gemini-1.5-flash
+      responseId: zlpeaNKFIZW1nvgP-O3vwQY
       usageMetadata:
         candidatesTokenCount: 5
         candidatesTokensDetails:

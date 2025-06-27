@@ -1393,10 +1393,36 @@ async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    IsInstance(TextPart),
                     IsInstance(ThinkingPart),
                     IsInstance(ThinkingPart),
                     IsInstance(ThinkingPart),
+                    TextPart(
+                        content="""\
+Here are guidelines for safely crossing a street. Remember that these tips are general and may need to be adjusted depending on your local traffic laws and the specific situation. They are not a substitute for professional safety advice.
+
+1. Before you approach the street:
+ • Use the sidewalk if available and get to the curb or edge of the road.
+ • If you're a child or feel unsure, try to have an adult accompany you.
+
+2. When you're ready to cross:
+ • Look carefully in all directions—start by looking left, then right, and left again. In countries where you drive on the left you'll want to adjust accordingly.
+ • Listen for vehicles and be aware of turning cars, which might not be immediately in your line of sight.
+ • Make eye contact with drivers if possible so that you know they see you.
+
+3. Use designated crossing areas whenever possible:
+ • If there's a pedestrian crosswalk, use it. Crosswalks and traffic signals are there to help manage the flow of both vehicles and pedestrians.
+ • If there's a "Walk" signal, wait until it's on before crossing. Even if the signal turns green for pedestrians, always take an extra moment to ensure that approaching drivers are stopping.
+
+4. While crossing:
+ • Continue to remain alert and avoid distractions like cell phones or headphones that could prevent you from noticing approaching traffic.
+ • Walk at a steady pace and stay in the crosswalk until you have completely reached the other side.
+
+5. After crossing:
+ • Once you've safely reached the other side, continue to be aware of any vehicles that might be turning or reversing.
+
+Always be cautious—even if you have the right-of-way—and understand that it's better to wait a moment longer than risk being caught off guard. Stay safe!\
+"""
+                    ),
                 ],
                 usage=Usage(
                     request_tokens=13,
@@ -1424,10 +1450,10 @@ async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
                     IsInstance(TextPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
                 ],
                 usage=Usage(
                     request_tokens=13,

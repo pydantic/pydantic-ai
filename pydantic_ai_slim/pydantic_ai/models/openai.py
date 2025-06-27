@@ -644,13 +644,16 @@ class OpenAIResponsesModel(Model):
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = number_to_datetime(response.created_at)
         items: list[ModelResponsePart] = []
-        items.append(TextPart(response.output_text))
         for item in response.output:
             if item.type == 'reasoning':
                 for summary in item.summary:
                     # NOTE: We use the same id for all summaries because we can merge them on the round trip.
                     # The providers don't force the signature to be unique.
                     items.append(ThinkingPart(content=summary.text, id=item.id))
+            elif item.type == 'message':
+                for content in item.content:
+                    if content.type == 'output_text':  # pragma: no branch
+                        items.append(TextPart(content.text))
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
         return ModelResponse(

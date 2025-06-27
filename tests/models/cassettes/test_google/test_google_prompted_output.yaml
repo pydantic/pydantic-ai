@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '619'
+      - '533'
       content-type:
       - application/json
       host:
@@ -30,21 +30,17 @@ interactions:
 
             Don't include any text or Markdown fencing before or after.
         role: user
-      toolConfig:
-        functionCallingConfig:
-          allowedFunctionNames: []
-          mode: ANY
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '879'
+      - '699'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=829
+      - gfet4t7; dur=270
       transfer-encoding:
       - chunked
       vary:
@@ -53,25 +49,24 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.010130892906870161
+      - avgLogprobs: -0.08075933273021992
         content:
           parts:
-          - text: '{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"],
-              "title": "CityLocation", "type": "object", "city": "Mexico City", "country": "Mexico"}'
+          - text: '{"city": "Mexico City", "country": "Mexico"}'
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: 4HlHaK75MdGU7dcPjoS34QI
+      responseId: P1teaNPqC5Tf1PIPmJOW8AE
       usageMetadata:
-        candidatesTokenCount: 56
+        candidatesTokenCount: 13
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 56
+          tokenCount: 13
         promptTokenCount: 80
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 80
-        totalTokenCount: 136
+        totalTokenCount: 93
     status:
       code: 200
       message: OK
