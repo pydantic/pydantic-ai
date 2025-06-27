@@ -7,7 +7,7 @@ from contextlib import AsyncExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Protocol, assert_never, overload
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Protocol, overload
 
 from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema
@@ -689,38 +689,33 @@ class RunToolset(WrapperToolset[AgentDepsT]):
             ctx = replace(ctx, tool_name=name, retry=self._retries.get(name, 0), retries={})
             yield ctx
         except (ValidationError, ModelRetry, UnexpectedModelBehavior, ToolRetryError) as e:
-            if isinstance(e, ToolRetryError):
-                pass
-            elif isinstance(e, ValidationError):
-                if ctx.tool_call_id:
-                    m = _messages.RetryPromptPart(
-                        tool_name=name,
-                        content=e.errors(include_url=False, include_context=False),
-                        tool_call_id=ctx.tool_call_id,
-                    )
-                    e = ToolRetryError(m)
-            elif isinstance(e, ModelRetry):
-                if ctx.tool_call_id:
-                    m = _messages.RetryPromptPart(
-                        tool_name=name,
-                        content=e.message,
-                        tool_call_id=ctx.tool_call_id,
-                    )
-                    e = ToolRetryError(m)
-            elif isinstance(e, UnexpectedModelBehavior):
-                if e.__cause__ is not None:
-                    e = e.__cause__
-            else:
-                assert_never(e)
-
             try:
                 max_retries = self._max_retries_for_tool(name)
             except Exception:
                 max_retries = 1
             current_retry = self._retries.get(name, 0)
 
+            if isinstance(e, UnexpectedModelBehavior) and e.__cause__ is not None:
+                e = e.__cause__
+
             if current_retry == max_retries:
                 raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from e
             else:
+                if ctx.tool_call_id:
+                    if isinstance(e, ValidationError):
+                        m = _messages.RetryPromptPart(
+                            tool_name=name,
+                            content=e.errors(include_url=False, include_context=False),
+                            tool_call_id=ctx.tool_call_id,
+                        )
+                        e = ToolRetryError(m)
+                    elif isinstance(e, ModelRetry):
+                        m = _messages.RetryPromptPart(
+                            tool_name=name,
+                            content=e.message,
+                            tool_call_id=ctx.tool_call_id,
+                        )
+                        e = ToolRetryError(m)
+
                 self._retries[name] = current_retry + 1
                 raise e

@@ -79,11 +79,13 @@ class GraphAgentState:
     retries: int
     run_step: int
 
-    def increment_retries(self, max_result_retries: int, error: Exception | None = None) -> None:
+    def increment_retries(self, max_result_retries: int, error: BaseException | None = None) -> None:
         self.retries += 1
         if self.retries > max_result_retries:
             message = f'Exceeded maximum retries ({max_result_retries}) for result validation'
             if error:
+                if isinstance(error, exceptions.UnexpectedModelBehavior) and error.__cause__ is not None:
+                    error = error.__cause__
                 raise exceptions.UnexpectedModelBehavior(message) from error
             else:
                 raise exceptions.UnexpectedModelBehavior(message)
