@@ -549,9 +549,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 ]
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())
-                ],
+                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
                 usage=Usage(
                     request_tokens=62,
                     response_tokens=12,
@@ -700,9 +698,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 ]
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())
-                ],
+                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
                 usage=Usage(
                     request_tokens=66,
                     response_tokens=12,
@@ -771,9 +767,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 ]
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())
-                ],
+                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
                 usage=Usage(
                     request_tokens=153,
                     response_tokens=12,
@@ -849,9 +843,7 @@ Don't include any text or Markdown fencing before or after.\
 """,
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())
-                ],
+                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
                 usage=Usage(
                     request_tokens=107,
                     response_tokens=12,
@@ -934,9 +926,7 @@ Don't include any text or Markdown fencing before or after.\
 """,
             ),
             ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())
-                ],
+                parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
                 usage=Usage(
                     request_tokens=283,
                     response_tokens=12,
