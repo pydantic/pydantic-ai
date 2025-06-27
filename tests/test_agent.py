@@ -25,6 +25,7 @@ from pydantic_ai._output import (
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.messages import (
     BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -34,6 +35,7 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -3137,6 +3139,224 @@ def test_unsupported_output_mode():
 
     with pytest.raises(UserError, match='Output tools are not supported by the model.'):
         agent.run_sync('Hello')
+
+
+def test_multimodal_tool_response():
+    """Test ToolReturn with custom content and tool return."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Analysis completed'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def analyze_data() -> ToolReturn:
+        return ToolReturn(
+            return_value='Data analysis completed successfully',
+            content=[
+                'Here are the analysis results:',
+                ImageUrl('https://example.com/chart.jpg'),
+                'The chart shows positive trends.',
+            ],
+            metadata={'foo': 'bar'},
+        )
+
+    result = agent.run_sync('Please analyze the data')
+
+    # Verify final output
+    assert result.output == 'Analysis completed'
+
+    # Verify message history contains the expected parts
+
+    # Verify the complete message structure using snapshot
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Please analyze the data', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Starting analysis'),
+                    ToolCallPart(
+                        tool_name='analyze_data',
+                        args={},
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=Usage(requests=1, request_tokens=54, response_tokens=4, total_tokens=58),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='analyze_data',
+                        content='Data analysis completed successfully',
+                        tool_call_id=IsStr(),
+                        metadata={'foo': 'bar'},
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'Here are the analysis results:',
+                            ImageUrl(url='https://example.com/chart.jpg'),
+                            'The chart shows positive trends.',
+                        ],
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Analysis completed')],
+                usage=Usage(requests=1, request_tokens=70, response_tokens=6, total_tokens=76),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+
+
+def test_plain_tool_response():
+    """Test ToolReturn with custom content and tool return."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Analysis completed'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def analyze_data() -> ToolReturn:
+        return ToolReturn(
+            return_value='Data analysis completed successfully',
+            metadata={'foo': 'bar'},
+        )
+
+    result = agent.run_sync('Please analyze the data')
+
+    # Verify final output
+    assert result.output == 'Analysis completed'
+
+    # Verify message history contains the expected parts
+
+    # Verify the complete message structure using snapshot
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Please analyze the data', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Starting analysis'),
+                    ToolCallPart(
+                        tool_name='analyze_data',
+                        args={},
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=Usage(requests=1, request_tokens=54, response_tokens=4, total_tokens=58),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='analyze_data',
+                        content='Data analysis completed successfully',
+                        tool_call_id=IsStr(),
+                        metadata={'foo': 'bar'},
+                        timestamp=IsNow(tz=timezone.utc),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Analysis completed')],
+                usage=Usage(requests=1, request_tokens=58, response_tokens=6, total_tokens=64),
+                model_name='function:llm:',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+
+
+def test_many_multimodal_tool_response():
+    """Test ToolReturn with custom content and tool return."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
+        else:
+            return ModelResponse(  # pragma: no cover
+                parts=[
+                    TextPart('Analysis completed'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def analyze_data() -> list[Any]:
+        return [
+            ToolReturn(
+                return_value='Data analysis completed successfully',
+                content=[
+                    'Here are the analysis results:',
+                    ImageUrl('https://example.com/chart.jpg'),
+                    'The chart shows positive trends.',
+                ],
+                metadata={'foo': 'bar'},
+            ),
+            'Something else',
+        ]
+
+    with pytest.raises(
+        UserError,
+        match="analyze_data's return contains invalid nested ToolReturn objects. ToolReturn should be used directly.",
+    ):
+        agent.run_sync('Please analyze the data')
+
+
+def test_multimodal_tool_response_nested():
+    """Test ToolReturn with custom content and tool return."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
+        else:
+            return ModelResponse(  # pragma: no cover
+                parts=[
+                    TextPart('Analysis completed'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def analyze_data() -> ToolReturn:
+        return ToolReturn(
+            return_value=ImageUrl('https://example.com/chart.jpg'),
+            content=[
+                'Here are the analysis results:',
+                ImageUrl('https://example.com/chart.jpg'),
+                'The chart shows positive trends.',
+            ],
+            metadata={'foo': 'bar'},
+        )
+
+    with pytest.raises(
+        UserError,
+        match="analyze_data's `return_value` contains invalid nested MultiModalContentTypes objects. Please use `content` instead.",
+    ):
+        agent.run_sync('Please analyze the data')
 
 
 def test_deprecated_kwargs_validation_agent_init():
