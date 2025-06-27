@@ -1,11 +1,12 @@
 """CLI argument parser for the PydanticAI AG-UI servers."""
 
+from __future__ import annotations
+
 import argparse
+from dataclasses import dataclass
 from typing import Any
 
 from uvicorn.config import LOGGING_CONFIG
-
-from pydantic_ai.models import dataclass
 
 
 @dataclass
