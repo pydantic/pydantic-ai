@@ -413,8 +413,7 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
                     content='30°C',
                     tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA',
                     timestamp=IsDatetime(),
-                ),
-                tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA',
+                )
             ),
             PartStartEvent(index=0, part=TextPart(content='The')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
