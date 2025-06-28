@@ -52,7 +52,8 @@ dependencies = [
     "uvicorn>=0.32.0",
     "devtools>=0.12.2",
     "gradio>=5.9.0; python_version>'3.9'",
-    "mcp[cli]>=1.4.1; python_version >= '3.10'"
+    "mcp[cli]>=1.4.1; python_version >= '3.10'",
+    "modal>=1.0.4",
 ]
 
 [tool.hatch.build.targets.wheel]
