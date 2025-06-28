@@ -208,7 +208,7 @@ class MCPServer(ABC):
         )
 
     def _map_tool_result_part(
-        self, part: mcp_types.Content
+        self, part: mcp_types.ContentBlock
     ) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
         # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
 
@@ -239,6 +239,13 @@ class MCPServer(ABC):
                 )
             else:
                 assert_never(resource)
+        elif isinstance(part, mcp_types.ResourceLink):
+            return {
+                'type': 'resource_link',
+                'uri': part.uri,
+                'name': part.name,
+                'mimeType': part.mimeType,
+            }
         else:
             assert_never(part)
 
