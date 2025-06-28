@@ -1,0 +1,82 @@
+from aci import ACI
+
+def clean_schema(schema):
+    if isinstance(schema, dict):
+        # Remove non-standard keys (e.g., 'visible')
+        return {k: clean_schema(v) for k, v in schema.items() if k not in {'visible'}}
+    elif isinstance(schema, list):
+        return [clean_schema(item) for item in schema]
+    else:
+        return schema
+
+def tool_from_aci(aci_function: str,
+                  linked_account_owner_id: str
+                  ) -> Tool:
+    """Creates a Pydantic tool proxy from a ACI tool.
+
+    Args:
+        aci_function: The ACI function to use.
+        linked_account_owner_id: The ACI user ID to execute the function on behalf of.
+
+    Returns:
+        A Pydantic tool that corresponds to the LangChain tool.
+    """
+    aci = ACI()
+    # print(aci_function)
+    function_definition = aci.functions.get_definition(aci_function)
+    # print(function_definition)
+
+    function_name = function_definition["function"]['name']
+    function_description = function_definition["function"]['description']
+    inputs = function_definition["function"]['parameters']
+
+    json_schema = {
+    'additionalProperties': inputs.get('additionalProperties', False),
+    'properties': inputs.get('properties', {}),
+    'required': inputs.get('required', []),
+    'type': inputs.get('type', 'object'), # Default to 'object' if not specified
+    }
+
+    # Clean the schema
+    json_schema = clean_schema(json_schema)
+
+    def implementation(**kwargs) -> str:
+        return aci.handle_function_call(
+            function_name,
+            kwargs,
+            linked_account_owner_id=linked_account_owner_id,
+            allowed_apps_only=True,
+        )
+
+    return Tool.from_schema(
+        function=implementation,
+        name=function_name,
+        description=function_description,
+        json_schema=json_schema,
+    )
+
+
+# Example Usage
+"""
+tavily_search = tool_from_aci(
+    "TAVILY__SEARCH",
+    linked_account_owner_id=LINKED_ACCOUNT_OWNER_ID
+)
+
+
+agent = Agent(
+    model,
+    system_prompt=(
+        "
+        You are a highly capable assistant. Make sure to do the tasks you're assigned to do.
+        "
+
+    ),
+    tools=[tavily_search]
+)
+
+
+result = new_agent.run_sync("Search the web and tell the next match Chelsea will play and when the match is")
+print(result.output)
+
+"""
