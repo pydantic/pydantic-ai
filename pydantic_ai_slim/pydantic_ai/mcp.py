@@ -240,7 +240,12 @@ class MCPServer(ABC):
             else:
                 assert_never(resource)
         elif isinstance(part, mcp_types.ResourceLink):
-            raise NotImplementedError('ResourceLink is not implemented.')
+            return {
+                'type': 'resource_link',
+                'uri': part.uri,
+                'name': getattr(part, 'name', None),
+                'mimeType': getattr(part, 'mimeType', None),
+            }
         else:
             assert_never(part)
 
