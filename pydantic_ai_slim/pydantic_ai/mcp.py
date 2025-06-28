@@ -208,7 +208,7 @@ class MCPServer(ABC):
         )
 
     def _map_tool_result_part(
-        self, part: mcp_types.Content
+        self, part: mcp_types.ContentBlock
     ) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
         # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
 
@@ -239,8 +239,10 @@ class MCPServer(ABC):
                 )
             else:
                 assert_never(resource)
+        elif isinstance(part, mcp_types.ResourceLink):
+            raise NotImplementedError('ResourceLink is not implemented.')
         else:
-            assert_never(part)  # type: ignore[arg-type]
+            assert_never(part)
 
 
 @dataclass
