@@ -28,7 +28,7 @@ PydanticAI also comes with [`TestModel`](../api/models/test.md) and [`FunctionMo
 for testing and development.
 
 To use each model provider, you need to configure your local environment and make sure you have the right
-packages installed.
+packages installed. If you try to use the model without having done so, you'll be told what to install.
 
 ## Models and Providers
 
@@ -59,6 +59,9 @@ If you want to use a different provider or profile, you can instantiate a model 
 
 ## Custom Models
 
+!!! note
+    If a model API is compatible with the OpenAI API, you do not need a custom model class and can provide your own [custom provider](openai.md#openai-compatible-models) instead.
+
 To implement support for a model API that's not already supported, you will need to subclass the [`Model`][pydantic_ai.models.Model] abstract base class.
 For streaming, you'll also need to implement the [`StreamedResponse`][pydantic_ai.models.StreamedResponse] abstract base class.
 
@@ -66,7 +69,6 @@ The best place to start is to review the source code for existing implementation
 
 For details on when we'll accept contributions adding new models to PydanticAI, see the [contributing guidelines](../contributing.md#new-model-rules).
 
-If a model API is compatible with the OpenAI API, you do not need a custom model class and can provide your own [custom provider](openai.md#openai-compatible-models) instead.
 
 <!-- TODO(Marcelo): We need to create a section in the docs about reliability. -->
 ## Fallback Model
