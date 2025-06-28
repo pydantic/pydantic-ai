@@ -856,7 +856,7 @@ with capture_run_messages() as messages:  # (2)!
                     )
                 ],
                 usage=Usage(
-                    requests=1, request_tokens=72, response_tokens=8, total_tokens=80
+                    requests=1, request_tokens=74, response_tokens=8, total_tokens=82
                 ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),

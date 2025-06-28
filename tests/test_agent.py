@@ -126,7 +126,7 @@ def test_result_pydantic_model_retry():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=87, response_tokens=14, total_tokens=101),
+                usage=Usage(requests=1, request_tokens=89, response_tokens=14, total_tokens=103),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -185,6 +185,7 @@ def test_result_pydantic_model_validation_error():
     retry_prompt = user_retry.parts[0]
     assert isinstance(retry_prompt, RetryPromptPart)
     assert retry_prompt.model_response() == snapshot("""\
+Validator response:
 1 validation errors: [
   {
     "type": "value_error",
@@ -242,7 +243,7 @@ def test_output_validator():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=63, response_tokens=14, total_tokens=77),
+                usage=Usage(requests=1, request_tokens=64, response_tokens=14, total_tokens=78),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -301,7 +302,7 @@ def test_plain_response_then_tuple():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
                 ],
-                usage=Usage(requests=1, request_tokens=72, response_tokens=8, total_tokens=80),
+                usage=Usage(requests=1, request_tokens=74, response_tokens=8, total_tokens=82),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -861,7 +862,7 @@ def test_output_type_function_with_retry():
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=68, response_tokens=13, total_tokens=81),
+                usage=Usage(requests=1, request_tokens=70, response_tokens=13, total_tokens=83),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
             ),
@@ -1950,7 +1951,7 @@ def test_unknown_tool():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=65, response_tokens=4, total_tokens=69),
+                usage=Usage(requests=1, request_tokens=67, response_tokens=4, total_tokens=71),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1990,7 +1991,7 @@ def test_unknown_tool_fix():
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
-                usage=Usage(requests=1, request_tokens=65, response_tokens=3, total_tokens=68),
+                usage=Usage(requests=1, request_tokens=67, response_tokens=3, total_tokens=70),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -3113,6 +3114,12 @@ def test_tool_call_with_validation_value_error_serializable():
                     'tool_call_id': IsStr(),
                     'timestamp': IsStr(),
                     'part_kind': 'retry-prompt',
+                    'model_response_template': """\
+Validator response:
+{description}
+
+Fix the errors and try again.\
+""",
                 }
             ],
             'instructions': None,
