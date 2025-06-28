@@ -240,7 +240,7 @@ class MCPServer(ABC):
             else:
                 assert_never(resource)
         else:
-            assert_never(part)
+            assert_never(part)  # type: ignore[arg-type]
 
 
 @dataclass
