@@ -243,8 +243,8 @@ class MCPServer(ABC):
             return {
                 'type': 'resource_link',
                 'uri': part.uri,
-                'name': getattr(part, 'name', None),
-                'mimeType': getattr(part, 'mimeType', None),
+                'name': part.name,
+                'mimeType': part.mimeType,
             }
         else:
             assert_never(part)
