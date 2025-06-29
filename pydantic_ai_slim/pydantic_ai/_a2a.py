@@ -142,7 +142,7 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
 
     def build_artifacts(self, result: Any) -> list[Artifact]:
         # TODO(Marcelo): We need to send the json schema of the result on the metadata of the message.
-        return [Artifact(name='result', index=0, parts=[A2ATextPart(type='text', text=str(result))])]
+        return [Artifact(name='result', index=0, parts=[A2ATextPart(kind='text', text=str(result))])]
 
     def build_message_history(self, task_history: list[Message]) -> list[ModelMessage]:
         model_messages: list[ModelMessage] = []
@@ -156,28 +156,29 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
     def _map_request_parts(self, parts: list[Part]) -> list[ModelRequestPart]:
         model_parts: list[ModelRequestPart] = []
         for part in parts:
-            if part['type'] == 'text':
+            if part['kind'] == 'text':
                 model_parts.append(UserPromptPart(content=part['text']))
-            elif part['type'] == 'file':
-                file = part['file']
-                if 'data' in file:
-                    data = file['data'].encode('utf-8')
-                    content = BinaryContent(data=data, media_type=file['mime_type'])
+            elif part['kind'] == 'file':
+                if 'data' in part:
+                    data = part['data'].encode('utf-8')
+                    mime_type = part.get('mime_type', 'application/octet-stream')
+                    content = BinaryContent(data=data, media_type=mime_type)
+                    model_parts.append(UserPromptPart(content=[content]))
+                elif 'uri' in part:
+                    url = part['uri']
+                    mime_type = part.get('mime_type', '')
+                    if mime_type.startswith('image/'):
+                        content = ImageUrl(url=url)
+                    elif mime_type.startswith('audio/'):
+                        content = AudioUrl(url=url)
+                    elif mime_type.startswith('video/'):
+                        content = VideoUrl(url=url)
+                    else:
+                        content = DocumentUrl(url=url)
                     model_parts.append(UserPromptPart(content=[content]))
                 else:
-                    url = file['url']
-                    for url_cls in (DocumentUrl, AudioUrl, ImageUrl, VideoUrl):
-                        content = url_cls(url=url)
-                        try:
-                            content.media_type
-                        except ValueError:  # pragma: no cover
-                            continue
-                        else:
-                            break
-                    else:
-                        raise ValueError(f'Unknown file type: {file["mime_type"]}')  # pragma: no cover
-                    model_parts.append(UserPromptPart(content=[content]))
-            elif part['type'] == 'data':
+                    raise ValueError('FilePart must have either data or uri')
+            elif part['kind'] == 'data':
                 # TODO(Marcelo): Maybe we should use this for `ToolReturnPart`, and `RetryPromptPart`.
                 raise NotImplementedError('Data parts are not supported yet.')
             else:
@@ -187,11 +188,11 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
     def _map_response_parts(self, parts: list[Part]) -> list[ModelResponsePart]:
         model_parts: list[ModelResponsePart] = []
         for part in parts:
-            if part['type'] == 'text':
+            if part['kind'] == 'text':
                 model_parts.append(TextPart(content=part['text']))
-            elif part['type'] == 'file':  # pragma: no cover
+            elif part['kind'] == 'file':  # pragma: no cover
                 raise NotImplementedError('File parts are not supported yet.')
-            elif part['type'] == 'data':  # pragma: no cover
+            elif part['kind'] == 'data':  # pragma: no cover
                 raise NotImplementedError('Data parts are not supported yet.')
             else:  # pragma: no cover
                 assert_never(part)

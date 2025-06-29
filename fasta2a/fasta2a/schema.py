@@ -419,6 +419,30 @@ class MessageSendParams(TypedDict):
     """Extension metadata."""
 
 
+@pydantic.with_config({'alias_generator': to_camel})
+class TaskSendParams(TypedDict):
+    """Internal parameters for task execution within the framework.
+    
+    Note: This is not part of the A2A protocol - it's used internally
+    for broker/worker communication.
+    """
+    
+    id: str
+    """The id of the task."""
+    
+    session_id: NotRequired[str]
+    """The session id for the task."""
+    
+    message: Message
+    """The message to process."""
+    
+    history_length: NotRequired[int]
+    """Number of recent messages to be retrieved."""
+    
+    metadata: NotRequired[dict[str, Any]]
+    """Extension metadata."""
+
+
 class JSONRPCMessage(TypedDict):
     """A JSON RPC message."""
 
