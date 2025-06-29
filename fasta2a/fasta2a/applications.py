@@ -17,10 +17,14 @@ from .schema import (
     Authentication,
     Capabilities,
     Provider,
+    SendMessageRequest,
+    SendMessageResponse,
     Skill,
     a2a_request_ta,
     a2a_response_ta,
     agent_card_ta,
+    send_message_request_ta,
+    send_message_response_ta,
 )
 from .storage import Storage
 from .task_manager import TaskManager
@@ -105,7 +109,7 @@ class FastA2A(Starlette):
 
         Although the specification allows freedom of choice and implementation, I'm pretty sure about some decisions.
 
-        1. The server will always either send a "submitted" or a "failed" on `tasks/send`.
+        1. The server will always either send a "submitted" or a "failed" on `message/send`.
             Never a "completed" on the first message.
         2. There are three possible ends for the task:
             2.1. The task was "completed" successfully.
@@ -116,8 +120,13 @@ class FastA2A(Starlette):
         data = await request.body()
         a2a_request = a2a_request_ta.validate_json(data)
 
-        if a2a_request['method'] == 'tasks/send':
-            jsonrpc_response = await self.task_manager.send_task(a2a_request)
+        if a2a_request['method'] == 'message/send':
+            # Handle new message/send method
+            message_request = send_message_request_ta.validate_json(data)
+            jsonrpc_response = await self.task_manager.send_message(message_request)
+        elif a2a_request['method'] == 'message/stream':
+            # TODO: Implement streaming support
+            raise NotImplementedError('message/stream not implemented yet')
         elif a2a_request['method'] == 'tasks/get':
             jsonrpc_response = await self.task_manager.get_task(a2a_request)
         elif a2a_request['method'] == 'tasks/cancel':

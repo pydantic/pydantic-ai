@@ -74,8 +74,8 @@ from .schema import (
     GetTaskRequest,
     GetTaskResponse,
     ResubscribeTaskRequest,
-    SendTaskRequest,
-    SendTaskResponse,
+    SendMessageRequest,
+    SendMessageResponse,
     SendTaskStreamingRequest,
     SendTaskStreamingResponse,
     SetTaskPushNotificationRequest,
@@ -111,20 +111,30 @@ class TaskManager:
         await self._aexit_stack.__aexit__(exc_type, exc_value, traceback)
         self._aexit_stack = None
 
-    async def send_task(self, request: SendTaskRequest) -> SendTaskResponse:
-        """Send a task to the worker."""
-        request_id = str(uuid.uuid4())
-        task_id = request['params']['id']
-        task = await self.storage.load_task(task_id)
+    async def send_message(self, request: SendMessageRequest) -> SendMessageResponse:
+        """Send a message using the new protocol."""
+        request_id = request['id']
+        task_id = str(uuid.uuid4())
+        session_id = str(uuid.uuid4())
+        message = request['params']['message']
+        metadata = request['params'].get('metadata')
+        config = request['params'].get('configuration', {})
+        
+        # Create a new task
+        task = await self.storage.submit_task(task_id, session_id, message, metadata)
+        
+        # Prepare params for broker (compatible with old format for now)
+        broker_params = {
+            'id': task_id,
+            'session_id': session_id,
+            'message': message,
+            'metadata': metadata,
+            'history_length': config.get('history_length')
+        }
+        
+        await self.broker.run_task(broker_params)
+        return SendMessageResponse(jsonrpc='2.0', id=request_id, result=task)
 
-        if task is None:
-            session_id = request['params'].get('session_id', str(uuid.uuid4()))
-            message = request['params']['message']
-            metadata = request['params'].get('metadata')
-            task = await self.storage.submit_task(task_id, session_id, message, metadata)
-
-        await self.broker.run_task(request['params'])
-        return SendTaskResponse(jsonrpc='2.0', id=request_id, result=task)
 
     async def get_task(self, request: GetTaskRequest) -> GetTaskResponse:
         """Get a task, and return it to the client.
