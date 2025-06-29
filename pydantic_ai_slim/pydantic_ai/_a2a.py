@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Generic
+from typing import Any, Callable, Generic
 
 from typing_extensions import assert_never
 
@@ -38,6 +38,7 @@ try:
         Part,
         Provider,
         Skill,
+        Task,
         TaskIdParams,
         TaskSendParams,
         TextPart as A2ATextPart,
@@ -65,6 +66,7 @@ async def worker_lifespan(app: FastA2A, worker: Worker) -> AsyncIterator[None]:
 def agent_to_a2a(
     agent: Agent[AgentDepsT, OutputDataT],
     *,
+    deps_factory: Callable[[Task], AgentDepsT] | None = None,
     storage: Storage | None = None,
     broker: Broker | None = None,
     # Agent card
@@ -84,7 +86,7 @@ def agent_to_a2a(
     """Create a FastA2A server from an agent."""
     storage = storage or InMemoryStorage()
     broker = broker or InMemoryBroker()
-    worker = AgentWorker(agent=agent, broker=broker, storage=storage)
+    worker = AgentWorker(agent=agent, broker=broker, storage=storage, deps_factory=deps_factory)
 
     lifespan = lifespan or partial(worker_lifespan, worker=worker)
 
@@ -110,6 +112,7 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
     """A worker that uses an agent to execute tasks."""
 
     agent: Agent[AgentDepsT, OutputDataT]
+    deps_factory: Callable[[Task], AgentDepsT] | None = None
 
     async def run_task(self, params: TaskSendParams) -> None:
         task = await self.storage.load_task(params['id'], history_length=params.get('history_length'))
@@ -124,8 +127,12 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
         task_history = task.get('history', [])
         message_history = self.build_message_history(task_history=task_history)
 
-        # TODO(Marcelo): We need to make this more customizable e.g. pass deps.
-        result = await self.agent.run(message_history=message_history)  # type: ignore
+        # Initialize dependencies if factory provided
+        deps = None
+        if self.deps_factory is not None:
+            deps = self.deps_factory(task)
+
+        result = await self.agent.run(message_history=message_history, deps=deps)
 
         artifacts = self.build_artifacts(result.output)
         await self.storage.update_task(task['id'], state='completed', artifacts=artifacts)

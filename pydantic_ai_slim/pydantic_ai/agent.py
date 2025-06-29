@@ -62,7 +62,7 @@ if TYPE_CHECKING:
 
     from fasta2a.applications import FastA2A
     from fasta2a.broker import Broker
-    from fasta2a.schema import Provider, Skill
+    from fasta2a.schema import Provider, Skill, Task
     from fasta2a.storage import Storage
     from pydantic_ai.mcp import MCPServer
 
@@ -1739,6 +1739,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     def to_a2a(
         self,
         *,
+        deps_factory: Callable[[Task], AgentDepsT] | None = None,
         storage: Storage | None = None,
         broker: Broker | None = None,
         # Agent card
@@ -1772,11 +1773,31 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         ```bash
         uvicorn app:app --host 0.0.0.0 --port 8000
         ```
+
+        Args:
+            deps_factory: Function that creates agent dependencies from task metadata.
+            storage: Backend for persisting task state and history. Defaults to in-memory storage.
+            broker: Message broker for distributing tasks to workers. Defaults to in-memory broker.
+            name: Display name for this agent in the A2A protocol.
+            url: Base URL where this agent will be hosted.
+            version: Version string for this agent.
+            description: Human-readable description of what this agent does.
+            provider: Provider metadata for the A2A agent card.
+            skills: List of capabilities this agent exposes via A2A.
+            debug: Enable Starlette debug mode with detailed error pages.
+            routes: Additional Starlette routes to include in the application.
+            middleware: Additional Starlette middleware to include.
+            exception_handlers: Custom exception handlers for the application.
+            lifespan: ASGI lifespan context manager for startup/shutdown logic.
+
+        Returns:
+            A FastA2A application ready to serve A2A requests.
         """
         from ._a2a import agent_to_a2a
 
         return agent_to_a2a(
             self,
+            deps_factory=deps_factory,
             storage=storage,
             broker=broker,
             name=name,

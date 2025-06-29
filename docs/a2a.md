@@ -93,4 +93,45 @@ Since `app` is an ASGI application, it can be used with any ASGI server.
 uvicorn agent_to_a2a:app --host 0.0.0.0 --port 8000
 ```
 
+#### Using Agents with Dependencies
+
+If your agent uses [dependencies](../agents.md#dependencies), you can provide a `deps_factory` function that creates dependencies from the A2A task metadata:
+
+```python {title="agent_with_deps_to_a2a.py"}
+from dataclasses import dataclass
+from pydantic_ai import Agent, RunContext
+
+@dataclass
+class SupportDeps:
+    customer_id: int
+
+support_agent = Agent(
+    'openai:gpt-4.1',
+    deps_type=SupportDeps,
+    instructions='You are a support agent.',
+)
+
+@support_agent.system_prompt
+def add_customer_info(ctx: RunContext[SupportDeps]) -> str:
+    return f'The customer ID is {ctx.deps.customer_id}'
+
+def create_deps(task):
+    """Create dependencies from task metadata."""
+    metadata = task.get('metadata', {})
+    return SupportDeps(customer_id=metadata.get('customer_id', 0))
+
+# Create A2A app with deps_factory
+app = support_agent.to_a2a(deps_factory=create_deps)
+```
+
+Now when clients send tasks with metadata, the agent will have access to the dependencies:
+
+```python {title="client_example.py"}
+# Client sends a task with metadata
+response = await a2a_client.send_task(
+    message=message,
+    metadata={'customer_id': 12345}
+)
+```
+
 Since the goal of `to_a2a` is to be a convenience method, it accepts the same arguments as the [`FastA2A`][fasta2a.FastA2A] constructor.
