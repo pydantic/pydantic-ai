@@ -9,14 +9,17 @@ from .schema import (
     GetTaskRequest,
     GetTaskResponse,
     Message,
+    MessageSendConfiguration,
+    MessageSendParams,
     PushNotificationConfig,
-    SendTaskRequest,
-    SendTaskResponse,
-    TaskSendParams,
+    SendMessageRequest,
+    SendMessageResponse,
+    Task,
     a2a_request_ta,
+    send_message_request_ta,
+    send_message_response_ta,
 )
 
-send_task_response_ta = pydantic.TypeAdapter(SendTaskResponse)
 get_task_response_ta = pydantic.TypeAdapter(GetTaskResponse)
 
 try:
@@ -37,26 +40,31 @@ class A2AClient:
             self.http_client = http_client
             self.http_client.base_url = base_url
 
-    async def send_task(
+    async def send_message(
         self,
         message: Message,
-        history_length: int | None = None,
-        push_notification: PushNotificationConfig | None = None,
+        *,
         metadata: dict[str, Any] | None = None,
-    ) -> SendTaskResponse:
-        task = TaskSendParams(message=message, id=str(uuid.uuid4()))
-        if history_length is not None:
-            task['history_length'] = history_length
-        if push_notification is not None:
-            task['push_notification'] = push_notification
+        configuration: MessageSendConfiguration | None = None,
+    ) -> Task | Message:
+        """Send a message using the A2A protocol.
+        
+        Returns either a Task (for async operations) or a Message (for quick responses).
+        """
+        params = MessageSendParams(message=message)
         if metadata is not None:
-            task['metadata'] = metadata
+            params['metadata'] = metadata
+        if configuration is not None:
+            params['configuration'] = configuration
 
-        payload = SendTaskRequest(jsonrpc='2.0', id=None, method='tasks/send', params=task)
-        content = a2a_request_ta.dump_json(payload, by_alias=True)
+        request_id = str(uuid.uuid4())
+        payload = SendMessageRequest(jsonrpc='2.0', id=request_id, method='message/send', params=params)
+        content = send_message_request_ta.dump_json(payload, by_alias=True)
         response = await self.http_client.post('/', content=content, headers={'Content-Type': 'application/json'})
         self._raise_for_status(response)
-        return send_task_response_ta.validate_json(response.content)
+        
+        response_data = send_message_response_ta.validate_json(response.content)
+        return response_data['result']
 
     async def get_task(self, task_id: str) -> GetTaskResponse:
         payload = GetTaskRequest(jsonrpc='2.0', id=None, method='tasks/get', params={'id': task_id})
