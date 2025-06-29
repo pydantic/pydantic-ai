@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Any
 
 from .schema import Artifact, Message, Task, TaskState, TaskStatus
 
@@ -22,7 +23,9 @@ class Storage(ABC):
         """
 
     @abstractmethod
-    async def submit_task(self, task_id: str, session_id: str, message: Message) -> Task:
+    async def submit_task(
+        self, task_id: str, session_id: str, message: Message, metadata: dict[str, Any] | None = None
+    ) -> Task:
         """Submit a task to storage."""
 
     @abstractmethod
@@ -60,13 +63,17 @@ class InMemoryStorage(Storage):
             task['history'] = task['history'][-history_length:]
         return task
 
-    async def submit_task(self, task_id: str, session_id: str, message: Message) -> Task:
+    async def submit_task(
+        self, task_id: str, session_id: str, message: Message, metadata: dict[str, Any] | None = None
+    ) -> Task:
         """Submit a task to storage."""
         if task_id in self.tasks:
             raise ValueError(f'Task {task_id} already exists')
 
         task_status = TaskStatus(state='submitted', timestamp=datetime.now().isoformat())
         task = Task(id=task_id, session_id=session_id, status=task_status, history=[message])
+        if metadata is not None:
+            task['metadata'] = metadata
         self.tasks[task_id] = task
         return task
 
