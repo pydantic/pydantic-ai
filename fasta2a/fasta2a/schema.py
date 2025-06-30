@@ -137,6 +137,9 @@ class Artifact(TypedDict):
     Artifacts.
     """
 
+    artifact_id: str
+    """Unique identifier for the artifact."""
+
     name: NotRequired[str]
     """The name of the artifact."""
 
@@ -149,8 +152,8 @@ class Artifact(TypedDict):
     metadata: NotRequired[dict[str, Any]]
     """Metadata about the artifact."""
 
-    index: int
-    """The index of the artifact."""
+    extensions: NotRequired[list[Any]]
+    """Array of extensions."""
 
     append: NotRequired[bool]
     """Whether to append this artifact to an existing one."""
@@ -223,21 +226,27 @@ class Message(TypedDict):
     parts: list[Part]
     """The parts of the message."""
 
+    kind: Literal['message']
+    """Event type."""
+
     metadata: NotRequired[dict[str, Any]]
     """Metadata about the message."""
-    
+
     # Additional fields
     message_id: NotRequired[str]
     """Identifier created by the message creator."""
-    
+
     context_id: NotRequired[str]
     """The context the message is associated with."""
-    
+
     task_id: NotRequired[str]
     """Identifier of task the message is related to."""
-    
-    kind: NotRequired[Literal['message']]
-    """Event type."""
+
+    reference_task_ids: NotRequired[list[str]]
+    """Array of task IDs this message references."""
+
+    extensions: NotRequired[list[Any]]
+    """Array of extensions."""
 
 
 class _BasePart(TypedDict):
@@ -258,22 +267,36 @@ class TextPart(_BasePart):
 
 
 @pydantic.with_config({'alias_generator': to_camel})
+class FileWithBytes(TypedDict):
+    """File with base64 encoded data."""
+
+    data: str
+    """The base64 encoded data."""
+
+    mime_type: str
+    """The mime type of the file."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class FileWithUri(TypedDict):
+    """File with URI reference."""
+
+    uri: str
+    """The URI of the file."""
+
+    mime_type: NotRequired[str]
+    """The mime type of the file."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
 class FilePart(_BasePart):
     """A part that contains a file."""
 
     kind: Literal['file']
     """The kind of the part."""
-    
-    data: NotRequired[str]
-    """The base64 encoded data."""
-    
-    mime_type: NotRequired[str]
-    """The mime type of the file."""
-    
-    uri: NotRequired[str]
-    """The URI of the file."""
 
-
+    file: FileWithBytes | FileWithUri
+    """The file content - either bytes or URI."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
@@ -285,7 +308,7 @@ class DataPart(_BasePart):
 
     data: Any
     """The data of the part."""
-    
+
     description: NotRequired[str]
     """A description of the data."""
 
@@ -403,16 +426,16 @@ class TaskQueryParams(TaskIdParams):
 @pydantic.with_config({'alias_generator': to_camel})
 class MessageSendConfiguration(TypedDict):
     """Configuration for the send message request."""
-    
+
     accepted_output_modes: list[str]
     """Accepted output modalities by the client."""
-    
+
     blocking: NotRequired[bool]
     """If the server should treat the client as a blocking request."""
-    
+
     history_length: NotRequired[int]
     """Number of recent messages to be retrieved."""
-    
+
     push_notification_config: NotRequired[PushNotificationConfig]
     """Where the server should send notifications when disconnected."""
 
@@ -420,13 +443,13 @@ class MessageSendConfiguration(TypedDict):
 @pydantic.with_config({'alias_generator': to_camel})
 class MessageSendParams(TypedDict):
     """Parameters for message/send method."""
-    
+
     configuration: NotRequired[MessageSendConfiguration]
     """Send message configuration."""
-    
+
     message: Message
     """The message being sent to the server."""
-    
+
     metadata: NotRequired[dict[str, Any]]
     """Extension metadata."""
 
@@ -434,23 +457,23 @@ class MessageSendParams(TypedDict):
 @pydantic.with_config({'alias_generator': to_camel})
 class TaskSendParams(TypedDict):
     """Internal parameters for task execution within the framework.
-    
+
     Note: This is not part of the A2A protocol - it's used internally
     for broker/worker communication.
     """
-    
+
     id: str
     """The id of the task."""
-    
+
     context_id: str
     """The context id for the task."""
-    
+
     message: Message
     """The message to process."""
-    
+
     history_length: NotRequired[int]
     """Number of recent messages to be retrieved."""
-    
+
     metadata: NotRequired[dict[str, Any]]
     """Extension metadata."""
 
@@ -617,4 +640,4 @@ def is_task(response: Task | Message) -> TypeGuard[Task]:
 
 def is_message(response: Task | Message) -> TypeGuard[Message]:
     """Type guard to check if a response is a Message."""
-    return 'role' in response and 'parts' in response
+    return 'role' in response and 'parts' in response and response.get('kind') == 'message'

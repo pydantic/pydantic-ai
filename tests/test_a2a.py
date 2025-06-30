@@ -40,7 +40,7 @@ async def test_a2a_runtime_error_without_lifespan():
     async with httpx.AsyncClient(transport=transport) as http_client:
         a2a_client = A2AClient(http_client=http_client)
 
-        message = Message(role='user', parts=[TextPart(text='Hello, world!', kind='text')])
+        message = Message(role='user', parts=[TextPart(text='Hello, world!', kind='text')], kind='message')
 
         with pytest.raises(RuntimeError, match='TaskManager was not properly initialized.'):
             await a2a_client.send_message(message=message)
@@ -55,7 +55,7 @@ async def test_a2a_simple():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
-            message = Message(role='user', parts=[TextPart(text='Hello, world!', kind='text')])
+            message = Message(role='user', parts=[TextPart(text='Hello, world!', kind='text')], kind='message')
             response = await a2a_client.send_message(message=message)
             assert 'error' not in response
             assert 'result' in response
@@ -67,7 +67,9 @@ async def test_a2a_simple():
                     'context_id': IsStr(),
                     'kind': 'task',
                     'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
-                    'history': [{'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}]}],
+                    'history': [
+                        {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}], 'kind': 'message'}
+                    ],
                 }
             )
 
@@ -84,11 +86,17 @@ async def test_a2a_simple():
                     'result': {
                         'id': IsStr(),
                         'context_id': IsStr(),
-                    'kind': 'task',
+                        'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
-                        'history': [{'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}]}],
+                        'history': [
+                            {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}], 'kind': 'message'}
+                        ],
                         'artifacts': [
-                            {'name': 'result', 'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}], 'index': 0}
+                            {
+                                'artifact_id': IsStr(),
+                                'name': 'result',
+                                'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}],
+                            }
                         ],
                     },
                 }
@@ -109,10 +117,13 @@ async def test_a2a_file_message_with_file():
                 parts=[
                     FilePart(
                         kind='file',
-                        uri='https://example.com/file.txt',
-                        mime_type='text/plain',
+                        file={
+                            'uri': 'https://example.com/file.txt',
+                            'mime_type': 'text/plain',
+                        },
                     )
                 ],
+                kind='message',
             )
             response = await a2a_client.send_message(message=message)
             assert 'error' not in response
@@ -131,10 +142,13 @@ async def test_a2a_file_message_with_file():
                             'parts': [
                                 {
                                     'kind': 'file',
-                                    'uri': 'https://example.com/file.txt',
-                                    'mime_type': 'text/plain',
+                                    'file': {
+                                        'uri': 'https://example.com/file.txt',
+                                        'mime_type': 'text/plain',
+                                    },
                                 }
                             ],
+                            'kind': 'message',
                         }
                     ],
                 }
@@ -153,7 +167,7 @@ async def test_a2a_file_message_with_file():
                     'result': {
                         'id': IsStr(),
                         'context_id': IsStr(),
-                    'kind': 'task',
+                        'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
                             {
@@ -161,14 +175,21 @@ async def test_a2a_file_message_with_file():
                                 'parts': [
                                     {
                                         'kind': 'file',
-                                        'uri': 'https://example.com/file.txt',
-                                        'mime_type': 'text/plain',
+                                        'file': {
+                                            'uri': 'https://example.com/file.txt',
+                                            'mime_type': 'text/plain',
+                                        },
                                     }
                                 ],
+                                'kind': 'message',
                             }
                         ],
                         'artifacts': [
-                            {'name': 'result', 'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}], 'index': 0}
+                            {
+                                'artifact_id': IsStr(),
+                                'name': 'result',
+                                'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}],
+                            }
                         ],
                     },
                 }
@@ -187,8 +208,9 @@ async def test_a2a_file_message_with_file_content():
             message = Message(
                 role='user',
                 parts=[
-                    FilePart(kind='file', data='foo', mime_type='text/plain'),
+                    FilePart(kind='file', file={'data': 'foo', 'mime_type': 'text/plain'}),
                 ],
+                kind='message',
             )
             response = await a2a_client.send_message(message=message)
             assert 'error' not in response
@@ -204,7 +226,8 @@ async def test_a2a_file_message_with_file_content():
                     'history': [
                         {
                             'role': 'user',
-                            'parts': [{'kind': 'file', 'data': 'foo', 'mime_type': 'text/plain'}],
+                            'parts': [{'kind': 'file', 'file': {'data': 'foo', 'mime_type': 'text/plain'}}],
+                            'kind': 'message',
                         }
                     ],
                 }
@@ -223,16 +246,21 @@ async def test_a2a_file_message_with_file_content():
                     'result': {
                         'id': IsStr(),
                         'context_id': IsStr(),
-                    'kind': 'task',
+                        'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
                             {
                                 'role': 'user',
-                                'parts': [{'kind': 'file', 'data': 'foo', 'mime_type': 'text/plain'}],
+                                'parts': [{'kind': 'file', 'file': {'data': 'foo', 'mime_type': 'text/plain'}}],
+                                'kind': 'message',
                             }
                         ],
                         'artifacts': [
-                            {'name': 'result', 'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}], 'index': 0}
+                            {
+                                'artifact_id': IsStr(),
+                                'name': 'result',
+                                'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}],
+                            }
                         ],
                     },
                 }
@@ -248,10 +276,7 @@ async def test_a2a_file_message_with_data():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
-            message = Message(
-                role='user',
-                parts=[DataPart(kind='data', data={'foo': 'bar'})],
-            )
+            message = Message(role='user', parts=[DataPart(kind='data', data={'foo': 'bar'})], kind='message')
             response = await a2a_client.send_message(message=message)
             assert 'error' not in response
             assert 'result' in response
@@ -263,7 +288,9 @@ async def test_a2a_file_message_with_data():
                     'context_id': IsStr(),
                     'kind': 'task',
                     'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
-                    'history': [{'role': 'user', 'parts': [{'kind': 'data', 'data': {'foo': 'bar'}}]}],
+                    'history': [
+                        {'role': 'user', 'parts': [{'kind': 'data', 'data': {'foo': 'bar'}}], 'kind': 'message'}
+                    ],
                 }
             )
 
@@ -280,9 +307,11 @@ async def test_a2a_file_message_with_data():
                     'result': {
                         'id': IsStr(),
                         'context_id': IsStr(),
-                    'kind': 'task',
+                        'kind': 'task',
                         'status': {'state': 'failed', 'timestamp': IsDatetime(iso_string=True)},
-                        'history': [{'role': 'user', 'parts': [{'kind': 'data', 'data': {'foo': 'bar'}}]}],
+                        'history': [
+                            {'role': 'user', 'parts': [{'kind': 'data', 'data': {'foo': 'bar'}}], 'kind': 'message'}
+                        ],
                     },
                 }
             )
@@ -298,7 +327,7 @@ async def test_a2a_multiple_messages():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
-            message = Message(role='user', parts=[TextPart(text='Hello, world!', kind='text')])
+            message = Message(role='user', parts=[TextPart(text='Hello, world!', kind='text')], kind='message')
             response = await a2a_client.send_message(message=message)
             assert 'error' not in response
             assert 'result' in response
@@ -310,7 +339,9 @@ async def test_a2a_multiple_messages():
                     'context_id': IsStr(),
                     'kind': 'task',
                     'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
-                    'history': [{'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}]}],
+                    'history': [
+                        {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}], 'kind': 'message'}
+                    ],
                 }
             )
 
@@ -318,7 +349,9 @@ async def test_a2a_multiple_messages():
             task_id = result['id']
             task = storage.tasks[task_id]
             assert 'history' in task
-            task['history'].append(Message(role='agent', parts=[TextPart(text='Whats up?', kind='text')]))
+            task['history'].append(
+                Message(role='agent', parts=[TextPart(text='Whats up?', kind='text')], kind='message')
+            )
 
             response = await a2a_client.get_task(task_id)
             assert response == snapshot(
@@ -328,11 +361,11 @@ async def test_a2a_multiple_messages():
                     'result': {
                         'id': IsStr(),
                         'context_id': IsStr(),
-                    'kind': 'task',
+                        'kind': 'task',
                         'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
                             {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}]},
-                            {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}]},
+                            {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}], 'kind': 'message'},
                         ],
                     },
                 }
@@ -347,14 +380,18 @@ async def test_a2a_multiple_messages():
                     'result': {
                         'id': IsStr(),
                         'context_id': IsStr(),
-                    'kind': 'task',
+                        'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
                             {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}]},
-                            {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}]},
+                            {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}], 'kind': 'message'},
                         ],
                         'artifacts': [
-                            {'name': 'result', 'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}], 'index': 0}
+                            {
+                                'artifact_id': IsStr(),
+                                'name': 'result',
+                                'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}],
+                            }
                         ],
                     },
                 }

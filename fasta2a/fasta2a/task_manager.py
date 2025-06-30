@@ -122,10 +122,10 @@ class TaskManager:
         message = request['params']['message']
         metadata = request['params'].get('metadata')
         config = request['params'].get('configuration', {})
-        
+
         # Create a new task
         task = await self.storage.submit_task(task_id, context_id, message, metadata)
-        
+
         # Prepare params for broker
         broker_params: TaskSendParams = {
             'id': task_id,
@@ -137,10 +137,9 @@ class TaskManager:
         history_length = config.get('history_length')
         if history_length is not None:
             broker_params['history_length'] = history_length
-        
+
         await self.broker.run_task(broker_params)
         return SendMessageResponse(jsonrpc='2.0', id=request_id, result=task)
-
 
     async def get_task(self, request: GetTaskRequest) -> GetTaskResponse:
         """Get a task, and return it to the client.
@@ -173,8 +172,8 @@ class TaskManager:
         self, request: StreamMessageRequest
     ) -> AsyncGenerator[TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None]:
         """Stream task updates using Server-Sent Events.
-        
-        Returns an async generator that yields TaskStatusUpdateEvent and 
+
+        Returns an async generator that yields TaskStatusUpdateEvent and
         TaskArtifactUpdateEvent objects for the message/stream protocol.
         """
         raise NotImplementedError('message/stream is not implemented yet.')
@@ -191,9 +190,11 @@ class TaskManager:
     ) -> GetTaskPushNotificationResponse:
         raise NotImplementedError('GetTaskPushNotification is not implemented yet.')
 
-    async def resubscribe_task(self, request: ResubscribeTaskRequest) -> AsyncGenerator[TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None]:
+    async def resubscribe_task(
+        self, request: ResubscribeTaskRequest
+    ) -> AsyncGenerator[TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None]:
         """Resubscribe to task updates.
-        
+
         Similar to stream_message, returns an async generator for SSE events.
         """
         raise NotImplementedError('tasks/resubscribe is not implemented yet.')

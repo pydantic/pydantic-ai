@@ -71,13 +71,7 @@ class InMemoryStorage(Storage):
             raise ValueError(f'Task {task_id} already exists')
 
         task_status = TaskStatus(state='submitted', timestamp=datetime.now().isoformat())
-        task = Task(
-            id=task_id,
-            context_id=context_id,
-            kind='task',
-            status=task_status,
-            history=[message]
-        )
+        task = Task(id=task_id, context_id=context_id, kind='task', status=task_status, history=[message])
         if metadata is not None:
             task['metadata'] = metadata
         self.tasks[task_id] = task

@@ -36,6 +36,7 @@ Then get the result:
 """
 
 from fasta2a.schema import Task
+
 from pydantic_ai_examples.bank_support import (
     DatabaseConn,
     SupportDependencies,

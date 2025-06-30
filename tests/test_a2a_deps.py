@@ -1,20 +1,21 @@
 """Test A2A with dependency injection via deps_factory."""
 
+from dataclasses import dataclass
+
 import anyio
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
-from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, TextPart as TextPartMessage
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart as TextPartMessage, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from .conftest import try_import
 
 with try_import() as imports_successful:
     from fasta2a.client import A2AClient
-    from fasta2a.schema import Message, TextPart, Task, is_task
+    from fasta2a.schema import Message, Task, TextPart, is_task
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fasta2a not installed'),
@@ -65,7 +66,7 @@ async def test_a2a_with_deps_factory():
             a2a_client = A2AClient(http_client=http_client)
 
             # Send task with metadata
-            message = Message(role='user', parts=[TextPart(text='Process this', kind='text')])
+            message = Message(role='user', parts=[TextPart(text='Process this', kind='text')], kind='message')
             response = await a2a_client.send_message(message=message, metadata={'user_name': 'Alice', 'multiplier': 5})
             assert 'error' not in response
             assert 'result' in response
@@ -118,7 +119,7 @@ async def test_a2a_without_deps_factory():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
-            message = Message(role='user', parts=[TextPart(text='Hello', kind='text')])
+            message = Message(role='user', parts=[TextPart(text='Hello', kind='text')], kind='message')
             response = await a2a_client.send_message(message=message)
             assert 'error' not in response
             assert 'result' in response

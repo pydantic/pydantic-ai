@@ -145,7 +145,10 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
 
     def build_artifacts(self, result: Any) -> list[Artifact]:
         # TODO(Marcelo): We need to send the json schema of the result on the metadata of the message.
-        return [Artifact(name='result', index=0, parts=[A2ATextPart(kind='text', text=str(result))])]
+        import uuid
+
+        artifact_id = str(uuid.uuid4())
+        return [Artifact(artifact_id=artifact_id, name='result', parts=[A2ATextPart(kind='text', text=str(result))])]
 
     def build_message_history(self, task_history: list[Message]) -> list[ModelMessage]:
         model_messages: list[ModelMessage] = []
@@ -162,14 +165,15 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
             if part['kind'] == 'text':
                 model_parts.append(UserPromptPart(content=part['text']))
             elif part['kind'] == 'file':
-                if 'data' in part:
-                    data = part['data'].encode('utf-8')
-                    mime_type = part.get('mime_type', 'application/octet-stream')
+                file_content = part['file']
+                if 'data' in file_content:
+                    data = file_content['data'].encode('utf-8')
+                    mime_type = file_content.get('mime_type', 'application/octet-stream')
                     content = BinaryContent(data=data, media_type=mime_type)
                     model_parts.append(UserPromptPart(content=[content]))
-                elif 'uri' in part:
-                    url = part['uri']
-                    mime_type = part.get('mime_type', '')
+                elif 'uri' in file_content:
+                    url = file_content['uri']
+                    mime_type = file_content.get('mime_type', '')
                     if mime_type.startswith('image/'):
                         content = ImageUrl(url=url)
                     elif mime_type.startswith('audio/'):
@@ -180,7 +184,7 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
                         content = DocumentUrl(url=url)
                     model_parts.append(UserPromptPart(content=[content]))
                 else:
-                    raise ValueError('FilePart must have either data or uri')
+                    raise ValueError('FilePart.file must have either data or uri')
             elif part['kind'] == 'data':
                 # TODO(Marcelo): Maybe we should use this for `ToolReturnPart`, and `RetryPromptPart`.
                 raise NotImplementedError('Data parts are not supported yet.')
