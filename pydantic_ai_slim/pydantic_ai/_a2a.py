@@ -117,7 +117,7 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
     async def run_task(self, params: TaskSendParams) -> None:
         task = await self.storage.load_task(params['id'], history_length=params.get('history_length'))
         assert task is not None, f'Task {params["id"]} not found'
-        assert 'session_id' in task, 'Task must have a session_id'
+        assert 'context_id' in task, 'Task must have a context_id'
 
         await self.storage.update_task(task['id'], state='working')
 

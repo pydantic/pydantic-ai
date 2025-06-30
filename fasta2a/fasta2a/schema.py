@@ -325,8 +325,11 @@ class Task(TypedDict):
     id: str
     """Unique identifier for the task."""
 
-    session_id: NotRequired[str]
-    """Client-generated id for the session holding the task."""
+    context_id: str
+    """The context the task is associated with."""
+
+    kind: Literal['task']
+    """Event type."""
 
     status: TaskStatus
     """Current status of the task."""
@@ -345,8 +348,11 @@ class Task(TypedDict):
 class TaskStatusUpdateEvent(TypedDict):
     """Sent by server during message/stream requests."""
 
-    id: str
+    task_id: str
     """The id of the task."""
+
+    context_id: str
+    """The context the task is associated with."""
 
     status: TaskStatus
     """The status of the task."""
@@ -362,8 +368,14 @@ class TaskStatusUpdateEvent(TypedDict):
 class TaskArtifactUpdateEvent(TypedDict):
     """Sent by server during message/stream requests."""
 
-    id: str
+    task_id: str
     """The id of the task."""
+
+    context_id: str
+    """The context the task is associated with."""
+
+    kind: Literal['artifactUpdate']
+    """Event type identification."""
 
     artifact: Artifact
     """The artifact that was updated."""
@@ -430,8 +442,8 @@ class TaskSendParams(TypedDict):
     id: str
     """The id of the task."""
     
-    session_id: NotRequired[str]
-    """The session id for the task."""
+    context_id: str
+    """The context id for the task."""
     
     message: Message
     """The message to process."""
@@ -524,6 +536,9 @@ UnsupportedOperationError = JSONRPCError[Literal[-32004], Literal['This operatio
 ContentTypeNotSupportedError = JSONRPCError[Literal[-32005], Literal['Incompatible content types']]
 """A JSON RPC error for incompatible content types."""
 
+InvalidAgentResponseError = JSONRPCError[Literal[-32006], Literal['Invalid agent response']]
+"""A JSON RPC error for invalid agent response."""
+
 ###############################################################################################
 #######################################   Requests and responses   ############################
 ###############################################################################################
@@ -597,7 +612,7 @@ stream_message_request_ta: TypeAdapter[StreamMessageRequest] = TypeAdapter(Strea
 
 def is_task(response: Task | Message) -> TypeGuard[Task]:
     """Type guard to check if a response is a Task."""
-    return 'id' in response and 'status' in response
+    return 'id' in response and 'status' in response and 'context_id' in response and response.get('kind') == 'task'
 
 
 def is_message(response: Task | Message) -> TypeGuard[Message]:

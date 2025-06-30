@@ -64,7 +64,8 @@ async def test_a2a_simple():
             assert result == snapshot(
                 {
                     'id': IsStr(),
-                    'session_id': IsStr(),
+                    'context_id': IsStr(),
+                    'kind': 'task',
                     'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
                     'history': [{'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}]}],
                 }
@@ -82,7 +83,8 @@ async def test_a2a_simple():
                     'id': None,
                     'result': {
                         'id': IsStr(),
-                        'session_id': IsStr(),
+                        'context_id': IsStr(),
+                    'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [{'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}]}],
                         'artifacts': [
@@ -120,7 +122,8 @@ async def test_a2a_file_message_with_file():
             assert result == snapshot(
                 {
                     'id': IsStr(),
-                    'session_id': IsStr(),
+                    'context_id': IsStr(),
+                    'kind': 'task',
                     'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
                     'history': [
                         {
@@ -149,7 +152,8 @@ async def test_a2a_file_message_with_file():
                     'id': None,
                     'result': {
                         'id': IsStr(),
-                        'session_id': IsStr(),
+                        'context_id': IsStr(),
+                    'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
                             {
@@ -194,7 +198,8 @@ async def test_a2a_file_message_with_file_content():
             assert result == snapshot(
                 {
                     'id': IsStr(),
-                    'session_id': IsStr(),
+                    'context_id': IsStr(),
+                    'kind': 'task',
                     'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
                     'history': [
                         {
@@ -217,7 +222,8 @@ async def test_a2a_file_message_with_file_content():
                     'id': None,
                     'result': {
                         'id': IsStr(),
-                        'session_id': IsStr(),
+                        'context_id': IsStr(),
+                    'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
                             {
@@ -254,7 +260,8 @@ async def test_a2a_file_message_with_data():
             assert result == snapshot(
                 {
                     'id': IsStr(),
-                    'session_id': IsStr(),
+                    'context_id': IsStr(),
+                    'kind': 'task',
                     'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
                     'history': [{'role': 'user', 'parts': [{'kind': 'data', 'data': {'foo': 'bar'}}]}],
                 }
@@ -272,7 +279,8 @@ async def test_a2a_file_message_with_data():
                     'id': None,
                     'result': {
                         'id': IsStr(),
-                        'session_id': IsStr(),
+                        'context_id': IsStr(),
+                    'kind': 'task',
                         'status': {'state': 'failed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [{'role': 'user', 'parts': [{'kind': 'data', 'data': {'foo': 'bar'}}]}],
                     },
@@ -299,7 +307,8 @@ async def test_a2a_multiple_messages():
             assert result == snapshot(
                 {
                     'id': IsStr(),
-                    'session_id': IsStr(),
+                    'context_id': IsStr(),
+                    'kind': 'task',
                     'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
                     'history': [{'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}]}],
                 }
@@ -318,7 +327,8 @@ async def test_a2a_multiple_messages():
                     'id': None,
                     'result': {
                         'id': IsStr(),
-                        'session_id': IsStr(),
+                        'context_id': IsStr(),
+                    'kind': 'task',
                         'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
                             {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}]},
@@ -336,7 +346,8 @@ async def test_a2a_multiple_messages():
                     'id': None,
                     'result': {
                         'id': IsStr(),
-                        'session_id': IsStr(),
+                        'context_id': IsStr(),
+                    'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
                             {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}]},

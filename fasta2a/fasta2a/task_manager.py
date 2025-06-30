@@ -118,18 +118,18 @@ class TaskManager:
         """Send a message using the new protocol."""
         request_id = request['id']
         task_id = str(uuid.uuid4())
-        session_id = str(uuid.uuid4())
+        context_id = str(uuid.uuid4())
         message = request['params']['message']
         metadata = request['params'].get('metadata')
         config = request['params'].get('configuration', {})
         
         # Create a new task
-        task = await self.storage.submit_task(task_id, session_id, message, metadata)
+        task = await self.storage.submit_task(task_id, context_id, message, metadata)
         
         # Prepare params for broker
         broker_params: TaskSendParams = {
             'id': task_id,
-            'session_id': session_id,
+            'context_id': context_id,
             'message': message,
         }
         if metadata is not None:

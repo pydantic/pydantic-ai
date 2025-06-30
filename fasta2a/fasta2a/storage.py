@@ -24,7 +24,7 @@ class Storage(ABC):
 
     @abstractmethod
     async def submit_task(
-        self, task_id: str, session_id: str, message: Message, metadata: dict[str, Any] | None = None
+        self, task_id: str, context_id: str, message: Message, metadata: dict[str, Any] | None = None
     ) -> Task:
         """Submit a task to storage."""
 
@@ -64,14 +64,20 @@ class InMemoryStorage(Storage):
         return task
 
     async def submit_task(
-        self, task_id: str, session_id: str, message: Message, metadata: dict[str, Any] | None = None
+        self, task_id: str, context_id: str, message: Message, metadata: dict[str, Any] | None = None
     ) -> Task:
         """Submit a task to storage."""
         if task_id in self.tasks:
             raise ValueError(f'Task {task_id} already exists')
 
         task_status = TaskStatus(state='submitted', timestamp=datetime.now().isoformat())
-        task = Task(id=task_id, session_id=session_id, status=task_status, history=[message])
+        task = Task(
+            id=task_id,
+            context_id=context_id,
+            kind='task',
+            status=task_status,
+            history=[message]
+        )
         if metadata is not None:
             task['metadata'] = metadata
         self.tasks[task_id] = task
