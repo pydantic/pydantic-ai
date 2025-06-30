@@ -17,14 +17,11 @@ from .schema import (
     Authentication,
     Capabilities,
     Provider,
-    SendMessageRequest,
-    SendMessageResponse,
     Skill,
     a2a_request_ta,
     a2a_response_ta,
     agent_card_ta,
     send_message_request_ta,
-    send_message_response_ta,
 )
 from .storage import Storage
 from .task_manager import TaskManager

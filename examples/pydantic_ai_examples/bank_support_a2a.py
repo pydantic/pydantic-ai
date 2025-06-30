@@ -35,6 +35,7 @@ Then get the result:
       }'
 """
 
+from fasta2a.schema import Task
 from pydantic_ai_examples.bank_support import (
     DatabaseConn,
     SupportDependencies,
@@ -42,7 +43,7 @@ from pydantic_ai_examples.bank_support import (
 )
 
 
-def create_deps(task):
+def create_deps(task: Task) -> SupportDependencies:
     """Create dependencies from A2A task metadata.
 
     In a real application, you might:

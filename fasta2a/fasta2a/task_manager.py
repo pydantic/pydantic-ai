@@ -61,6 +61,7 @@ The flow:
 from __future__ import annotations as _annotations
 
 import uuid
+from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Any
@@ -76,11 +77,13 @@ from .schema import (
     ResubscribeTaskRequest,
     SendMessageRequest,
     SendMessageResponse,
-    SendTaskStreamingRequest,
-    SendTaskStreamingResponse,
     SetTaskPushNotificationRequest,
     SetTaskPushNotificationResponse,
+    StreamMessageRequest,
+    TaskArtifactUpdateEvent,
     TaskNotFoundError,
+    TaskSendParams,
+    TaskStatusUpdateEvent,
 )
 from .storage import Storage
 
@@ -123,14 +126,17 @@ class TaskManager:
         # Create a new task
         task = await self.storage.submit_task(task_id, session_id, message, metadata)
         
-        # Prepare params for broker (compatible with old format for now)
-        broker_params = {
+        # Prepare params for broker
+        broker_params: TaskSendParams = {
             'id': task_id,
             'session_id': session_id,
             'message': message,
-            'metadata': metadata,
-            'history_length': config.get('history_length')
         }
+        if metadata is not None:
+            broker_params['metadata'] = metadata
+        history_length = config.get('history_length')
+        if history_length is not None:
+            broker_params['history_length'] = history_length
         
         await self.broker.run_task(broker_params)
         return SendMessageResponse(jsonrpc='2.0', id=request_id, result=task)
@@ -163,8 +169,17 @@ class TaskManager:
             )
         return CancelTaskResponse(jsonrpc='2.0', id=request['id'], result=task)
 
-    async def send_task_streaming(self, request: SendTaskStreamingRequest) -> SendTaskStreamingResponse:
-        raise NotImplementedError('SendTaskStreaming is not implemented yet.')
+    async def stream_message(
+        self, request: StreamMessageRequest
+    ) -> AsyncGenerator[TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None]:
+        """Stream task updates using Server-Sent Events.
+        
+        Returns an async generator that yields TaskStatusUpdateEvent and 
+        TaskArtifactUpdateEvent objects for the message/stream protocol.
+        """
+        raise NotImplementedError('message/stream is not implemented yet.')
+        # This is a generator function, so we need to make it yield
+        yield  # type: ignore[unreachable]
 
     async def set_task_push_notification(
         self, request: SetTaskPushNotificationRequest
@@ -176,5 +191,10 @@ class TaskManager:
     ) -> GetTaskPushNotificationResponse:
         raise NotImplementedError('GetTaskPushNotification is not implemented yet.')
 
-    async def resubscribe_task(self, request: ResubscribeTaskRequest) -> SendTaskStreamingResponse:
-        raise NotImplementedError('Resubscribe is not implemented yet.')
+    async def resubscribe_task(self, request: ResubscribeTaskRequest) -> AsyncGenerator[TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None]:
+        """Resubscribe to task updates.
+        
+        Similar to stream_message, returns an async generator for SSE events.
+        """
+        raise NotImplementedError('tasks/resubscribe is not implemented yet.')
+        yield  # type: ignore[unreachable]

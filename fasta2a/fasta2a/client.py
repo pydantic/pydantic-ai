@@ -11,10 +11,8 @@ from .schema import (
     Message,
     MessageSendConfiguration,
     MessageSendParams,
-    PushNotificationConfig,
     SendMessageRequest,
     SendMessageResponse,
-    Task,
     a2a_request_ta,
     send_message_request_ta,
     send_message_response_ta,
@@ -46,10 +44,10 @@ class A2AClient:
         *,
         metadata: dict[str, Any] | None = None,
         configuration: MessageSendConfiguration | None = None,
-    ) -> Task | Message:
+    ) -> SendMessageResponse:
         """Send a message using the A2A protocol.
         
-        Returns either a Task (for async operations) or a Message (for quick responses).
+        Returns a JSON-RPC response containing either a result (Task | Message) or an error.
         """
         params = MessageSendParams(message=message)
         if metadata is not None:
@@ -63,8 +61,7 @@ class A2AClient:
         response = await self.http_client.post('/', content=content, headers={'Content-Type': 'application/json'})
         self._raise_for_status(response)
         
-        response_data = send_message_response_ta.validate_json(response.content)
-        return response_data['result']
+        return send_message_response_ta.validate_json(response.content)
 
     async def get_task(self, task_id: str) -> GetTaskResponse:
         payload = GetTaskRequest(jsonrpc='2.0', id=None, method='tasks/get', params={'id': task_id})

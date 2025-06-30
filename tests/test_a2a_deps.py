@@ -14,7 +14,7 @@ from .conftest import try_import
 
 with try_import() as imports_successful:
     from fasta2a.client import A2AClient
-    from fasta2a.schema import Message, TextPart, Task
+    from fasta2a.schema import Message, TextPart, Task, is_task
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fasta2a not installed'),
@@ -65,29 +65,35 @@ async def test_a2a_with_deps_factory():
             a2a_client = A2AClient(http_client=http_client)
 
             # Send task with metadata
-            message = Message(role='user', parts=[TextPart(text='Process this', type='text')])
-            response = await a2a_client.send_task(message=message, metadata={'user_name': 'Alice', 'multiplier': 5})
-
+            message = Message(role='user', parts=[TextPart(text='Process this', kind='text')])
+            response = await a2a_client.send_message(message=message, metadata={'user_name': 'Alice', 'multiplier': 5})
+            assert 'error' not in response
             assert 'result' in response
-            task_id = response['result']['id']
+            result = response['result']
+            assert is_task(result), 'Expected Task response'
+            task_id = result['id']
 
             # Wait for task completion
             task = None
             for _ in range(10):  # Max 10 attempts
-                task = await a2a_client.get_task(task_id)
-                if 'result' in task and task['result']['status']['state'] in ('completed', 'failed'):
-                    break
+                response = await a2a_client.get_task(task_id)
+                if 'result' in response:
+                    task = response['result']
+                    if task['status']['state'] in ('completed', 'failed'):
+                        break
                 await anyio.sleep(0.1)
 
             # Verify the result
             assert task is not None
-            if task['result']['status']['state'] == 'failed':
+            if task['status']['state'] == 'failed':
                 print(f'Task failed. Full task: {task}')
-            assert task['result']['status']['state'] == 'completed'
-            assert 'artifacts' in task['result']
-            artifacts = task['result']['artifacts']
+            assert task['status']['state'] == 'completed'
+            assert 'artifacts' in task
+            artifacts = task['artifacts']
             assert len(artifacts) == 1
-            assert artifacts[0]['parts'][0]['text'] == 'Result computed with deps'
+            part = artifacts[0]['parts'][0]
+            assert part['kind'] == 'text'
+            assert part['text'] == 'Result computed with deps'
 
 
 async def test_a2a_without_deps_factory():
@@ -112,18 +118,27 @@ async def test_a2a_without_deps_factory():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
-            message = Message(role='user', parts=[TextPart(text='Hello', type='text')])
-            response = await a2a_client.send_task(message=message)
-
-            task_id = response['result']['id']
+            message = Message(role='user', parts=[TextPart(text='Hello', kind='text')])
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+            result = response['result']
+            assert is_task(result), 'Expected Task response'
+            task_id = result['id']
 
             # Wait for completion
             task = None
             for _ in range(10):
-                task = await a2a_client.get_task(task_id)
-                if 'result' in task and task['result']['status']['state'] == 'completed':
-                    break
+                response = await a2a_client.get_task(task_id)
+                if 'result' in response:
+                    task = response['result']
+                    if task['status']['state'] == 'completed':
+                        break
                 await anyio.sleep(0.1)
 
-            assert task['result']['status']['state'] == 'completed'
-            assert task['result']['artifacts'][0]['parts'][0]['text'] == 'Hello from agent'
+            assert task is not None
+            assert task['status']['state'] == 'completed'
+            assert 'artifacts' in task
+            part = task['artifacts'][0]['parts'][0]
+            assert part['kind'] == 'text'
+            assert part['text'] == 'Hello from agent'

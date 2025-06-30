@@ -128,11 +128,14 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
         message_history = self.build_message_history(task_history=task_history)
 
         # Initialize dependencies if factory provided
-        deps = None
         if self.deps_factory is not None:
             deps = self.deps_factory(task)
-
-        result = await self.agent.run(message_history=message_history, deps=deps)
+            result = await self.agent.run(message_history=message_history, deps=deps)
+        else:
+            # No deps_factory provided - this only works if the agent accepts None for deps
+            # (e.g., Agent[None, ...] or Agent[Optional[...], ...])
+            # If the agent requires deps, this will raise TypeError at runtime
+            result = await self.agent.run(message_history=message_history)  # type: ignore[call-arg]
 
         artifacts = self.build_artifacts(result.output)
         await self.storage.update_task(task['id'], state='completed', artifacts=artifacts)
