@@ -1,6 +1,7 @@
 import json
 import re
 import sys
+from dataclasses import dataclass
 from datetime import timezone
 from typing import Any, Callable, Union
 
@@ -3491,3 +3492,94 @@ def test_override_toolsets():
     result = agent.run_sync('Hello', toolsets=[])
     assert available_tools[-1] == snapshot(['baz'])
     assert result.output == snapshot('{"baz":"Hello from baz"}')
+
+
+def test_prepare_output_tools():
+    @dataclass
+    class AgentDeps:
+        plan_presented: bool = False
+
+    async def present_plan(ctx: RunContext[AgentDeps], plan: str) -> str:
+        """
+        Present the plan to the user.
+        """
+        ctx.deps.plan_presented = True
+        return plan
+
+    async def run_sql(ctx: RunContext[AgentDeps], purpose: str, query: str) -> str:
+        """
+        Run an SQL query.
+        """
+        return 'SQL query executed successfully'
+
+    async def only_if_plan_presented(
+        ctx: RunContext[AgentDeps], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        return tool_defs if ctx.deps.plan_presented else []
+
+    agent = Agent(
+        model='test',
+        deps_type=AgentDeps,
+        tools=[present_plan],
+        output_type=[ToolOutput(run_sql, name='run_sql')],
+        prepare_output_tools=only_if_plan_presented,
+    )
+
+    result = agent.run_sync('Hello', deps=AgentDeps())
+    assert result.output == snapshot('SQL query executed successfully')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='present_plan',
+                        args={'plan': 'a'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=5, total_tokens=56),
+                model_name='test',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='present_plan',
+                        content='a',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='run_sql',
+                        args={'purpose': 'a', 'query': 'a'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=12, total_tokens=64),
+                model_name='test',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='run_sql',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )

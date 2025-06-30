@@ -589,7 +589,7 @@ def test_tool_return_conflict():
     # this raises an error
     with pytest.raises(
         UserError,
-        match="Function toolset defines a tool whose name conflicts with existing tool from OutputToolset: 'ctx_tool'. Consider renaming the tool or wrapping the toolset in a `PrefixedToolset` to avoid name conflicts.",
+        match="Function toolset defines a tool whose name conflicts with existing tool from Output toolset: 'ctx_tool'. Consider renaming the tool or wrapping the toolset in a `PrefixedToolset` to avoid name conflicts.",
     ):
         Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(int, name='ctx_tool'))
 

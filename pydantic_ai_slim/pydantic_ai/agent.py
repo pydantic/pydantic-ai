@@ -159,6 +159,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
     _toolset: AbstractToolset[AgentDepsT] = dataclasses.field(repr=False)
     _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
+    _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _override_deps: _utils.Option[AgentDepsT] = dataclasses.field(default=None, repr=False)
     _override_model: _utils.Option[models.Model] = dataclasses.field(default=None, repr=False)
@@ -181,6 +182,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
@@ -212,6 +214,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         result_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
@@ -238,6 +241,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[
             MCPServer
         ] = (),  # TODO: Deprecate argument, MCPServers can be passed directly to toolsets
@@ -270,9 +274,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
-            prepare_tools: custom method to prepare the tool definition of all tools for each step.
+            prepare_tools: Custom function to prepare the tool definition of all tools for each step, except output tools.
                 This is useful if you want to customize the definition of multiple tools or you want to register
                 a subset of tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
+            prepare_output_tools: Custom function to prepare the tool definition of all output tools for each step.
+                This is useful if you want to customize the definition of multiple output tools or you want to register
+                a subset of output tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
             mcp_servers: MCP servers to register with the agent. You should register a [`MCPServer`][pydantic_ai.mcp.MCPServer]
                 for each server you want the agent to connect to.
             toolsets: Toolsets to register with the agent.
@@ -365,6 +372,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._prepare_tools = prepare_tools
+        self._prepare_output_tools = prepare_output_tools
 
         self._output_toolset = OutputToolset(self._output_schema, max_retries=self._max_result_retries)
         self._function_toolset = FunctionToolset(tools, max_retries=retries)
@@ -682,6 +690,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_toolset = OutputToolset[AgentDepsT](
                 output_schema, max_retries=self._max_result_retries, output_validators=output_validators
             )
+        if self._prepare_output_tools:
+            output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
 
         # Build the graph
         graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (
