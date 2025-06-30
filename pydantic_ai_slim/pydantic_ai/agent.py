@@ -1893,7 +1893,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: UsageLimits | None = None,
         usage: Usage | None = None,
         infer_name: bool = True,
-        additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> FastAGUI[AgentDepsT, OutputDataT]:
         """Convert the agent to an Adapter instance.
 
@@ -1914,7 +1914,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            additional_tools: Additional tools to use for this run.
+            toolsets: Optional list of toolsets to use for this agent, defaults to the agent's toolset.
 
         Returns:
             An adapter that converts between AG-UI protocol and PydanticAI.
@@ -1940,7 +1940,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits=usage_limits,
             usage=usage,
             infer_name=infer_name,
-            additional_tools=additional_tools,
+            toolsets=toolsets,
         )
 
     def to_a2a(
