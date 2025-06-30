@@ -441,11 +441,11 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
                     IsInstance(TextPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
                 ],
                 usage=Usage(
                     request_tokens=13,
@@ -470,11 +470,11 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
                     IsInstance(TextPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
                 ],
                 usage=Usage(
                     request_tokens=13,
@@ -495,43 +495,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 ]
             ),
             ModelResponse(
-                parts=[
-                    TextPart(
-                        content="""\
-Crossing a river can be a different challenge compared to crossing a street, and the approach to safety and navigation will vary. Here are some considerations and steps to help you cross a river safely:
-
-1. **Determine the River's Characteristics:**
-   - **Width and Depth:** Measure or estimate the width of the river. Very wide rivers may require a boat or bridge for safe crossing. Also, assess the depth; shallow areas might be safe to wade through, while deeper sections may require a different method.
-   - **Current and Flow:** Understand the river's current. Strong currents can make swimming dangerous and may carry debris. Always check the flow rate and direction before attempting to cross.
-   - **Hazards:** Look for potential hazards like rocks, logs, or underwater obstacles that could cause injury or damage to equipment.
-
-2. **Choose a Safe Crossing Method:**
-   - **Fording:** If the river is shallow and the current is gentle, you might be able to ford the river. This involves walking through the water, often with the help of a sturdy stick or pole for balance and support. Always test the depth and current before attempting to ford.
-   - **Swimming:** Swimming across a river is a challenging and potentially dangerous option. It requires strong swimming skills, endurance, and knowledge of river currents. Always swim with a buddy and be aware of your surroundings.
-   - **Boat or Raft:** Using a boat, raft, or even an inflatable tube can be a safe and efficient way to cross. Ensure the boat is sturdy, properly equipped, and that you have the necessary safety gear, such as life jackets and a first-aid kit.
-   - **Bridge or Ferry:** If available, use a bridge or a ferry service. These are typically the safest and most reliable methods for crossing a river.
-
-3. **Prepare and Pack Essential Items:**
-   - **Life Jacket/Personal Flotation Device (PFD):** Always wear a life jacket or PFD when crossing a river, especially if swimming or using a boat.
-   - **First-Aid Kit:** Carry a basic first-aid kit to handle any minor injuries that might occur during the crossing.
-   - **Map and Compass:** Navigate the river and its surroundings with the help of a map and compass, especially if you're in an unfamiliar area.
-   - **Communication Device:** Have a means of communication, such as a satellite phone or a personal locator beacon, especially in remote areas.
-   - **Dry Clothing and Shelter:** Pack extra dry clothing and a waterproof shelter (like a tarp or tent) in case you get wet or need to wait out bad weather.
-
-4. **Follow River Safety Guidelines:**
-   - **Stay on Marked Paths:** If there are designated river paths or trails, use them. These routes are often designed to be safer and less prone to hazards.
-   - **Avoid Hazards:** Be cautious of slippery rocks, strong currents, and hidden underwater obstacles. Never swim or ford in areas with known dangers.
-   - **Group Safety:** If crossing with others, stay together. It's easier to keep an eye on each other and provide assistance if needed.
-
-5. **Be Prepared for Emergencies:**
-   - **Know Emergency Procedures:** Familiarize yourself with river rescue techniques and procedures. Learn how to signal for help and basic survival skills.
-   - **Carry Emergency Supplies:** Pack emergency supplies, including a whistle, a bright-colored cloth to signal, and a signal mirror (if available).
-   - **Leave a Plan:** Inform someone on the riverbank about your crossing plans, including your expected time of return. This person can raise the alarm if you don't return as scheduled.
-
-Remember, crossing a river can be a challenging and potentially dangerous endeavor. Always prioritize safety, and if in doubt, seek professional guidance or assistance from experienced river guides or local authorities. It's better to be over-prepared than caught off guard in a river crossing situation.\
-"""
-                    )
-                ],
+                parts=[IsInstance(TextPart)],
                 usage=Usage(
                     requests=1,
                     request_tokens=1457,

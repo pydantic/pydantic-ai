@@ -10,7 +10,7 @@ from pydantic.alias_generators import to_camel
 from typing_extensions import NotRequired, TypeAlias, TypedDict
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class AgentCard(TypedDict):
     """The card that describes an agent."""
 
@@ -66,7 +66,7 @@ class Provider(TypedDict):
     url: str
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class Capabilities(TypedDict):
     """The capabilities of the agent."""
 
@@ -80,7 +80,7 @@ class Capabilities(TypedDict):
     """Whether the agent exposes status change history for tasks."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class Authentication(TypedDict):
     """The authentication schemes supported by the agent."""
 
@@ -91,7 +91,7 @@ class Authentication(TypedDict):
     """The credentials a client should use for private cards."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class Skill(TypedDict):
     """Skills are a unit of capability that an agent can perform."""
 
@@ -126,7 +126,7 @@ class Skill(TypedDict):
     """Supported mime types for output data."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class Artifact(TypedDict):
     """Agents generate Artifacts as an end result of a Task.
 
@@ -159,7 +159,7 @@ class Artifact(TypedDict):
     """Whether this is the last chunk of the artifact."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class PushNotificationConfig(TypedDict):
     """Configuration for push notifications.
 
@@ -193,7 +193,7 @@ class PushNotificationConfig(TypedDict):
     """Authentication details for push notifications."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class TaskPushNotificationConfig(TypedDict):
     """Configuration for task push notifications."""
 
@@ -242,7 +242,7 @@ class TextPart(_BasePart):
     """The text of the part."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class FilePart(_BasePart):
     """A part that contains a file."""
 
@@ -253,7 +253,7 @@ class FilePart(_BasePart):
     """The file of the part."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class _BaseFile(_BasePart):
     """A base class for all file types."""
 
@@ -264,7 +264,7 @@ class _BaseFile(_BasePart):
     """The mime type of the file."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class _BinaryFile(_BaseFile):
     """A binary file."""
 
@@ -272,7 +272,7 @@ class _BinaryFile(_BaseFile):
     """The base64 encoded bytes of the file."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class _URLFile(_BaseFile):
     """A file that is hosted on a remote URL."""
 
@@ -284,7 +284,7 @@ File: TypeAlias = Union[_BinaryFile, _URLFile]
 """A file is a binary file or a URL file."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class DataPart(_BasePart):
     """A part that contains data."""
 
@@ -305,7 +305,7 @@ TaskState: TypeAlias = Literal['submitted', 'working', 'input-required', 'comple
 """The possible states of a task."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class TaskStatus(TypedDict):
     """Status and accompanying message for a task."""
 
@@ -319,7 +319,7 @@ class TaskStatus(TypedDict):
     """ISO datetime value of when the status was updated."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class Task(TypedDict):
     """A Task is a stateful entity that allows Clients and Remote Agents to achieve a specific outcome.
 
@@ -346,7 +346,7 @@ class Task(TypedDict):
     """Extension metadata."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class TaskStatusUpdateEvent(TypedDict):
     """Sent by server during sendSubscribe or subscribe requests."""
 
@@ -363,7 +363,7 @@ class TaskStatusUpdateEvent(TypedDict):
     """Extension metadata."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class TaskArtifactUpdateEvent(TypedDict):
     """Sent by server during sendSubscribe or subscribe requests."""
 
@@ -377,7 +377,7 @@ class TaskArtifactUpdateEvent(TypedDict):
     """Extension metadata."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class TaskIdParams(TypedDict):
     """Parameters for a task id."""
 
@@ -385,7 +385,7 @@ class TaskIdParams(TypedDict):
     metadata: NotRequired[dict[str, Any]]
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class TaskQueryParams(TaskIdParams):
     """Query parameters for a task."""
 
@@ -393,7 +393,7 @@ class TaskQueryParams(TaskIdParams):
     """Number of recent messages to be retrieved."""
 
 
-@pydantic.with_config(config={'alias_generator': to_camel})
+@pydantic.with_config({'alias_generator': to_camel})
 class TaskSendParams(TypedDict):
     """Sent by the client to the agent to create, continue, or restart a task."""
 

@@ -199,6 +199,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                     _flatten_output_spec(output.outputs),
                     name=output.name,
                     description=output.description,
+                    strict=output.strict,
                 ),
                 deferred_tool_calls=deferred_tool_calls,
             )

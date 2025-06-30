@@ -60,6 +60,7 @@ nav:
       - examples/stream-whales.md
       - examples/chat-app.md
       - examples/question-graph.md
+      - examples/slack-lead-qualifier.md
   - API Reference:
       - api/agent.md
       - api/tools.md
@@ -72,6 +73,7 @@ nav:
       - api/usage.md
       - api/mcp.md
       - api/format_as_xml.md
+      - api/format_prompt.md
       - api/direct.md
       - api/models/base.md
       - api/models/openai.md

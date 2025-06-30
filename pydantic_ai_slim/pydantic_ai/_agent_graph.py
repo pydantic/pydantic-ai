@@ -687,9 +687,38 @@ async def process_function_tools(  # noqa: C901
                     if isinstance(tool_result, _messages.RetryPromptPart):
                         results_by_index[index] = tool_result
                     elif isinstance(tool_result, _messages.ToolReturnPart):
+                        if isinstance(tool_result.content, _messages.ToolReturn):
+                            tool_return = tool_result.content
+                            if (
+                                isinstance(tool_return.return_value, _messages.MultiModalContentTypes)
+                                or isinstance(tool_return.return_value, list)
+                                and any(
+                                    isinstance(content, _messages.MultiModalContentTypes)
+                                    for content in tool_return.return_value  # type: ignore
+                                )
+                            ):
+                                raise exceptions.UserError(
+                                    f"{tool_result.tool_name}'s `return_value` contains invalid nested MultiModalContentTypes objects. "
+                                    f'Please use `content` instead.'
+                                )
+                            tool_result.content = tool_return.return_value  # type: ignore
+                            tool_result.metadata = tool_return.metadata
+                            if tool_return.content:
+                                user_parts.append(
+                                    _messages.UserPromptPart(
+                                        content=list(tool_return.content),
+                                        timestamp=tool_result.timestamp,
+                                        part_kind='user-prompt',
+                                    )
+                                )
 
                         def process_content(content: Any) -> Any:
-                            if isinstance(content, _messages.MultiModalContentTypes):
+                            if isinstance(content, _messages.ToolReturn):
+                                raise exceptions.UserError(
+                                    f"{tool_result.tool_name}'s return contains invalid nested ToolReturn objects. "
+                                    f'ToolReturn should be used directly.'
+                                )
+                            elif isinstance(content, _messages.MultiModalContentTypes):
                                 if isinstance(content, _messages.BinaryContent):
                                     identifier = multi_modal_content_identifier(content.data)
                                 else:

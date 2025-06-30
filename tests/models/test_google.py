@@ -2,14 +2,12 @@ from __future__ import annotations as _annotations
 
 import datetime
 import os
-from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 
 import pytest
-from httpx import Request, Timeout
+from httpx import Timeout
 from inline_snapshot import Is, snapshot
 from pydantic import BaseModel
-from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
@@ -43,7 +41,6 @@ from pydantic_ai.result import Usage
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
-    from google.genai import _api_client
     from google.genai.types import HarmBlockThreshold, HarmCategory
 
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
@@ -56,7 +53,7 @@ pytestmark = [
 ]
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture()
 def google_provider(gemini_api_key: str) -> GoogleProvider:
     return GoogleProvider(api_key=gemini_api_key)
 
@@ -251,10 +248,10 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     requests=1,
                     request_tokens=57,
                     response_tokens=15,
-                    total_tokens=173,
-                    details={'thoughts_tokens': 101, 'text_prompt_tokens': 57},
+                    total_tokens=227,
+                    details={'thoughts_tokens': 155, 'text_prompt_tokens': 57},
                 ),
-                model_name='models/gemini-2.5-pro-preview-05-06',
+                model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
             ),
@@ -271,17 +268,17 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='I am sorry, I cannot fulfill this request. The country you provided is not supported.'
+                        content='I am sorry, I cannot fulfill this request. The country "France" is not supported by my system.'
                     )
                 ],
                 usage=Usage(
                     requests=1,
                     request_tokens=104,
-                    response_tokens=18,
-                    total_tokens=122,
-                    details={'text_prompt_tokens': 104},
+                    response_tokens=22,
+                    total_tokens=304,
+                    details={'thoughts_tokens': 178, 'text_prompt_tokens': 104},
                 ),
-                model_name='models/gemini-2.5-pro-preview-05-06',
+                model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
             ),
@@ -321,43 +318,17 @@ async def test_google_model_gla_labels_raises_value_error(allow_model_requests: 
         await agent.run('What is the capital of France?')
 
 
-@pytest.fixture(autouse=True)
-def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
-    # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
-    if not os.getenv('CI'):
-        return  # pragma: lax no cover
-
-    @dataclass
-    class NoOpCredentials:
-        token = 'my-token'
-        quota_project_id = 'pydantic-ai'
-
-        def refresh(self, request: Request): ...
-
-        def expired(self) -> bool:
-            return False
-
-    return_value = (NoOpCredentials(), 'pydantic-ai')
-    mocker.patch.object(_api_client, '_load_auth', return_value=return_value)
-
-
-@pytest.mark.skipif(
-    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
-)
-async def test_google_model_vertex_provider(allow_model_requests: None):
-    provider = GoogleProvider(location='global')
-    model = GoogleModel('gemini-2.0-flash', provider=provider)
+async def test_google_model_vertex_provider(allow_model_requests: None, vertex_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.')
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.\n')
 
 
-@pytest.mark.skipif(
-    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
-)
-async def test_google_model_vertex_labels(allow_model_requests: None):  # pragma: lax no cover
-    provider = GoogleProvider(location='global', project='pydantic-ai')
-    model = GoogleModel('gemini-2.0-flash', provider=provider)
+async def test_google_model_vertex_labels(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
+    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=settings)
     result = await agent.run('What is the capital of France?')
@@ -418,9 +389,9 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                 ),
                 tool_call_id=IsStr(),
             ),
-            PartStartEvent(index=0, part=TextPart(content='The temperature in')),
+            PartStartEvent(index=0, part=TextPart(content='The temperature in Paris')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' Paris is 30°C.\n')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' is 30°C.\n')),
         ]
     )
 
@@ -443,16 +414,11 @@ async def test_google_model_video_as_binary_content_input(
 
     result = await agent.run(['Explain me this video', video_content])
     assert result.output == snapshot("""\
-Okay, I can describe what's visible in the image you sent.
+Okay, I can describe what is visible in the image.
 
-The image shows a camera setup in an outdoor environment. Here's a breakdown of what's in the frame:
+The image shows a camera setup in an outdoor setting. The camera is mounted on a tripod and has an external monitor attached to it. The monitor is displaying a scene that appears to be a desert landscape with rocky formations and mountains in the background. The foreground and background of the overall image, outside of the camera monitor, is also a blurry, desert landscape. The colors in the background are warm and suggest either sunrise, sunset, or reflected light off the rock formations.
 
-*   **Camera Monitor:** A small, external monitor is mounted on top of the camera. The monitor is displaying a preview of the scene the camera is capturing. The preview shows a scene of a dirt road, rocks, and a distant mountain range.
-*   **Camera:** The camera itself is attached to a tripod. It's a compact camera, and the lens is visible.
-*   **Tripod:** The camera is mounted on a tripod to keep it stable.
-*   **Background:** The background is blurred, but it appears to be a mountainous or desert landscape with rocks and vegetation. The colors suggest that it could be late afternoon or early morning, with warm light illuminating the scene.
-
-In summary, the image depicts a camera setup being used to film or photograph a desert landscape.\
+It looks like someone is either reviewing footage on the monitor, or using it as an aid for framing the shot.\
 """)
 
 
@@ -466,7 +432,7 @@ async def test_google_model_image_url_input(allow_model_requests: None, google_p
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.output == snapshot("That's a potato!\n")
+    assert result.output == snapshot('That is a potato.\n')
 
 
 async def test_google_model_video_url_input(allow_model_requests: None, google_provider: GoogleProvider):
@@ -480,11 +446,13 @@ async def test_google_model_video_url_input(allow_model_requests: None, google_p
         ]
     )
     assert result.output == snapshot("""\
-Certainly! Based on the image, here's what I can tell you:
+Okay, based on the image, here's what I can infer:
 
-**Visual Description:**
+*   **A camera monitor is mounted on top of a camera.**
+*   **The monitor's screen is on, displaying a view of the rocky mountains.**
+*   **This setting suggests a professional video shoot.**
 
-The image shows a small video monitor (likely a field monitor used in filmmaking or photography) mounted on top of a camera tripod. The monitor screen displays a scenic shot of a mountainous landscape, possibly a canyon or ravine. The background is a blurred, out-of-focus view of a similar landscape, suggesting that the monitor is set up in the field.
+If you'd like a more detailed explanation, please provide additional information about the video.\
 """)
 
 
@@ -495,7 +463,7 @@ async def test_google_model_document_url_input(allow_model_requests: None, googl
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.output == snapshot('The main content of the document is the phrase "Dummy PDF file".\n')
+    assert result.output == snapshot('The document appears to be a "Dummy PDF file".\n')
 
 
 async def test_google_model_text_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
@@ -506,7 +474,7 @@ async def test_google_model_text_document_url_input(allow_model_requests: None, 
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
     assert result.output == snapshot(
-        'The main content of this TXT document is an explanation of the placeholder names "John Doe" (and variations) used when the true identity of a person is unknown or withheld, primarily in legal contexts in the United States and Canada. It also discusses alternative names used in other countries, different uses of the name, and the origin of the practice.\n'
+        'The main content of the document is an example of a TXT file, specifically providing information about the placeholder names "John Doe" (and related variations) used for unidentified or anonymous individuals, particularly in legal contexts in the United States and Canada. It also explains alternative names used in other countries and some additional context and examples of when "John Doe" might be used. The document also includes attribution to Wikipedia for the example content and a link to the license under which it is shared.\n'
     )
 
 
@@ -568,7 +536,7 @@ async def test_google_model_multiple_documents_in_history(
         ],
     )
 
-    assert result.output == snapshot('Both documents contain the text "Dummy PDF file".')
+    assert result.output == snapshot('Both documents contain the text "Dummy PDF file" at the top of the page.')
 
 
 async def test_google_model_safety_settings(allow_model_requests: None, google_provider: GoogleProvider):
@@ -592,9 +560,7 @@ async def test_google_model_empty_user_prompt(allow_model_requests: None, google
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run()
-    assert result.output == snapshot(
-        'Please provide me with a question or task. I need some information to be able to help you.\n'
-    )
+    assert result.output == snapshot("I'm ready to assist you.  Please tell me what you need.\n")
 
 
 async def test_google_model_thinking_part(allow_model_requests: None, google_provider: GoogleProvider):
@@ -611,77 +577,15 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 ]
             ),
             ModelResponse(
-                parts=[
-                    ThinkingPart(
-                        content="""\
-**My Approach to Street Crossing Advice**
-
-Okay, so the user wants to know how to cross the street. Simple question, right? But safety is paramount here. My brain immediately goes into problem-solving mode. First, I have to *deconstruct* the request. Then, I define the core *goal*: crossing safely.  That means I need to brainstorm the key principles that make that possible.
-
-I'm thinking: **visibility**, **awareness**, **predictability**, **caution**, and using designated crossings.  These are the building blocks.  Now, how to structure this into a clear, helpful response?  A step-by-step approach seems best. I'll break it down into *before*, *during*, and some *general tips*.
-
-Let's flesh this out.  "Before" means finding a safe spot: marked **crosswalks**, intersections with signals, or pedestrian bridges/tunnels are ideal. Avoid darting out!  Then, I need to *stop* at the curb, *look* and *listen* in all directions, and make eye contact with drivers, if possible.  Wait for a *gap* or a signal.
-
-During crossing, the plan is to *walk*, not run. Keep looking and listening, stay in the crosswalk, and be visible. No distractions like phones. That's the basic framework.
-
-Now, for the "general tips." Teaching children how to do it is important. Extra caution at night or in bad weather is obvious. I should emphasize *never assume* drivers see you or will stop. Alcohol and drugs are a huge no-no. Watch out for parked cars, and turning vehicles are another common hazard. Always follow local laws!
-
-Okay, time to refine the language.  I want clear, action-oriented verbs and maybe some bullet points for readability. Bolding key terms helps too. And then, I need to consider edge cases. What if there are no crosswalks? Well, find a spot with good visibility and wait for a large gap. What about different traffic rules?  I'll just say to look in *all* directions.  I want to make sure it covers all bases.
-
-Finally, a quick review to make sure it's logical, comprehensive, easy to understand, and not too complex.  I think this is a good balance between thoroughness and conciseness.  Hopefully, this will keep people safe!
-"""
-                    ),
-                    TextPart(
-                        content="""\
-Crossing the street safely is crucial! Here's a step-by-step guide:
-
-1.  **Find a Safe Place to Cross:**
-    *   **Best:** Use a designated pedestrian crossing (zebra stripes, crosswalk lines) or an intersection with traffic lights and pedestrian signals ("walk/don't walk" signs).
-    *   **Good:** If no designated crossing is nearby, go to a street corner or an area where you have a clear view of traffic in all directions.
-    *   **Avoid:** Crossing between parked cars, on a curve, or near the crest of a hill where drivers can't see you easily.
-
-2.  **Stop at the Edge:**
-    *   Stop at the curb or the edge of the road. Don't step into the street yet.
-
-3.  **Look and Listen for Traffic:**
-    *   **Look Left:** Check for oncoming traffic.
-    *   **Look Right:** Check for oncoming traffic from the other direction.
-    *   **Look Left Again:** Double-check the closest lane of traffic before stepping out.
-    *   **Listen:** Sometimes you can hear traffic before you see it, especially large vehicles or motorcycles.
-
-4.  **Wait for a Safe Gap (or the Signal):**
-    *   **No Signal:** Wait until there's a large enough gap in traffic for you to cross safely without rushing. Make sure drivers have seen you and have time to stop if necessary. Try to make eye contact with drivers.
-    *   **With Signal:** Wait for the "WALK" signal or the little green walking person symbol. Even with a green signal, quickly check for turning vehicles before stepping off the curb.
-
-5.  **Cross Alertly:**
-    *   **Walk, Don't Run:** Walking briskly is good, but running can increase your risk of tripping and falling.
-    *   **Keep Looking and Listening:** Continue to check for traffic as you cross. The situation can change quickly.
-    *   **Stay Visible:** If it's dark or visibility is poor (rain, fog), wear bright or reflective clothing.
-    *   **Avoid Distractions:** Put away your phone, take off headphones, and focus on crossing safely.
-
-6.  **If There's a Median Strip or Island:**
-    *   Cross to the median, stop, and repeat the "Look Left, Right, Left" process for the next set of lanes before continuing.
-
-**Key Things to Remember:**
-
-*   **Never assume a driver sees you.** Always try to make eye contact.
-*   **Be extra careful at night or in bad weather.**
-*   **Teach children these rules** and hold their hands when crossing.
-*   **Obey traffic signals and signs.**
-*   **Don't dart out** into the street.
-
-Stay safe!\
-"""
-                    ),
-                ],
+                parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
                 usage=Usage(
                     requests=1,
                     request_tokens=15,
-                    response_tokens=606,
-                    total_tokens=1704,
-                    details={'thoughts_tokens': 1083, 'text_prompt_tokens': 15},
+                    response_tokens=1041,
+                    total_tokens=2703,
+                    details={'thoughts_tokens': 1647, 'text_prompt_tokens': 15},
                 ),
-                model_name='models/gemini-2.5-pro-preview-05-06',
+                model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
             ),
@@ -705,6 +609,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
     assert event_parts == snapshot(
         [
             PartStartEvent(index=0, part=IsInstance(ThinkingPart)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
@@ -740,13 +645,24 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
         ]
     )
 
 
-@pytest.mark.skipif(
-    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
-)
 @pytest.mark.parametrize(
     'url,expected_output',
     [
@@ -798,14 +714,12 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
     ],
 )
 async def test_google_url_input(
-    # Need to use noqa because with runtime annotations this always fails linting
-    # https://docs.astral.sh/ruff/rules/non-pep604-annotation-union/
-    url: Union[AudioUrl, DocumentUrl, ImageUrl, VideoUrl],  # noqa
+    url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl,
     expected_output: str,
     allow_model_requests: None,
+    vertex_provider: GoogleProvider,
 ) -> None:
-    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
-    m = GoogleModel('gemini-2.0-flash', provider=provider)
+    m = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     agent = Agent(m)
     result = await agent.run(['What is the main content of this URL?', url])
 
@@ -1000,10 +914,10 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
                 usage=Usage(
                     requests=1,
-                    request_tokens=32,
+                    request_tokens=33,
                     response_tokens=5,
-                    total_tokens=37,
-                    details={'text_candidates_tokens': 5, 'text_prompt_tokens': 32},
+                    total_tokens=38,
+                    details={'text_candidates_tokens': 5, 'text_prompt_tokens': 33},
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -1029,10 +943,10 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 ],
                 usage=Usage(
                     requests=1,
-                    request_tokens=46,
+                    request_tokens=47,
                     response_tokens=8,
-                    total_tokens=54,
-                    details={'text_candidates_tokens': 8, 'text_prompt_tokens': 46},
+                    total_tokens=55,
+                    details={'text_candidates_tokens': 8, 'text_prompt_tokens': 47},
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -1067,7 +981,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
     result = await agent.run(
         'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.'
     )
-    assert result.output == snapshot('BASED ON THE INFORMATION I HAVE, THE LARGEST CITY IN MEXICO IS MEXICO CITY.')
+    assert result.output == snapshot('THE LARGEST CITY IN MEXICO IS MEXICO CITY.')
 
     assert result.all_messages() == snapshot(
         [
@@ -1080,18 +994,15 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 ]
             ),
             ModelResponse(
-                parts=[
-                    TextPart(content='Okay, I can help with that. First, I need to determine your country.\n'),
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr()),
-                ],
+                parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
                 usage=Usage(
                     requests=1,
                     request_tokens=49,
-                    response_tokens=30,
-                    total_tokens=238,
-                    details={'thoughts_tokens': 159, 'text_prompt_tokens': 49},
+                    response_tokens=12,
+                    total_tokens=325,
+                    details={'thoughts_tokens': 264, 'text_prompt_tokens': 49},
                 ),
-                model_name='models/gemini-2.5-pro-preview-05-06',
+                model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
             ),
@@ -1106,15 +1017,15 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='Based on the information I have, the largest city in Mexico is Mexico City.')],
+                parts=[TextPart(content='The largest city in Mexico is Mexico City.')],
                 usage=Usage(
                     requests=1,
-                    request_tokens=98,
-                    response_tokens=16,
-                    total_tokens=159,
-                    details={'thoughts_tokens': 45, 'text_prompt_tokens': 98},
+                    request_tokens=80,
+                    response_tokens=9,
+                    total_tokens=239,
+                    details={'thoughts_tokens': 150, 'text_prompt_tokens': 80},
                 ),
-                model_name='models/gemini-2.5-pro-preview-05-06',
+                model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
             ),
@@ -1176,10 +1087,10 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                 ],
                 usage=Usage(
                     requests=1,
-                    request_tokens=19,
+                    request_tokens=25,
                     response_tokens=20,
-                    total_tokens=39,
-                    details={'text_candidates_tokens': 20, 'text_prompt_tokens': 19},
+                    total_tokens=45,
+                    details={'text_candidates_tokens': 20, 'text_prompt_tokens': 25},
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -1233,10 +1144,10 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                 ],
                 usage=Usage(
                     requests=1,
-                    request_tokens=64,
+                    request_tokens=50,
                     response_tokens=46,
-                    total_tokens=110,
-                    details={'text_candidates_tokens': 46, 'text_prompt_tokens': 64},
+                    total_tokens=96,
+                    details={'text_candidates_tokens': 46, 'text_prompt_tokens': 50},
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -1276,17 +1187,13 @@ Don't include any text or Markdown fencing before or after.\
 """,
             ),
             ModelResponse(
-                parts=[
-                    TextPart(
-                        content='{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object", "city": "Mexico City", "country": "Mexico"}'
-                    )
-                ],
+                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
                 usage=Usage(
                     requests=1,
                     request_tokens=80,
-                    response_tokens=56,
-                    total_tokens=136,
-                    details={'text_candidates_tokens': 56, 'text_prompt_tokens': 80},
+                    response_tokens=13,
+                    total_tokens=93,
+                    details={'text_candidates_tokens': 13, 'text_prompt_tokens': 80},
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -1337,10 +1244,10 @@ Don't include any text or Markdown fencing before or after.\
                     requests=1,
                     request_tokens=123,
                     response_tokens=12,
-                    total_tokens=401,
-                    details={'thoughts_tokens': 266, 'text_prompt_tokens': 123},
+                    total_tokens=267,
+                    details={'thoughts_tokens': 132, 'text_prompt_tokens': 123},
                 ),
-                model_name='models/gemini-2.5-pro-preview-05-06',
+                model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
             ),
@@ -1362,23 +1269,15 @@ Don't include any text or Markdown fencing before or after.\
 """,
             ),
             ModelResponse(
-                parts=[
-                    TextPart(
-                        content="""\
-```json
-{"city": "Mexico City", "country": "Mexico"}
-```\
-"""
-                    )
-                ],
+                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
                 usage=Usage(
                     requests=1,
                     request_tokens=154,
-                    response_tokens=18,
-                    total_tokens=266,
-                    details={'thoughts_tokens': 94, 'text_prompt_tokens': 154},
+                    response_tokens=13,
+                    total_tokens=320,
+                    details={'thoughts_tokens': 153, 'text_prompt_tokens': 154},
                 ),
-                model_name='models/gemini-2.5-pro-preview-05-06',
+                model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
             ),
@@ -1427,10 +1326,10 @@ Don't include any text or Markdown fencing before or after.\
                 ],
                 usage=Usage(
                     requests=1,
-                    request_tokens=241,
+                    request_tokens=240,
                     response_tokens=27,
-                    total_tokens=268,
-                    details={'text_candidates_tokens': 27, 'text_prompt_tokens': 241},
+                    total_tokens=267,
+                    details={'text_candidates_tokens': 27, 'text_prompt_tokens': 240},
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
