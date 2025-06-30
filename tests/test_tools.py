@@ -18,6 +18,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import DeferredToolCalls, ToolOutput
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolset import DeferredToolset
 
 from .conftest import IsStr
 
@@ -1181,14 +1182,16 @@ def test_tool_retries():
 
 
 def test_deferred_tool():
-    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls])
-
-    async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
-        return replace(tool_def, kind='deferred')
-
-    @agent.tool_plain(prepare=prepare_tool)
-    def my_tool(x: int) -> int:
-        return x + 1
+    deferred_toolset = DeferredToolset(
+        [
+            ToolDefinition(
+                name='my_tool',
+                description='',
+                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+            ),
+        ]
+    )
+    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls], toolsets=[deferred_toolset])
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
@@ -1199,10 +1202,9 @@ def test_deferred_tool():
                     name='my_tool',
                     description='',
                     parameters_json_schema={
-                        'additionalProperties': False,
+                        'type': 'object',
                         'properties': {'x': {'type': 'integer'}},
                         'required': ['x'],
-                        'type': 'object',
                     },
                     kind='deferred',
                 )
