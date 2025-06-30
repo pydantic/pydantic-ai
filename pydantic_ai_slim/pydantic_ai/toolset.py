@@ -46,7 +46,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
     @property
     def name(self) -> str:
-        return self.__class__.__name__
+        return self.__class__.__name__.replace('Toolset', ' toolset')
 
     @property
     def name_conflict_hint(self) -> str:
@@ -109,10 +109,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
     max_retries: int = field(default=1)
     tools: dict[str, Tool[Any]] = field(default_factory=dict)
-
-    @property
-    def name(self) -> str:
-        return 'FunctionToolset'
 
     def __init__(self, tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [], max_retries: int = 1):
         self.max_retries = max_retries
