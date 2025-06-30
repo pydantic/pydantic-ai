@@ -39,7 +39,7 @@ async def test_agent_card():
                 'skills': [],
                 'defaultInputModes': ['application/json'],
                 'defaultOutputModes': ['application/json'],
-                'capabilities': {'streaming': False, 'pushNotifications': False, 'stateTransitionHistory': False},
+                'capabilities': {'streaming': True, 'pushNotifications': False, 'stateTransitionHistory': False},
                 'authentication': {'schemes': []},
             }
         )

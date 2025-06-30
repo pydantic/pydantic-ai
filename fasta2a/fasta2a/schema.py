@@ -659,10 +659,7 @@ def is_message(response: Task | Message) -> TypeGuard[Message]:
 
 # Streaming support - unified event type for broker communication
 # Use discriminator to properly identify event types
-StreamEvent = Annotated[
-    Union[Task, Message, TaskStatusUpdateEvent, TaskArtifactUpdateEvent],
-    Discriminator('kind')
-]
+StreamEvent = Annotated[Union[Task, Message, TaskStatusUpdateEvent, TaskArtifactUpdateEvent], Discriminator('kind')]
 """Events that can be streamed through the broker for message/stream support."""
 
 stream_event_ta: TypeAdapter[StreamEvent] = TypeAdapter(StreamEvent)

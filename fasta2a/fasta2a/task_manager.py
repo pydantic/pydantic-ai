@@ -121,10 +121,10 @@ class TaskManager:
         request_id = request['id']
         task_id = str(uuid.uuid4())
         message = request['params']['message']
-        
+
         # Use provided context_id or create new one
         context_id = message.get('context_id') or str(uuid.uuid4())
-        
+
         metadata = request['params'].get('metadata')
         config = request['params'].get('configuration', {})
 
@@ -184,22 +184,22 @@ class TaskManager:
         # Extract request parameters
         task_id = str(uuid.uuid4())
         message = request['params']['message']
-        
+
         # Use provided context_id or create new one
         context_id = message.get('context_id') or str(uuid.uuid4())
-        
+
         metadata = request['params'].get('metadata')
         config = request['params'].get('configuration', {})
 
         # Create a new task
         task = await self.storage.submit_task(task_id, context_id, message, metadata)
-        
+
         # Yield the initial task
         yield task
-        
+
         # Subscribe to events BEFORE starting execution to avoid race conditions
         event_stream = self.broker.subscribe_to_stream(task_id)
-        
+
         # Prepare params for broker
         broker_params: TaskSendParams = {
             'id': task_id,
@@ -214,7 +214,7 @@ class TaskManager:
 
         # Start task execution asynchronously
         await self.broker.run_task(broker_params)
-        
+
         # Stream events from broker - they're already in A2A format!
         async for event in event_stream:
             yield event

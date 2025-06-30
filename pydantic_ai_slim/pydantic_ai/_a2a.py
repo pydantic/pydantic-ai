@@ -40,7 +40,6 @@ try:
         Provider,
         Skill,
         Task,
-        TaskArtifactUpdateEvent,
         TaskIdParams,
         TaskSendParams,
         TaskStatusUpdateEvent,
@@ -121,7 +120,7 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
         task = await self.storage.load_task(params['id'], history_length=params.get('history_length'))
         assert task is not None, f'Task {params["id"]} not found'
         assert 'context_id' in task, 'Task must have a context_id'
-        
+
         task_id = task['id']
         context_id = task['context_id']
 
@@ -130,12 +129,8 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
         await self.broker.send_stream_event(
             task_id,
             TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                kind='status-update',
-                status={'state': 'working'},
-                final=False
-            )
+                task_id=task_id, context_id=context_id, kind='status-update', status={'state': 'working'}, final=False
+            ),
         )
 
         # TODO(Marcelo): We need to have a way to communicate when the task is set to `input-required`. Maybe
@@ -143,8 +138,7 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
 
         try:
             context_history = await self.storage.get_context_history(
-                context_id, 
-                history_length=params.get('history_length')
+                context_id, history_length=params.get('history_length')
             )
             message_history = self.build_message_history(task_history=context_history)
 
@@ -165,15 +159,15 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
                 kind='message',
                 message_id=str(uuid.uuid4()),
                 task_id=task_id,
-                context_id=context_id
+                context_id=context_id,
             )
-            
+
             # Add the agent's response to storage
             await self.storage.add_message(agent_message)
-            
+
             # Send the agent's response as a message
             await self.broker.send_stream_event(task_id, agent_message)
-            
+
             # Update storage and send completion event (no artifacts)
             await self.storage.update_task(task_id, state='completed')
             await self.broker.send_stream_event(
@@ -183,10 +177,10 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
                     context_id=context_id,
                     kind='status-update',
                     status={'state': 'completed'},
-                    final=True
-                )
+                    final=True,
+                ),
             )
-        except Exception as e:
+        except Exception:
             # Update storage and send failure event
             await self.storage.update_task(task_id, state='failed')
             await self.broker.send_stream_event(
@@ -195,9 +189,9 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
                     task_id=task_id,
                     context_id=context_id,
                     kind='status-update',
-                    status={'state': 'failed', 'message': str(e)},
-                    final=True
-                )
+                    status={'state': 'failed'},
+                    final=True,
+                ),
             )
             raise
 
@@ -207,7 +201,7 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
     def build_artifacts(self, result: Any) -> list[Artifact]:
         # TODO(Marcelo): We need to send the json schema of the result on the metadata of the message.
         artifact_id = str(uuid.uuid4())
-        return [Artifact(artifactId=artifact_id, name='result', parts=[A2ATextPart(kind='text', text=str(result))])]
+        return [Artifact(artifact_id=artifact_id, name='result', parts=[A2ATextPart(kind='text', text=str(result))])]
 
     def build_message_history(self, task_history: list[Message]) -> list[ModelMessage]:
         model_messages: list[ModelMessage] = []

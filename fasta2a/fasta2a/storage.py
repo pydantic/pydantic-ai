@@ -40,17 +40,13 @@ class Storage(ABC):
     @abstractmethod
     async def add_message(self, message: Message) -> None:
         """Add a message to the history for both its task and context.
-        
+
         This should be called for messages created during task execution,
         not for the initial message (which is handled by submit_task).
         """
 
     @abstractmethod
-    async def get_context_history(
-        self,
-        context_id: str,
-        history_length: int | None = None
-    ) -> list[Message]:
+    async def get_context_history(self, context_id: str, history_length: int | None = None) -> list[Message]:
         """Get all messages across tasks in a context."""
 
 
@@ -89,18 +85,18 @@ class InMemoryStorage(Storage):
         # Add IDs to the message
         message['task_id'] = task_id
         message['context_id'] = context_id
-        
+
         task_status = TaskStatus(state='submitted', timestamp=datetime.now().isoformat())
         task = Task(id=task_id, context_id=context_id, kind='task', status=task_status, history=[message])
         if metadata is not None:
             task['metadata'] = metadata
         self.tasks[task_id] = task
-        
+
         # Add message to context storage directly (not via add_message to avoid duplication)
         if context_id not in self.context_messages:
             self.context_messages[context_id] = []
         self.context_messages[context_id].append(message)
-        
+
         return task
 
     async def update_task(
@@ -127,18 +123,14 @@ class InMemoryStorage(Storage):
                 if 'history' not in task:
                     task['history'] = []
                 task['history'].append(message)
-        
+
         if 'context_id' in message and message['context_id']:
             context_id = message['context_id']
             if context_id not in self.context_messages:
                 self.context_messages[context_id] = []
             self.context_messages[context_id].append(message)
 
-    async def get_context_history(
-        self,
-        context_id: str,
-        history_length: int | None = None
-    ) -> list[Message]:
+    async def get_context_history(self, context_id: str, history_length: int | None = None) -> list[Message]:
         """Get all messages across tasks in a context."""
         messages = self.context_messages.get(context_id, [])
         if history_length:

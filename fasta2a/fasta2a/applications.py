@@ -5,13 +5,13 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
+from sse_starlette import EventSourceResponse
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 from starlette.types import ExceptionHandler, Lifespan, Receive, Scope, Send
-from sse_starlette import EventSourceResponse
 
 from .broker import Broker
 from .schema import (
@@ -128,24 +128,20 @@ class FastA2A(Starlette):
         elif a2a_request['method'] == 'message/stream':
             # Parse the streaming request
             stream_request = stream_message_request_ta.validate_json(data)
-            
+
             # Create an async generator wrapper that formats events as JSON-RPC responses
             async def sse_generator():
                 request_id = stream_request.get('id')
                 async for event in self.task_manager.stream_message(stream_request):
                     # Serialize event to ensure proper camelCase conversion
                     event_dict = stream_event_ta.dump_python(event, mode='json', by_alias=True)
-                    
+
                     # Wrap in JSON-RPC response
-                    jsonrpc_response = {
-                        'jsonrpc': '2.0',
-                        'id': request_id,
-                        'result': event_dict
-                    }
-                    
+                    jsonrpc_response = {'jsonrpc': '2.0', 'id': request_id, 'result': event_dict}
+
                     # Convert to JSON string
                     yield json.dumps(jsonrpc_response)
-            
+
             # Return SSE response
             return EventSourceResponse(sse_generator())
         elif a2a_request['method'] == 'tasks/get':
