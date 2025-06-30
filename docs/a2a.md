@@ -27,7 +27,7 @@ The library is designed to be used with any agentic framework, and is **not excl
 
 ### Design
 
-**FastA2A** is built on top of [Starlette](https://starlette.io), which means it's fully compatible with any ASGI server.
+**FastA2A** is built on top of [Starlette](https://www.starlette.io), which means it's fully compatible with any ASGI server.
 
 Given the nature of the A2A protocol, it's important to understand the design before using it, as a developer
 you'll need to provide some components:
