@@ -45,6 +45,7 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolset import FunctionToolset
 
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 
@@ -3451,3 +3452,42 @@ def test_deprecated_kwargs_mixed_valid_invalid():
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', DeprecationWarning)  # Ignore the deprecation warning for result_tool_name
             Agent('test', result_tool_name='test', foo='value1', bar='value2')  # type: ignore[call-arg]
+
+
+def test_override_toolsets():
+    foo_toolset = FunctionToolset()
+
+    @foo_toolset.tool
+    def foo() -> str:
+        return 'Hello from foo'
+
+    bar_toolset = FunctionToolset()
+
+    @bar_toolset.tool
+    def bar() -> str:
+        return 'Hello from bar'
+
+    available_tools: list[list[str]] = []
+
+    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        nonlocal available_tools
+        available_tools.append([tool_def.name for tool_def in tool_defs])
+        return tool_defs
+
+    agent = Agent('test', toolsets=[foo_toolset], prepare_tools=prepare_tools)
+
+    @agent.tool_plain
+    def baz() -> str:
+        return 'Hello from baz'
+
+    result = agent.run_sync('Hello')
+    assert available_tools[-1] == snapshot(['baz', 'foo'])
+    assert result.output == snapshot('{"baz":"Hello from baz","foo":"Hello from foo"}')
+
+    result = agent.run_sync('Hello', toolsets=[bar_toolset])
+    assert available_tools[-1] == snapshot(['baz', 'bar'])
+    assert result.output == snapshot('{"baz":"Hello from baz","bar":"Hello from bar"}')
+
+    result = agent.run_sync('Hello', toolsets=[])
+    assert available_tools[-1] == snapshot(['baz'])
+    assert result.output == snapshot('{"baz":"Hello from baz"}')

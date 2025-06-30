@@ -155,7 +155,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     )
     _function_toolset: FunctionToolset[AgentDepsT] = dataclasses.field(repr=False)
     _output_toolset: OutputToolset[AgentDepsT] = dataclasses.field(repr=False)
+    _user_toolsets: Sequence[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
+    _mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
     _toolset: AbstractToolset[AgentDepsT] = dataclasses.field(repr=False)
+    _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _override_deps: _utils.Option[AgentDepsT] = dataclasses.field(default=None, repr=False)
     _override_model: _utils.Option[models.Model] = dataclasses.field(default=None, repr=False)
@@ -179,7 +182,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] = (),
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -210,7 +213,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] = (),
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -238,7 +241,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         mcp_servers: Sequence[
             MCPServer
         ] = (),  # TODO: Deprecate argument, MCPServers can be passed directly to toolsets
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] = (),
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -361,19 +364,18 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._system_prompt_dynamic_functions = {}
 
         self._max_result_retries = output_retries if output_retries is not None else retries
+        self._prepare_tools = prepare_tools
 
-        self._output_toolset = OutputToolset[AgentDepsT](self._output_schema, max_retries=self._max_result_retries)
-        self._function_toolset = FunctionToolset[AgentDepsT](tools, max_retries=retries)
+        self._output_toolset = OutputToolset(self._output_schema, max_retries=self._max_result_retries)
+        self._function_toolset = FunctionToolset(tools, max_retries=retries)
+        self._user_toolsets = toolsets or ()
+        # TODO: Set max_retries on MCPServer
+        self._mcp_servers = mcp_servers
 
         # This will raise errors for any name conflicts
-        # TODO: Also include toolsets (not mcp_serves as we won't have tool defs yet)
-        CombinedToolset[AgentDepsT]([self._output_toolset, self._function_toolset])
-
-        # TODO: Set max_retries on MCPServer
-        toolset = CombinedToolset[AgentDepsT]([self._function_toolset, *toolsets, *mcp_servers])
-        if prepare_tools:
-            toolset = PreparedToolset[AgentDepsT](toolset, prepare_tools)
-        self._toolset = toolset
+        self._toolset = CombinedToolset(
+            [self._output_toolset, self._function_toolset, *self._user_toolsets, *self._mcp_servers]
+        )
 
         self.history_processors = history_processors or []
 
@@ -395,6 +397,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -410,6 +413,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     @overload
@@ -426,6 +430,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     async def run(
@@ -440,6 +445,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -470,6 +476,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional toolsets to use for this run instead of the `toolsets` set when creating the agent.
 
         Returns:
             The result of the run.
@@ -494,6 +501,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             usage_limits=usage_limits,
             usage=usage,
+            toolsets=toolsets,
         ) as agent_run:
             async for _ in agent_run:
                 pass
@@ -514,6 +522,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -530,6 +539,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -547,6 +557,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, Any]]: ...
 
     @asynccontextmanager
@@ -562,6 +573,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -636,6 +648,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional toolsets to use for this run instead of the `toolsets` set when creating the agent.
 
         Returns:
             The result of the run.
@@ -693,7 +706,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             run_step=state.run_step,
         )
 
-        toolset = CombinedToolset([output_toolset, self._toolset])
+        user_toolsets = self._user_toolsets if toolsets is None else toolsets
+        toolset = CombinedToolset([self._function_toolset, *user_toolsets, *self._mcp_servers])
+        if self._prepare_tools:
+            toolset = PreparedToolset(toolset, self._prepare_tools)
+        toolset = CombinedToolset([output_toolset, toolset])
         run_toolset = await toolset.prepare_for_run(run_context)
 
         model_settings = merge_model_settings(self.model_settings, model_settings)
@@ -814,6 +831,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -829,6 +847,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     @overload
@@ -845,6 +864,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     def run_sync(
@@ -859,6 +879,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -888,6 +909,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional toolsets to use for this run instead of the `toolsets` set when creating the agent.
 
         Returns:
             The result of the run.
@@ -914,6 +936,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 usage_limits=usage_limits,
                 usage=usage,
                 infer_name=False,
+                toolsets=toolsets,
             )
         )
 
@@ -929,6 +952,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -944,6 +968,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
     @overload
@@ -960,6 +985,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -975,6 +1001,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
@@ -1002,6 +1029,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional toolsets to use for this run instead of the `toolsets` set when creating the agent.
 
         Returns:
             The result of the run.
@@ -1032,6 +1060,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits=usage_limits,
             usage=usage,
             infer_name=False,
+            toolsets=toolsets,
         ) as agent_run:
             first_node = agent_run.next_node  # start with the first node
             assert isinstance(first_node, _agent_graph.UserPromptNode)  # the first node should be a user prompt node
