@@ -364,7 +364,7 @@ async def test_a2a_multiple_messages():
                         'kind': 'task',
                         'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
-                            {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}]},
+                            {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}], 'kind': 'message'},
                             {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}], 'kind': 'message'},
                         ],
                     },
@@ -383,7 +383,7 @@ async def test_a2a_multiple_messages():
                         'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
-                            {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}]},
+                            {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}], 'kind': 'message'},
                             {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}], 'kind': 'message'},
                         ],
                         'artifacts': [
