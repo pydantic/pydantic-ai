@@ -66,7 +66,7 @@ pip/uv-add fasta2a
 
 The only dependencies are:
 
-- [starlette](https://starlette.io): to expose the A2A server as an [ASGI application](https://asgi.readthedocs.io/en/latest/)
+- [starlette](https://www.starlette.io): to expose the A2A server as an [ASGI application](https://asgi.readthedocs.io/en/latest/)
 - [pydantic](https://pydantic.dev): to validate the request/response messages
 - [opentelemetry-api](https://opentelemetry-python.readthedocs.io/en/latest): to provide tracing capabilities
 
