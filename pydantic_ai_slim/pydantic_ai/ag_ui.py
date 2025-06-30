@@ -18,11 +18,8 @@ from typing import (
     Callable,
     Final,
     Generic,
-    NoReturn,
     Protocol,
     TypeVar,
-    Union,
-    cast,
     runtime_checkable,
 )
 
@@ -75,6 +72,11 @@ except ImportError as e:  # pragma: no cover
 
 from pydantic import BaseModel, ValidationError
 
+from pydantic_ai.output import DeferredToolCalls
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets.deferred import DeferredToolset
+
 from . import Agent, models
 from ._agent_graph import ModelRequestNode
 from .agent import RunOutputDataT
@@ -100,7 +102,7 @@ from .messages import (
 from .output import OutputDataT, OutputSpec
 from .result import AgentStream
 from .settings import ModelSettings
-from .tools import AgentDepsT, Tool
+from .tools import AgentDepsT
 from .usage import Usage, UsageLimits
 
 if TYPE_CHECKING:
@@ -139,7 +141,7 @@ class FastAGUI(Generic[AgentDepsT, OutputDataT], Starlette):
         usage_limits: UsageLimits | None = None,
         usage: Usage | None = None,
         infer_name: bool = True,
-        additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         # Starlette
         debug: bool = False,
         routes: Sequence[BaseRoute] | None = None,
@@ -164,7 +166,7 @@ class FastAGUI(Generic[AgentDepsT, OutputDataT], Starlette):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            additional_tools: Additional tools to use for this run.
+            toolsets: Optional list of toolsets to use for this agent, defaults to the agent's toolset.
 
             debug: Boolean indicating if debug tracebacks should be returned on errors.
             routes: A list of routes to serve incoming HTTP and WebSocket requests.
@@ -218,7 +220,7 @@ class FastAGUI(Generic[AgentDepsT, OutputDataT], Starlette):
                     usage_limits=usage_limits,
                     usage=usage,
                     infer_name=infer_name,
-                    additional_tools=additional_tools,
+                    toolsets=toolsets,
                 ),
                 media_type=SSE_CONTENT_TYPE,
             )
@@ -241,7 +243,7 @@ def agent_to_ag_ui(
     usage_limits: UsageLimits | None = None,
     usage: Usage | None = None,
     infer_name: bool = True,
-    additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     # Starlette parameters.
     debug: bool = False,
     routes: Sequence[BaseRoute] | None = None,
@@ -268,7 +270,7 @@ def agent_to_ag_ui(
         usage_limits: Optional limits on model request count or token usage.
         usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
         infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-        additional_tools: Additional tools to use for this run.
+        toolsets: Optional list of toolsets to use for this agent, defaults to the agent's toolset.
 
         debug: Boolean indicating if debug tracebacks should be returned on errors.
         routes: A list of routes to serve incoming HTTP and WebSocket requests.
@@ -308,7 +310,7 @@ def agent_to_ag_ui(
         usage_limits=usage_limits,
         usage=usage,
         infer_name=infer_name,
-        additional_tools=additional_tools,
+        toolsets=toolsets,
         # Starlette
         debug=debug,
         routes=routes,
@@ -402,7 +404,7 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
         usage_limits: UsageLimits | None = None,
         usage: Usage | None = None,
         infer_name: bool = True,
-        additional_tools: Sequence[Tool[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Run the agent with streaming response using AG-UI protocol events.
 
@@ -420,7 +422,7 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            additional_tools: Additional tools to use for this run.
+            toolsets: Optional list of toolsets to use for this agent, defaults to the agent's toolset.
 
         Yields:
             Streaming SSE-formatted event chunks.
@@ -429,8 +431,9 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
 
         tool_names: dict[str, str] = {self.tool_prefix + tool.name: tool.name for tool in run_input.tools}
         encoder: EventEncoder = EventEncoder(accept=accept)
-        run_tools: list[Tool[AgentDepsT]] = list(additional_tools) if additional_tools else []
-        run_tools.extend(self._convert_tools(run_input.tools))
+        run_toolset: list[AbstractToolset[AgentDepsT]] = list(toolsets) if toolsets else []
+        if run_input.tools:
+            run_toolset.append(_AGUIToolset[AgentDepsT](run_input.tools))
 
         try:
             yield encoder.encode(
@@ -449,10 +452,18 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
 
             history: _History = _convert_history(run_input.messages)
 
+            output_type_: OutputSpec[OutputDataT | DeferredToolCalls | RunOutputDataT]
+            if output_type is None:
+                # Use the agent's output type if not specified.
+                output_type_ = [self.agent.output_type, DeferredToolCalls]
+            else:
+                output_type_ = [output_type, DeferredToolCalls]
+
             run: AgentRun[AgentDepsT, Any]
             async with self.agent.iter(
                 user_prompt=None,
-                output_type=output_type,
+                # TODO(steve): Could or should it just accept: [output_type, DeferredToolCalls]
+                output_type=output_type_,
                 message_history=history.messages,
                 model=model,
                 deps=deps,
@@ -460,9 +471,9 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                 usage_limits=usage_limits,
                 usage=usage,
                 infer_name=infer_name,
-                additional_tools=run_tools,
+                toolsets=run_toolset,
             ) as run:
-                async for event in self._agent_stream(tool_names, run, history.prompt_message_id):
+                async for event in self._agent_stream(tool_names, run, history):
                     if event is None:
                         # Tool call signals early return, so we stop processing.
                         self.logger.debug('tool call early return')
@@ -493,14 +504,14 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
     async def _tool_events(
         self,
         parts: list[ModelRequestPart],
-        prompt_message_id: str,
+        history: _History,
     ) -> AsyncGenerator[BaseEvent | None, None]:
         """Check for tool call results that are AG-UI events.
 
         Args:
             encoder: The event encoder to use for encoding events.
             parts: The list of request parts to check for tool event returns.
-            prompt_message_id: The message ID of the user prompt to use for tool call results.
+            history: The history of messages and tool calls to use for the run.
 
         Yields:
             AG-UI Server-Sent Events (SSE).
@@ -510,8 +521,12 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
             if not isinstance(part, ToolReturnPart):
                 continue
 
+            if part.tool_call_id in history.tool_calls:
+                # Tool call was passed in the history, so we skip it.
+                continue
+
             yield ToolCallResultEvent(
-                message_id=prompt_message_id,
+                message_id=history.prompt_message_id,
                 type=EventType.TOOL_CALL_RESULT,
                 role=Role.TOOL.value,
                 tool_call_id=part.tool_call_id,
@@ -534,64 +549,18 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                         self.logger.debug('ag-ui event: %s', item)
                         yield item
 
-    def _convert_tools(self, run_tools: list[ToolAGUI]) -> list[Tool[AgentDepsT]]:
-        """Convert AG-UI tools to PydanticAI tools.
-
-        Creates `Tool` objects from AG-UI tool definitions. These tools don't
-        actually execute anything, that is done by AG-UI client - they just
-        provide the necessary tool definitions to PydanticAI agent.
-
-        Args:
-            run_tools: List of AG-UI tool definitions to convert.
-
-        Returns:
-            List of PydanticAI Tool objects that call the AG-UI tools.
-        """
-        return [self._tool_call(tool) for tool in run_tools]
-
-    def _tool_call(self, tool: ToolAGUI) -> Tool[AgentDepsT]:
-        """Create a PydanticAI tool from an AG-UI tool definition.
-
-        Args:
-            tool: The AG-UI tool definition to convert.
-
-        Returns:
-            A PydanticAI `Tool` object that calls the AG-UI tool.
-        """
-
-        def _tool_stub(*args: Any, **kwargs: Any) -> NoReturn:
-            """Stub function which is never called.
-
-            Returns:
-                Never returns as it always raises an exception.
-
-            Raises:
-                _UnexpectedToolCallError: Always raised since this should never be called.
-            """
-            raise _UnexpectedToolCallError(tool_name=tool.name)  # pragma: no cover
-
-        return cast(
-            'Tool[AgentDepsT]',
-            Tool.from_schema(
-                function=_tool_stub,
-                name=tool.name,
-                description=tool.description,
-                json_schema=tool.parameters,
-            ),
-        )
-
     async def _agent_stream(
         self,
         tool_names: dict[str, str],
         run: AgentRun[AgentDepsT, Any],
-        prompt_message_id: str,
+        history: _History,
     ) -> AsyncGenerator[BaseEvent | None, None]:
         """Run the agent streaming responses using AG-UI protocol events.
 
         Args:
             tool_names: A mapping of tool names to their AG-UI names.
             run: The agent run to process.
-            prompt_message_id: The message ID of the user prompt to use for tool call results.
+            history: The history of messages and tool calls to use for the run.
 
         Yields:
             AG-UI Server-Sent Events (SSE).
@@ -605,7 +574,7 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                 continue
 
             # Check for tool results.
-            async for msg in self._tool_events(node.request.parts, prompt_message_id):
+            async for msg in self._tool_events(node.request.parts, history):
                 yield msg
 
             stream_ctx: _RequestStreamContext = _RequestStreamContext()
@@ -616,8 +585,9 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                     async for msg in self._handle_agent_event(tool_names, stream_ctx, agent_event):
                         yield msg
 
-                for part_end in stream_ctx.part_ends:
-                    yield part_end
+                if stream_ctx.part_end:
+                    yield stream_ctx.part_end
+                    stream_ctx.part_end = None
 
     async def _handle_agent_event(
         self,
@@ -638,11 +608,10 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
         """
         self.logger.debug('agent_event: %s', agent_event)
         if isinstance(agent_event, PartStartEvent):
-            # If we have a previous part end it.
-            part_end: BaseEvent | None
-            for part_end in stream_ctx.part_ends:
-                yield part_end
-            stream_ctx.part_ends.clear()
+            if stream_ctx.part_end:
+                # End the previous part.
+                yield stream_ctx.part_end
+                stream_ctx.part_end = None
 
             if isinstance(agent_event.part, TextPart):
                 message_id: str = stream_ctx.new_message_id()
@@ -651,12 +620,10 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                     message_id=message_id,
                     role=Role.ASSISTANT.value,
                 )
-                stream_ctx.part_ends = [
-                    TextMessageEndEvent(
-                        type=EventType.TEXT_MESSAGE_END,
-                        message_id=message_id,
-                    ),
-                ]
+                stream_ctx.part_end = TextMessageEndEvent(
+                    type=EventType.TEXT_MESSAGE_END,
+                    message_id=message_id,
+                )
                 if agent_event.part.content:
                     yield TextMessageContentEvent(  # pragma: no cover
                         type=EventType.TEXT_MESSAGE_CONTENT,
@@ -671,15 +638,10 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                     tool_call_id=agent_event.part.tool_call_id,
                     tool_call_name=tool_name or agent_event.part.tool_name,
                 )
-                stream_ctx.part_ends = [
-                    ToolCallEndEvent(
-                        type=EventType.TOOL_CALL_END,
-                        tool_call_id=agent_event.part.tool_call_id,
-                    ),
-                ]
-                if tool_name:
-                    # AG-UI tool, signal continuation of the stream.
-                    stream_ctx.part_ends.append(None)
+                stream_ctx.part_end = ToolCallEndEvent(
+                    type=EventType.TOOL_CALL_END,
+                    tool_call_id=agent_event.part.tool_call_id,
+                )
 
             elif isinstance(agent_event.part, ThinkingPart):  # pragma: no branch
                 yield ThinkingTextMessageStartEvent(
@@ -690,11 +652,10 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                         type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
                         delta=agent_event.part.content,
                     )
-                stream_ctx.part_ends = [
-                    ThinkingTextMessageEndEvent(
-                        type=EventType.THINKING_TEXT_MESSAGE_END,
-                    ),
-                ]
+                stream_ctx.part_end = ThinkingTextMessageEndEvent(
+                    type=EventType.THINKING_TEXT_MESSAGE_END,
+                )
+
         elif isinstance(agent_event, PartDeltaEvent):
             if isinstance(agent_event.delta, TextPartDelta):
                 yield TextMessageContentEvent(
@@ -728,6 +689,7 @@ class _History:
 
     prompt_message_id: str  # The ID of the last user message.
     messages: list[ModelMessage]
+    tool_calls: set[str] = field(default_factory=set)
 
 
 def _convert_history(messages: list[Message]) -> _History:
@@ -742,7 +704,7 @@ def _convert_history(messages: list[Message]) -> _History:
     msg: Message
     prompt_message_id: str = ''
     result: list[ModelMessage] = []
-    tool_calls: dict[str, str] = {}
+    tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
     for msg in messages:
         if isinstance(msg, UserMessage):
             prompt_message_id = msg.id
@@ -789,6 +751,7 @@ def _convert_history(messages: list[Message]) -> _History:
     return _History(
         prompt_message_id=prompt_message_id,
         messages=result,
+        tool_calls=set(tool_calls.keys()),
     )
 
 
@@ -824,21 +787,6 @@ class _RunError(Exception):
 
     def __str__(self) -> str:
         return self.message
-
-
-class _UnexpectedToolCallError(_RunError):
-    """Exception raised when an unexpected tool call is encountered."""
-
-    def __init__(self, *, tool_name: str) -> None:
-        """Initialize the unexpected tool call error.
-
-        Args:
-            tool_name: The name of the tool that was unexpectedly called.
-        """
-        super().__init__(
-            message=f'unexpected tool call name={tool_name}',  # pragma: no cover
-            code='unexpected_tool_call',
-        )
 
 
 @dataclass
@@ -926,7 +874,7 @@ class _RequestStreamContext:
 
     message_id: str = ''
     last_tool_call_id: str | None = None
-    part_ends: list[BaseEvent | None] = field(default_factory=lambda: list[Union[BaseEvent, None]]())
+    part_end: BaseEvent | None = None
 
     def new_message_id(self) -> str:
         """Generate a new message ID for the request stream.
@@ -938,3 +886,15 @@ class _RequestStreamContext:
         """
         self.message_id = str(uuid.uuid4())
         return self.message_id
+
+
+class _AGUIToolset(DeferredToolset[AgentDepsT]):
+    """A toolset that is used for AG-UI."""
+
+    def __init__(self, tools: list[ToolAGUI]) -> None:
+        super().__init__(
+            [
+                ToolDefinition(name=tool.name, description=tool.description, parameters_json_schema=tool.parameters)
+                for tool in tools
+            ]
+        )

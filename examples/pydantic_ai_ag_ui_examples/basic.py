@@ -1,4 +1,4 @@
-"""Basic example of using pydantic_ai.ag_ui with FastAPI."""
+"""Basic example of using Agent.to_ag_ui with FastAPI."""
 
 from __future__ import annotations
 
