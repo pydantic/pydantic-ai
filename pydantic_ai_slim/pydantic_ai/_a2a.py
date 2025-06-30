@@ -1,5 +1,6 @@
 from __future__ import annotations, annotations as _annotations
 
+import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -39,8 +40,10 @@ try:
         Provider,
         Skill,
         Task,
+        TaskArtifactUpdateEvent,
         TaskIdParams,
         TaskSendParams,
+        TaskStatusUpdateEvent,
         TextPart as A2ATextPart,
     )
     from fasta2a.storage import InMemoryStorage, Storage
@@ -118,37 +121,93 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
         task = await self.storage.load_task(params['id'], history_length=params.get('history_length'))
         assert task is not None, f'Task {params["id"]} not found'
         assert 'context_id' in task, 'Task must have a context_id'
+        
+        task_id = task['id']
+        context_id = task['context_id']
 
-        await self.storage.update_task(task['id'], state='working')
+        # Update storage and send working status event
+        await self.storage.update_task(task_id, state='working')
+        await self.broker.send_stream_event(
+            task_id,
+            TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                kind='status-update',
+                status={'state': 'working'},
+                final=False
+            )
+        )
 
         # TODO(Marcelo): We need to have a way to communicate when the task is set to `input-required`. Maybe
         # a custom `output_type` with a `more_info_required` field, or something like that.
 
-        task_history = task.get('history', [])
-        message_history = self.build_message_history(task_history=task_history)
+        try:
+            context_history = await self.storage.get_context_history(
+                context_id, 
+                history_length=params.get('history_length')
+            )
+            message_history = self.build_message_history(task_history=context_history)
 
-        # Initialize dependencies if factory provided
-        if self.deps_factory is not None:
-            deps = self.deps_factory(task)
-            result = await self.agent.run(message_history=message_history, deps=deps)
-        else:
-            # No deps_factory provided - this only works if the agent accepts None for deps
-            # (e.g., Agent[None, ...] or Agent[Optional[...], ...])
-            # If the agent requires deps, this will raise TypeError at runtime
-            result = await self.agent.run(message_history=message_history)  # type: ignore[call-arg]
+            # Initialize dependencies if factory provided
+            if self.deps_factory is not None:
+                deps = self.deps_factory(task)
+                result = await self.agent.run(message_history=message_history, deps=deps)
+            else:
+                # No deps_factory provided - this only works if the agent accepts None for deps
+                # (e.g., Agent[None, ...] or Agent[Optional[...], ...])
+                # If the agent requires deps, this will raise TypeError at runtime
+                result = await self.agent.run(message_history=message_history)  # type: ignore[call-arg]
 
-        artifacts = self.build_artifacts(result.output)
-        await self.storage.update_task(task['id'], state='completed', artifacts=artifacts)
+            # Create a message from the agent's response
+            agent_message = Message(
+                role='agent',
+                parts=[A2ATextPart(kind='text', text=str(result.output))],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+                task_id=task_id,
+                context_id=context_id
+            )
+            
+            # Add the agent's response to storage
+            await self.storage.add_message(agent_message)
+            
+            # Send the agent's response as a message
+            await self.broker.send_stream_event(task_id, agent_message)
+            
+            # Update storage and send completion event (no artifacts)
+            await self.storage.update_task(task_id, state='completed')
+            await self.broker.send_stream_event(
+                task_id,
+                TaskStatusUpdateEvent(
+                    task_id=task_id,
+                    context_id=context_id,
+                    kind='status-update',
+                    status={'state': 'completed'},
+                    final=True
+                )
+            )
+        except Exception as e:
+            # Update storage and send failure event
+            await self.storage.update_task(task_id, state='failed')
+            await self.broker.send_stream_event(
+                task_id,
+                TaskStatusUpdateEvent(
+                    task_id=task_id,
+                    context_id=context_id,
+                    kind='status-update',
+                    status={'state': 'failed', 'message': str(e)},
+                    final=True
+                )
+            )
+            raise
 
     async def cancel_task(self, params: TaskIdParams) -> None:
         pass
 
     def build_artifacts(self, result: Any) -> list[Artifact]:
         # TODO(Marcelo): We need to send the json schema of the result on the metadata of the message.
-        import uuid
-
         artifact_id = str(uuid.uuid4())
-        return [Artifact(artifact_id=artifact_id, name='result', parts=[A2ATextPart(kind='text', text=str(result))])]
+        return [Artifact(artifactId=artifact_id, name='result', parts=[A2ATextPart(kind='text', text=str(result))])]
 
     def build_message_history(self, task_history: list[Message]) -> list[ModelMessage]:
         model_messages: list[ModelMessage] = []

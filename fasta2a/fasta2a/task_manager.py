@@ -74,12 +74,14 @@ from .schema import (
     GetTaskPushNotificationResponse,
     GetTaskRequest,
     GetTaskResponse,
+    Message,
     ResubscribeTaskRequest,
     SendMessageRequest,
     SendMessageResponse,
     SetTaskPushNotificationRequest,
     SetTaskPushNotificationResponse,
     StreamMessageRequest,
+    Task,
     TaskArtifactUpdateEvent,
     TaskNotFoundError,
     TaskSendParams,
@@ -118,8 +120,11 @@ class TaskManager:
         """Send a message using the new protocol."""
         request_id = request['id']
         task_id = str(uuid.uuid4())
-        context_id = str(uuid.uuid4())
         message = request['params']['message']
+        
+        # Use provided context_id or create new one
+        context_id = message.get('context_id') or str(uuid.uuid4())
+        
         metadata = request['params'].get('metadata')
         config = request['params'].get('configuration', {})
 
@@ -170,15 +175,50 @@ class TaskManager:
 
     async def stream_message(
         self, request: StreamMessageRequest
-    ) -> AsyncGenerator[TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None]:
+    ) -> AsyncGenerator[TaskStatusUpdateEvent | TaskArtifactUpdateEvent | Task | Message, None]:
         """Stream task updates using Server-Sent Events.
 
-        Returns an async generator that yields TaskStatusUpdateEvent and
+        Returns an async generator that yields Task, Message, TaskStatusUpdateEvent and
         TaskArtifactUpdateEvent objects for the message/stream protocol.
         """
-        raise NotImplementedError('message/stream is not implemented yet.')
-        # This is a generator function, so we need to make it yield
-        yield  # type: ignore[unreachable]
+        # Extract request parameters
+        task_id = str(uuid.uuid4())
+        message = request['params']['message']
+        
+        # Use provided context_id or create new one
+        context_id = message.get('context_id') or str(uuid.uuid4())
+        
+        metadata = request['params'].get('metadata')
+        config = request['params'].get('configuration', {})
+
+        # Create a new task
+        task = await self.storage.submit_task(task_id, context_id, message, metadata)
+        
+        # Yield the initial task
+        yield task
+        
+        # Subscribe to events BEFORE starting execution to avoid race conditions
+        event_stream = self.broker.subscribe_to_stream(task_id)
+        
+        # Prepare params for broker
+        broker_params: TaskSendParams = {
+            'id': task_id,
+            'context_id': context_id,
+            'message': message,
+        }
+        if metadata is not None:
+            broker_params['metadata'] = metadata
+        history_length = config.get('history_length')
+        if history_length is not None:
+            broker_params['history_length'] = history_length
+
+        # Start task execution asynchronously
+        await self.broker.run_task(broker_params)
+        
+        # Stream events from broker - they're already in A2A format!
+        async for event in event_stream:
+            yield event
+            # The subscribe_to_stream method already handles checking for final events
 
     async def set_task_push_notification(
         self, request: SetTaskPushNotificationRequest

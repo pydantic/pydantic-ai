@@ -32,7 +32,8 @@ class DatabaseConn:
             else:
                 return 100.00
         else:
-            raise ValueError('Customer not found')
+            return 42
+            #raise ValueError('Customer not found')
 
 
 @dataclass

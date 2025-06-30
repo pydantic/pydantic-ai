@@ -68,7 +68,13 @@ async def test_a2a_simple():
                     'kind': 'task',
                     'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
                     'history': [
-                        {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}], 'kind': 'message'}
+                        {
+                            'role': 'user',
+                            'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                            'kind': 'message',
+                            'context_id': IsStr(),
+                            'task_id': IsStr(),
+                        }
                     ],
                 }
             )
@@ -89,14 +95,21 @@ async def test_a2a_simple():
                         'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
-                            {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}], 'kind': 'message'}
-                        ],
-                        'artifacts': [
                             {
-                                'artifact_id': IsStr(),
-                                'name': 'result',
+                                'role': 'user',
+                                'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                                'kind': 'message',
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
+                            {
+                                'role': 'agent',
                                 'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}],
-                            }
+                                'kind': 'message',
+                                'message_id': IsStr(),
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
                         ],
                     },
                 }
@@ -149,6 +162,8 @@ async def test_a2a_file_message_with_file():
                                 }
                             ],
                             'kind': 'message',
+                            'context_id': IsStr(),
+                            'task_id': IsStr(),
                         }
                     ],
                 }
@@ -182,14 +197,17 @@ async def test_a2a_file_message_with_file():
                                     }
                                 ],
                                 'kind': 'message',
-                            }
-                        ],
-                        'artifacts': [
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
                             {
-                                'artifact_id': IsStr(),
-                                'name': 'result',
+                                'role': 'agent',
                                 'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}],
-                            }
+                                'kind': 'message',
+                                'message_id': IsStr(),
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
                         ],
                     },
                 }
@@ -228,6 +246,8 @@ async def test_a2a_file_message_with_file_content():
                             'role': 'user',
                             'parts': [{'kind': 'file', 'file': {'data': 'foo', 'mime_type': 'text/plain'}}],
                             'kind': 'message',
+                            'context_id': IsStr(),
+                            'task_id': IsStr(),
                         }
                     ],
                 }
@@ -253,14 +273,17 @@ async def test_a2a_file_message_with_file_content():
                                 'role': 'user',
                                 'parts': [{'kind': 'file', 'file': {'data': 'foo', 'mime_type': 'text/plain'}}],
                                 'kind': 'message',
-                            }
-                        ],
-                        'artifacts': [
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
                             {
-                                'artifact_id': IsStr(),
-                                'name': 'result',
+                                'role': 'agent',
                                 'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}],
-                            }
+                                'kind': 'message',
+                                'message_id': IsStr(),
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
                         ],
                     },
                 }
@@ -289,7 +312,13 @@ async def test_a2a_file_message_with_data():
                     'kind': 'task',
                     'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
                     'history': [
-                        {'role': 'user', 'parts': [{'kind': 'data', 'data': {'foo': 'bar'}}], 'kind': 'message'}
+                        {
+                            'role': 'user',
+                            'parts': [{'kind': 'data', 'data': {'foo': 'bar'}}],
+                            'kind': 'message',
+                            'context_id': IsStr(),
+                            'task_id': IsStr(),
+                        }
                     ],
                 }
             )
@@ -297,7 +326,7 @@ async def test_a2a_file_message_with_data():
             task_id = result['id']
 
             while task := await a2a_client.get_task(task_id):  # pragma: no branch
-                if 'result' in task and task['result']['status']['state'] == 'failed':
+                if 'result' in task and task['result']['status']['state'] in ('failed', 'completed'):
                     break
                 await anyio.sleep(0.1)
             assert task == snapshot(
@@ -310,7 +339,13 @@ async def test_a2a_file_message_with_data():
                         'kind': 'task',
                         'status': {'state': 'failed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
-                            {'role': 'user', 'parts': [{'kind': 'data', 'data': {'foo': 'bar'}}], 'kind': 'message'}
+                            {
+                                'role': 'user',
+                                'parts': [{'kind': 'data', 'data': {'foo': 'bar'}}],
+                                'kind': 'message',
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            }
                         ],
                     },
                 }
@@ -340,7 +375,13 @@ async def test_a2a_multiple_messages():
                     'kind': 'task',
                     'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
                     'history': [
-                        {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}], 'kind': 'message'}
+                        {
+                            'role': 'user',
+                            'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                            'kind': 'message',
+                            'context_id': IsStr(),
+                            'task_id': IsStr(),
+                        }
                     ],
                 }
             )
@@ -364,7 +405,13 @@ async def test_a2a_multiple_messages():
                         'kind': 'task',
                         'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
-                            {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}], 'kind': 'message'},
+                            {
+                                'role': 'user',
+                                'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                                'kind': 'message',
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
                             {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}], 'kind': 'message'},
                         ],
                     },
@@ -383,15 +430,22 @@ async def test_a2a_multiple_messages():
                         'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
-                            {'role': 'user', 'parts': [{'kind': 'text', 'text': 'Hello, world!'}], 'kind': 'message'},
-                            {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}], 'kind': 'message'},
-                        ],
-                        'artifacts': [
                             {
-                                'artifact_id': IsStr(),
-                                'name': 'result',
+                                'role': 'user',
+                                'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                                'kind': 'message',
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
+                            {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}], 'kind': 'message'},
+                            {
+                                'role': 'agent',
                                 'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}],
-                            }
+                                'kind': 'message',
+                                'message_id': IsStr(),
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
                         ],
                     },
                 }

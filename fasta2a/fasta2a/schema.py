@@ -411,6 +411,12 @@ class TaskArtifactUpdateEvent(TypedDict):
     artifact: Artifact
     """The artifact that was updated."""
 
+    append: NotRequired[bool]
+    """Whether to append to existing artifact (true) or replace (false)."""
+
+    last_chunk: NotRequired[bool]
+    """Indicates this is the final chunk of the artifact."""
+
     metadata: NotRequired[dict[str, Any]]
     """Extension metadata."""
 
@@ -649,3 +655,15 @@ def is_task(response: Task | Message) -> TypeGuard[Task]:
 def is_message(response: Task | Message) -> TypeGuard[Message]:
     """Type guard to check if a response is a Message."""
     return 'role' in response and 'parts' in response and response.get('kind') == 'message'
+
+
+# Streaming support - unified event type for broker communication
+# Use discriminator to properly identify event types
+StreamEvent = Annotated[
+    Union[Task, Message, TaskStatusUpdateEvent, TaskArtifactUpdateEvent],
+    Discriminator('kind')
+]
+"""Events that can be streamed through the broker for message/stream support."""
+
+stream_event_ta: TypeAdapter[StreamEvent] = TypeAdapter(StreamEvent)
+"""TypeAdapter for serializing/deserializing stream events."""

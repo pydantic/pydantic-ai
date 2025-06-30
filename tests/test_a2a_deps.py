@@ -89,10 +89,13 @@ async def test_a2a_with_deps_factory():
             if task['status']['state'] == 'failed':
                 print(f'Task failed. Full task: {task}')
             assert task['status']['state'] == 'completed'
-            assert 'artifacts' in task
-            artifacts = task['artifacts']
-            assert len(artifacts) == 1
-            part = artifacts[0]['parts'][0]
+            assert 'history' in task
+            # Find the agent's response message
+            agent_messages = [msg for msg in task['history'] if msg['role'] == 'agent']
+            assert len(agent_messages) >= 1
+            last_agent_message = agent_messages[-1]
+            assert len(last_agent_message['parts']) == 1
+            part = last_agent_message['parts'][0]
             assert part['kind'] == 'text'
             assert part['text'] == 'Result computed with deps'
 
@@ -139,7 +142,12 @@ async def test_a2a_without_deps_factory():
 
             assert task is not None
             assert task['status']['state'] == 'completed'
-            assert 'artifacts' in task
-            part = task['artifacts'][0]['parts'][0]
+            assert 'history' in task
+            # Find the agent's response message
+            agent_messages = [msg for msg in task['history'] if msg['role'] == 'agent']
+            assert len(agent_messages) >= 1
+            last_agent_message = agent_messages[-1]
+            assert len(last_agent_message['parts']) == 1
+            part = last_agent_message['parts'][0]
             assert part['kind'] == 'text'
             assert part['text'] == 'Hello from agent'
