@@ -501,7 +501,10 @@ class RetryPromptPart:
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
         if isinstance(self.content, str):
-            description = self.content
+            if self.tool_name is None:
+                description = f'Validation feedback:\n{self.content}'
+            else:
+                description = self.content
         else:
             json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
             description = f'{len(self.content)} validation errors: {json_errors.decode()}'
