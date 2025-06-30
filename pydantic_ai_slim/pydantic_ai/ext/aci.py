@@ -1,5 +1,6 @@
 from aci import ACI
 from pydantic_ai import Tool
+from typing import Any
 
 def _clean_schema(schema):
     if isinstance(schema, dict):
@@ -10,9 +11,10 @@ def _clean_schema(schema):
     else:
         return schema
 
-def tool_from_aci(aci_function: str,
-                  linked_account_owner_id: str
-                  ) -> Tool:
+def tool_from_aci(
+    aci_function: str,
+    linked_account_owner_id: str
+) -> Tool:
     """Creates a PydanticAI tool from an ACI function.
 
     Args:
@@ -38,13 +40,15 @@ def tool_from_aci(aci_function: str,
     # Clean the schema
     json_schema = _clean_schema(json_schema)
 
-    def implementation(**kwargs) -> str:
-        return aci.handle_function_call(
-            function_name,
-            kwargs,
-            linked_account_owner_id=linked_account_owner_id,
-            allowed_apps_only=True,
-        )
+    def implementation(*args: Any, **kwargs: Any) -> str:
+      if args:
+          raise TypeError("Positional arguments are not allowed")
+      return aci.handle_function_call(
+          function_name,
+          kwargs,
+          linked_account_owner_id=linked_account_owner_id,
+          allowed_apps_only=True,
+      )
 
     return Tool.from_schema(
         function=implementation,
