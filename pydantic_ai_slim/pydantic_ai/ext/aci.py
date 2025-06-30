@@ -1,6 +1,7 @@
 from aci import ACI
+from pydantic_ai import Tool
 
-def clean_schema(schema):
+def _clean_schema(schema):
     if isinstance(schema, dict):
         # Remove non-standard keys (e.g., 'visible')
         return {k: clean_schema(v) for k, v in schema.items() if k not in {'visible'}}
@@ -12,20 +13,17 @@ def clean_schema(schema):
 def tool_from_aci(aci_function: str,
                   linked_account_owner_id: str
                   ) -> Tool:
-    """Creates a Pydantic tool proxy from a ACI tool.
+    """Creates a PydanticAI tool from an ACI function.
 
     Args:
         aci_function: The ACI function to use.
         linked_account_owner_id: The ACI user ID to execute the function on behalf of.
 
     Returns:
-        A Pydantic tool that corresponds to the LangChain tool.
+        A PydanticAI tool that can be used in an Agent.
     """
     aci = ACI()
-    # print(aci_function)
     function_definition = aci.functions.get_definition(aci_function)
-    # print(function_definition)
-
     function_name = function_definition["function"]['name']
     function_description = function_definition["function"]['description']
     inputs = function_definition["function"]['parameters']
@@ -38,7 +36,7 @@ def tool_from_aci(aci_function: str,
     }
 
     # Clean the schema
-    json_schema = clean_schema(json_schema)
+    json_schema = _clean_schema(json_schema)
 
     def implementation(**kwargs) -> str:
         return aci.handle_function_call(
@@ -65,18 +63,16 @@ tavily_search = tool_from_aci(
 
 
 agent = Agent(
-    model,
+    "openai:gpt-4.1",
     system_prompt=(
         "
         You are a highly capable assistant. Make sure to do the tasks you're assigned to do.
         "
-
     ),
     tools=[tavily_search]
 )
 
-
-result = new_agent.run_sync("Search the web and tell the next match Chelsea will play and when the match is")
+result = agent.run_sync("Search the web and tell me the next match Chelsea will play and when the match is")
 print(result.output)
 
 """
