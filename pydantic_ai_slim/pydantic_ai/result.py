@@ -5,10 +5,12 @@ from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Generic
+from typing import Generic, cast
 
 from pydantic import ValidationError
 from typing_extensions import TypeVar, deprecated, overload
+
+from pydantic_ai.toolset import RunToolset
 
 from . import _utils, exceptions, messages as _messages, models
 from ._output import (
@@ -47,6 +49,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]
     _usage_limits: UsageLimits | None
+    _toolset: RunToolset[AgentDepsT]
 
     _agent_stream_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _final_result_event: FinalResultEvent | None = field(default=None, init=False)
@@ -102,6 +105,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             result_data = await output_tool.process(
                 call, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
             )
+        elif deferred_tool_calls := self._toolset.get_deferred_tool_calls(message.parts):
+            if not self._output_schema.deferred_tool_calls:
+                raise exceptions.UserError(
+                    'There are deferred tool calls but DeferredToolCalls is not among output types.'
+                )
+            return cast(OutputDataT, deferred_tool_calls)
         elif isinstance(self._output_schema, TextOutputSchema):
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
 
@@ -112,8 +121,6 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                 'Invalid response, unable to process text output'
             )
-
-        # TODO: Possibly return DeferredToolCalls here?
 
         for validator in self._output_validators:
             result_data = await validator.validate(result_data, call, self._run_ctx)
@@ -136,13 +143,19 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
                 if isinstance(e, _messages.PartStartEvent):
                     new_part = e.part
-                    if isinstance(new_part, _messages.ToolCallPart) and isinstance(output_schema, ToolOutputSchema):
-                        for call, _ in output_schema.find_tool([new_part]):  # pragma: no branch
-                            return _messages.FinalResultEvent(tool_name=call.tool_name, tool_call_id=call.tool_call_id)
-                    elif isinstance(new_part, _messages.TextPart) and isinstance(
+                    if isinstance(new_part, _messages.TextPart) and isinstance(
                         output_schema, TextOutputSchema
                     ):  # pragma: no branch
                         return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
+                    elif isinstance(new_part, _messages.ToolCallPart) and (
+                        tool_def := self._toolset.get_tool_def(new_part.tool_name)
+                    ):
+                        if tool_def.kind == 'output':
+                            return _messages.FinalResultEvent(
+                                tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id
+                            )
+                        elif tool_def.kind == 'deferred':
+                            return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
 
             usage_checking_stream = _get_usage_checking_stream_response(
                 self._raw_stream_response, self._usage_limits, self.usage
@@ -177,6 +190,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _output_tool_name: str | None
     _on_complete: Callable[[], Awaitable[None]]
+    _toolset: RunToolset[AgentDepsT]
 
     _initial_run_ctx_usage: Usage = field(init=False)
     is_complete: bool = field(default=False, init=False)
@@ -382,7 +396,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             pass
         message = self._stream_response.get()
         await self._marked_completed(message)
-        # TODO: Possibly return DeferredToolCalls here?
         return await self.validate_structured_output(message)
 
     @deprecated('`get_data` is deprecated, use `get_output` instead.')
@@ -423,6 +436,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             result_data = await output_tool.process(
                 call, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
             )
+        elif deferred_tool_calls := self._toolset.get_deferred_tool_calls(message.parts):
+            if not self._output_schema.deferred_tool_calls:
+                raise exceptions.UserError(
+                    'There are deferred tool calls but DeferredToolCalls is not among output types.'
+                )
+            return cast(OutputDataT, deferred_tool_calls)
         elif isinstance(self._output_schema, TextOutputSchema):
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
 

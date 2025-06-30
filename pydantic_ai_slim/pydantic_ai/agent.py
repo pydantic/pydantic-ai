@@ -1042,12 +1042,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                         output_schema, _output.TextOutputSchema
                                     ):
                                         return FinalResult(s, None, None)
-                                    elif isinstance(new_part, _messages.ToolCallPart) and isinstance(
-                                        output_schema, _output.ToolOutputSchema
-                                    ):  # pragma: no branch
-                                        for call, _ in output_schema.find_tool([new_part]):
-                                            return FinalResult(s, call.tool_name, call.tool_call_id)
-                                    # TODO: Handle DeferredToolCalls
+                                    elif isinstance(new_part, _messages.ToolCallPart) and (
+                                        tool_def := graph_ctx.deps.toolset.get_tool_def(new_part.tool_name)
+                                    ):
+                                        if tool_def.kind == 'output':
+                                            return FinalResult(s, new_part.tool_name, new_part.tool_call_id)
+                                        elif tool_def.kind == 'deferred':
+                                            return FinalResult(s, None, None)
                             return None
 
                         final_result = await stream_to_final(streamed_response)
@@ -1072,16 +1073,20 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
                                 # TODO: Should we move on to the CallToolsNode here, instead of doing this ourselves?
                                 parts: list[_messages.ModelRequestPart] = []
+                                # final_result_holder: list[result.FinalResult[models.StreamedResponse]] = []
                                 async for _event in _agent_graph.process_function_tools(
                                     graph_ctx.deps.toolset,
                                     tool_calls,
                                     final_result,
                                     graph_ctx,
                                     parts,
+                                    # final_result_holder,
                                 ):
                                     pass
                                 if parts:
                                     messages.append(_messages.ModelRequest(parts))
+                                # if final_result_holder:
+                                #     final_result = final_result_holder[0]
 
                             yield StreamedRunResult(
                                 messages,
@@ -1093,6 +1098,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                 graph_ctx.deps.output_validators,
                                 final_result.tool_name,
                                 on_complete,
+                                graph_ctx.deps.toolset,
                             )
                             break
                         # TODO: There may be deferred tool calls, process those.

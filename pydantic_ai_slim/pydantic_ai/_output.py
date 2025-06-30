@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Iterable, Iterator, Sequence
+from collections.abc import Awaitable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast, overload
 
@@ -548,16 +548,6 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
             if isinstance(part, _messages.ToolCallPart):  # pragma: no branch
                 if part.tool_name == tool_name:
                     return part, self.tools[tool_name]
-
-    def find_tool(
-        self,
-        parts: Iterable[_messages.ModelResponsePart],
-    ) -> Iterator[tuple[_messages.ToolCallPart, OutputTool[OutputDataT]]]:
-        """Find a tool that matches one of the calls."""
-        for part in parts:
-            if isinstance(part, _messages.ToolCallPart):  # pragma: no branch
-                if result := self.tools.get(part.tool_name):
-                    yield part, result
 
 
 @dataclass(init=False)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Iterator, Sequence
+from collections.abc import Awaitable, Iterable, Iterator, Sequence
 from contextlib import AsyncExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -13,6 +13,8 @@ from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
+
+from pydantic_ai.output import DeferredToolCalls
 
 from . import messages as _messages
 from ._output import BaseOutputSchema, OutputValidator, ToolRetryError
@@ -69,6 +71,9 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     @property
     def tool_names(self) -> list[str]:
         return [tool_def.name for tool_def in self.tool_defs]
+
+    def get_tool_def(self, name: str) -> ToolDefinition | None:
+        return next((tool_def for tool_def in self.tool_defs if tool_def.name == name), None)
 
     @abstractmethod
     def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
@@ -675,6 +680,25 @@ class RunToolset(WrapperToolset[AgentDepsT]):
             else:
                 self._retries.pop(name, None)
                 return output
+
+    def get_deferred_tool_calls(self, parts: Iterable[_messages.ModelResponsePart]) -> DeferredToolCalls | None:
+        deferred_calls_and_defs = [
+            (part, tool_def)
+            for part in parts
+            if isinstance(part, _messages.ToolCallPart)
+            and (tool_def := self.get_tool_def(part.tool_name))
+            and tool_def.kind == 'deferred'
+        ]
+        if not deferred_calls_and_defs:
+            return None
+
+        deferred_calls: list[_messages.ToolCallPart] = []
+        deferred_tool_defs: dict[str, ToolDefinition] = {}
+        for part, tool_def in deferred_calls_and_defs:
+            deferred_calls.append(part)
+            deferred_tool_defs[part.tool_name] = tool_def
+
+        return DeferredToolCalls(deferred_calls, deferred_tool_defs)
 
     @contextmanager
     def _with_retry(self, name: str, ctx: RunContext[AgentDepsT]) -> Iterator[RunContext[AgentDepsT]]:

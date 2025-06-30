@@ -5,6 +5,7 @@ import json
 import re
 from collections.abc import AsyncIterator
 from copy import deepcopy
+from dataclasses import replace
 from datetime import timezone
 from typing import Any, Union
 
@@ -12,14 +13,16 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, UnexpectedModelBehavior, UserError, capture_run_messages
+from pydantic_ai import Agent, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.messages import (
+    FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartStartEvent,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -28,8 +31,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import PromptedOutput, TextOutput
+from pydantic_ai.output import DeferredToolCalls, PromptedOutput, TextOutput
 from pydantic_ai.result import AgentStream, FinalResult, Usage
+from pydantic_ai.tools import ToolDefinition
 from pydantic_graph import End
 
 from .conftest import IsInt, IsNow, IsStr
@@ -1081,3 +1085,95 @@ async def test_stream_prompted_output():
             ]
         )
         assert result.is_complete
+
+
+async def test_deferred_tool():
+    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls])
+
+    async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        return replace(tool_def, kind='deferred')
+
+    @agent.tool_plain(prepare=prepare_tool)
+    def my_tool(x: int) -> int:
+        return x + 1
+
+    async with agent.run_stream('Hello') as result:
+        assert not result.is_complete
+        output = await result.get_output()
+        assert output == snapshot(
+            DeferredToolCalls(
+                tool_calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                tool_defs={
+                    'my_tool': ToolDefinition(
+                        name='my_tool',
+                        description='',
+                        parameters_json_schema={
+                            'additionalProperties': False,
+                            'properties': {'x': {'type': 'integer'}},
+                            'required': ['x'],
+                            'type': 'object',
+                        },
+                        kind='deferred',
+                    )
+                },
+            )
+        )
+        assert result.is_complete
+
+
+async def test_deferred_tool_iter():
+    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls])
+
+    async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        return replace(tool_def, kind='deferred')
+
+    @agent.tool_plain(prepare=prepare_tool)
+    def my_tool(x: int) -> int:
+        return x + 1
+
+    outputs: list[str | DeferredToolCalls] = []
+    events: list[Any] = []
+
+    async with agent.iter('test') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        events.append(event)
+                    async for output in stream.stream_output(debounce_by=None):
+                        outputs.append(output)
+            if agent.is_call_tools_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        events.append(event)
+
+    assert outputs == snapshot(
+        [
+            DeferredToolCalls(
+                tool_calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                tool_defs={
+                    'my_tool': ToolDefinition(
+                        name='my_tool',
+                        description='',
+                        parameters_json_schema={
+                            'additionalProperties': False,
+                            'properties': {'x': {'type': 'integer'}},
+                            'required': ['x'],
+                            'type': 'object',
+                        },
+                        kind='deferred',
+                    )
+                },
+            )
+        ]
+    )
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())),
+        ]
+    )

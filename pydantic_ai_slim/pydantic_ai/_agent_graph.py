@@ -21,7 +21,7 @@ from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
-from .output import DeferredToolCalls, OutputDataT, OutputSpec
+from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, ToolDefinition, ToolKind
 
@@ -310,6 +310,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx.deps.output_validators,
                 build_run_context(ctx),
                 ctx.deps.usage_limits,
+                ctx.deps.toolset,
             )
             yield agent_stream
             # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
@@ -497,6 +498,13 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         if final_result_holder:
             final_result = final_result_holder[0]
             self._next_node = self._handle_final_result(ctx, final_result, parts)
+        elif deferred_tool_calls := ctx.deps.toolset.get_deferred_tool_calls(tool_calls):
+            if not ctx.deps.output_schema.deferred_tool_calls:
+                raise exceptions.UserError(
+                    'There are deferred tool calls but DeferredToolCalls is not among output types.'
+                )
+            final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_calls), None, None)
+            self._next_node = self._handle_final_result(ctx, final_result, parts)
         else:
             instructions = await ctx.deps.get_instructions(run_context)
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
@@ -578,16 +586,11 @@ async def process_function_tools(  # noqa: C901
     """
     run_context = build_run_context(ctx)
 
-    unknown_calls: list[_messages.ToolCallPart] = []
-    tool_calls_by_kind: dict[ToolKind, list[_messages.ToolCallPart]] = defaultdict(list)
-    # TODO: Make Toolset.tool_defs a dict
-    tool_defs_by_name: dict[str, ToolDefinition] = {tool_def.name: tool_def for tool_def in toolset.tool_defs}
+    tool_calls_by_kind: dict[ToolKind | Literal['unknown'], list[_messages.ToolCallPart]] = defaultdict(list)
     for call in tool_calls:
-        try:
-            tool_def = tool_defs_by_name[call.tool_name]
-            tool_calls_by_kind[tool_def.kind].append(call)
-        except KeyError:
-            unknown_calls.append(call)
+        tool_def = toolset.get_tool_def(call.tool_name)
+        kind = tool_def.kind if tool_def else 'unknown'
+        tool_calls_by_kind[kind].append(call)
 
     # first, look for the output tool call
     for call in tool_calls_by_kind['output']:
@@ -642,9 +645,9 @@ async def process_function_tools(  # noqa: C901
     else:
         calls_to_run.extend(tool_calls_by_kind['function'])
 
-    if unknown_calls:
+    if tool_calls_by_kind['unknown']:
         ctx.state.increment_retries(ctx.deps.max_result_retries)
-        calls_to_run.extend(unknown_calls)
+        calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     for call in calls_to_run:
         yield _messages.FunctionToolCallEvent(call)
@@ -718,7 +721,6 @@ async def process_function_tools(  # noqa: C901
         for k in sorted(results_by_index):
             parts.append(results_by_index[k])
 
-    deferred_calls: list[_messages.ToolCallPart] = []
     for call in tool_calls_by_kind['deferred']:
         if final_result:
             parts.append(
@@ -730,18 +732,6 @@ async def process_function_tools(  # noqa: C901
             )
         else:
             yield _messages.FunctionToolCallEvent(call)
-            deferred_calls.append(call)
-
-    if deferred_calls:
-        if not ctx.deps.output_schema.deferred_tool_calls:
-            raise exceptions.UserError('There are pending tool calls but DeferredToolCalls is not among output types.')
-
-        deferred_tool_names = [call.tool_name for call in deferred_calls]
-        deferred_tool_defs = {
-            tool_def.name: tool_def for tool_def in toolset.tool_defs if tool_def.name in deferred_tool_names
-        }
-        output_data = cast(NodeRunEndT, DeferredToolCalls(deferred_calls, deferred_tool_defs))
-        final_result = result.FinalResult(output_data)
 
     parts.extend(user_parts)
 
