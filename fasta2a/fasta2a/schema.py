@@ -186,6 +186,9 @@ class PushNotificationConfig(TypedDict):
     mobile Push Notification Service).
     """
 
+    id: NotRequired[str]
+    """Server-assigned identifier."""
+
     url: str
     """The URL to send push notifications to."""
 
@@ -319,7 +322,9 @@ Part = Annotated[Union[TextPart, FilePart, DataPart], pydantic.Field(discriminat
 Each Part has its own content type and metadata.
 """
 
-TaskState: TypeAlias = Literal['submitted', 'working', 'input-required', 'completed', 'canceled', 'failed', 'unknown']
+TaskState: TypeAlias = Literal[
+    'submitted', 'working', 'input-required', 'completed', 'canceled', 'failed', 'rejected', 'auth-required'
+]
 """The possible states of a task."""
 
 
@@ -377,6 +382,9 @@ class TaskStatusUpdateEvent(TypedDict):
     context_id: str
     """The context the task is associated with."""
 
+    kind: Literal['status-update']
+    """Event type."""
+
     status: TaskStatus
     """The status of the task."""
 
@@ -397,7 +405,7 @@ class TaskArtifactUpdateEvent(TypedDict):
     context_id: str
     """The context the task is associated with."""
 
-    kind: Literal['artifactUpdate']
+    kind: Literal['artifact-update']
     """Event type identification."""
 
     artifact: Artifact

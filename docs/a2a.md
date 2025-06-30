@@ -124,14 +124,6 @@ def create_deps(task):
 app = support_agent.to_a2a(deps_factory=create_deps)
 ```
 
-Now when clients send tasks with metadata, the agent will have access to the dependencies:
-
-```python {title="client_example.py"}
-# Client sends a task with metadata
-response = await a2a_client.send_task(
-    message=message,
-    metadata={'customer_id': 12345}
-)
-```
+Now when clients send messages with metadata, the agent will have access to the dependencies through the `deps_factory` function.
 
 Since the goal of `to_a2a` is to be a convenience method, it accepts the same arguments as the [`FastA2A`][fasta2a.FastA2A] constructor.
