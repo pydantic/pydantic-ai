@@ -30,11 +30,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '637'
+      - '680'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=449
+      - gfet4t7; dur=444
       transfer-encoding:
       - chunked
       vary:
@@ -43,7 +43,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.00021161907352507114
+      - avgLogprobs: -0.0001856483577284962
         content:
           parts:
           - text: |
@@ -51,6 +51,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
+      responseId: 41peaK-wOMSenvgPh-vRiAY
       usageMetadata:
         candidatesTokenCount: 8
         candidatesTokensDetails:

@@ -33,11 +33,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '817'
+      - '860'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=473
+      - gfet4t7; dur=496
       transfer-encoding:
       - chunked
       vary:
@@ -59,6 +59,7 @@ interactions:
         - category: HARM_CATEGORY_SEXUALLY_EXPLICIT
           probability: NEGLIGIBLE
       modelVersion: gemini-1.5-flash
+      responseId: 5lpeaLOIBf__698Pv8HGgAg
       usageMetadata:
         promptTokenCount: 14
         promptTokensDetails:

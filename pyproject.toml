@@ -188,7 +188,10 @@ files = "tests/typed_agent.py,tests/typed_graph.py"
 strict = true
 
 [tool.pytest.ini_options]
-testpaths = "tests"
+testpaths = [
+    "tests",
+    "docs/.hooks"
+]
 xfail_strict = true
 filterwarnings = [
     "error",

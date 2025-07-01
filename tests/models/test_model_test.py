@@ -193,7 +193,7 @@ async def test_multiple_concurrent_tool_retries():
     await asyncio.gather(*[agent.run('Hello', model=TestModel(), deps=AgentRunDeps(run_id)) for run_id in run_ids])
 
 
-def test_output_tool_retry_error_handled_with_custom_args(set_event_loop: None):
+def test_output_tool_retry_error_handled_with_custom_args():
     class ResultModel(BaseModel):
         x: int
         y: str
