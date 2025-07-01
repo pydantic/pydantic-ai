@@ -1515,7 +1515,7 @@ async def test_anthropic_unsupported_server_tool_name():
     from datetime import datetime
 
     # Create a mock message history with an unsupported server tool return
-    messages = [
+    messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
                 ServerToolReturnPart(
@@ -1538,7 +1538,7 @@ async def test_anthropic_unsupported_server_tool_name():
 
     # Should raise ValueError when trying to map messages with unsupported tool
     with pytest.raises(ValueError, match='Unsupported tool name: unsupported_tool_result'):
-        await m._map_message(messages)
+        await m._map_message(messages)  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.vcr

@@ -541,5 +541,7 @@ def test_server_tool_parts_in_usage_calculation():
     result = agent.run_sync('Another test', message_history=messages)
 
     # Verify usage was calculated (it includes tokens from all parts)
-    assert result.usage().request_tokens > 0
-    assert result.usage().response_tokens > 0
+    usage = result.usage()
+    assert usage is not None
+    assert usage.request_tokens > 0
+    assert usage.response_tokens > 0
