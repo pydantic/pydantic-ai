@@ -190,6 +190,12 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
 
         outputs = [output for output in raw_outputs if output is not DeferredToolCalls]
         deferred_tool_calls = len(outputs) < len(raw_outputs)
+        if len(outputs) == 0:
+            if deferred_tool_calls:
+                raise UserError('At least one output type must be provided other than DeferredToolCalls.')
+            else:
+                raise UserError('At least one output type must be provided.')
+
         if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):
             if len(outputs) > 1:
                 raise UserError('NativeOutput cannot be mixed with other output types.')

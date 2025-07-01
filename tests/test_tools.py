@@ -1211,3 +1211,32 @@ def test_deferred_tool():
             },
         )
     )
+
+
+def test_deferred_tool_with_output_type():
+    class MyModel(BaseModel):
+        foo: str
+
+    deferred_toolset = DeferredToolset(
+        [
+            ToolDefinition(
+                name='my_tool',
+                description='',
+                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+            ),
+        ]
+    )
+    agent = Agent(TestModel(call_tools=[]), output_type=[MyModel, DeferredToolCalls], toolsets=[deferred_toolset])
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(MyModel(foo='a'))
+
+
+def test_output_type_deferred_tool_calls_by_itself():
+    with pytest.raises(UserError, match='At least one output type must be provided other than DeferredToolCalls.'):
+        Agent(TestModel(), output_type=DeferredToolCalls)
+
+
+def test_output_type_empty():
+    with pytest.raises(UserError, match='At least one output type must be provided.'):
+        Agent(TestModel(), output_type=[])
