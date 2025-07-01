@@ -16,6 +16,8 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     RetryPromptPart,
+    ServerToolCallPart,
+    ServerToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -221,6 +223,14 @@ class CohereModel(Model):
                         pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
+                    elif isinstance(item, ServerToolCallPart):
+                        # ServerToolCallPart represents a tool call from a remote server
+                        # Never returned from cohere
+                        pass
+                    elif isinstance(item, ServerToolReturnPart):
+                        # ServerToolReturnPart represents a tool return from a remote server
+                        # Never returned from cohere
+                        pass
                     else:
                         assert_never(item)
                 message_param = AssistantChatMessageV2(role='assistant')
@@ -242,7 +252,7 @@ class CohereModel(Model):
         return tools
 
     @staticmethod
-    def _map_tool_call(t: ToolCallPart) -> ToolCallV2:
+    def _map_tool_call(t: ToolCallPart | ServerToolCallPart) -> ToolCallV2:
         return ToolCallV2(
             id=_guard_tool_call_id(t=t),
             type='function',

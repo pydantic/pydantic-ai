@@ -495,6 +495,12 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             # please open an issue. The below code is the code to send thinking to the provider.
             # parts.append({'text': item.content, 'thought': True})
             pass
+        elif isinstance(item, ServerToolCallPart):
+            # Never returned from google
+            pass
+        elif isinstance(item, ServerToolReturnPart):
+            # Never returned from gemini
+            pass
         else:
             assert_never(item)
     return ContentDict(role='model', parts=parts)

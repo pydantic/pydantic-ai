@@ -315,6 +315,14 @@ class GroqModel(Model):
                     elif isinstance(item, ThinkingPart):
                         # Skip thinking parts when mapping to Groq messages
                         continue
+                    elif isinstance(item, ServerToolCallPart):
+                        # ServerToolCallPart is handled separately in server-side tools
+                        # Never returned from groq
+                        pass
+                    elif isinstance(item, ServerToolReturnPart):
+                        # ServerToolReturnPart is handled separately in server-side tools
+                        # Never returned from groq
+                        pass
                     else:
                         assert_never(item)
                 message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
