@@ -86,6 +86,20 @@ class SystemPromptPart:
 
 
 @dataclass(repr=False)
+class VendorMetadata:
+    """The video metadata for video processing."""
+
+    google_start_offset: str | None = None
+    """Usable only by Google Models. The start offset for video processing."""
+
+    google_end_offset: str | None = None
+    """Usable only by Google Models. The end offset for video processing."""
+
+    google_fps: float | None = None
+    """Usable only by Google Models. The frames rate sampling for video."""
+
+
+@dataclass(repr=False)
 class FileUrl(ABC):
     """Abstract base class for any URL-based file."""
 
@@ -98,6 +112,9 @@ class FileUrl(ABC):
     * If True, the file is downloaded and the data is sent to the model as bytes.
     * If False, the URL is sent directly to the model and no download is performed.
     """
+
+    vendor_metadata: VendorMetadata | None = None
+    """The vendor specific metadata for the file."""
 
     @property
     @abstractmethod
@@ -262,6 +279,9 @@ class BinaryContent:
 
     media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str
     """The media type of the binary data."""
+
+    vendor_metadata: VendorMetadata | None = None
+    """The vendor specific metadata for the file."""
 
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
