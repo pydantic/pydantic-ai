@@ -554,6 +554,46 @@ def test_include_tool_args_span_attributes(
     ]
 
     if include_content:
-        assert tool_attributes['tool_arguments'] == snapshot('{"x":42,"y":42}')
+        assert tool_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'add_numbers',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"x":42,"y":42}',
+                'tool_response': '84',
+                'logfire.msg': 'running tool: add_numbers',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+            }
+        )
     else:
-        assert 'tool_arguments' not in tool_attributes
+        assert tool_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'add_numbers',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running tool: add_numbers',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+            }
+        )
