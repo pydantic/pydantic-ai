@@ -52,7 +52,7 @@ server = MCPServerStdio('deno',
         'jsr:@pydantic/mcp-run-python',
         'stdio',
     ])
-agent = Agent('claude-3-5-haiku-latest', mcp_servers=[server])
+agent = Agent('claude-3-5-haiku-latest', toolsets=[server])
 
 
 async def main():

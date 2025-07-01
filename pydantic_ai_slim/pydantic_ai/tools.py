@@ -309,11 +309,11 @@ class Tool(Generic[AgentDepsT]):
         Returns:
             return a `ToolDefinition` or `None` if the tools should not be registered for this run.
         """
-        standard_tool_def = self.tool_def
+        base_tool_def = self.tool_def
         if self.prepare is not None:
-            return await self.prepare(ctx, standard_tool_def)
+            return await self.prepare(ctx, base_tool_def)
         else:
-            return standard_tool_def
+            return base_tool_def
 
 
 ObjectJsonSchema: TypeAlias = dict[str, Any]
@@ -363,6 +363,11 @@ class ToolDefinition:
     """
 
     kind: ToolKind = field(default='function')
-    """The kind of tool."""
+    """The kind of tool:
+    - `'function'`: a tool that can be executed by Pydantic AI and has its result returned to the model
+    - `'output'`: a tool that passes through an output value that ends the run
+    - `'deferred'`: a tool that cannot be executed by Pydantic AI and needs to get a result from the outside.
+        When the model calls a deferred tool, the agent run ends with a `DeferredToolCalls` object and a new run is expected to be started at a later point with the message history and new `ToolReturnPart`s for each deferred call.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr

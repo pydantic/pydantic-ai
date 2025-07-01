@@ -18,7 +18,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import DeferredToolCalls, ToolOutput
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolset import DeferredToolset
+from pydantic_ai.toolsets.deferred import DeferredToolset
 
 from .conftest import IsStr
 
@@ -1233,7 +1233,7 @@ def test_deferred_tool_with_output_type():
 
 
 def test_output_type_deferred_tool_calls_by_itself():
-    with pytest.raises(UserError, match='At least one output type must be provided other than DeferredToolCalls.'):
+    with pytest.raises(UserError, match='At least one output type must be provided other than `DeferredToolCalls`.'):
         Agent(TestModel(), output_type=DeferredToolCalls)
 
 

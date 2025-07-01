@@ -47,7 +47,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerSSE
 
 server = MCPServerSSE(url='http://localhost:3001/sse')  # (1)!
-agent = Agent('openai:gpt-4o', mcp_servers=[server])  # (2)!
+agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 
 async def main():
@@ -118,7 +118,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
 server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
-agent = Agent('openai:gpt-4o', mcp_servers=[server])  # (2)!
+agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 async def main():
     async with agent.run_toolsets():  # (3)!
@@ -156,7 +156,7 @@ server = MCPServerStdio(  # (1)!
         'stdio',
     ]
 )
-agent = Agent('openai:gpt-4o', mcp_servers=[server])
+agent = Agent('openai:gpt-4o', toolsets=[server])
 
 
 async def main():
@@ -200,7 +200,7 @@ server = MCPServerStdio('python', ['mcp_server.py'], process_tool_call=process_t
 agent = Agent(
     model=TestModel(call_tools=['echo_deps']),
     deps_type=int,
-    mcp_servers=[server]
+    toolsets=[server]
 )
 
 
@@ -243,7 +243,7 @@ calculator_server = MCPServerSSE(
 # Both servers might have a tool named 'get_data', but they'll be exposed as:
 # - 'weather_get_data'
 # - 'calc_get_data'
-agent = Agent('openai:gpt-4o', mcp_servers=[weather_server, calculator_server])
+agent = Agent('openai:gpt-4o', toolsets=[weather_server, calculator_server])
 ```
 
 ### Example with Stdio Server
@@ -273,7 +273,7 @@ js_server = MCPServerStdio(
     tool_prefix='js'  # Tools will be prefixed with 'js_'
 )
 
-agent = Agent('openai:gpt-4o', mcp_servers=[python_server, js_server])
+agent = Agent('openai:gpt-4o', toolsets=[python_server, js_server])
 ```
 
 When the model interacts with these servers, it will see the prefixed tool names, but the prefixes will be automatically handled when making tool calls.
@@ -360,7 +360,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio(command='python', args=['generate_svg.py'])
-agent = Agent('openai:gpt-4o', mcp_servers=[server])
+agent = Agent('openai:gpt-4o', toolsets=[server])
 
 
 async def main():

@@ -14,8 +14,6 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
-from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.toolset import AbstractToolset, CombinedToolset, FunctionToolset, OutputToolset, PreparedToolset
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
 
@@ -31,8 +29,10 @@ from . import (
     usage as _usage,
 )
 from ._agent_graph import HistoryProcessor
+from ._output import OutputToolset
 from .models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from .output import OutputDataT, OutputSpec
+from .profiles import ModelProfile
 from .result import FinalResult, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
@@ -48,6 +48,10 @@ from .tools import (
     ToolPrepareFunc,
     ToolsPrepareFunc,
 )
+from .toolsets import AbstractToolset
+from .toolsets.combined import CombinedToolset
+from .toolsets.function import FunctionToolset
+from .toolsets.prepared import PreparedToolset
 
 # Re-exporting like this improves auto-import behavior in PyCharm
 capture_run_messages = _agent_graph.capture_run_messages
@@ -154,9 +158,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         repr=False
     )
     _function_toolset: FunctionToolset[AgentDepsT] = dataclasses.field(repr=False)
-    _output_toolset: OutputToolset[AgentDepsT] = dataclasses.field(repr=False)
+    _output_toolset: OutputToolset[AgentDepsT] | None = dataclasses.field(repr=False)
     _user_toolsets: Sequence[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
-    _mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
     _toolset: AbstractToolset[AgentDepsT] = dataclasses.field(repr=False)
     _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
@@ -183,7 +186,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        mcp_servers: Sequence[MCPServer] = (),
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -193,7 +195,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     @overload
     @deprecated(
-        '`result_type`, `result_tool_name`, `result_tool_description` & `result_retries` are deprecated, use `output_type` instead. `result_retries` is deprecated, use `output_retries` instead.'
+        '`result_type`, `result_tool_name` & `result_tool_description` are deprecated, use `output_type` instead. `result_retries` is deprecated, use `output_retries` instead.'
     )
     def __init__(
         self,
@@ -215,8 +217,36 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        mcp_servers: Sequence[MCPServer] = (),
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy = 'early',
+        instrument: InstrumentationSettings | bool | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
+    ) -> None: ...
+
+    @overload
+    @deprecated('`mcp_servers` is deprecated, use `toolsets` instead.')
+    def __init__(
+        self,
+        model: models.Model | models.KnownModelName | str | None = None,
+        *,
+        result_type: type[OutputDataT] = str,
+        instructions: str
+        | _system_prompt.SystemPromptFunc[AgentDepsT]
+        | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
+        | None = None,
+        system_prompt: str | Sequence[str] = (),
+        deps_type: type[AgentDepsT] = NoneType,
+        name: str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int = 1,
+        result_tool_name: str = _output.DEFAULT_OUTPUT_TOOL_NAME,
+        result_tool_description: str | None = None,
+        result_retries: int | None = None,
+        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -242,9 +272,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        mcp_servers: Sequence[
-            MCPServer
-        ] = (),  # TODO: Deprecate argument, MCPServers can be passed directly to toolsets
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -271,7 +298,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 when the agent is first run.
             model_settings: Optional model request settings to use for this agent's runs, by default.
             retries: The default number of retries to allow before raising an error.
-            output_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
+            output_retries: The maximum number of retries to allow for output validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
             prepare_tools: Custom function to prepare the tool definition of all tools for each step, except output tools.
@@ -280,9 +307,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             prepare_output_tools: Custom function to prepare the tool definition of all output tools for each step.
                 This is useful if you want to customize the definition of multiple output tools or you want to register
                 a subset of output tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
-            mcp_servers: MCP servers to register with the agent. You should register a [`MCPServer`][pydantic_ai.mcp.MCPServer]
-                for each server you want the agent to connect to.
-            toolsets: Toolsets to register with the agent.
+            toolsets: Toolsets to register with the agent, including MCP servers.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
                 which checks for the necessary environment variables. Set this to `false`
@@ -342,10 +367,18 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn('`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning)
             output_retries = result_retries
 
+        if mcp_servers := _deprecated_kwargs.pop('mcp_servers', None):
+            warnings.warn('`mcp_servers` is deprecated, use `toolsets` instead', DeprecationWarning)
+            if toolsets is None:
+                toolsets = mcp_servers
+            else:
+                toolsets = [*toolsets, *mcp_servers]
+
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         default_output_mode = (
             self.model.profile.default_structured_output_mode if isinstance(self.model, models.Model) else None
         )
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         self._output_schema = _output.OutputSchema[OutputDataT].build(
             output_type,
@@ -374,16 +407,21 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._prepare_tools = prepare_tools
         self._prepare_output_tools = prepare_output_tools
 
-        self._output_toolset = OutputToolset(self._output_schema, max_retries=self._max_result_retries)
+        self._output_toolset = self._output_schema.toolset
+        if self._output_toolset:
+            self._output_toolset.max_retries = self._max_result_retries
+
         self._function_toolset = FunctionToolset(tools, max_retries=retries)
         self._user_toolsets = toolsets or ()
-        # TODO: Set max_retries on MCPServer
-        self._mcp_servers = mcp_servers
+
+        all_toolsets: list[AbstractToolset[AgentDepsT]] = []
+        if self._output_toolset:
+            all_toolsets.append(self._output_toolset)
+        all_toolsets.append(self._function_toolset)
+        all_toolsets.extend(self._user_toolsets)
 
         # This will raise errors for any name conflicts
-        self._toolset = CombinedToolset(
-            [self._output_toolset, self._function_toolset, *self._user_toolsets, *self._mcp_servers]
-        )
+        self._toolset = CombinedToolset(all_toolsets)
 
         self.history_processors = history_processors or []
 
@@ -687,11 +725,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         output_toolset = self._output_toolset
         if output_schema != self._output_schema or output_validators:
-            output_toolset = OutputToolset[AgentDepsT](
-                output_schema, max_retries=self._max_result_retries, output_validators=output_validators
-            )
-        if self._prepare_output_tools:
-            output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
+            output_toolset = output_schema.toolset
+            if output_toolset:
+                output_toolset.max_retries = self._max_result_retries
+                output_toolset.output_validators = output_validators
+                if self._prepare_output_tools:
+                    output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
 
         # Build the graph
         graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (
@@ -717,10 +756,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         )
 
         user_toolsets = self._user_toolsets if toolsets is None else toolsets
-        toolset = CombinedToolset([self._function_toolset, *user_toolsets, *self._mcp_servers])
+        toolset = CombinedToolset([self._function_toolset, *user_toolsets])
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
-        toolset = CombinedToolset([output_toolset, toolset])
+        if output_toolset:
+            toolset = CombinedToolset([output_toolset, toolset])
         run_toolset = await toolset.prepare_for_run(run_context)
 
         model_settings = merge_model_settings(self.model_settings, model_settings)
@@ -1120,22 +1160,17 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                     part for part in last_message.parts if isinstance(part, _messages.ToolCallPart)
                                 ]
 
-                                # TODO: Should we move on to the CallToolsNode here, instead of doing this ourselves?
                                 parts: list[_messages.ModelRequestPart] = []
-                                # final_result_holder: list[result.FinalResult[models.StreamedResponse]] = []
                                 async for _event in _agent_graph.process_function_tools(
                                     graph_ctx.deps.toolset,
                                     tool_calls,
                                     final_result,
                                     graph_ctx,
                                     parts,
-                                    # final_result_holder,
                                 ):
                                     pass
                                 if parts:
                                     messages.append(_messages.ModelRequest(parts))
-                                # if final_result_holder:
-                                #     final_result = final_result_holder[0]
 
                             yield StreamedRunResult(
                                 messages,
@@ -1150,7 +1185,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                 graph_ctx.deps.toolset,
                             )
                             break
-                        # TODO: There may be deferred tool calls, process those.
                 next_node = await agent_run.next(node)
                 if not isinstance(next_node, _agent_graph.AgentNode):
                     raise exceptions.AgentRunError(  # pragma: no cover

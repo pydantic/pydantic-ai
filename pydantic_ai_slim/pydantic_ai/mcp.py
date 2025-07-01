@@ -20,7 +20,10 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import ToolDefinition
 
 from .exceptions import UserError
-from .toolset import AbstractToolset, PrefixedToolset, ProcessedToolset, RunToolset, ToolProcessFunc
+from .toolsets import AbstractToolset
+from .toolsets.prefixed import PrefixedToolset
+from .toolsets.processed import ProcessedToolset, ToolProcessFunc
+from .toolsets.run import RunToolset
 
 try:
     from mcp import types as mcp_types
@@ -56,6 +59,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     timeout: float = 5
     process_tool_call: ToolProcessFunc[Any] | None = None
     allow_sampling: bool = True
+    max_retries: int = 1
     # } end of "abstract fields"
 
     _running_count: int = 0
@@ -90,7 +94,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         return repr(self)
 
     @property
-    def name_conflict_hint(self) -> str:
+    def tool_name_conflict_hint(self) -> str:
         return 'Consider setting `tool_prefix` to avoid name conflicts.'
 
     async def list_tools(self) -> list[mcp_types.Tool]:
@@ -169,6 +173,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
+        # The actual tool definitions are loaded in `prepare_for_run` and cached on the `RunToolset` that will wrap us
         return []
 
     async def list_tool_defs(self) -> list[ToolDefinition]:
@@ -190,7 +195,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         )
 
     def _max_retries_for_tool(self, name: str) -> int:
-        return 1
+        return self.max_retries
 
     def set_mcp_sampling_model(self, model: models.Model) -> None:
         self.sampling_model = model
@@ -317,7 +322,7 @@ class MCPServerStdio(MCPServer):
             'stdio',
         ]
     )
-    agent = Agent('openai:gpt-4o', mcp_servers=[server])
+    agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
         async with agent.run_toolsets():  # (2)!
@@ -372,6 +377,9 @@ class MCPServerStdio(MCPServer):
 
     allow_sampling: bool = True
     """Whether to allow MCP sampling through this client."""
+
+    max_retries: int = 1
+    """The maximum number of times to retry a tool call."""
 
     @asynccontextmanager
     async def client_streams(
@@ -468,6 +476,9 @@ class _MCPServerHTTP(MCPServer):
     allow_sampling: bool = True
     """Whether to allow MCP sampling through this client."""
 
+    max_retries: int = 1
+    """The maximum number of times to retry a tool call."""
+
     @property
     @abstractmethod
     def _transport_client(
@@ -549,7 +560,7 @@ class MCPServerSSE(_MCPServerHTTP):
     from pydantic_ai.mcp import MCPServerSSE
 
     server = MCPServerSSE('http://localhost:3001/sse')  # (1)!
-    agent = Agent('openai:gpt-4o', mcp_servers=[server])
+    agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
         async with agent.run_toolsets():  # (2)!
@@ -583,7 +594,7 @@ class MCPServerHTTP(MCPServerSSE):
     from pydantic_ai.mcp import MCPServerHTTP
 
     server = MCPServerHTTP('http://localhost:3001/sse')  # (1)!
-    agent = Agent('openai:gpt-4o', mcp_servers=[server])
+    agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
         async with agent.run_toolsets():  # (2)!
@@ -612,7 +623,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     from pydantic_ai.mcp import MCPServerStreamableHTTP
 
     server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
-    agent = Agent('openai:gpt-4o', mcp_servers=[server])
+    agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
         async with agent.run_toolsets():  # (2)!

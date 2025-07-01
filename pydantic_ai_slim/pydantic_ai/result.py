@@ -3,14 +3,14 @@ from __future__ import annotations as _annotations
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from copy import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Generic, cast
 
 from pydantic import ValidationError
 from typing_extensions import TypeVar, deprecated, overload
 
-from pydantic_ai.toolset import RunToolset
+from pydantic_ai.toolsets.run import RunToolset
 
 from . import _utils, exceptions, messages as _messages, models
 from ._output import (
@@ -93,20 +93,26 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         self, message: _messages.ModelResponse, output_tool_name: str | None, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
-        call = None
         if isinstance(self._output_schema, ToolOutputSchema) and output_tool_name is not None:
-            match = self._output_schema.find_named_tool(message.parts, output_tool_name)
-            if match is None:
-                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                    'Invalid response, unable to find tool'
-                )
-
-            call, output_tool = match
-            result_data = await output_tool.process(
-                call, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
+            tool_call = next(
+                (
+                    part
+                    for part in message.parts
+                    if isinstance(part, _messages.ToolCallPart) and part.tool_name == output_tool_name
+                ),
+                None,
             )
+            if tool_call is None:
+                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                    f'Invalid response, unable to find tool call for {output_tool_name!r}'
+                )
+            run_context = replace(self._run_ctx, tool_call_id=tool_call.tool_call_id)
+            args_dict = self._toolset.validate_tool_args(
+                run_context, tool_call.tool_name, tool_call.args, allow_partial=allow_partial
+            )
+            return await self._toolset.call_tool(run_context, tool_call.tool_name, args_dict)
         elif deferred_tool_calls := self._toolset.get_deferred_tool_calls(message.parts):
-            if not self._output_schema.deferred_tool_calls:
+            if not self._output_schema.allows_deferred_tool_calls:
                 raise exceptions.UserError(
                     'There are deferred tool calls but DeferredToolCalls is not among output types.'
                 )
@@ -117,14 +123,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             result_data = await self._output_schema.process(
                 text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
             )
+            for validator in self._output_validators:
+                result_data = await validator.validate(result_data, None, self._run_ctx)
+            return result_data
         else:
             raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                 'Invalid response, unable to process text output'
             )
-
-        for validator in self._output_validators:
-            result_data = await validator.validate(result_data, call, self._run_ctx)
-        return result_data
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
@@ -424,20 +429,26 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
-        call = None
         if isinstance(self._output_schema, ToolOutputSchema) and self._output_tool_name is not None:
-            match = self._output_schema.find_named_tool(message.parts, self._output_tool_name)
-            if match is None:
-                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                    'Invalid response, unable to find tool'
-                )
-
-            call, output_tool = match
-            result_data = await output_tool.process(
-                call, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
+            tool_call = next(
+                (
+                    part
+                    for part in message.parts
+                    if isinstance(part, _messages.ToolCallPart) and part.tool_name == self._output_tool_name
+                ),
+                None,
             )
+            if tool_call is None:
+                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                    f'Invalid response, unable to find tool call for {self._output_tool_name!r}'
+                )
+            run_context = replace(self._run_ctx, tool_call_id=tool_call.tool_call_id)
+            args_dict = self._toolset.validate_tool_args(
+                run_context, tool_call.tool_name, tool_call.args, allow_partial=allow_partial
+            )
+            return await self._toolset.call_tool(run_context, tool_call.tool_name, args_dict)
         elif deferred_tool_calls := self._toolset.get_deferred_tool_calls(message.parts):
-            if not self._output_schema.deferred_tool_calls:
+            if not self._output_schema.allows_deferred_tool_calls:
                 raise exceptions.UserError(
                     'There are deferred tool calls but DeferredToolCalls is not among output types.'
                 )
@@ -448,14 +459,13 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             result_data = await self._output_schema.process(
                 text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
             )
+            for validator in self._output_validators:
+                result_data = await validator.validate(result_data, None, self._run_ctx)  # pragma: no cover
+            return result_data
         else:
             raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                 'Invalid response, unable to process text output'
             )
-
-        for validator in self._output_validators:
-            result_data = await validator.validate(result_data, call, self._run_ctx)  # pragma: no cover
-        return result_data
 
     async def _validate_text_output(self, text: str) -> str:
         for validator in self._output_validators:

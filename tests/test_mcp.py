@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.toolset import CallToolFunc
+from pydantic_ai.toolsets.processed import CallToolFunc
 from pydantic_ai.usage import Usage
 
 from .conftest import IsDatetime, IsNow, IsStr, try_import
@@ -63,7 +63,7 @@ def model(openai_api_key: str) -> Model:
 
 @pytest.fixture
 def agent(model: Model, mcp_server: MCPServerStdio) -> Agent:
-    return Agent(model, mcp_servers=[mcp_server])
+    return Agent(model, toolsets=[mcp_server])
 
 
 @pytest.fixture
@@ -122,7 +122,7 @@ async def test_process_tool_call(run_context: RunContext[int]) -> int:
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
     async with server:
-        agent = Agent(deps_type=int, model=TestModel(call_tools=['echo_deps']), mcp_servers=[server])
+        agent = Agent(deps_type=int, model=TestModel(call_tools=['echo_deps']), toolsets=[server])
         result = await agent.run('Echo with deps set to 42', deps=42)
         assert result.output == snapshot('{"echo_deps":{"echo":"This is an echo message","deps":42}}')
         assert called, 'process_tool_call should have been called'
@@ -243,7 +243,7 @@ async def test_agent_with_prefix_tool_name(openai_api_key: str):
     model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
         model,
-        mcp_servers=[server],
+        toolsets=[server],
     )
 
     @agent.tool_plain
@@ -260,7 +260,7 @@ async def test_agent_with_prefix_tool_name(openai_api_key: str):
 async def test_agent_with_server_not_running(openai_api_key: str):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model, mcp_servers=[server])
+    agent = Agent(model, toolsets=[server])
     with pytest.raises(UserError, match='MCP server is not running'):
         await agent.run('What is 0 degrees Celsius in Fahrenheit?')
 

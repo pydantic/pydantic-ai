@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Iterable, Sequence
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast, overload
 
@@ -13,7 +13,7 @@ from typing_extensions import TypedDict, TypeVar, assert_never
 
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, UserError
+from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
     DeferredToolCalls,
     NativeOutput,
@@ -28,6 +28,8 @@ from .output import (
     ToolOutput,
 )
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
+from .toolsets import AbstractToolset
+from .toolsets.run import RunToolset
 
 if TYPE_CHECKING:
     from .profiles import ModelProfile
@@ -65,14 +67,6 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
-
-
-class ToolRetryError(Exception):
-    """Exception used to signal a `ToolRetry` message should be returned to the LLM."""
-
-    def __init__(self, tool_retry: _messages.RetryPromptPart):
-        self.tool_retry = tool_retry
-        super().__init__()
 
 
 @dataclass
@@ -135,16 +129,16 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
 
 @dataclass
 class BaseOutputSchema(ABC, Generic[OutputDataT]):
-    deferred_tool_calls: bool
+    allows_deferred_tool_calls: bool
 
     @abstractmethod
     def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
         raise NotImplementedError()
 
     @property
-    def tools(self) -> dict[str, OutputTool[OutputDataT]]:
-        """Get the tools for this output schema."""
-        return {}
+    def toolset(self) -> OutputToolset[Any] | None:
+        """Get the toolset for this output schema."""
+        return None
 
 
 @dataclass(init=False)
@@ -189,16 +183,13 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
         raw_outputs = _flatten_output_spec(output_spec)
 
         outputs = [output for output in raw_outputs if output is not DeferredToolCalls]
-        deferred_tool_calls = len(outputs) < len(raw_outputs)
-        if len(outputs) == 0:
-            if deferred_tool_calls:
-                raise UserError('At least one output type must be provided other than DeferredToolCalls.')
-            else:
-                raise UserError('At least one output type must be provided.')
+        allows_deferred_tool_calls = len(outputs) < len(raw_outputs)
+        if len(outputs) == 0 and allows_deferred_tool_calls:
+            raise UserError('At least one output type must be provided other than `DeferredToolCalls`.')
 
         if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):
             if len(outputs) > 1:
-                raise UserError('NativeOutput cannot be mixed with other output types.')
+                raise UserError('`NativeOutput` must be the only output type.')
 
             return NativeOutputSchema(
                 processor=cls._build_processor(
@@ -207,11 +198,11 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                     description=output.description,
                     strict=output.strict,
                 ),
-                deferred_tool_calls=deferred_tool_calls,
+                allows_deferred_tool_calls=allows_deferred_tool_calls,
             )
         elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):
             if len(outputs) > 1:
-                raise UserError('PromptedOutput cannot be mixed with other output types.')
+                raise UserError('`PromptedOutput` must be the only output type.')
 
             return PromptedOutputSchema(
                 processor=cls._build_processor(
@@ -220,7 +211,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                     description=output.description,
                 ),
                 template=output.template,
-                deferred_tool_calls=deferred_tool_calls,
+                allows_deferred_tool_calls=allows_deferred_tool_calls,
             )
 
         text_outputs: Sequence[type[str] | TextOutput[OutputDataT]] = []
@@ -233,53 +224,62 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                 text_outputs.append(output)
             elif isinstance(output, ToolOutput):
                 tool_outputs.append(output)
-            elif isinstance(output, (NativeOutput, PromptedOutput)):
-                # We can never get here because these are checked for above.
-                raise UserError('NativeOutput and PromptedOutput must be the only output types.')  # pragma: no cover
+            elif isinstance(output, NativeOutput):
+                # We can never get here because this is checked for above.
+                raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
+            elif isinstance(output, PromptedOutput):
+                # We can never get here because this is checked for above.
+                raise UserError('`PromptedOutput` must be the only output type.')  # pragma: no cover
             else:
                 other_outputs.append(output)
 
-        tools = cls._build_tools(tool_outputs + other_outputs, name=name, description=description, strict=strict)
+        toolset = cls._build_toolset(tool_outputs + other_outputs, name=name, description=description, strict=strict)
 
         if len(text_outputs) > 0:
             if len(text_outputs) > 1:
-                raise UserError('Only one text output is allowed.')
+                raise UserError('Only one `str` or `TextOutput` is allowed.')
             text_output = text_outputs[0]
 
             text_output_schema = None
             if isinstance(text_output, TextOutput):
                 text_output_schema = PlainTextOutputProcessor(text_output.output_function)
 
-            if len(tools) == 0:
-                return PlainTextOutputSchema(processor=text_output_schema, deferred_tool_calls=deferred_tool_calls)
-            else:
+            if toolset:
                 return ToolOrTextOutputSchema(
-                    processor=text_output_schema, tools=tools, deferred_tool_calls=deferred_tool_calls
+                    processor=text_output_schema, toolset=toolset, allows_deferred_tool_calls=allows_deferred_tool_calls
+                )
+            else:
+                return PlainTextOutputSchema(
+                    processor=text_output_schema, allows_deferred_tool_calls=allows_deferred_tool_calls
                 )
 
         if len(tool_outputs) > 0:
-            return ToolOutputSchema(tools=tools, deferred_tool_calls=deferred_tool_calls)
+            return ToolOutputSchema(toolset=toolset, allows_deferred_tool_calls=allows_deferred_tool_calls)
 
         if len(other_outputs) > 0:
             schema = OutputSchemaWithoutMode(
                 processor=cls._build_processor(other_outputs, name=name, description=description, strict=strict),
-                tools=tools,
-                deferred_tool_calls=deferred_tool_calls,
+                toolset=toolset,
+                allows_deferred_tool_calls=allows_deferred_tool_calls,
             )
             if default_mode:
                 schema = schema.with_default_mode(default_mode)
             return schema
 
-        raise UserError('No output type provided.')  # pragma: no cover
+        raise UserError('At least one output type must be provided.')
 
     @staticmethod
-    def _build_tools(
+    def _build_toolset(
         outputs: list[OutputTypeOrFunction[OutputDataT] | ToolOutput[OutputDataT]],
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
-    ) -> dict[str, OutputTool[OutputDataT]]:
-        tools: dict[str, OutputTool[OutputDataT]] = {}
+    ) -> OutputToolset[Any] | None:
+        if len(outputs) == 0:
+            return None
+
+        processors: dict[str, ObjectOutputProcessor[Any]] = {}
+        tool_defs: list[ToolDefinition] = []
 
         default_name = name or DEFAULT_OUTPUT_TOOL_NAME
         default_description = description
@@ -305,7 +305,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
 
             i = 1
             original_name = name
-            while name in tools:
+            while name in processors:
                 i += 1
                 name = f'{original_name}_{i}'
 
@@ -314,9 +314,26 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                 strict = default_strict
 
             processor = ObjectOutputProcessor(output=output, description=description, strict=strict)
-            tools[name] = OutputTool(name=name, processor=processor, multiple=multiple)
+            object_def = processor.object_def
 
-        return tools
+            description = object_def.description
+            if not description:
+                description = DEFAULT_OUTPUT_TOOL_DESCRIPTION
+                if multiple:
+                    description = f'{object_def.name}: {description}'
+
+            tool_def = ToolDefinition(
+                name=name,
+                description=description,
+                parameters_json_schema=object_def.json_schema,
+                strict=object_def.strict,
+                outer_typed_dict_key=processor.outer_typed_dict_key,
+                kind='output',
+            )
+            processors[name] = processor
+            tool_defs.append(tool_def)
+
+        return OutputToolset(processors=processors, tool_defs=tool_defs)
 
     @staticmethod
     def _build_processor(
@@ -348,35 +365,39 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
 @dataclass(init=False)
 class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
     processor: ObjectOutputProcessor[OutputDataT] | UnionOutputProcessor[OutputDataT]
-    _tools: dict[str, OutputTool[OutputDataT]] = field(default_factory=dict)
+    _toolset: OutputToolset[Any] | None = None
 
     def __init__(
         self,
         processor: ObjectOutputProcessor[OutputDataT] | UnionOutputProcessor[OutputDataT],
-        tools: dict[str, OutputTool[OutputDataT]],
-        deferred_tool_calls: bool,
+        toolset: OutputToolset[Any] | None,
+        allows_deferred_tool_calls: bool,
     ):
-        super().__init__(deferred_tool_calls)
+        super().__init__(allows_deferred_tool_calls)
         self.processor = processor
-        self._tools = tools
+        self._toolset = toolset
 
     def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
         if mode == 'native':
-            return NativeOutputSchema(processor=self.processor, deferred_tool_calls=self.deferred_tool_calls)
+            return NativeOutputSchema(
+                processor=self.processor, allows_deferred_tool_calls=self.allows_deferred_tool_calls
+            )
         elif mode == 'prompted':
-            return PromptedOutputSchema(processor=self.processor, deferred_tool_calls=self.deferred_tool_calls)
+            return PromptedOutputSchema(
+                processor=self.processor, allows_deferred_tool_calls=self.allows_deferred_tool_calls
+            )
         elif mode == 'tool':
-            return ToolOutputSchema(tools=self.tools, deferred_tool_calls=self.deferred_tool_calls)
+            return ToolOutputSchema(toolset=self.toolset, allows_deferred_tool_calls=self.allows_deferred_tool_calls)
         else:
             assert_never(mode)
 
     @property
-    def tools(self) -> dict[str, OutputTool[OutputDataT]]:
-        """Get the tools for this output schema."""
-        # TODO: Update for toolsets
-        # We return tools here as they're checked in Agent._register_tool.
-        # At that point we may don't know yet what output mode we're going to use if no model was provided or it was deferred until agent.run time.
-        return self._tools
+    def toolset(self) -> OutputToolset[Any] | None:
+        """Get the toolset for this output schema."""
+        # We return a toolset here as they're checked for name conflicts with other toolsets in the Agent constructor.
+        # At that point we may not know yet what output mode we're going to use if no model was provided or it was deferred until agent.run time,
+        # but we cover ourselves just in case we end up using the tool output mode.
+        return self._toolset
 
 
 class TextOutputSchema(OutputSchema[OutputDataT], ABC):
@@ -527,11 +548,11 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
 
 @dataclass(init=False)
 class ToolOutputSchema(OutputSchema[OutputDataT]):
-    _tools: dict[str, OutputTool[OutputDataT]] = field(default_factory=dict)
+    _toolset: OutputToolset[Any] | None = None
 
-    def __init__(self, tools: dict[str, OutputTool[OutputDataT]], deferred_tool_calls: bool):
-        super().__init__(deferred_tool_calls)
-        self._tools = tools
+    def __init__(self, toolset: OutputToolset[Any] | None, allows_deferred_tool_calls: bool):
+        super().__init__(allows_deferred_tool_calls)
+        self._toolset = toolset
 
     @property
     def mode(self) -> OutputMode:
@@ -543,18 +564,9 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
             raise UserError('Output tools are not supported by the model.')
 
     @property
-    def tools(self) -> dict[str, OutputTool[OutputDataT]]:
-        """Get the tools for this output schema."""
-        return self._tools
-
-    def find_named_tool(
-        self, parts: Iterable[_messages.ModelResponsePart], tool_name: str
-    ) -> tuple[_messages.ToolCallPart, OutputTool[OutputDataT]] | None:
-        """Find a tool that matches one of the calls, with a specific name."""
-        for part in parts:  # pragma: no branch
-            if isinstance(part, _messages.ToolCallPart):  # pragma: no branch
-                if part.tool_name == tool_name:
-                    return part, self.tools[tool_name]
+    def toolset(self) -> OutputToolset[Any] | None:
+        """Get the toolset for this output schema."""
+        return self._toolset
 
 
 @dataclass(init=False)
@@ -562,10 +574,10 @@ class ToolOrTextOutputSchema(ToolOutputSchema[OutputDataT], PlainTextOutputSchem
     def __init__(
         self,
         processor: PlainTextOutputProcessor[OutputDataT] | None,
-        tools: dict[str, OutputTool[OutputDataT]],
-        deferred_tool_calls: bool,
+        toolset: OutputToolset[Any] | None,
+        allows_deferred_tool_calls: bool,
     ):
-        super().__init__(tools=tools, deferred_tool_calls=deferred_tool_calls)
+        super().__init__(toolset=toolset, allows_deferred_tool_calls=allows_deferred_tool_calls)
         self.processor = processor
 
     @property
@@ -888,73 +900,46 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
 
 
 @dataclass(init=False)
-class OutputTool(Generic[OutputDataT]):
-    processor: ObjectOutputProcessor[OutputDataT]
-    tool_def: ToolDefinition
+class OutputToolset(AbstractToolset[AgentDepsT]):
+    """A toolset that contains output tools."""
 
-    def __init__(self, *, name: str, processor: ObjectOutputProcessor[OutputDataT], multiple: bool):
-        self.processor = processor
-        object_def = processor.object_def
+    _tool_defs: list[ToolDefinition]
+    processors: dict[str, ObjectOutputProcessor[Any]]
+    max_retries: int = field(default=1)
+    output_validators: list[OutputValidator[AgentDepsT, Any]] = field(default_factory=list)
 
-        description = object_def.description
-        if not description:
-            description = DEFAULT_OUTPUT_TOOL_DESCRIPTION
-            if multiple:
-                description = f'{object_def.name}: {description}'
-
-        self.tool_def = ToolDefinition(
-            name=name,
-            description=description,
-            parameters_json_schema=object_def.json_schema,
-            strict=object_def.strict,
-            outer_typed_dict_key=processor.outer_typed_dict_key,
-            kind='output',
-        )
-
-    async def process(
+    def __init__(
         self,
-        tool_call: _messages.ToolCallPart,
-        run_context: RunContext[AgentDepsT],
-        allow_partial: bool = False,
-        wrap_validation_errors: bool = True,
-    ) -> OutputDataT:
-        """Process an output message.
+        tool_defs: list[ToolDefinition],
+        processors: dict[str, ObjectOutputProcessor[Any]],
+        max_retries: int = 1,
+        output_validators: list[OutputValidator[AgentDepsT, Any]] = [],
+    ):
+        self.processors = processors
+        self._tool_defs = tool_defs
+        self.max_retries = max_retries
+        self.output_validators = output_validators
 
-        Args:
-            tool_call: The tool call from the LLM to validate.
-            run_context: The current run context.
-            allow_partial: If true, allow partial validation.
-            wrap_validation_errors: If true, wrap the validation errors in a retry message.
+    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
+        return RunToolset(self, ctx)
 
-        Returns:
-            Either the validated output data (left) or a retry message (right).
-        """
-        try:
-            output = await self.processor.process(
-                tool_call.args, run_context, allow_partial=allow_partial, wrap_validation_errors=False
-            )
-        except ValidationError as e:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    tool_name=tool_call.tool_name,
-                    content=e.errors(include_url=False, include_context=False),
-                    tool_call_id=tool_call.tool_call_id,
-                )
-                raise ToolRetryError(m) from e
-            else:
-                raise  # pragma: lax no cover
-        except ModelRetry as r:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    tool_name=tool_call.tool_name,
-                    content=r.message,
-                    tool_call_id=tool_call.tool_call_id,
-                )
-                raise ToolRetryError(m) from r
-            else:
-                raise  # pragma: lax no cover
-        else:
-            return output
+    @property
+    def tool_defs(self) -> list[ToolDefinition]:
+        return self._tool_defs
+
+    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+        return self.processors[name].validator
+
+    def _max_retries_for_tool(self, name: str) -> int:
+        return self.max_retries
+
+    async def call_tool(
+        self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
+    ) -> Any:
+        output = await self.processors[name].call(tool_args, ctx)
+        for validator in self.output_validators:
+            output = await validator.validate(output, None, ctx, wrap_validation_errors=False)
+        return output
 
 
 def _flatten_output_spec(output_spec: T | Sequence[T]) -> list[T]:

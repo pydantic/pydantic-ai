@@ -46,7 +46,7 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolset import FunctionToolset
+from pydantic_ai.toolsets.function import FunctionToolset
 
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 
@@ -955,7 +955,7 @@ def test_output_type_text_output_function_with_retry():
     [[str, str], [str, TextOutput(upcase)], [TextOutput(upcase), TextOutput(upcase)]],
 )
 def test_output_type_multiple_text_output(output_type: OutputSpec[str]):
-    with pytest.raises(UserError, match='Only one text output is allowed.'):
+    with pytest.raises(UserError, match='Only one `str` or `TextOutput` is allowed.'):
         Agent('test', output_type=output_type)
 
 
@@ -1945,7 +1945,7 @@ def test_unknown_tool():
     agent = Agent(FunctionModel(empty))
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
             agent.run_sync('Hello')
     assert messages == snapshot(
         [

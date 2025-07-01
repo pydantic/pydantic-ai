@@ -9,7 +9,7 @@ from inline_snapshot import snapshot
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolset import FunctionToolset
+from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import Usage
 
 pytestmark = pytest.mark.anyio

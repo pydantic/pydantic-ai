@@ -295,7 +295,7 @@ See [output docs](../output.md) for more information.
 
 @dataclass
 class DeferredToolCalls:
-    """Output type for calls to tools defined as pending."""
+    """Container for calls of deferred tools. This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools."""
 
     tool_calls: list[ToolCallPart]
     tool_defs: dict[str, ToolDefinition]
