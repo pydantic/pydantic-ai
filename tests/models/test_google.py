@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 from google.genai.types import Language
-from httpx import Request, Timeout
+from httpx import Timeout
 from inline_snapshot import Is, snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict

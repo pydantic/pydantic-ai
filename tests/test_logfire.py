@@ -476,7 +476,14 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'gen_ai.system': 'test',
                     'gen_ai.request.model': 'test',
                     'model_request_parameters': IsJson(
-                        {'function_tools': [], 'builtin_tools': [], 'output_mode': 'text', 'output_object': None, 'output_tools': [], 'allow_text_output': True}
+                        {
+                            'function_tools': [],
+                            'builtin_tools': [],
+                            'output_mode': 'text',
+                            'output_object': None,
+                            'output_tools': [],
+                            'allow_text_output': True,
+                        }
                     ),
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',

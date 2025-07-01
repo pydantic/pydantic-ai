@@ -11,8 +11,8 @@ from uuid import uuid4
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
-from ..builtin_tools import CodeExecutionTool, WebSearchTool
 from .._output import OutputObjectDefinition
+from ..builtin_tools import CodeExecutionTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,

@@ -11,8 +11,8 @@ from typing import Any, Literal, Union, cast, overload
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._thinking_part import split_content_into_text_and_thinking
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
+from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..builtin_tools import WebSearchTool
 from ..messages import (
