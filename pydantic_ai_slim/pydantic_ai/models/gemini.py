@@ -626,7 +626,6 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
             # Handle ServerToolCallPart the same as ToolCallPart
             # Never returned from gemini
             pass
-            parts.append(_function_call_part_from_call(item))
         elif isinstance(item, ServerToolReturnPart):
             # Convert ServerToolReturnPart to a function response part
             # Never returned from gemini
