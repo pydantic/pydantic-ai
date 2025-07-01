@@ -101,15 +101,19 @@ async def test_a2a_simple():
                                 'kind': 'message',
                                 'context_id': IsStr(),
                                 'task_id': IsStr(),
-                            },
+                            }
+                        ],
+                        'artifacts': [
                             {
-                                'role': 'agent',
-                                'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}],
-                                'kind': 'message',
-                                'message_id': IsStr(),
-                                'context_id': IsStr(),
-                                'task_id': IsStr(),
-                            },
+                                'artifact_id': IsStr(),
+                                'name': 'result',
+                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'metadata': {
+                                    'type': 'tuple',
+                                    'json_schema': {'items': {}, 'type': 'array'},
+                                    'class_name': 'tuple',
+                                },
+                            }
                         ],
                     },
                 }
@@ -199,15 +203,19 @@ async def test_a2a_file_message_with_file():
                                 'kind': 'message',
                                 'context_id': IsStr(),
                                 'task_id': IsStr(),
-                            },
+                            }
+                        ],
+                        'artifacts': [
                             {
-                                'role': 'agent',
-                                'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}],
-                                'kind': 'message',
-                                'message_id': IsStr(),
-                                'context_id': IsStr(),
-                                'task_id': IsStr(),
-                            },
+                                'artifact_id': IsStr(),
+                                'name': 'result',
+                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'metadata': {
+                                    'type': 'tuple',
+                                    'json_schema': {'items': {}, 'type': 'array'},
+                                    'class_name': 'tuple',
+                                },
+                            }
                         ],
                     },
                 }
@@ -275,15 +283,19 @@ async def test_a2a_file_message_with_file_content():
                                 'kind': 'message',
                                 'context_id': IsStr(),
                                 'task_id': IsStr(),
-                            },
+                            }
+                        ],
+                        'artifacts': [
                             {
-                                'role': 'agent',
-                                'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}],
-                                'kind': 'message',
-                                'message_id': IsStr(),
-                                'context_id': IsStr(),
-                                'task_id': IsStr(),
-                            },
+                                'artifact_id': IsStr(),
+                                'name': 'result',
+                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'metadata': {
+                                    'type': 'tuple',
+                                    'json_schema': {'items': {}, 'type': 'array'},
+                                    'class_name': 'tuple',
+                                },
+                            }
                         ],
                     },
                 }
@@ -438,14 +450,18 @@ async def test_a2a_multiple_messages():
                                 'task_id': IsStr(),
                             },
                             {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}], 'kind': 'message'},
+                        ],
+                        'artifacts': [
                             {
-                                'role': 'agent',
-                                'parts': [{'kind': 'text', 'text': "('foo', 'bar')"}],
-                                'kind': 'message',
-                                'message_id': IsStr(),
-                                'context_id': IsStr(),
-                                'task_id': IsStr(),
-                            },
+                                'artifact_id': IsStr(),
+                                'name': 'result',
+                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'metadata': {
+                                    'type': 'tuple',
+                                    'json_schema': {'items': {}, 'type': 'array'},
+                                    'class_name': 'tuple',
+                                },
+                            }
                         ],
                     },
                 }

@@ -3,10 +3,11 @@ from __future__ import annotations, annotations as _annotations
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from functools import partial
-from typing import Any, Callable, Generic
+from typing import Any, Callable, Generic, cast
 
+from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
 from pydantic_ai.messages import (
@@ -20,6 +21,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     ModelResponsePart,
     TextPart,
+    ThinkingPart,
+    ToolCallPart,
     UserPromptPart,
     VideoUrl,
 )
@@ -35,11 +38,13 @@ try:
     from fasta2a.broker import Broker, InMemoryBroker
     from fasta2a.schema import (
         Artifact,
+        DataPart,
         Message,
         Part,
         Provider,
         Skill,
         Task,
+        TaskArtifactUpdateEvent,
         TaskIdParams,
         TaskSendParams,
         TaskStatusUpdateEvent,
@@ -140,36 +145,123 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
             context_history = await self.storage.get_context_history(
                 context_id, history_length=params.get('history_length')
             )
-            message_history = self.build_message_history(task_history=context_history)
+            message_history = self.build_message_history(context_history)
+            assert len(message_history) and isinstance(message_history[-1], ModelRequest)
+            # Extract text content from the last message's parts
+            text_parts: list[str] = []
+            for part in message_history[-1].parts:
+                if hasattr(part, 'content'):
+                    if isinstance(part.content, str):
+                        text_parts.append(part.content)
+            current_message: str = ''.join(text_parts)
+            message_history = message_history[:-1]
 
             # Initialize dependencies if factory provided
-            if self.deps_factory is not None:
-                deps = self.deps_factory(task)
-                result = await self.agent.run(message_history=message_history, deps=deps)
-            else:
-                # No deps_factory provided - this only works if the agent accepts None for deps
-                # (e.g., Agent[None, ...] or Agent[Optional[...], ...])
-                # If the agent requires deps, this will raise TypeError at runtime
-                result = await self.agent.run(message_history=message_history)  # type: ignore[call-arg]
+            deps: AgentDepsT = cast(AgentDepsT, self.deps_factory(task) if self.deps_factory is not None else None)
 
-            # Create a message from the agent's response
-            agent_message = Message(
-                role='agent',
-                parts=[A2ATextPart(kind='text', text=str(result.output))],
-                kind='message',
-                message_id=str(uuid.uuid4()),
-                task_id=task_id,
-                context_id=context_id,
-            )
+            async with self.agent.iter(current_message, message_history=message_history, deps=deps) as run:
+                message_id = str(uuid.uuid4())
+                node = run.next_node
+                while not self.agent.is_end_node(node):
+                    # Check if this node has a model response
+                    if hasattr(node, 'model_response'):
+                        model_response = getattr(node, 'model_response')
+                        # Convert model response parts to A2A parts
+                        a2a_parts = self._response_parts_to_a2a(model_response.parts)
 
-            # Add the agent's response to storage
-            await self.storage.add_message(agent_message)
+                        if a2a_parts:
+                            # Send incremental message event
+                            incremental_message = Message(
+                                role='agent',
+                                parts=a2a_parts,
+                                kind='message',
+                                message_id=message_id,
+                                task_id=task_id,
+                                context_id=context_id,
+                            )
+                            await self.storage.add_message(incremental_message)
+                            await self.broker.send_stream_event(task_id, incremental_message)
 
-            # Send the agent's response as a message
-            await self.broker.send_stream_event(task_id, agent_message)
+                    # Move to next node
+                    current = node
+                    node = await run.next(current)
 
-            # Update storage and send completion event (no artifacts)
-            await self.storage.update_task(task_id, state='completed')
+                # Run finished - get the final result
+                if run.result is None:
+                    raise RuntimeError('Agent finished without producing a result')
+
+                artifacts: list[Artifact] = []
+                if isinstance(run.result.output, str):
+                    final_message = Message(
+                        role='agent',
+                        parts=[A2ATextPart(kind='text', text=run.result.output)],
+                        kind='message',
+                        message_id=message_id,
+                        task_id=task_id,
+                        context_id=context_id,
+                    )
+                    await self.storage.add_message(final_message)
+                    await self.broker.send_stream_event(task_id, final_message)
+                else:
+                    # Create artifact for non-string outputs
+                    artifact_id = str(uuid.uuid4())
+                    output: OutputDataT = run.result.output
+                    metadata: dict[str, Any] = {'type': type(output).__name__}
+
+                    try:
+                        # Create TypeAdapter for the output type
+                        output_type = type(output)
+                        type_adapter: TypeAdapter[OutputDataT] = TypeAdapter(output_type)
+
+                        # Serialize to Python dict/list for DataPart
+                        data = type_adapter.dump_python(output, mode='json')
+
+                        # Get JSON schema if possible
+                        try:
+                            json_schema = type_adapter.json_schema()
+                            metadata['json_schema'] = json_schema
+                            if hasattr(output, '__class__'):
+                                metadata['class_name'] = output.__class__.__name__
+                        except Exception:
+                            raise
+                            # Some types may not support JSON schema generation
+                            pass
+
+                    except Exception:
+                        raise
+                        # Fallback for types that TypeAdapter can't handle
+                        if is_dataclass(output):
+                            data = asdict(output)  # type: ignore[arg-type]
+                            metadata['type'] = 'dataclass'
+                            metadata['class_name'] = output.__class__.__name__
+                        else:
+                            # Last resort - convert to string
+                            data = str(output)
+                            metadata['type'] = 'string_fallback'
+
+                    # Create artifact with DataPart
+                    artifact = Artifact(
+                        artifact_id=artifact_id,
+                        name='result',
+                        parts=[DataPart(kind='data', data=data)],
+                        metadata=metadata,
+                    )
+                    artifacts.append(artifact)
+
+                    # Send artifact update event
+                    await self.broker.send_stream_event(
+                        task_id,
+                        TaskArtifactUpdateEvent(
+                            task_id=task_id,
+                            context_id=context_id,
+                            kind='artifact-update',
+                            artifact=artifact,
+                            last_chunk=True,
+                        ),
+                    )
+
+            # Update storage and send completion event
+            await self.storage.update_task(task_id, state='completed', artifacts=artifacts if artifacts else None)
             await self.broker.send_stream_event(
                 task_id,
                 TaskStatusUpdateEvent(
@@ -203,16 +295,28 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
         artifact_id = str(uuid.uuid4())
         return [Artifact(artifact_id=artifact_id, name='result', parts=[A2ATextPart(kind='text', text=str(result))])]
 
-    def build_message_history(self, task_history: list[Message]) -> list[ModelMessage]:
+    def build_message_history(self, history: list[Message]) -> list[ModelMessage]:
         model_messages: list[ModelMessage] = []
-        for message in task_history:
+        for message in history:
             if message['role'] == 'user':
-                model_messages.append(ModelRequest(parts=self._map_request_parts(message['parts'])))
+                model_messages.append(ModelRequest(parts=self._request_parts_from_a2a(message['parts'])))
             else:
-                model_messages.append(ModelResponse(parts=self._map_response_parts(message['parts'])))
+                model_messages.append(ModelResponse(parts=self._response_parts_from_a2a(message['parts'])))
+
         return model_messages
 
-    def _map_request_parts(self, parts: list[Part]) -> list[ModelRequestPart]:
+    def _request_parts_from_a2a(self, parts: list[Part]) -> list[ModelRequestPart]:
+        """Convert A2A Part objects to pydantic-ai ModelRequestPart objects.
+
+        This handles the conversion from A2A protocol parts (text, file, data) to
+        pydantic-ai's internal request parts (UserPromptPart with various content types).
+
+        Args:
+            parts: List of A2A Part objects from incoming messages
+
+        Returns:
+            List of ModelRequestPart objects for the pydantic-ai agent
+        """
         model_parts: list[ModelRequestPart] = []
         for part in parts:
             if part['kind'] == 'text':
@@ -245,7 +349,19 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
                 assert_never(part)
         return model_parts
 
-    def _map_response_parts(self, parts: list[Part]) -> list[ModelResponsePart]:
+    def _response_parts_from_a2a(self, parts: list[Part]) -> list[ModelResponsePart]:
+        """Convert A2A Part objects to pydantic-ai ModelResponsePart objects.
+
+        This handles the conversion from A2A protocol parts (text, file, data) to
+        pydantic-ai's internal response parts. Currently only supports text parts
+        as agent responses in A2A are expected to be text-based.
+
+        Args:
+            parts: List of A2A Part objects from stored agent messages
+
+        Returns:
+            List of ModelResponsePart objects for message history
+        """
         model_parts: list[ModelResponsePart] = []
         for part in parts:
             if part['kind'] == 'text':
@@ -257,3 +373,38 @@ class AgentWorker(Worker, Generic[AgentDepsT, OutputDataT]):
             else:  # pragma: no cover
                 assert_never(part)
         return model_parts
+
+    def _response_parts_to_a2a(self, parts: list[ModelResponsePart]) -> list[Part]:
+        """Convert pydantic-ai ModelResponsePart objects to A2A Part objects.
+
+        This handles the conversion from pydantic-ai's internal response parts to
+        A2A protocol parts. Different part types are handled as follows:
+        - TextPart: Converted directly to A2A TextPart
+        - ThinkingPart: Converted to TextPart with metadata indicating it's thinking
+        - ToolCallPart: Skipped (internal to agent execution)
+
+        Args:
+            parts: List of ModelResponsePart objects from agent response
+
+        Returns:
+            List of A2A Part objects suitable for sending via A2A protocol
+        """
+        a2a_parts: list[Part] = []
+        for part in parts:
+            if isinstance(part, TextPart):
+                if part.content:  # Only add non-empty text
+                    a2a_parts.append(A2ATextPart(kind='text', text=part.content))
+            elif isinstance(part, ThinkingPart):
+                if part.content:  # Only add non-empty thinking
+                    # Convert thinking to text with metadata
+                    a2a_parts.append(
+                        A2ATextPart(
+                            kind='text',
+                            text=part.content,
+                            metadata={'type': 'thinking', 'thinking_id': part.id, 'signature': part.signature},
+                        )
+                    )
+            elif isinstance(part, ToolCallPart):
+                # Skip tool calls - they're internal to agent execution
+                pass
+        return a2a_parts
