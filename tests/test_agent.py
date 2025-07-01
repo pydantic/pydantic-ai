@@ -301,7 +301,7 @@ def test_plain_response_then_tuple():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
                 ],
-                usage=Usage(requests=1, request_tokens=72, response_tokens=8, total_tokens=80),
+                usage=Usage(requests=1, request_tokens=74, response_tokens=8, total_tokens=82),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -930,7 +930,7 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
-                usage=Usage(requests=1, request_tokens=68, response_tokens=5, total_tokens=73),
+                usage=Usage(requests=1, request_tokens=70, response_tokens=5, total_tokens=75),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
             ),
@@ -1584,7 +1584,7 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
-                usage=Usage(requests=1, request_tokens=68, response_tokens=11, total_tokens=79),
+                usage=Usage(requests=1, request_tokens=70, response_tokens=11, total_tokens=81),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
             ),
