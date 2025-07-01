@@ -25,11 +25,11 @@ def tool_from_aci(
         A PydanticAI tool that can be used in an Agent.
 
     Example:
+    
         tavily_search = tool_from_aci(
             "TAVILY__SEARCH",
             linked_account_owner_id=LINKED_ACCOUNT_OWNER_ID
         )
-
 
         agent = Agent(
             "openai:gpt-4.1",
@@ -61,14 +61,14 @@ def tool_from_aci(
     json_schema = _clean_schema(json_schema)
 
     def implementation(*args: Any, **kwargs: Any) -> str:
-      if args:
-          raise TypeError("Positional arguments are not allowed")
-      return aci.handle_function_call(
-          function_name,
-          kwargs,
-          linked_account_owner_id=linked_account_owner_id,
-          allowed_apps_only=True,
-      )
+        if args:
+            raise TypeError("Positional arguments are not allowed")
+        return aci.handle_function_call(
+            function_name,
+            kwargs,
+            linked_account_owner_id=linked_account_owner_id,
+            allowed_apps_only=True,
+        )
 
     return Tool.from_schema(
         function=implementation,
