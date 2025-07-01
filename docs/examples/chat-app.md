@@ -29,18 +29,12 @@ Then open the app at [localhost:8000](http://localhost:8000).
 
 Python code that runs the chat app:
 
-```python {title="chat_app.py"}
-#! examples/pydantic_ai_examples/chat_app.py
-```
+```snippet {path="/examples/pydantic_ai_examples/chat_app.py"}```
 
 Simple HTML page to render the app:
 
-```html {title="chat_app.html"}
-#! examples/pydantic_ai_examples/chat_app.html
-```
+```snippet {path="/examples/pydantic_ai_examples/chat_app.py"}```
 
 TypeScript to handle rendering the messages, to keep this simple (and at the risk of offending frontend developers) the typescript code is passed to the browser as plain text and transpiled in the browser.
 
-```ts {title="chat_app.ts"}
-#! examples/pydantic_ai_examples/chat_app.ts
-```
+```snippet {path="/examples/pydantic_ai_examples/chat_app.ts"}```

@@ -19,12 +19,13 @@ from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
-from .result import OutputDataT
+from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings, merge_model_settings
 from .tools import RunContext, Tool, ToolDefinition, ToolsPrepareFunc
 
 if TYPE_CHECKING:
     from .mcp import MCPServer
+    from .models.instrumented import InstrumentationSettings
 
 __all__ = (
     'GraphAgentState',
@@ -103,7 +104,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     end_strategy: EndStrategy
     get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]]
 
-    output_schema: _output.OutputSchema[OutputDataT] | None
+    output_schema: _output.OutputSchema[OutputDataT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
 
     history_processors: Sequence[HistoryProcessor[DepsT]]
@@ -114,6 +115,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     default_retries: int
 
     tracer: Tracer
+    instrumentation_settings: InstrumentationSettings | None = None
 
     prepare_tools: ToolsPrepareFunc[DepsT] | None = None
 
@@ -143,6 +145,8 @@ def is_agent_node(
 
 @dataclasses.dataclass
 class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
+    """The node that handles the user prompt and instructions."""
+
     user_prompt: str | Sequence[_messages.UserContent] | None
 
     instructions: str | None
@@ -286,17 +290,30 @@ async def _prepare_request_parameters(
         function_tool_defs = await ctx.deps.prepare_tools(run_context, function_tool_defs) or []
 
     output_schema = ctx.deps.output_schema
+
+    output_tools = []
+    output_object = None
+    if isinstance(output_schema, _output.ToolOutputSchema):
+        output_tools = output_schema.tool_defs()
+    elif isinstance(output_schema, _output.NativeOutputSchema):
+        output_object = output_schema.object_def
+
+    # ToolOrTextOutputSchema, NativeOutputSchema, and PromptedOutputSchema all inherit from TextOutputSchema
+    allow_text_output = isinstance(output_schema, _output.TextOutputSchema)
+
     return models.ModelRequestParameters(
         function_tools=function_tool_defs,
         builtin_tools=ctx.deps.builtin_tools,
-        allow_text_output=_output.allow_text_output(output_schema),
-        output_tools=output_schema.tool_defs() if output_schema is not None else [],
+        output_mode=output_schema.mode,
+        output_tools=output_tools,
+        output_object=output_object,
+        allow_text_output=allow_text_output,
     )
 
 
 @dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
-    """Make a request to the model using the last message in state.message_history."""
+    """The node that makes a request to the model using the last message in state.message_history."""
 
     request: _messages.ModelRequest
 
@@ -415,7 +432,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
 @dataclasses.dataclass
 class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
-    """Process a model response, and decide whether to end the run or make a new request."""
+    """The node that processes a model response, and decides whether to end the run or make a new request."""
 
     model_response: _messages.ModelResponse
 
@@ -489,7 +506,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # when the model has already returned text along side tool calls
                     # in this scenario, if text responses are allowed, we return text from the most recent model
                     # response, if any
-                    if _output.allow_text_output(ctx.deps.output_schema):
+                    if isinstance(ctx.deps.output_schema, _output.TextOutputSchema):
                         for message in reversed(ctx.state.message_history):
                             if isinstance(message, _messages.ModelResponse):
                                 last_texts = [p.content for p in message.parts if isinstance(p, _messages.TextPart)]
@@ -512,10 +529,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_schema = ctx.deps.output_schema
         run_context = build_run_context(ctx)
 
-        # first, look for the output tool call
         final_result: result.FinalResult[NodeRunEndT] | None = None
         parts: list[_messages.ModelRequestPart] = []
-        if output_schema is not None:
+
+        # first, look for the output tool call
+        if isinstance(output_schema, _output.ToolOutputSchema):
             for call, output_tool in output_schema.find_tool(tool_calls):
                 try:
                     result_data = await output_tool.process(call, run_context)
@@ -573,9 +591,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         text = '\n\n'.join(texts)
         try:
-            if _output.allow_text_output(output_schema):
-                # The following cast is safe because we know `str` is an allowed result type
-                result_data = cast(NodeRunEndT, text)
+            if isinstance(output_schema, _output.TextOutputSchema):
+                run_context = build_run_context(ctx)
+                result_data = await output_schema.process(text, run_context)
             else:
                 m = _messages.RetryPromptPart(
                     content='Plain text responses are not permitted, please include your response in a tool call',
@@ -674,7 +692,7 @@ async def process_function_tools(  # noqa C901
                 yield event
                 call_index_to_event_id[len(calls_to_run)] = event.call_id
                 calls_to_run.append((mcp_tool, call))
-        elif output_schema is not None and call.tool_name in output_schema.tools:
+        elif call.tool_name in output_schema.tools:
             # if tool_name is in output_schema, it means we found a output tool but an error occurred in
             # validation, we don't add another part here
             if output_tool_name is not None:
@@ -703,6 +721,10 @@ async def process_function_tools(  # noqa C901
 
     user_parts: list[_messages.UserPromptPart] = []
 
+    include_content = (
+        ctx.deps.instrumentation_settings is not None and ctx.deps.instrumentation_settings.include_content
+    )
+
     # Run all tool tasks in parallel
     results_by_index: dict[int, _messages.ModelRequestPart] = {}
     with ctx.deps.tracer.start_as_current_span(
@@ -713,7 +735,7 @@ async def process_function_tools(  # noqa C901
         },
     ):
         tasks = [
-            asyncio.create_task(tool.run(call, run_context, ctx.deps.tracer), name=call.tool_name)
+            asyncio.create_task(tool.run(call, run_context, ctx.deps.tracer, include_content), name=call.tool_name)
             for tool, call in calls_to_run
         ]
 
@@ -728,6 +750,30 @@ async def process_function_tools(  # noqa C901
                 if isinstance(result, _messages.RetryPromptPart):
                     results_by_index[index] = result
                 elif isinstance(result, _messages.ToolReturnPart):
+                    if isinstance(result.content, _messages.ToolReturn):
+                        tool_return = result.content
+                        if (
+                            isinstance(tool_return.return_value, _messages.MultiModalContentTypes)
+                            or isinstance(tool_return.return_value, list)
+                            and any(
+                                isinstance(content, _messages.MultiModalContentTypes)
+                                for content in tool_return.return_value  # type: ignore
+                            )
+                        ):
+                            raise exceptions.UserError(
+                                f"{result.tool_name}'s `return_value` contains invalid nested MultiModalContentTypes objects. "
+                                f'Please use `content` instead.'
+                            )
+                        result.content = tool_return.return_value  # type: ignore
+                        result.metadata = tool_return.metadata
+                        if tool_return.content:
+                            user_parts.append(
+                                _messages.UserPromptPart(
+                                    content=list(tool_return.content),
+                                    timestamp=result.timestamp,
+                                    part_kind='user-prompt',
+                                )
+                            )
                     contents: list[Any]
                     single_content: bool
                     if isinstance(result.content, list):
@@ -739,7 +785,13 @@ async def process_function_tools(  # noqa C901
 
                     processed_contents: list[Any] = []
                     for content in contents:
-                        if isinstance(content, _messages.MultiModalContentTypes):
+                        if isinstance(content, _messages.ToolReturn):
+                            raise exceptions.UserError(
+                                f"{result.tool_name}'s return contains invalid nested ToolReturn objects. "
+                                f'ToolReturn should be used directly.'
+                            )
+                        elif isinstance(content, _messages.MultiModalContentTypes):
+                            # Handle direct multimodal content
                             if isinstance(content, _messages.BinaryContent):
                                 identifier = multi_modal_content_identifier(content.data)
                             else:
@@ -754,6 +806,7 @@ async def process_function_tools(  # noqa C901
                             )
                             processed_contents.append(f'See file {identifier}')
                         else:
+                            # Handle regular content
                             processed_contents.append(content)
 
                     if single_content:
@@ -814,7 +867,9 @@ def _unknown_tool(
 ) -> _messages.RetryPromptPart:
     ctx.state.increment_retries(ctx.deps.max_result_retries)
     tool_names = list(ctx.deps.function_tools.keys())
-    if output_schema := ctx.deps.output_schema:
+
+    output_schema = ctx.deps.output_schema
+    if isinstance(output_schema, _output.ToolOutputSchema):
         tool_names.extend(output_schema.tool_names())
 
     if tool_names:
@@ -891,7 +946,7 @@ def get_captured_run_messages() -> _RunMessages:
 def build_agent_graph(
     name: str | None,
     deps_type: type[DepsT],
-    output_type: _output.OutputType[OutputT],
+    output_type: OutputSpec[OutputT],
 ) -> Graph[GraphAgentState, GraphAgentDeps[DepsT, result.FinalResult[OutputT]], result.FinalResult[OutputT]]:
     """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
     nodes = (

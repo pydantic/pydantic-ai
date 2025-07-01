@@ -174,7 +174,7 @@ def generate_snapshot_id(node_id: str) -> str:
     return f'{node_id}:{uuid4().hex}'
 
 
-@dataclass
+@dataclass(frozen=True)
 class Edge:
     """Annotation to apply a label to an edge in a graph."""
 

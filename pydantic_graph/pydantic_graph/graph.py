@@ -142,7 +142,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
         Here's an example of running the graph from [above][pydantic_graph.graph.Graph]:
 
-        ```py {title="run_never_42.py" noqa="I001" py="3.10"}
+        ```py {title="run_never_42.py" noqa="I001" py="3.10" requires="never_42.py"}
         from never_42 import Increment, MyState, never_42_graph
 
         async def main():
@@ -410,7 +410,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
         Here's an example of generating a diagram for the graph from [above][pydantic_graph.graph.Graph]:
 
-        ```py {title="mermaid_never_42.py" py="3.10"}
+        ```py {title="mermaid_never_42.py" py="3.10" requires="never_42.py"}
         from never_42 import Increment, never_42_graph
 
         print(never_42_graph.mermaid_code(start_node=Increment))
@@ -600,7 +600,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
     through nodes as they run, either by `async for` iteration or by repeatedly calling `.next(...)`.
 
     Here's an example of iterating over the graph from [above][pydantic_graph.graph.Graph]:
-    ```py {title="iter_never_42.py" noqa="I001" py="3.10"}
+    ```py {title="iter_never_42.py" noqa="I001" py="3.10" requires="never_42.py"}
     from copy import deepcopy
     from never_42 import Increment, MyState, never_42_graph
 
@@ -716,7 +716,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         under dynamic conditions. The graph run should stop when you return an [`End`][pydantic_graph.nodes.End] node.
 
         Here's an example of using `next` to drive the graph from [above][pydantic_graph.graph.Graph]:
-        ```py {title="next_never_42.py" noqa="I001" py="3.10"}
+        ```py {title="next_never_42.py" noqa="I001" py="3.10" requires="never_42.py"}
         from copy import deepcopy
         from pydantic_graph import End
         from never_42 import Increment, MyState, never_42_graph

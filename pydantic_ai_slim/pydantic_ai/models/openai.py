@@ -12,6 +12,7 @@ from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._thinking_part import split_content_into_text_and_thinking
+from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..builtin_tools import WebSearchTool
 from ..messages import (
@@ -275,9 +276,12 @@ class OpenAIModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
+<<<<<<< HEAD
         web_search_options = self._get_web_search_options(model_request_parameters)
 
         # standalone function to make it easier to override
+=======
+>>>>>>> main
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
         elif not model_request_parameters.allow_text_output:
@@ -286,6 +290,16 @@ class OpenAIModel(Model):
             tool_choice = 'auto'
 
         openai_messages = await self._map_messages(messages)
+
+        response_format: chat.completion_create_params.ResponseFormat | None = None
+        if model_request_parameters.output_mode == 'native':
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            response_format = self._map_json_schema(output_object)
+        elif (
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
+        ):  # pragma: no branch
+            response_format = {'type': 'json_object'}
 
         sampling_settings = (
             model_settings
@@ -307,6 +321,7 @@ class OpenAIModel(Model):
                 stop=model_settings.get('stop_sequences', NOT_GIVEN),
                 max_completion_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
+                response_format=response_format or NOT_GIVEN,
                 seed=model_settings.get('seed', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
@@ -451,6 +466,17 @@ class OpenAIModel(Model):
             type='function',
             function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
         )
+
+    def _map_json_schema(self, o: OutputObjectDefinition) -> chat.completion_create_params.ResponseFormat:
+        response_format_param: chat.completion_create_params.ResponseFormatJSONSchema = {  # pyright: ignore[reportPrivateImportUsage]
+            'type': 'json_schema',
+            'json_schema': {'name': o.name or DEFAULT_OUTPUT_TOOL_NAME, 'schema': o.json_schema, 'strict': True},
+        }
+        if o.description:
+            response_format_param['json_schema']['description'] = o.description
+        if OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition:  # pragma: no branch
+            response_format_param['json_schema']['strict'] = o.strict
+        return response_format_param
 
     def _map_tool_definition(self, f: ToolDefinition) -> chat.ChatCompletionToolParam:
         tool_param: chat.ChatCompletionToolParam = {
@@ -641,13 +667,16 @@ class OpenAIResponsesModel(Model):
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = number_to_datetime(response.created_at)
         items: list[ModelResponsePart] = []
-        items.append(TextPart(response.output_text))
         for item in response.output:
             if item.type == 'reasoning':
                 for summary in item.summary:
                     # NOTE: We use the same id for all summaries because we can merge them on the round trip.
                     # The providers don't force the signature to be unique.
                     items.append(ThinkingPart(content=summary.text, id=item.id))
+            elif item.type == 'message':
+                for content in item.content:
+                    if content.type == 'output_text':  # pragma: no branch
+                        items.append(TextPart(content.text))
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
         return ModelResponse(
@@ -703,7 +732,6 @@ class OpenAIResponsesModel(Model):
         tools = list(model_settings.get('openai_builtin_tools', [])) + tools
         tools = self._get_builtin_tools(model_request_parameters) + tools
 
-        # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
         elif not model_request_parameters.allow_text_output:
@@ -713,6 +741,23 @@ class OpenAIResponsesModel(Model):
 
         instructions, openai_messages = await self._map_messages(messages)
         reasoning = self._get_reasoning(model_settings)
+
+        text: responses.ResponseTextConfigParam | None = None
+        if model_request_parameters.output_mode == 'native':
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            text = {'format': self._map_json_schema(output_object)}
+        elif (
+            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
+        ):  # pragma: no branch
+            text = {'format': {'type': 'json_object'}}
+
+            # Without this trick, we'd hit this error:
+            # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
+            # Apparently they're only checking input messages for "JSON", not instructions.
+            assert isinstance(instructions, str)
+            openai_messages.insert(0, responses.EasyInputMessageParam(role='system', content=instructions))
+            instructions = NOT_GIVEN
 
         sampling_settings = (
             model_settings
@@ -738,6 +783,7 @@ class OpenAIResponsesModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
+                text=text or NOT_GIVEN,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -875,6 +921,18 @@ class OpenAIResponsesModel(Model):
             name=t.tool_name,
             type='function_call',
         )
+
+    def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:
+        response_format_param: responses.ResponseFormatTextJSONSchemaConfigParam = {
+            'type': 'json_schema',
+            'name': o.name or DEFAULT_OUTPUT_TOOL_NAME,
+            'schema': o.json_schema,
+        }
+        if o.description:
+            response_format_param['description'] = o.description
+        if OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition:  # pragma: no branch
+            response_format_param['strict'] = o.strict
+        return response_format_param
 
     @staticmethod
     async def _map_user_prompt(part: UserPromptPart) -> responses.EasyInputMessageParam:
@@ -1098,18 +1156,29 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
     if response_usage is None:
         return usage.Usage()
     elif isinstance(response_usage, responses.ResponseUsage):
-        details: dict[str, int] = {}
+        details: dict[str, int] = {
+            key: value
+            for key, value in response_usage.model_dump(
+                exclude={'input_tokens', 'output_tokens', 'total_tokens'}
+            ).items()
+            if isinstance(value, int)
+        }
+        details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
+        details['cached_tokens'] = response_usage.input_tokens_details.cached_tokens
         return usage.Usage(
             request_tokens=response_usage.input_tokens,
             response_tokens=response_usage.output_tokens,
             total_tokens=response_usage.total_tokens,
-            details={
-                'reasoning_tokens': response_usage.output_tokens_details.reasoning_tokens,
-                'cached_tokens': response_usage.input_tokens_details.cached_tokens,
-            },
+            details=details,
         )
     else:
-        details = {}
+        details = {
+            key: value
+            for key, value in response_usage.model_dump(
+                exclude={'prompt_tokens', 'completion_tokens', 'total_tokens'}
+            ).items()
+            if isinstance(value, int)
+        }
         if response_usage.completion_tokens_details is not None:
             details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
         if response_usage.prompt_tokens_details is not None:

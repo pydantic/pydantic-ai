@@ -292,8 +292,10 @@ def test_logfire(
                             }
                         ],
                         'builtin_tools': [],
-                        'allow_text_output': True,
+                        'output_mode': 'text',
                         'output_tools': [],
+                        'output_object': None,
+                        'allow_text_output': True,
                     }
                 )
             ),
@@ -474,7 +476,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'gen_ai.system': 'test',
                     'gen_ai.request.model': 'test',
                     'model_request_parameters': IsJson(
-                        {'function_tools': [], 'builtin_tools': [], 'allow_text_output': True, 'output_tools': []}
+                        {'function_tools': [], 'builtin_tools': [], 'output_mode': 'text', 'output_object': None, 'output_tools': [], 'allow_text_output': True}
                     ),
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',
@@ -547,3 +549,35 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
             },
         ]
     )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_include_tool_args_span_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    """Test that tool arguments are included/excluded in span attributes based on instrumentation settings."""
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    test_model = TestModel(seed=42)
+    my_agent = Agent(model=test_model, instrument=instrumentation_settings)
+
+    @my_agent.tool_plain
+    async def add_numbers(x: int, y: int) -> int:
+        """Add two numbers together."""
+        return x + y
+
+    result = my_agent.run_sync('Add 42 and 42')
+    assert result.output == snapshot('{"add_numbers":84}')
+
+    summary = get_logfire_summary()
+
+    [tool_attributes] = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'add_numbers'
+    ]
+
+    if include_content:
+        assert tool_attributes['tool_arguments'] == snapshot('{"x":42,"y":42}')
+    else:
+        assert 'tool_arguments' not in tool_attributes
