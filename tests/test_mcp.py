@@ -232,7 +232,7 @@ async def test_agent_with_conflict_tool_name(agent: Agent):
         with pytest.raises(
             UserError,
             match=re.escape(
-                "MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'], tool_prefix=None) defines a tool whose name conflicts with existing tool from FunctionToolset: 'get_none'. Consider setting `tool_prefix` to avoid name conflicts."
+                "MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'], tool_prefix=None) defines a tool whose name conflicts with existing tool from Function toolset: 'get_none'. Consider setting `tool_prefix` to avoid name conflicts."
             ),
         ):
             await agent.run('Get me a conflict')

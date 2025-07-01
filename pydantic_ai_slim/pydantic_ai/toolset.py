@@ -441,6 +441,10 @@ class WrapperToolset(AbstractToolset[AgentDepsT], ABC):
     ) -> bool | None:
         return await self.wrapped.__aexit__(exc_type, exc_value, traceback)
 
+    @abstractmethod
+    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
+        raise NotImplementedError()
+
     @property
     def tool_defs(self) -> list[ToolDefinition]:
         return self.wrapped.tool_defs
