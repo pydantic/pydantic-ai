@@ -276,12 +276,9 @@ class OpenAIModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
-<<<<<<< HEAD
         web_search_options = self._get_web_search_options(model_request_parameters)
 
         # standalone function to make it easier to override
-=======
->>>>>>> main
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
         elif not model_request_parameters.allow_text_output:

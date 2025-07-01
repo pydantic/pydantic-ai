@@ -5,12 +5,8 @@ import os
 from typing import Any
 
 import pytest
-<<<<<<< HEAD
 from google.genai.types import Language
 from httpx import Request, Timeout
-=======
-from httpx import Timeout
->>>>>>> main
 from inline_snapshot import Is, snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict

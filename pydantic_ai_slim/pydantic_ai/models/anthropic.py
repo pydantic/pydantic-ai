@@ -418,19 +418,6 @@ class AnthropicModel(Model):
                         )
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
-<<<<<<< HEAD
-                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
-                        # please open an issue. The below code is the code to send thinking to the provider.
-                        # assert response_part.signature is not None, 'Thinking part must have a signature'
-                        # assistant_content_params.append(
-                        #     BetaThinkingBlockParam(
-                        #         thinking=response_part.content, signature=response_part.signature, type='thinking'
-                        #     )
-                        # )
-                        pass
-                    elif isinstance(response_part, ServerToolCallPart):
-                        server_tool_use_block_param = BetaServerToolUseBlockParam(
-=======
                         # NOTE: We only send thinking part back for Anthropic, otherwise they raise an error.
                         if response_part.signature is not None:  # pragma: no branch
                             assistant_content_params.append(
@@ -438,9 +425,8 @@ class AnthropicModel(Model):
                                     thinking=response_part.content, signature=response_part.signature, type='thinking'
                                 )
                             )
-                    else:
-                        tool_use_block_param = BetaToolUseBlockParam(
->>>>>>> main
+                    elif isinstance(response_part, ServerToolCallPart):
+                        server_tool_use_block_param = BetaServerToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),
                             type='server_tool_use',
                             name=cast(Literal['web_search', 'code_execution'], response_part.tool_name),
