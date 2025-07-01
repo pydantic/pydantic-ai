@@ -499,7 +499,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             # Never returned from google
             pass
         elif isinstance(item, ServerToolReturnPart):
-            # Never returned from gemini
+            # Never returned from google
             pass
         else:
             assert_never(item)
