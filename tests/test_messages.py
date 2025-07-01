@@ -8,6 +8,7 @@ from pydantic_ai.messages import (
     DocumentUrl,
     ImageUrl,
     ThinkingPartDelta,
+    ToolReturnPart,
     VideoUrl,
 )
 
@@ -305,3 +306,14 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     result = content_delta.apply(original_delta)
     assert isinstance(result, ThinkingPartDelta)
     assert result.content_delta == 'new_content'
+
+
+def test_tool_return_part_has_content():
+    """Test ToolReturnPart.has_content() method for coverage."""
+    # Test with content
+    tool_return_with_content = ToolReturnPart(tool_call_id='call_123', tool_name='test_tool', content='some result')
+    assert tool_return_with_content.has_content() is True
+
+    # Test with None content
+    tool_return_without_content = ToolReturnPart(tool_call_id='call_456', tool_name='test_tool', content=None)
+    assert tool_return_without_content.has_content() is False

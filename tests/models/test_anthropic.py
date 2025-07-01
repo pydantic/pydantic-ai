@@ -1510,6 +1510,37 @@ print(f"3 * 12390 = {result}")\
     )
 
 
+async def test_anthropic_unsupported_server_tool_name():
+    """Test that unsupported server tool names raise ValueError."""
+    from datetime import datetime
+
+    # Create a mock message history with an unsupported server tool return
+    messages = [
+        ModelResponse(
+            parts=[
+                ServerToolReturnPart(
+                    tool_name='unsupported_tool_result',  # This should trigger the ValueError
+                    content='some content',
+                    tool_call_id='test_id',
+                    timestamp=datetime.now(timezone.utc),
+                )
+            ],
+            usage=Usage(requests=1, request_tokens=10, response_tokens=10, total_tokens=20),
+            model_name='test',
+            timestamp=datetime.now(timezone.utc),
+            vendor_id='test',
+        )
+    ]
+
+    # Create a mock anthropic model and test the message mapping
+    mock_client = MockAnthropic.create_mock([])
+    m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    # Should raise ValueError when trying to map messages with unsupported tool
+    with pytest.raises(ValueError, match='Unsupported tool name: unsupported_tool_result'):
+        await m._map_message(messages)
+
+
 @pytest.mark.vcr
 async def test_anthropic_server_tool_pass_history_to_another_provider(
     allow_model_requests: None, anthropic_api_key: str, openai_api_key: str
