@@ -608,7 +608,7 @@ async def process_function_tools(  # noqa: C901
                     content='Output tool not used - a final result was already processed.',
                     tool_call_id=call.tool_call_id,
                 )
-                yield _messages.FunctionToolResultEvent(part, tool_call_id=call.tool_call_id)
+                yield _messages.FunctionToolResultEvent(part)
 
             parts.append(part)
         else:
@@ -621,7 +621,7 @@ async def process_function_tools(  # noqa: C901
                 ctx.state.increment_retries(ctx.deps.max_result_retries, e)
                 yield _messages.FunctionToolCallEvent(call)
                 parts.append(e.tool_retry)
-                yield _messages.FunctionToolResultEvent(e.tool_retry, tool_call_id=call.tool_call_id)
+                yield _messages.FunctionToolResultEvent(e.tool_retry)
             else:
                 part = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
@@ -682,7 +682,7 @@ async def process_function_tools(  # noqa: C901
                 for task in done:
                     index = tasks.index(task)
                     tool_result = task.result()
-                    yield _messages.FunctionToolResultEvent(tool_result, tool_call_id=tool_result.tool_call_id)
+                    yield _messages.FunctionToolResultEvent(tool_result)
 
                     if isinstance(tool_result, _messages.RetryPromptPart):
                         results_by_index[index] = tool_result

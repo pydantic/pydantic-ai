@@ -997,7 +997,6 @@ async def test_unknown_tool_call_events():
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                tool_call_id=IsStr(),
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -1006,7 +1005,6 @@ async def test_unknown_tool_call_events():
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
                 ),
-                tool_call_id=IsStr(),
             ),
         ]
     )
@@ -1057,8 +1055,7 @@ async def test_output_tool_validation_failure_events():
                     tool_name='final_result',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
-                ),
-                tool_call_id=IsStr(),
+                )
             ),
         ]
     )
@@ -1085,6 +1082,23 @@ async def test_stream_prompted_output():
             ]
         )
         assert result.is_complete
+
+
+def test_function_tool_event_tool_call_id_properties():
+    """Ensure that the `tool_call_id` property on function tool events mirrors the underlying part's ID."""
+    # Prepare a ToolCallPart with a fixed ID
+    call_part = ToolCallPart(tool_name='sample_tool', args={'a': 1}, tool_call_id='call_id_123')
+    call_event = FunctionToolCallEvent(part=call_part)
+
+    # The event should expose the same `tool_call_id` as the part
+    assert call_event.tool_call_id == call_part.tool_call_id == 'call_id_123'
+
+    # Prepare a ToolReturnPart with a fixed ID
+    return_part = ToolReturnPart(tool_name='sample_tool', content='ok', tool_call_id='return_id_456')
+    result_event = FunctionToolResultEvent(result=return_part)
+
+    # The event should expose the same `tool_call_id` as the result part
+    assert result_event.tool_call_id == return_part.tool_call_id == 'return_id_456'
 
 
 async def test_deferred_tool():
