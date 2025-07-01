@@ -11,7 +11,7 @@ from .exceptions import (
     UserError,
 )
 from .format_prompt import format_as_xml
-from .messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, VideoUrl
+from .messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, VendorMetadata, VideoUrl
 from .output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from .tools import RunContext, Tool
 
@@ -36,6 +36,7 @@ __all__ = (
     'ImageUrl',
     'AudioUrl',
     'VideoUrl',
+    'VendorMetadata',
     'DocumentUrl',
     'BinaryContent',
     # tools
