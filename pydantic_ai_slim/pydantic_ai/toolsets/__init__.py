@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from contextlib import contextmanager
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, Literal
 
@@ -80,5 +82,6 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     ) -> Any:
         raise NotImplementedError()
 
-    def _set_mcp_sampling_model(self, model: Model) -> None:
-        pass
+    @contextmanager
+    def override_sampling_model(self, model: Model) -> Iterator[None]:
+        yield

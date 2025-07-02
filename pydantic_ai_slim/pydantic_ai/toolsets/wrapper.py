@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
@@ -59,8 +61,10 @@ class WrapperToolset(AbstractToolset[AgentDepsT], ABC):
     ) -> Any:
         return await self.wrapped.call_tool(ctx, name, tool_args, *args, **kwargs)
 
-    def _set_mcp_sampling_model(self, model: Model) -> None:
-        self.wrapped._set_mcp_sampling_model(model)
+    @contextmanager
+    def override_sampling_model(self, model: Model) -> Iterator[None]:
+        with self.wrapped.override_sampling_model(model):
+            yield
 
     def __getattr__(self, item: str):
         return getattr(self.wrapped, item)  # pragma: no cover

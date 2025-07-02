@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
-from contextlib import AsyncExitStack
+from collections.abc import Iterator, Sequence
+from contextlib import AsyncExitStack, ExitStack, contextmanager
 from dataclasses import dataclass
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
@@ -92,9 +92,12 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         return await self._toolset_for_tool_name(name).call_tool(ctx, name, tool_args, *args, **kwargs)
 
-    def _set_mcp_sampling_model(self, model: Model) -> None:
-        for toolset in self.toolsets:
-            toolset._set_mcp_sampling_model(model)
+    @contextmanager
+    def override_sampling_model(self, model: Model) -> Iterator[None]:
+        with ExitStack() as exit_stack:
+            for toolset in self.toolsets:
+                exit_stack.enter_context(toolset.override_sampling_model(model))
+            yield
 
     def _toolset_for_tool_name(self, name: str) -> AbstractToolset[AgentDepsT]:
         try:
