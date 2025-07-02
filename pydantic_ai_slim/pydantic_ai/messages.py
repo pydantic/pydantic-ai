@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
 import pydantic
 import pydantic_core
 from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import TypeAlias
+from typing_extensions import TypeAlias, deprecated
 
 from . import _utils
 from ._utils import (
@@ -518,7 +518,10 @@ class RetryPromptPart:
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
         if isinstance(self.content, str):
-            description = self.content
+            if self.tool_name is None:
+                description = f'Validation feedback:\n{self.content}'
+            else:
+                description = self.content
         else:
             json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
             description = f'{len(self.content)} validation errors: {json_errors.decode()}'
@@ -1045,9 +1048,15 @@ class FunctionToolCallEvent:
     """Event type identifier, used as a discriminator."""
 
     @property
-    def call_id(self) -> str:
-        """An ID used for matching details about the call to its result. If present, defaults to the part's tool_call_id."""
+    def tool_call_id(self) -> str:
+        """An ID used for matching details about the call to its result."""
         return self.part.tool_call_id
+
+    @property
+    @deprecated('`call_id` is deprecated, use `tool_call_id` instead.')
+    def call_id(self) -> str:
+        """An ID used for matching details about the call to its result."""
+        return self.part.tool_call_id  # pragma: no cover
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1058,10 +1067,13 @@ class FunctionToolResultEvent:
 
     result: ToolReturnPart | RetryPromptPart
     """The result of the call to the function tool."""
-    tool_call_id: str
-    """An ID used to match the result to its original call."""
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""
+
+    @property
+    def tool_call_id(self) -> str:
+        """An ID used to match the result to its original call."""
+        return self.result.tool_call_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

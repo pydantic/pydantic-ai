@@ -379,8 +379,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='get_capital', content='Paris', tool_call_id=IsStr(), timestamp=IsDatetime()
-                ),
-                tool_call_id=IsStr(),
+                )
             ),
             PartStartEvent(
                 index=0,
@@ -390,8 +389,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='get_temperature', content='30°C', tool_call_id=IsStr(), timestamp=IsDatetime()
-                ),
-                tool_call_id=IsStr(),
+                )
             ),
             PartStartEvent(index=0, part=TextPart(content='The temperature in Paris')),
             FinalResultEvent(tool_name=None, tool_call_id=None),

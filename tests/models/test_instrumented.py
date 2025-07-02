@@ -240,6 +240,7 @@ Fix the errors and try again.\
             {
                 'body': {
                     'content': """\
+Validation feedback:
 retry_prompt2
 
 Fix the errors and try again.\
@@ -619,6 +620,7 @@ Fix the errors and try again.\
                                 {
                                     'event.name': 'gen_ai.user.message',
                                     'content': """\
+Validation feedback:
 retry_prompt2
 
 Fix the errors and try again.\

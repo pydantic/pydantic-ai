@@ -56,6 +56,7 @@ try:
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
+    from openai.types.chat.chat_completion_prediction_content_param import ChatCompletionPredictionContentParam
     from openai.types.chat.completion_create_params import (
         WebSearchOptions,
         WebSearchOptionsUserLocation,
@@ -124,6 +125,12 @@ class OpenAIModelSettings(ModelSettings, total=False):
 
     Currently supported values are `auto`, `default`, and `flex`.
     For more information, see [OpenAI's service tiers documentation](https://platform.openai.com/docs/api-reference/chat/object#chat/object-service_tier).
+    """
+
+    openai_prediction: ChatCompletionPredictionContentParam
+    """Enables [predictive outputs](https://platform.openai.com/docs/guides/predicted-outputs).
+
+    This feature is currently only supported for some OpenAI models.
     """
 
 
@@ -324,6 +331,7 @@ class OpenAIModel(Model):
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 web_search_options=web_search_options or NOT_GIVEN,
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
+                prediction=model_settings.get('openai_prediction', NOT_GIVEN),
                 temperature=sampling_settings.get('temperature', NOT_GIVEN),
                 top_p=sampling_settings.get('top_p', NOT_GIVEN),
                 presence_penalty=sampling_settings.get('presence_penalty', NOT_GIVEN),
