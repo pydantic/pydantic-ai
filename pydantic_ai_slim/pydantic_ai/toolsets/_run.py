@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -25,7 +24,7 @@ class RunToolset(WrapperToolset[AgentDepsT]):
     ctx: RunContext[AgentDepsT]
     _tool_defs: list[ToolDefinition]
     _tool_names: list[str]
-    _retries: defaultdict[str, int]
+    _retries: dict[str, int]
     _original: AbstractToolset[AgentDepsT]
 
     def __init__(
@@ -108,14 +107,14 @@ class RunToolset(WrapperToolset[AgentDepsT]):
                     msg = 'No tools available.'
                 raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
 
-            ctx = replace(ctx, tool_name=name, retry=self._retries[name], retries={})
+            ctx = replace(ctx, tool_name=name, retry=self._retries.get(name, 0), retries={})
             yield ctx
         except (ValidationError, ModelRetry, UnexpectedModelBehavior, ToolRetryError) as e:
             try:
                 max_retries = self._max_retries_for_tool(name)
             except Exception:
                 max_retries = 1
-            current_retry = self._retries[name]
+            current_retry = self._retries.get(name, 0)
 
             if isinstance(e, UnexpectedModelBehavior) and e.__cause__ is not None:
                 e = e.__cause__

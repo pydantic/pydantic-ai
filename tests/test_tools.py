@@ -1155,7 +1155,7 @@ def test_tool_retries():
         ctx: RunContext[None], tool_defs: list[ToolDefinition]
     ) -> Union[list[ToolDefinition], None]:
         nonlocal prepare_tools_retries
-        retry = ctx.retries['infinite_retry_tool']
+        retry = ctx.retries.get('infinite_retry_tool', 0)
         prepare_tools_retries.append(retry)
         return tool_defs
 

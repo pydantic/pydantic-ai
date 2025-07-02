@@ -188,7 +188,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
     async def _prepare_tool_def(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_name = tool_def.name
-        ctx = replace(ctx, tool_name=tool_name, retry=ctx.retries[tool_name])
+        ctx = replace(ctx, tool_name=tool_name, retry=ctx.retries.get(tool_name, 0))
         return await self.tools[tool_name].prepare_tool_def(ctx)
 
     @property
