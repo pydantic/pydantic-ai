@@ -163,8 +163,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             return content[0] if len(content) == 1 else content
 
     async def prepare_for_run(self, ctx: RunContext[Any]) -> RunToolset[Any]:
-        frozen_self = RunToolset(self, ctx, await self.list_tool_defs())
-        frozen_toolset = frozen_self
+        frozen_toolset = RunToolset(self, ctx, await self.list_tool_defs())
         if self.process_tool_call:
             frozen_toolset = await ProcessedToolset(frozen_toolset, self.process_tool_call).prepare_for_run(ctx)
         if self.tool_prefix:

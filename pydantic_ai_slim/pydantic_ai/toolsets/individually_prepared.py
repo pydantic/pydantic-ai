@@ -33,7 +33,7 @@ class IndividuallyPreparedToolset(WrapperToolset[AgentDepsT]):
             new_name = tool_def.name
             if new_name in tool_defs:
                 if new_name != original_name:
-                    raise UserError(f"Renaming tool '{original_name}' to '{new_name}' conflicts with existing tool.")
+                    raise UserError(f'Renaming tool {original_name!r} to {new_name!r} conflicts with existing tool.')
                 else:
                     raise UserError(f'Tool name conflicts with previously renamed tool: {new_name!r}.')
             name_map[new_name] = original_name
