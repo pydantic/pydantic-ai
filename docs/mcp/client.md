@@ -183,7 +183,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio, ToolResult
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.toolset import CallToolFunc
+from pydantic_ai.toolsets.processed import CallToolFunc
 
 
 async def process_tool_call(
