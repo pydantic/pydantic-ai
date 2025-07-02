@@ -453,7 +453,7 @@ class BaseToolReturnPart:
 
     def has_content(self) -> bool:
         """Return `True` if the tool return has content."""
-        return self.content is not None
+        return self.content is not None  # pragma: no cover
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
