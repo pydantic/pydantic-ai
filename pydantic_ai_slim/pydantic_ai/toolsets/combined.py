@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from types import TracebackType
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
@@ -15,9 +15,6 @@ from ..exceptions import UserError
 from ..tools import ToolDefinition
 from . import AbstractToolset
 from ._run import RunToolset
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass(init=False)
