@@ -408,35 +408,27 @@ class GoogleModel(Model):
                 elif isinstance(item, BinaryContent):
                     # NOTE: The type from Google GenAI is incorrect, it should be `str`, not `bytes`.
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
+                    inline_data_dict = {'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}}
+
                     if item.vendor_metadata:
                         video_metadata = VideoMetadata(
-                            fps=item.vendor_metadata.google_fps,
-                            start_offset=item.vendor_metadata.google_start_offset,
-                            end_offset=item.vendor_metadata.google_end_offset,
+                            fps=item.vendor_metadata.get('fps', None),
+                            start_offset=item.vendor_metadata.get('start_offset', None),
+                            end_offset=item.vendor_metadata.get('end_offset', None),
                         )
-                        content.append(
-                            {
-                                'inline_data': {'data': base64_encoded, 'mime_type': item.media_type},
-                                'video_metadata': video_metadata,  # type: ignore
-                            }
-                        )
-                    else:
-                        content.append({'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}})  # type: ignore
+                        inline_data_dict['video_metadata'] = video_metadata  # type: ignore
+
+                    content.append(inline_data_dict)  # type: ignore
                 elif isinstance(item, VideoUrl) and item.is_youtube:
+                    file_data_dict = {'file_data': {'file_uri': item.url, 'mime_type': item.media_type}}
                     if item.vendor_metadata:
                         video_metadata = VideoMetadata(
-                            fps=item.vendor_metadata.google_fps,
-                            start_offset=item.vendor_metadata.google_start_offset,
-                            end_offset=item.vendor_metadata.google_end_offset,
+                            fps=item.vendor_metadata.get('fps', None),
+                            start_offset=item.vendor_metadata.get('start_offset', None),
+                            end_offset=item.vendor_metadata.get('end_offset', None),
                         )
-                        content.append(
-                            {
-                                'file_data': {'file_uri': item.url, 'mime_type': item.media_type},
-                                'video_metadata': video_metadata,  # type: ignore
-                            }
-                        )
-                    else:
-                        content.append({'file_data': {'file_uri': item.url, 'mime_type': item.media_type}})
+                        inline_data_dict['video_metadata'] = video_metadata  # type: ignore
+                    content.append(file_data_dict)  # type: ignore
                 elif isinstance(item, FileUrl):
                     if self.system == 'google-gla' or item.force_download:
                         downloaded_item = await download_item(item, data_format='base64')
