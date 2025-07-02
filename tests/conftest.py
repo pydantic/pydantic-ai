@@ -294,7 +294,7 @@ def openrouter_api_key() -> str:
 
 @pytest.fixture(scope='session')
 def huggingface_api_key() -> str:
-    return os.getenv('HF_TOKEN', 'hf_token') or os.getenv('HUGGINGFACE_API_KEY', 'hf_token')
+    return os.getenv('HF_TOKEN', 'hf_token')
 
 
 @pytest.fixture(scope='session')
@@ -428,7 +428,7 @@ def model(
 
             return HuggingFaceModel(
                 'Qwen/Qwen2.5-72B-Instruct',
-                provider=HuggingFaceProvider(provider='nebius', api_key=huggingface_api_key),
+                provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
             )
         else:
             raise ValueError(f'Unknown model: {request.param}')

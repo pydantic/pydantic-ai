@@ -125,7 +125,8 @@ async def test_simple_completion(allow_model_requests: None):
     c = completion_message(ChatCompletionInputMessage(content='world', role='assistant'))  # type:ignore
     mock_client = MockHuggingFace.create_mock(c)
     model = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct', provider=HuggingFaceProvider(provider='nebius', hf_client=mock_client, api_key='x')
+        'Qwen/Qwen2.5-72B-Instruct',
+        provider=HuggingFaceProvider(provider_name='nebius', hf_client=mock_client, api_key='x'),
     )
     agent = Agent(model)
 
@@ -148,7 +149,8 @@ async def test_request_simple_usage(allow_model_requests: None):
     c = completion_message(ChatCompletionInputMessage(content='world', role='assistant'))  # type:ignore
     mock_client = MockHuggingFace.create_mock(c)
     model = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct', provider=HuggingFaceProvider(provider='nebius', hf_client=mock_client, api_key='x')
+        'Qwen/Qwen2.5-72B-Instruct',
+        provider=HuggingFaceProvider(provider_name='nebius', hf_client=mock_client, api_key='x'),
     )
     agent = Agent(model)
 
@@ -181,7 +183,8 @@ async def test_request_structured_response(allow_model_requests: None):
 
     mock_client = MockHuggingFace.create_mock(c)
     model = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct', provider=HuggingFaceProvider(provider='nebius', hf_client=mock_client, api_key='x')
+        'Qwen/Qwen2.5-72B-Instruct',
+        provider=HuggingFaceProvider(provider_name='nebius', hf_client=mock_client, api_key='x'),
     )
     agent = Agent(model, output_type=list[int])
 
@@ -652,7 +655,7 @@ def test_model_status_error(allow_model_requests: None) -> None:
 @pytest.mark.vcr()
 async def test_request_simple_success_with_vcr(allow_model_requests: None, huggingface_api_key: str):
     m = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct', provider=HuggingFaceProvider(provider='nebius', api_key=huggingface_api_key)
+        'Qwen/Qwen2.5-72B-Instruct', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
     )
     agent = Agent(m)
     result = await agent.run('hello')
@@ -664,7 +667,7 @@ async def test_request_simple_success_with_vcr(allow_model_requests: None, huggi
 @pytest.mark.vcr()
 async def test_hf_model_instructions(allow_model_requests: None, huggingface_api_key: str):
     m = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct', provider=HuggingFaceProvider(provider='nebius', api_key=huggingface_api_key)
+        'Qwen/Qwen2.5-72B-Instruct', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
     )
 
     def simple_instructions(ctx: RunContext):
@@ -684,7 +687,7 @@ async def test_hf_model_instructions(allow_model_requests: None, huggingface_api
                 usage=Usage(requests=1, request_tokens=26, response_tokens=2, total_tokens=28),
                 model_name='Qwen/Qwen2.5-72B-Instruct-fast',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-6fa46f85f4f04beda9c936d5996b22a8',
+                vendor_id='chatcmpl-b3936940372c481b8d886e596dc75524',
             ),
         ]
     )
