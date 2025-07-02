@@ -737,7 +737,14 @@ async def _call_function_tool(
             {
                 'type': 'object',
                 'properties': {
-                    **({'tool_arguments': {'type': 'object'}} if include_content else {}),
+                    **(
+                        {
+                            'tool_arguments': {'type': 'object'},
+                            'tool_response': {'type': 'object'},
+                        }
+                        if include_content
+                        else {}
+                    ),
                     'gen_ai.tool.name': {},
                     'gen_ai.tool.call.id': {},
                 },
@@ -745,14 +752,25 @@ async def _call_function_tool(
         ),
     }
 
-    with tracer.start_as_current_span('running tool', attributes=span_attributes):
+    with tracer.start_as_current_span('running tool', attributes=span_attributes) as span:
         try:
             tool_result = await _call_tool(toolset, tool_call, run_context)
         except ToolRetryError as e:
+            part = e.tool_retry
+            if include_content and span.is_recording():
+                span.set_attribute('tool_response', part.model_response())
             return (e.tool_retry, [])
 
+        part = _messages.ToolReturnPart(
+            tool_name=tool_call.tool_name,
+            content=tool_result,
+            tool_call_id=tool_call.tool_call_id,
+        )
+
+        if include_content and span.is_recording():
+            span.set_attribute('tool_response', part.model_response_str())
+
         extra_parts: list[_messages.ModelRequestPart] = []
-        metadata = None
 
         def process_content(content: Any) -> Any:
             if isinstance(content, _messages.ToolReturn):
@@ -790,7 +808,8 @@ async def _call_function_tool(
                     f'Please use `content` instead.'
                 )
 
-            metadata = tool_result.metadata
+            part.content = tool_result.return_value  # type: ignore
+            part.metadata = tool_result.metadata
             if tool_result.content:
                 extra_parts.append(
                     _messages.UserPromptPart(
@@ -798,19 +817,11 @@ async def _call_function_tool(
                         part_kind='user-prompt',
                     )
                 )
-            tool_result = tool_result.return_value  # type: ignore
         elif isinstance(tool_result, list):
             contents = cast(list[Any], tool_result)
-            tool_result = [process_content(content) for content in contents]
+            part.content = [process_content(content) for content in contents]
         else:
-            tool_result = process_content(tool_result)
-
-        part = _messages.ToolReturnPart(
-            tool_name=tool_call.tool_name,
-            content=tool_result,
-            metadata=metadata,
-            tool_call_id=tool_call.tool_call_id,
-        )
+            part.content = process_content(tool_result)
 
         return (part, extra_parts)
 
