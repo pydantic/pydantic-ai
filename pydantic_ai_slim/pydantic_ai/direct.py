@@ -8,14 +8,19 @@ These methods are thin wrappers around [`Model`][pydantic_ai.models.Model] imple
 
 from __future__ import annotations as _annotations
 
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, AbstractContextManager
 
 from pydantic_graph._utils import get_event_loop as _get_event_loop
 
 from . import agent, messages, models, settings
 from .models import instrumented as instrumented_models
 
-__all__ = 'model_request', 'model_request_sync', 'model_request_stream'
+__all__ = (
+    'model_request',
+    'model_request_sync',
+    'model_request_stream',
+    'model_request_stream_sync',
+)
 
 
 async def model_request(
@@ -144,7 +149,7 @@ def model_request_stream(
 
     async def main():
         messages = [ModelRequest.user_text_prompt('Who was Albert Einstein?')]  # (1)!
-        async with model_request_stream( 'openai:gpt-4.1-mini', messages) as stream:
+        async with model_request_stream('openai:gpt-4.1-mini', messages) as stream:
             chunks = []
             async for chunk in stream:
                 chunks.append(chunk)
@@ -179,6 +184,65 @@ def model_request_stream(
         model_settings,
         model_instance.customize_request_parameters(model_request_parameters or models.ModelRequestParameters()),
     )
+
+
+def model_request_stream_sync(
+    model: models.Model | models.KnownModelName | str,
+    messages: list[messages.ModelMessage],
+    *,
+    model_settings: settings.ModelSettings | None = None,
+    model_request_parameters: models.ModelRequestParameters | None = None,
+    instrument: instrumented_models.InstrumentationSettings | bool | None = None,
+) -> AbstractContextManager[models.StreamedResponseSync]:
+    """Make a streamed synchronous request to a model.
+
+    This is the synchronous version of [`model_request_stream`][pydantic_ai.direct.model_request_stream].
+    It uses threading to run the asynchronous stream in the background while providing a synchronous iterator interface.
+
+    ```py {title="model_request_stream_sync_example.py"}
+
+    from pydantic_ai.direct import model_request_stream_sync
+    from pydantic_ai.messages import ModelRequest
+
+
+    def main():
+        messages = [ModelRequest.user_text_prompt('Who was Albert Einstein?')]
+        with model_request_stream_sync('openai:gpt-4.1-mini', messages) as stream:
+            chunks = []
+            for chunk in stream:
+                chunks.append(chunk)
+            print(chunks)
+            '''
+            [
+                PartStartEvent(index=0, part=TextPart(content='Albert Einstein was ')),
+                PartDeltaEvent(
+                    index=0, delta=TextPartDelta(content_delta='a German-born theoretical ')
+                ),
+                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='physicist.')),
+            ]
+            '''
+    ```
+
+    Args:
+        model: The model to make a request to. We allow `str` here since the actual list of allowed models changes frequently.
+        messages: Messages to send to the model
+        model_settings: optional model settings
+        model_request_parameters: optional model request parameters
+        instrument: Whether to instrument the request with OpenTelemetry/Logfire, if `None` the value from
+            [`logfire.instrument_pydantic_ai`][logfire.Logfire.instrument_pydantic_ai] is used.
+
+    Returns:
+        A [sync stream response][pydantic_ai.models.StreamedResponseSync] context manager.
+    """
+    async_stream_cm = model_request_stream(
+        model=model,
+        messages=messages,
+        model_settings=model_settings,
+        model_request_parameters=model_request_parameters,
+        instrument=instrument,
+    )
+
+    return models.StreamedResponseSync(async_stream_cm)
 
 
 def _prepare_model(

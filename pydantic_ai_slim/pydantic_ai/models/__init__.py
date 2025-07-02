@@ -7,29 +7,42 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import queue
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Generic, TypeVar, overload
+from types import TracebackType
+from typing import Any, Generic, TypeVar, overload
 
 import httpx
 from typing_extensions import Literal, TypeAliasType, TypedDict
 
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
+from pydantic_graph._utils import get_event_loop
 
 from .. import _utils
 from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
-from ..messages import FileUrl, ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent, VideoUrl
+from ..messages import (
+    FileUrl,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ModelResponseStreamEvent,
+    VideoUrl,
+)
 from ..output import OutputMode
 from ..profiles._json_schema import JsonSchemaTransformer
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import Usage
+
+STREAM_INITIALIZATION_TIMEOUT = 30.0
 
 KnownModelName = TypeAliasType(
     'KnownModelName',
@@ -499,6 +512,134 @@ class StreamedResponse(ABC):
         raise NotImplementedError()
 
 
+@dataclass
+class StreamedResponseSync:
+    """Synchronous wrapper to async streaming responses by running the async producer in a background thread and providing a synchronous iterator.
+
+    This class MUST be used as a context manager with the `with` statement.
+    """
+
+    _async_stream_cm: Any
+    _queue: queue.Queue[ModelResponseStreamEvent | Exception | None] = field(default_factory=queue.Queue, init=False)
+    _thread: threading.Thread | None = field(default=None, init=False)
+    _stream_response: StreamedResponse | None = field(default=None, init=False)
+    _exception: Exception | None = field(default=None, init=False)
+    _context_entered: bool = field(default=False, init=False)
+    _stream_ready: threading.Event = field(default_factory=threading.Event, init=False)
+
+    def __enter__(self) -> StreamedResponseSync:
+        self._context_entered = True
+        self._start_producer()
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc_val: BaseException | None,
+        _exc_tb: TracebackType | None,
+    ) -> None:
+        self._cleanup()
+
+    def __iter__(self) -> Iterator[ModelResponseStreamEvent]:
+        self._check_context_manager_usage()
+
+        while True:
+            item = self._queue.get()
+            if item is None:  # End of stream
+                break
+            elif isinstance(item, Exception):
+                raise item
+            else:
+                yield item
+
+    def _ensure_stream_ready(self) -> StreamedResponse:
+        """Ensure the stream is ready and return it, raising appropriate errors if not."""
+        self._check_context_manager_usage()
+
+        if self._stream_response is None:
+            # Wait for the background thread to signal that the stream is ready
+            if not self._stream_ready.wait(timeout=STREAM_INITIALIZATION_TIMEOUT):
+                raise RuntimeError('Stream failed to initialize within timeout')
+
+            if self._stream_response is None:
+                raise RuntimeError('Stream failed to initialize')
+
+        return self._stream_response
+
+    def __repr__(self) -> str:
+        if self._stream_response:
+            return repr(self._stream_response)
+        else:
+            return f'{self.__class__.__name__}(context_entered={self._context_entered})'
+
+    __str__ = __repr__
+
+    def _check_context_manager_usage(self) -> None:
+        """Check that the context manager was properly entered."""
+        if not self._context_entered:
+            raise RuntimeError(
+                'StreamedResponseSync must be used as a context manager. '
+                'Use: `with model_request_stream_sync(...) as stream:`'
+            )
+
+    def _start_producer(self):
+        """Start the background thread to consume the async stream."""
+        if self._thread is not None:
+            return
+
+        self._thread = threading.Thread(target=self._async_producer, daemon=True)
+        self._thread.start()
+
+    def _async_producer(self):
+        """Run in background thread to consume async stream."""
+
+        async def _consume_async_stream():
+            try:
+                async with self._async_stream_cm as stream:
+                    self._stream_response = stream
+                    # Signal that the stream is ready
+                    self._stream_ready.set()
+                    async for event in stream:
+                        self._queue.put(event)
+            except Exception as e:
+                # Signal ready even on error so waiting threads don't hang
+                self._stream_ready.set()
+                self._queue.put(e)
+            finally:
+                self._queue.put(None)  # Signal end
+
+        get_event_loop().run_until_complete(_consume_async_stream())
+
+    def _cleanup(self):
+        """Clean up resources when exiting context."""
+        if self._thread and self._thread.is_alive():
+            self._thread.join()
+
+    def get(self) -> ModelResponse:
+        """Build a ModelResponse from the data received from the stream so far."""
+        self._check_context_manager_usage()
+        if self._stream_response is None:
+            raise RuntimeError('Stream has not been started yet')
+        return self._stream_response.get()
+
+    def usage(self) -> Usage:
+        """Get the usage of the response so far."""
+        self._check_context_manager_usage()
+        if self._stream_response is None:
+            return Usage()
+        return self._stream_response.usage()
+
+    @property
+    def model_name(self) -> str:
+        """Get the model name of the response."""
+        return self._ensure_stream_ready().model_name
+
+    @property
+    def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
+        return self._ensure_stream_ready().timestamp
+
+
 ALLOW_MODEL_REQUESTS = True
 """Whether to allow requests to models.
 
@@ -569,7 +710,16 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
-    elif provider in ('openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku'):
+    elif provider in (
+        'openai',
+        'deepseek',
+        'azure',
+        'openrouter',
+        'grok',
+        'fireworks',
+        'together',
+        'heroku',
+    ):
         from .openai import OpenAIModel
 
         return OpenAIModel(model_name, provider=provider)
