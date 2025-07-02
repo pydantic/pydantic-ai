@@ -49,6 +49,7 @@ with try_import() as imports_successful:
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
         BetaCodeExecutionResultBlock,
+        BetaCodeExecutionToolResultBlock,
         BetaContentBlock,
         BetaInputJSONDelta,
         BetaMessage,
@@ -60,10 +61,12 @@ with try_import() as imports_successful:
         BetaRawMessageStartEvent,
         BetaRawMessageStopEvent,
         BetaRawMessageStreamEvent,
+        BetaServerToolUseBlock,
         BetaTextBlock,
         BetaToolUseBlock,
         BetaUsage,
         BetaWebSearchResultBlock,
+        BetaWebSearchToolResultBlock,
     )
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
@@ -1981,3 +1984,134 @@ Based on the information that you're in Mexico, the largest city in your country
 
 Mexico City is not only the largest city in Mexico but also one of the largest metropolitan areas in the world, with a metropolitan population of over 21 million people. The city proper has a population of approximately 9 million people and serves as the capital and political, cultural, and economic center of Mexico.\
 """)
+
+
+async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_model_requests: None):
+    """Test passing web search tool history back to Anthropic."""
+    # Create the first mock response with server tool blocks
+    first_response = completion_message(
+        [
+            BetaTextBlock(text='Let me search for the current date.', type='text'),
+            BetaServerToolUseBlock(
+                id='server_tool_123', name='web_search', input={'query': 'current date today'}, type='server_tool_use'
+            ),
+            BetaWebSearchToolResultBlock(
+                tool_use_id='server_tool_123',
+                type='web_search_tool_result',
+                content=[
+                    BetaWebSearchResultBlock(
+                        title='Current Date and Time',
+                        url='https://example.com/date',
+                        type='web_search_result',
+                        encrypted_content='dummy_encrypted_content',
+                    )
+                ],
+            ),
+            BetaTextBlock(text='Today is January 2, 2025.', type='text'),
+        ],
+        BetaUsage(input_tokens=10, output_tokens=20),
+    )
+
+    # Create the second mock response that references the history
+    second_response = completion_message(
+        [BetaTextBlock(text='The web search result showed that today is January 2, 2025.', type='text')],
+        BetaUsage(input_tokens=50, output_tokens=30),
+    )
+
+    mock_client = MockAnthropic.create_mock([first_response, second_response])
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[WebSearchTool()])
+
+    # First run to get server tool history
+    result = await agent.run('What day is today?')
+
+    # Verify we have server tool parts in the history
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, ServerToolCallPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ServerToolReturnPart)]
+    assert len(server_tool_calls) == 1
+    assert len(server_tool_returns) == 1
+    assert server_tool_calls[0].tool_name == 'web_search'
+    assert server_tool_returns[0].tool_name == 'web_search_tool_result'
+
+    # Pass the history back to another Anthropic agent run
+    agent2 = Agent(m)
+    result2 = await agent2.run('What was the web search result?', message_history=result.all_messages())
+    assert result2.output == 'The web search result showed that today is January 2, 2025.'
+
+
+async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, allow_model_requests: None):
+    """Test passing code execution tool history back to Anthropic."""
+    # Create the first mock response with server tool blocks
+    first_response = completion_message(
+        [
+            BetaTextBlock(text='Let me calculate 2 + 2.', type='text'),
+            BetaServerToolUseBlock(
+                id='server_tool_456', name='code_execution', input={'code': 'print(2 + 2)'}, type='server_tool_use'
+            ),
+            BetaCodeExecutionToolResultBlock(
+                tool_use_id='server_tool_456',
+                type='code_execution_tool_result',
+                content=BetaCodeExecutionResultBlock(
+                    content=[],
+                    return_code=0,
+                    stderr='',
+                    stdout='4\n',
+                    type='code_execution_result',
+                ),
+            ),
+            BetaTextBlock(text='The result is 4.', type='text'),
+        ],
+        BetaUsage(input_tokens=10, output_tokens=20),
+    )
+
+    # Create the second mock response that references the history
+    second_response = completion_message(
+        [BetaTextBlock(text='The code execution returned the result: 4', type='text')],
+        BetaUsage(input_tokens=50, output_tokens=30),
+    )
+
+    mock_client = MockAnthropic.create_mock([first_response, second_response])
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    # First run to get server tool history
+    result = await agent.run('What is 2 + 2?')
+
+    # Verify we have server tool parts in the history
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, ServerToolCallPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ServerToolReturnPart)]
+    assert len(server_tool_calls) == 1
+    assert len(server_tool_returns) == 1
+    assert server_tool_calls[0].tool_name == 'code_execution'
+    assert server_tool_returns[0].tool_name == 'code_execution_tool_result'
+
+    # Pass the history back to another Anthropic agent run
+    agent2 = Agent(m)
+    result2 = await agent2.run('What was the code execution result?', message_history=result.all_messages())
+    assert result2.output == 'The code execution returned the result: 4'
+
+
+async def test_anthropic_unsupported_server_tool_name_error():
+    """Test that unsupported server tool names raise an error."""
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ServerToolReturnPart
+
+    env = TestEnv()
+    env.set('ANTHROPIC_API_KEY', 'test-key')
+    model = AnthropicModel('claude-3-5-sonnet-latest', provider='anthropic')
+
+    # Create a message with an unsupported server tool name
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ServerToolReturnPart(
+                    tool_name='unsupported_tool',  # This should trigger the error
+                    content='some content',
+                    tool_call_id='test_id',
+                )
+            ]
+        )
+    ]
+
+    # This should raise a ValueError
+    with pytest.raises(ValueError, match='Unsupported tool name: unsupported_tool'):
+        await model._map_message(messages)  # type: ignore[attr-defined]
