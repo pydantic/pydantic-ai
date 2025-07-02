@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator, Sequence
-from contextlib import AsyncExitStack, ExitStack, contextmanager
+from collections.abc import Sequence
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
@@ -17,7 +17,7 @@ from . import AbstractToolset
 from ._run import RunToolset
 
 if TYPE_CHECKING:
-    from ..models import Model
+    pass
 
 
 @dataclass(init=False)
@@ -91,13 +91,6 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
     ) -> Any:
         return await self._toolset_for_tool_name(name).call_tool(ctx, name, tool_args, *args, **kwargs)
-
-    @contextmanager
-    def override_sampling_model(self, model: Model) -> Iterator[None]:
-        with ExitStack() as exit_stack:
-            for toolset in self.toolsets:
-                exit_stack.enter_context(toolset.override_sampling_model(model))
-            yield
 
     def _toolset_for_tool_name(self, name: str) -> AbstractToolset[AgentDepsT]:
         try:

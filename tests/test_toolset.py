@@ -18,7 +18,15 @@ T = TypeVar('T')
 
 
 def build_run_context(deps: T) -> RunContext[T]:
-    return RunContext(deps=deps, model=TestModel(), usage=Usage(), prompt=None, messages=[], run_step=0)
+    return RunContext(
+        deps=deps,
+        model=TestModel(),
+        usage=Usage(),
+        sampling_model=TestModel(),
+        prompt=None,
+        messages=[],
+        run_step=0,
+    )
 
 
 async def test_function_toolset_prepare_for_run():

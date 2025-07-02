@@ -6,6 +6,7 @@ import re
 import shutil
 import sys
 from collections.abc import AsyncIterator, Iterable, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from inspect import FrameInfo
 from io import StringIO
@@ -263,6 +264,7 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
 
 class MockMCPServer(AbstractToolset[Any]):
     is_running = True
+    override_sampling_model = nullcontext
 
     async def __aenter__(self) -> MockMCPServer:
         return self

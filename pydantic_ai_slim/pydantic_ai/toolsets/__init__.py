@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
-from contextlib import contextmanager
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, Literal
 
@@ -13,7 +11,6 @@ from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
 
 if TYPE_CHECKING:
-    from ..models import Model
     from ._run import RunToolset
 
 
@@ -81,7 +78,3 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
     ) -> Any:
         raise NotImplementedError()
-
-    @contextmanager
-    def override_sampling_model(self, model: Model) -> Iterator[None]:
-        yield

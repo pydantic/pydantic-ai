@@ -4,7 +4,7 @@ import base64
 import functools
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
@@ -120,7 +120,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         - We don't cache tools as they might change.
         - We also don't subscribe to the server to avoid complexity.
         """
-        async with self:
+        async with self:  # Ensure server is running
             result = await self._client.list_tools()
         return result.tools
 
@@ -149,24 +149,28 @@ class MCPServer(AbstractToolset[Any], ABC):
         Raises:
             ModelRetry: If the tool call fails.
         """
-        async with self:
-            try:
-                # meta param is not provided by session yet, so build and can send_request directly.
-                result = await self._client.send_request(
-                    mcp_types.ClientRequest(
-                        mcp_types.CallToolRequest(
-                            method='tools/call',
-                            params=mcp_types.CallToolRequestParams(
-                                name=name,
-                                arguments=tool_args,
-                                _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
-                            ),
-                        )
-                    ),
-                    mcp_types.CallToolResult,
-                )
-            except McpError as e:
-                raise exceptions.ModelRetry(e.error.message)
+        sampling_contextmanager = (
+            nullcontext() if self._get_sampling_model() else self.override_sampling_model(ctx.sampling_model)
+        )
+        with sampling_contextmanager:
+            async with self:  # Ensure server is running
+                try:
+                    # meta param is not provided by session yet, so build and can send_request directly.
+                    result = await self._client.send_request(
+                        mcp_types.ClientRequest(
+                            mcp_types.CallToolRequest(
+                                method='tools/call',
+                                params=mcp_types.CallToolRequestParams(
+                                    name=name,
+                                    arguments=tool_args,
+                                    _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
+                                ),
+                            )
+                        ),
+                        mcp_types.CallToolResult,
+                    )
+                except McpError as e:
+                    raise exceptions.ModelRetry(e.error.message)
 
         content = [self._map_tool_result_part(part) for part in result.content]
 
@@ -241,11 +245,14 @@ class MCPServer(AbstractToolset[Any], ABC):
         if self._running_count <= 0:
             await self._exit_stack.aclose()
 
+    def _get_sampling_model(self) -> models.Model | None:
+        return self._override_sampling_model.get() or self.sampling_model
+
     async def _sampling_callback(
         self, context: RequestContext[ClientSession, Any], params: mcp_types.CreateMessageRequestParams
     ) -> mcp_types.CreateMessageResult | mcp_types.ErrorData:
         """MCP sampling callback."""
-        sampling_model = self._override_sampling_model.get() or self.sampling_model
+        sampling_model = self._get_sampling_model()
         if sampling_model is None:
             raise ValueError('Sampling model is not set')  # pragma: no cover
 
@@ -336,7 +343,7 @@ class MCPServerStdio(MCPServer):
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
-        async with agent.run_toolsets():  # (2)!
+        async with agent:  # (2)!
             ...
     ```
 
@@ -574,7 +581,7 @@ class MCPServerSSE(_MCPServerHTTP):
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
-        async with agent.run_toolsets():  # (2)!
+        async with agent:  # (2)!
             ...
     ```
 
@@ -608,7 +615,7 @@ class MCPServerHTTP(MCPServerSSE):
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
-        async with agent.run_toolsets():  # (2)!
+        async with agent:  # (2)!
             ...
     ```
 
@@ -637,7 +644,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
-        async with agent.run_toolsets():  # (2)!
+        async with agent:  # (2)!
             ...
     ```
     """

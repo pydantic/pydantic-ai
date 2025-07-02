@@ -165,6 +165,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
+    _sampling_model: models.Model | models.KnownModelName | str | None = dataclasses.field(repr=False)
+
+    _running_count: int = dataclasses.field(repr=False)
+    _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
 
     @overload
     def __init__(
@@ -190,6 +194,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
     ) -> None: ...
 
     @overload
@@ -221,6 +226,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
     ) -> None: ...
 
     @overload
@@ -250,6 +256,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
     ) -> None: ...
 
     def __init__(
@@ -276,6 +283,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -324,6 +332,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             history_processors: Optional list of callables to process the message history before sending it to the model.
                 Each processor takes a list of messages and returns a modified list of messages.
                 Processors can be sync or async and are applied in sequence.
+            sampling_model: The model to use for MCP sampling, if not provided, the agent's model will be used.
         """
         if model is None or defer_model_check:
             self.model = model
@@ -424,8 +433,16 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         self.history_processors = history_processors or []
 
+        self._sampling_model = sampling_model
+
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
         self._override_model: ContextVar[_utils.Option[models.Model]] = ContextVar('_override_model', default=None)
+        self._override_sampling_model: ContextVar[_utils.Option[models.Model]] = ContextVar(
+            '_override_sampling_model', default=None
+        )
+
+        self._exit_stack = None
+        self._running_count = 0
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -446,6 +463,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -462,6 +480,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     @overload
@@ -479,6 +498,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     async def run(
@@ -494,6 +514,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -525,6 +546,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional toolsets to use for this run instead of the `toolsets` set when creating the agent.
+            sampling_model: Optional model to use for MCP sampling.
 
         Returns:
             The result of the run.
@@ -550,6 +572,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits=usage_limits,
             usage=usage,
             toolsets=toolsets,
+            sampling_model=sampling_model,
         ) as agent_run:
             async for _ in agent_run:
                 pass
@@ -571,6 +594,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -588,6 +612,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -606,6 +631,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, Any]]: ...
 
     @asynccontextmanager
@@ -622,6 +648,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -697,6 +724,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional toolsets to use for this run instead of the `toolsets` set when creating the agent.
+            sampling_model: Optional model to use for MCP sampling.
 
         Returns:
             The result of the run.
@@ -705,6 +733,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             self._infer_name(inspect.currentframe())
         model_used = self._get_model(model)
         del model
+
+        sampling_model_used = self._get_sampling_model(sampling_model) or model_used
 
         if 'result_type' in _deprecated_kwargs:  # pragma: no cover
             if output_type is not str:
@@ -752,6 +782,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             deps=deps,
             model=model_used,
             usage=usage,
+            sampling_model=sampling_model_used,
             prompt=user_prompt,
             messages=state.message_history,
             run_step=state.run_step,
@@ -813,6 +844,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_validators=output_validators,
             history_processors=self.history_processors,
             toolset=run_toolset,
+            sampling_model=sampling_model_used,
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
@@ -884,6 +916,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -900,6 +933,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     @overload
@@ -917,6 +951,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     def run_sync(
@@ -932,6 +967,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -962,6 +998,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional toolsets to use for this run instead of the `toolsets` set when creating the agent.
+            sampling_model: Optional model to use for MCP sampling.
 
         Returns:
             The result of the run.
@@ -989,6 +1026,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 usage=usage,
                 infer_name=False,
                 toolsets=toolsets,
+                sampling_model=sampling_model,
             )
         )
 
@@ -1054,6 +1092,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        sampling_model: models.Model | models.KnownModelName | str | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
@@ -1082,6 +1121,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional toolsets to use for this run instead of the `toolsets` set when creating the agent.
+            sampling_model: Optional model to use for MCP sampling.
 
         Returns:
             The result of the run.
@@ -1113,6 +1153,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage=usage,
             infer_name=False,
             toolsets=toolsets,
+            sampling_model=sampling_model,
         ) as agent_run:
             first_node = agent_run.next_node  # start with the first node
             assert isinstance(first_node, _agent_graph.UserPromptNode)  # the first node should be a user prompt node
@@ -1203,6 +1244,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
+        sampling_model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent dependencies and model.
 
@@ -1212,6 +1254,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         Args:
             deps: The dependencies to use instead of the dependencies passed to the agent run.
             model: The model to use instead of the model passed to the agent run.
+            sampling_model: The model to use for MCP sampling instead of the sampling model passed to the agent run.
         """
         if _utils.is_set(deps):
             deps_token = self._override_deps.set(_utils.Some(deps))
@@ -1223,6 +1266,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         else:
             model_token = None
 
+        if _utils.is_set(sampling_model):
+            sampling_model_token = self._override_sampling_model.set(_utils.Some(models.infer_model(sampling_model)))
+        else:
+            sampling_model_token = None
+
         try:
             yield
         finally:
@@ -1230,6 +1278,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 self._override_deps.reset(deps_token)
             if model_token is not None:
                 self._override_model.reset(model_token)
+            if sampling_model_token is not None:
+                self._override_sampling_model.reset(sampling_model_token)
 
     @overload
     def instructions(
@@ -1696,6 +1746,19 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         else:
             return deps
 
+    def _get_sampling_model(
+        self, sampling_model: models.Model | models.KnownModelName | str | None
+    ) -> models.Model | None:
+        """Get the sampling model for a run."""
+        if some_sampling_model := self._override_sampling_model.get():
+            return some_sampling_model.value
+        elif sampling_model is not None:
+            return models.infer_model(sampling_model)
+        elif self._sampling_model is not None:
+            return models.infer_model(self._sampling_model)
+        else:
+            return None
+
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.
 
@@ -1781,27 +1844,24 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         """
         return isinstance(node, End)
 
-    @asynccontextmanager
-    async def run_toolsets(
-        self, sampling_model: models.Model | models.KnownModelName | str | None = None
-    ) -> AsyncIterator[None]:
-        """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] among toolsets so they can be used by the agent.
+    async def __aenter__(self) -> Self:
+        if self._running_count == 0:
+            self._exit_stack = AsyncExitStack()
+            await self._exit_stack.enter_async_context(self._toolset)
+        self._running_count += 1
+        return self
 
-        Returns: a context manager to start and shutdown the servers.
-        """
-        try:
-            model: models.Model | None = self._get_model(sampling_model)
-        except exceptions.UserError:  # pragma: no cover
-            model = None
-
-        async with AsyncExitStack() as exit_stack:
-            if model is not None:  # pragma: no branch
-                exit_stack.enter_context(self._toolset.override_sampling_model(model))
-            await exit_stack.enter_async_context(self._toolset)
-            yield
+    async def __aexit__(self, *args: Any) -> bool | None:
+        self._running_count -= 1
+        if self._running_count <= 0 and self._exit_stack is not None:
+            await self._exit_stack.aclose()
+            self._exit_stack = None
+        return None
 
     @asynccontextmanager
-    @deprecated('`run_mcp_servers` is deprecated, use `run_toolsets` instead.')
+    @deprecated(
+        '`run_mcp_servers` is deprecated, use `async with agent:` instead. If you need to set an MCP sampling model, use `with agent.override(sampling_model=...)`.'
+    )
     async def run_mcp_servers(
         self, model: models.Model | models.KnownModelName | str | None = None
     ) -> AsyncIterator[None]:
@@ -1809,8 +1869,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         Returns: a context manager to start and shutdown the servers.
         """
-        async with self.run_toolsets(model):
-            yield
+        with self.override(sampling_model=model or _utils.UNSET):
+            async with self:
+                yield
 
     def to_a2a(
         self,

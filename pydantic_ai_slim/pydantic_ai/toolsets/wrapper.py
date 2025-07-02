@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
@@ -15,7 +13,6 @@ from ..tools import ToolDefinition
 from . import AbstractToolset
 
 if TYPE_CHECKING:
-    from ..models import Model
     from ._run import RunToolset
 
 
@@ -60,11 +57,6 @@ class WrapperToolset(AbstractToolset[AgentDepsT], ABC):
         self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
     ) -> Any:
         return await self.wrapped.call_tool(ctx, name, tool_args, *args, **kwargs)
-
-    @contextmanager
-    def override_sampling_model(self, model: Model) -> Iterator[None]:
-        with self.wrapped.override_sampling_model(model):
-            yield
 
     def __getattr__(self, item: str):
         return getattr(self.wrapped, item)  # pragma: no cover

@@ -115,6 +115,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     history_processors: Sequence[HistoryProcessor[DepsT]]
 
     toolset: RunToolset[DepsT]
+    sampling_model: models.Model
 
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None = None
@@ -561,6 +562,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         deps=ctx.deps.user_deps,
         model=ctx.deps.model,
         usage=ctx.state.usage,
+        sampling_model=ctx.deps.sampling_model,
         prompt=ctx.deps.prompt,
         messages=ctx.state.message_history,
         run_step=ctx.state.run_step,
