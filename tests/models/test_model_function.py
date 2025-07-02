@@ -14,8 +14,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    ServerToolCallPart,
-    ServerToolReturnPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -510,38 +508,3 @@ async def test_return_empty():
     with pytest.raises(ValueError, match='Stream function must return at least one item'):
         async with agent.run_stream(''):
             pass
-
-
-def test_server_tool_parts_in_usage_calculation():
-    """Test that ServerToolCallPart and ServerToolReturnPart are handled in usage calculation."""
-    # Create a message history with server tool parts
-    messages = [
-        ModelRequest(parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))]),
-        ModelResponse(
-            parts=[
-                TextPart(content='Let me search for that.'),
-                ServerToolCallPart(
-                    tool_name='web_search', args={'query': 'test search'}, tool_call_id='test_id_1', model_name='test'
-                ),
-                ServerToolReturnPart(
-                    tool_name='web_search_tool_result',
-                    content={'results': ['result1', 'result2']},
-                    tool_call_id='test_id_1',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-            ],
-            usage=Usage(requests=1, request_tokens=10, response_tokens=10, total_tokens=20),
-            model_name='test',
-            timestamp=IsNow(tz=timezone.utc),
-        ),
-    ]
-
-    # The function model should calculate usage including server tool parts
-    agent = Agent(FunctionModel(return_last))
-    result = agent.run_sync('Another test', message_history=messages)
-
-    # Verify usage was calculated (it includes tokens from all parts)
-    usage = result.usage()
-    assert usage is not None
-    assert usage.request_tokens > 0
-    assert usage.response_tokens > 0

@@ -1412,20 +1412,3 @@ Don't include any text or Markdown fencing before or after.\
             ),
         ]
     )
-
-
-def test_google_unsupported_builtin_tool(allow_model_requests: None):
-    """Test that unsupported builtin tools raise UserError."""
-    from pydantic_ai.builtin_tools import AbstractBuiltinTool
-
-    # Create a custom unsupported builtin tool
-    class UnsupportedTool(AbstractBuiltinTool):
-        pass
-
-    # Create a google model with an unsupported builtin tool
-    m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test'))
-    agent = Agent(m, builtin_tools=[UnsupportedTool()])
-
-    # Should raise UserError when trying to run
-    with pytest.raises(UserError, match='Unsupported builtin tool'):
-        agent.run_sync('test')
