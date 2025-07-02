@@ -291,6 +291,8 @@ class HuggingFaceModel(Model):
                 texts: list[str] = []
                 tool_calls: list[ChatCompletionInputToolCall] = []
                 for item in message.parts:
+                    if isinstance(item, ThinkingPart):
+                        continue
                     if isinstance(item, TextPart):
                         texts.append(item.content)
                     elif isinstance(item, ToolCallPart):
