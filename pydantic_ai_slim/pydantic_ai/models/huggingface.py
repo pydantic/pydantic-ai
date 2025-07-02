@@ -26,6 +26,7 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -294,6 +295,11 @@ class HuggingFaceModel(Model):
                         texts.append(item.content)
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
+                    elif isinstance(item, ThinkingPart):
+                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
+                        # please open an issue. The below code is the code to send thinking to the provider.
+                        # texts.append(f'<think>\n{item.content}\n</think>')
+                        pass
                     else:
                         assert_never(item)
                 message_param = ChatCompletionInputMessage(role='assistant')  # type: ignore

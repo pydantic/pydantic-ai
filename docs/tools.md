@@ -40,7 +40,7 @@ agent = Agent(
 
 
 @agent.tool_plain  # (3)!
-def roll_die() -> str:
+def roll_dice() -> str:
     """Roll a six-sided die and return the result."""
     return str(random.randint(1, 6))
 
@@ -66,7 +66,7 @@ _(This example is complete, it can be run "as is")_
 
 Let's print the messages from that game to see what happened:
 
-```python {title="dice_game_messages.py"}
+```python {title="dice_game_messages.py" requires="dice_game.py"}
 from dice_game import dice_result
 
 print(dice_result.all_messages())
@@ -87,7 +87,7 @@ print(dice_result.all_messages())
     ModelResponse(
         parts=[
             ToolCallPart(
-                tool_name='roll_die', args={}, tool_call_id='pyd_ai_tool_call_id'
+                tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
         usage=Usage(requests=1, request_tokens=90, response_tokens=2, total_tokens=92),
@@ -97,7 +97,7 @@ print(dice_result.all_messages())
     ModelRequest(
         parts=[
             ToolReturnPart(
-                tool_name='roll_die',
+                tool_name='roll_dice',
                 content='4',
                 tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
@@ -152,7 +152,7 @@ sequenceDiagram
     activate LLM
     Note over LLM: LLM decides to use<br>a tool
 
-    LLM ->> Agent: Call tool<br>roll_die()
+    LLM ->> Agent: Call tool<br>roll_dice()
     deactivate LLM
     activate Agent
     Note over Agent: Rolls a six-sided die
@@ -192,7 +192,7 @@ Use the player's name in the response.
 """
 
 
-def roll_die() -> str:
+def roll_dice() -> str:
     """Roll a six-sided die and return the result."""
     return str(random.randint(1, 6))
 
@@ -205,14 +205,14 @@ def get_player_name(ctx: RunContext[str]) -> str:
 agent_a = Agent(
     'google-gla:gemini-1.5-flash',
     deps_type=str,
-    tools=[roll_die, get_player_name],  # (1)!
+    tools=[roll_dice, get_player_name],  # (1)!
     system_prompt=system_prompt,
 )
 agent_b = Agent(
     'google-gla:gemini-1.5-flash',
     deps_type=str,
     tools=[  # (2)!
-        Tool(roll_die, takes_ctx=False),
+        Tool(roll_dice, takes_ctx=False),
         Tool(get_player_name, takes_ctx=True),
     ],
     system_prompt=system_prompt,
@@ -292,6 +292,66 @@ print(result.output)
 _(This example is complete, it can be run "as is")_
 
 Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
+
+### Advanced Tool Returns
+
+For scenarios where you need more control over both the tool's return value and the content sent to the model, you can use [`ToolReturn`][pydantic_ai.messages.ToolReturn]. This is particularly useful when you want to:
+
+- Provide rich multi-modal content (images, documents, etc.) to the model as context
+- Separate the programmatic return value from the model's context
+- Include additional metadata that shouldn't be sent to the LLM
+
+Here's an example of a computer automation tool that captures screenshots and provides visual feedback:
+
+```python {title="advanced_tool_return.py" test="skip" lint="skip"}
+import time
+from pydantic_ai import Agent
+from pydantic_ai.messages import ToolReturn, BinaryContent
+
+agent = Agent('openai:gpt-4o')
+
+@agent.tool_plain
+def click_and_capture(x: int, y: int) -> ToolReturn:
+    """Click at coordinates and show before/after screenshots."""
+    # Take screenshot before action
+    before_screenshot = capture_screen()
+
+    # Perform click operation
+    perform_click(x, y)
+    time.sleep(0.5)  # Wait for UI to update
+
+    # Take screenshot after action
+    after_screenshot = capture_screen()
+
+    return ToolReturn(
+        return_value=f"Successfully clicked at ({x}, {y})",
+        content=[
+            f"Clicked at coordinates ({x}, {y}). Here's the comparison:",
+            "Before:",
+            BinaryContent(data=before_screenshot, media_type="image/png"),
+            "After:",
+            BinaryContent(data=after_screenshot, media_type="image/png"),
+            "Please analyze the changes and suggest next steps."
+        ],
+        metadata={
+            "coordinates": {"x": x, "y": y},
+            "action_type": "click_and_capture",
+            "timestamp": time.time()
+        }
+    )
+
+# The model receives the rich visual content for analysis
+# while your application can access the structured return_value and metadata
+result = agent.run_sync("Click on the submit button and tell me what happened")
+print(result.output)
+# The model can analyze the screenshots and provide detailed feedback
+```
+
+- **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result.
+- **`content`**: A sequence of content (text, images, documents, etc.) that provides additional context to the model. This appears as a separate user message.
+- **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature "artifacts".
+
+This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic.
 
 ## Function Tools vs. Structured Outputs
 

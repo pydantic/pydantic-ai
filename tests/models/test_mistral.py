@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -29,7 +30,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import Usage
 
-from ..conftest import IsDatetime, IsNow, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -54,14 +55,16 @@ with try_import() as imports_successful:
     from mistralai.types.basemodel import Unset as MistralUnset
 
     from pydantic_ai.models.mistral import MistralModel, MistralStreamedResponse
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.mistral import MistralProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
     # note: we use Union here so that casting works with Python 3.9
     MockChatCompletion = Union[MistralChatCompletionResponse, Exception]
     MockCompletionEvent = Union[MistralCompletionEvent, Exception]
 
 pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='mistral not installed'),
+    pytest.mark.skipif(not imports_successful(), reason='mistral or openai not installed'),
     pytest.mark.anyio,
 ]
 
@@ -361,7 +364,7 @@ async def test_no_delta(allow_model_requests: None):
 #####################
 
 
-async def test_request_model_structured_with_arguments_dict_response(allow_model_requests: None):
+async def test_request_native_with_arguments_dict_response(allow_model_requests: None):
     class CityLocation(BaseModel):
         city: str
         country: str
@@ -420,7 +423,7 @@ async def test_request_model_structured_with_arguments_dict_response(allow_model
     )
 
 
-async def test_request_model_structured_with_arguments_str_response(allow_model_requests: None):
+async def test_request_native_with_arguments_str_response(allow_model_requests: None):
     class CityLocation(BaseModel):
         city: str
         country: str
@@ -1962,6 +1965,116 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
                 vendor_id='123',
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_mistral_model_thinking_part(allow_model_requests: None, openai_api_key: str, mistral_api_key: str):
+    openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
+    agent = Agent(openai_model, model_settings=settings)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    TextPart(content=IsStr()),
+                ],
+                usage=Usage(
+                    request_tokens=13,
+                    response_tokens=1789,
+                    total_tokens=1802,
+                    details={'reasoning_tokens': 1344, 'cached_tokens': 0},
+                ),
+                model_name='o3-mini-2025-01-31',
+                timestamp=IsDatetime(),
+                vendor_id='resp_68079acebbfc819189ec20e1e5bf525d0493b22e4095129c',
+            ),
+        ]
+    )
+
+    mistral_model = MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key))
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        model=mistral_model,
+        message_history=result.all_messages(),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    TextPart(
+                        content="""\
+I'm not a traffic safety expert, but here are some general guidelines that many people follow when crossing a street safely. Remember that local rules and conditions might vary, so always follow local traffic laws and pay close attention to your surroundings.
+
+1. Find a Designated Crossing Point
+ • Look for crosswalks, pedestrian signals, or marked intersections. These areas are designed for safe crossing.
+ • If no crosswalk is available, choose a spot where you have clear visibility of oncoming traffic in all directions.
+
+2. Stop at the Curb or Edge of the Road
+ • Before stepping off the curb, pause to assess the situation.
+ • Resist the urge to step into the street immediately—this helps you avoid unpredictable traffic behavior.
+
+3. Look and Listen
+ • Look left, then right, and left again. In some places, you might need to check right a second time depending on the flow of traffic.
+ • Pay attention to the sound of approaching vehicles or any signals that indicate vehicles may be turning into your path.
+ • Remove or lower distractions like headphones so you can be fully aware of your environment.
+
+4. Follow Pedestrian Signals (if available)
+ • If you're at an intersection with traffic signals, wait for the "Walk" signal.
+ • Even when the signal is in your favor, ensure that any turning vehicles (cars or bikes) see you and are stopping.
+
+5. Make Eye Contact
+ • If possible, make eye contact with drivers who might be turning. This can help ensure that they see you and are taking appropriate action.
+
+6. Cross Quickly and Carefully
+ • Once you've determined that it's safe, proceed at a steady pace.
+ • Continue to be alert while you cross, watching for any unexpected vehicle movements.
+
+7. Stay on the Sidewalk Once You've Crossed
+ • After reaching the other side, stick to areas designated for pedestrians rather than walking immediately back into the roadway.
+
+These suggestions are meant to help you think through pedestrian safety. Different regions may have additional rules or different signals, so if you're unsure, it might help to check local guidelines or ask someone familiar with the area. Stay safe!\
+"""
+                    ),
+                ],
+                usage=Usage(
+                    request_tokens=13,
+                    response_tokens=1789,
+                    total_tokens=1802,
+                    details={'reasoning_tokens': 1344, 'cached_tokens': 0},
+                ),
+                model_name='o3-mini-2025-01-31',
+                timestamp=IsDatetime(),
+                vendor_id='resp_68079acebbfc819189ec20e1e5bf525d0493b22e4095129c',
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=Usage(requests=1, request_tokens=1036, response_tokens=691, total_tokens=1727),
+                model_name='mistral-large-latest',
+                timestamp=IsDatetime(),
+                vendor_id='a088e80a476e44edaaa959a1ff08f358',
             ),
         ]
     )

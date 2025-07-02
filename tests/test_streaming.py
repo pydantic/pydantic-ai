@@ -6,7 +6,7 @@ import re
 from collections.abc import AsyncIterator
 from copy import deepcopy
 from datetime import timezone
-from typing import Union
+from typing import Any, Union
 
 import pytest
 from inline_snapshot import snapshot
@@ -15,6 +15,8 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -26,6 +28,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.output import PromptedOutput, TextOutput
 from pydantic_ai.result import AgentStream, FinalResult, Usage
 from pydantic_graph import End
 
@@ -190,6 +193,22 @@ async def test_streamed_text_stream():
     async with agent.run_stream('Hello') as result:
         assert [c async for c in result.stream_text(delta=True, debounce_by=None)] == snapshot(
             ['The ', 'cat ', 'sat ', 'on ', 'the ', 'mat.']
+        )
+
+    def upcase(text: str) -> str:
+        return text.upper()
+
+    async with agent.run_stream('Hello', output_type=TextOutput(upcase)) as result:
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+            [
+                'THE ',
+                'THE CAT ',
+                'THE CAT SAT ',
+                'THE CAT SAT ON ',
+                'THE CAT SAT ON THE ',
+                'THE CAT SAT ON THE MAT.',
+                'THE CAT SAT ON THE MAT.',
+            ]
         )
 
     async with agent.run_stream('Hello') as result:
@@ -921,3 +940,157 @@ async def test_stream_iter_structured_validator() -> None:
                     async for output in stream.stream_output(debounce_by=None):
                         outputs.append(output)
     assert outputs == [OutputType(value='a (validated)'), OutputType(value='a (validated)')]
+
+
+async def test_unknown_tool_call_events():
+    """Test that unknown tool calls emit both FunctionToolCallEvent and FunctionToolResultEvent during streaming."""
+
+    def call_mixed_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        """Mock function that calls both known and unknown tools."""
+        return ModelResponse(
+            parts=[
+                ToolCallPart('unknown_tool', {'arg': 'value'}),
+                ToolCallPart('known_tool', {'x': 5}),
+            ]
+        )
+
+    agent = Agent(FunctionModel(call_mixed_tools))
+
+    @agent.tool_plain
+    def known_tool(x: int) -> int:
+        return x * 2
+
+    event_parts: list[Any] = []
+
+    try:
+        async with agent.iter('test') as agent_run:
+            async for node in agent_run:  # pragma: no branch
+                if Agent.is_call_tools_node(node):
+                    async with node.stream(agent_run.ctx) as event_stream:
+                        async for event in event_stream:
+                            event_parts.append(event)
+
+    except UnexpectedModelBehavior:
+        pass
+
+    assert event_parts == snapshot(
+        [
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='unknown_tool',
+                    args={'arg': 'value'},
+                    tool_call_id=IsStr(),
+                ),
+            ),
+            FunctionToolResultEvent(
+                result=RetryPromptPart(
+                    content="Unknown tool name: 'unknown_tool'. Available tools: known_tool",
+                    tool_name='unknown_tool',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='known_tool', args={'x': 5}, tool_call_id=IsStr()),
+            ),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='known_tool',
+                    content=10,
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='unknown_tool',
+                    args={'arg': 'value'},
+                    tool_call_id=IsStr(),
+                ),
+            ),
+        ]
+    )
+
+
+async def test_output_tool_validation_failure_events():
+    """Test that output tools that fail validation emit events during streaming."""
+
+    def call_final_result_with_bad_data(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        """Mock function that calls final_result tool with invalid data."""
+        assert info.output_tools is not None
+        return ModelResponse(
+            parts=[
+                ToolCallPart('final_result', {'bad_value': 'invalid'}),  # Invalid field name
+                ToolCallPart('final_result', {'value': 'valid'}),  # Valid field name
+            ]
+        )
+
+    agent = Agent(FunctionModel(call_final_result_with_bad_data), output_type=OutputType)
+
+    event_parts: list[Any] = []
+    async with agent.iter('test') as agent_run:
+        async for node in agent_run:
+            if Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as event_stream:
+                    async for event in event_stream:
+                        event_parts.append(event)
+
+    assert event_parts == snapshot(
+        [
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args={'bad_value': 'invalid'},
+                    tool_call_id=IsStr(),
+                ),
+            ),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='final_result',
+                    content='Output tool not used - result failed validation.',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+        ]
+    )
+
+
+async def test_stream_prompted_output():
+    class CityLocation(BaseModel):
+        city: str
+        country: str | None = None
+
+    m = TestModel(custom_output_text='{"city": "Mexico City", "country": "Mexico"}')
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation))
+
+    async with agent.run_stream('') as result:
+        assert not result.is_complete
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+            [
+                CityLocation(city='Mexico '),
+                CityLocation(city='Mexico City'),
+                CityLocation(city='Mexico City'),
+                CityLocation(city='Mexico City', country='Mexico'),
+                CityLocation(city='Mexico City', country='Mexico'),
+            ]
+        )
+        assert result.is_complete
+
+
+def test_function_tool_event_tool_call_id_properties():
+    """Ensure that the `tool_call_id` property on function tool events mirrors the underlying part's ID."""
+    # Prepare a ToolCallPart with a fixed ID
+    call_part = ToolCallPart(tool_name='sample_tool', args={'a': 1}, tool_call_id='call_id_123')
+    call_event = FunctionToolCallEvent(part=call_part)
+
+    # The event should expose the same `tool_call_id` as the part
+    assert call_event.tool_call_id == call_part.tool_call_id == 'call_id_123'
+
+    # Prepare a ToolReturnPart with a fixed ID
+    return_part = ToolReturnPart(tool_name='sample_tool', content='ok', tool_call_id='return_id_456')
+    result_event = FunctionToolResultEvent(result=return_part)
+
+    # The event should expose the same `tool_call_id` as the result part
+    assert result_event.tool_call_id == return_part.tool_call_id == 'return_id_456'

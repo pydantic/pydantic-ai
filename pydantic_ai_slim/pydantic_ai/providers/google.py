@@ -84,7 +84,7 @@ class GoogleProvider(Provider[genai.Client]):
         """
         if client is None:
             # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
-            api_key = api_key or os.environ.get('GOOGLE_API_KEY')
+            api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
 
             if vertexai is None:  # pragma: lax no cover
                 vertexai = bool(location or project or credentials)
@@ -104,7 +104,12 @@ class GoogleProvider(Provider[genai.Client]):
                 self._client = genai.Client(
                     vertexai=vertexai,
                     project=project or os.environ.get('GOOGLE_CLOUD_PROJECT'),
-                    location=location or os.environ.get('GOOGLE_CLOUD_LOCATION'),
+                    # From https://github.com/pydantic/pydantic-ai/pull/2031/files#r2169682149:
+                    # Currently `us-central1` supports the most models by far of any region including `global`, but not
+                    # all of them. `us-central1` has all google models but is missing some Anthropic partner models,
+                    # which use `us-east5` instead. `global` has fewer models but higher availability.
+                    # For more details, check: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions
+                    location=location or os.environ.get('GOOGLE_CLOUD_LOCATION') or 'us-central1',
                     credentials=credentials,
                     http_options={'headers': {'User-Agent': get_user_agent()}},
                 )

@@ -9,6 +9,8 @@ from typing import Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
+from pydantic_ai._thinking_part import split_content_into_text_and_thinking
+
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..messages import (
@@ -23,6 +25,7 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -95,7 +98,7 @@ class GroqModelSettings(ModelSettings, total=False):
     ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    # This class is a placeholder for any future groq-specific settings
+    groq_reasoning_format: Literal['hidden', 'raw', 'parsed']
 
 
 @dataclass(init=False)
@@ -234,6 +237,7 @@ class GroqModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 seed=model_settings.get('seed', NOT_GIVEN),
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
+                reasoning_format=model_settings.get('groq_reasoning_format', NOT_GIVEN),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers=extra_headers,
@@ -249,8 +253,12 @@ class GroqModel(Model):
         timestamp = number_to_datetime(response.created)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+        # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
+        if choice.message.reasoning is not None:
+            items.append(ThinkingPart(content=choice.message.reasoning))
         if choice.message.content is not None:
-            items.append(TextPart(content=choice.message.content))
+            # NOTE: The `<think>` tag is only present if `groq_reasoning_format` is set to `raw`.
+            items.extend(split_content_into_text_and_thinking(choice.message.content))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
@@ -293,6 +301,9 @@ class GroqModel(Model):
                         texts.append(item.content)
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
+                    elif isinstance(item, ThinkingPart):
+                        # Skip thinking parts when mapping to Groq messages
+                        continue
                     else:
                         assert_never(item)
                 message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')

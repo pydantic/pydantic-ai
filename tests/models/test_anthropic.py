@@ -11,25 +11,34 @@ from typing import Any, Callable, TypeVar, Union, cast
 import httpx
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
+    FinalResultEvent,
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -67,6 +76,7 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
     pytest.mark.anyio,
+    pytest.mark.vcr,
 ]
 
 # Type variable for generic AsyncStream
@@ -459,7 +469,6 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     )
 
 
-@pytest.mark.vcr
 async def test_multiple_parallel_tool_calls(allow_model_requests: None):
     async def retrieve_entity_info(name: str) -> str:
         """Get the knowledge about the given entity."""
@@ -682,7 +691,6 @@ async def test_stream_structured(allow_model_requests: None):
         assert tool_called
 
 
-@pytest.mark.vcr()
 async def test_image_url_input(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -698,7 +706,6 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
     )
 
 
-@pytest.mark.vcr()
 async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
@@ -711,7 +718,6 @@ async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str)
     await agent.run('hello')
 
 
-@pytest.mark.vcr()
 async def test_image_url_input_invalid_mime_type(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -729,7 +735,6 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
     )
 
 
-@pytest.mark.vcr()
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, anthropic_api_key: str, image_content: BinaryContent
 ):
@@ -845,7 +850,6 @@ def test_model_status_error(allow_model_requests: None) -> None:
     )
 
 
-@pytest.mark.vcr()
 async def test_document_binary_content_input(
     allow_model_requests: None, anthropic_api_key: str, document_content: BinaryContent
 ):
@@ -858,7 +862,6 @@ async def test_document_binary_content_input(
     )
 
 
-@pytest.mark.vcr()
 async def test_document_url_input(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -871,7 +874,6 @@ async def test_document_url_input(allow_model_requests: None, anthropic_api_key:
     )
 
 
-@pytest.mark.vcr()
 async def test_text_document_url_input(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -914,7 +916,6 @@ def test_init_with_provider_string(env: TestEnv):
     assert model.client is not None
 
 
-@pytest.mark.vcr()
 async def test_anthropic_model_instructions(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-opus-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -948,6 +949,247 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 timestamp=IsDatetime(),
                 vendor_id='msg_01BznVNBje2zyfpCfNQCD5en',
             ),
+        ]
+    )
+
+
+async def test_anthropic_model_thinking_part(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-7-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="This is a basic question about pedestrian safety when crossing a street. I'll provide a clear, step-by-step explanation of how to safely cross a street. This is important safety information that applies to most places, though specific rules might vary slightly by country.",
+                        signature='ErUBCkYIBBgCIkDdtS5sPfAhQSct3TDKHzeqm87m7bk/P0ecMKVxqofk9q15fEDVWXxuIzQIYZCLUfcJzFi4/IYnpQYrgP34x4pnEgzeA7mWRCy/f1bK+IYaDH5i0Q5hgZkqPeMdwSIwMzHMBPM4Xae4czWnzjHGLR9Xg7DN+sb+MXKFgdXY4bcaOKzhImS05aqIjqBs4CHyKh1dTzSnHd76MAHgM1qjBQ2eIZJJ7s5WGkRkbvWzTxgC',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=42,
+                    response_tokens=302,
+                    total_tokens=344,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 42,
+                        'output_tokens': 302,
+                    },
+                ),
+                model_name='claude-3-7-sonnet-20250219',
+                timestamp=IsDatetime(),
+                vendor_id='msg_01FWiSVNCRHvHUYU21BRandY',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=42,
+                    response_tokens=302,
+                    total_tokens=344,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 42,
+                        'output_tokens': 302,
+                    },
+                ),
+                model_name='claude-3-7-sonnet-20250219',
+                timestamp=IsDatetime(),
+                vendor_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+This is an interesting analogy question. The person is asking how to cross a river by comparing it to crossing a street. I should outline the key principles of river crossing that parallel street crossing safety, while adapting for the unique challenges of a river environment.
+
+For crossing a river, I should consider:
+1. Finding the right spot (like shallow areas, bridges, or ferry crossings)
+2. Assessing the conditions (river speed, depth, width, obstacles)
+3. Choosing the appropriate method based on the river conditions
+4. Safety precautions specific to water crossings
+5. The actual crossing technique
+
+I'll structure this as a parallel to the street crossing guide, highlighting the similarities in approach while acknowledging the different hazards and considerations.\
+""",
+                        signature='ErUBCkYIBBgCIkCNPEqIUXmAqiaqIqaHEmtiTi5sG6jBLYWmyfr9ELAh9dLAPPiq0Bnp2YQFJB2kz0aWYC8pJW9ylay8cJPFOGdIEgwcoJGGceEVCihog7MaDBZNwmI8LweQANgdvCIwvYrhAAqUDGHfQUYWuVB3ay4ySnmnROCDhtjOe6zTA2N2NC+BCePcZQBGQh/tnuoXKh37QqP3KRrKdVU5j1x4vAtUNtxQhbh4ip5qU5J12xgC',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=303,
+                    response_tokens=486,
+                    total_tokens=789,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 303,
+                        'output_tokens': 486,
+                    },
+                ),
+                model_name='claude-3-7-sonnet-20250219',
+                timestamp=IsDatetime(),
+                vendor_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-7-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
+    agent = Agent(m, model_settings=settings)
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='', signature='')),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartStartEvent(index=1, part=IsInstance(TextPart)),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+1. **Fin\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='d a designated crossing point** if')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ possible:
+   -\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Crosswalks')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+   - Pedestrian signals
+   -\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Pedestrian bridges')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+   - Inters\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ections
+
+2. **Before\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ crossing:**
+   - Stop\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' at the curb or edge of the road')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+   - Look left,\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' right, then left again (')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='or right, left, right again')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' in countries with left')),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
         ]
     )
 
@@ -1037,7 +1279,6 @@ def test_usage(message_callback: Callable[[], BetaMessage | BetaRawMessageStream
     assert _map_usage(message_callback()) == usage
 
 
-@pytest.mark.vcr()
 async def test_anthropic_model_empty_message_on_history(allow_model_requests: None, anthropic_api_key: str):
     """The Anthropic API will error if you send an empty message on the history.
 
@@ -1062,4 +1303,423 @@ I can't physically give you a potato since I'm a computer program. However, I ca
 4. Provide guidance on growing potatoes
 
 What specifically would you like to know about potatoes?\
+""")
+
+
+async def test_anthropic_empty_content_filtering(env: TestEnv):
+    """Test the empty content filtering logic directly."""
+
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelRequest,
+        ModelResponse,
+        SystemPromptPart,
+        TextPart,
+        UserPromptPart,
+    )
+
+    # Initialize model for all tests
+    env.set('ANTHROPIC_API_KEY', 'test-key')
+    model = AnthropicModel('claude-3-5-sonnet-latest', provider='anthropic')
+
+    # Test _map_message with empty string in user prompt
+    messages_empty_string: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='')], kind='request'),
+    ]
+    _, anthropic_messages = await model._map_message(messages_empty_string)  # type: ignore[attr-defined]
+    assert anthropic_messages == snapshot([])  # Empty content should be filtered out
+
+    # Test _map_message with list containing empty strings in user prompt
+    messages_mixed_content: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['', 'Hello', '', 'World'])], kind='request'),
+    ]
+    _, anthropic_messages = await model._map_message(messages_mixed_content)  # type: ignore[attr-defined]
+    assert anthropic_messages == snapshot(
+        [{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}, {'text': 'World', 'type': 'text'}]}]
+    )
+
+    # Test _map_message with empty assistant response
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='You are helpful')], kind='request'),
+        ModelResponse(parts=[TextPart(content='')], kind='response'),  # Empty response
+        ModelRequest(parts=[UserPromptPart(content='Hello')], kind='request'),
+    ]
+    _, anthropic_messages = await model._map_message(messages)  # type: ignore[attr-defined]
+    # The empty assistant message should be filtered out
+    assert anthropic_messages == snapshot([{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}]}])
+
+    # Test with only empty assistant parts
+    messages_resp: list[ModelMessage] = [
+        ModelResponse(parts=[TextPart(content=''), TextPart(content='')], kind='response'),
+    ]
+    _, anthropic_messages = await model._map_message(messages_resp)  # type: ignore[attr-defined]
+    assert len(anthropic_messages) == 0  # No messages should be added
+
+
+async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=ToolOutput(CityLocation))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run('What is the largest city in the user country?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_019pMboNVRg5jkw4PKkofQ6Y')
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=445,
+                    response_tokens=23,
+                    total_tokens=468,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 445,
+                        'output_tokens': 23,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_01EnfsDTixCmHjqvk9QarBj4',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id='toolu_019pMboNVRg5jkw4PKkofQ6Y',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'city': 'Mexico City', 'country': 'Mexico'},
+                        tool_call_id='toolu_01V4d2H4EWp5LDM2aXaeyR6W',
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=497,
+                    response_tokens=56,
+                    total_tokens=553,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 497,
+                        'output_tokens': 56,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_01Hbm5BtKzfVtWs8Eb7rCNNx',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='toolu_01V4d2H4EWp5LDM2aXaeyR6W',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+
+async def test_anthropic_text_output_function(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    def upcase(text: str) -> str:
+        return text.upper()
+
+    agent = Agent(m, output_type=TextOutput(upcase))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run(
+        'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.'
+    )
+    assert result.output == snapshot(
+        "BASED ON THE RESULT, YOU ARE LOCATED IN MEXICO. THE LARGEST CITY IN MEXICO IS MEXICO CITY (CIUDAD DE MÉXICO), WHICH IS ALSO THE NATION'S CAPITAL. MEXICO CITY HAS A POPULATION OF APPROXIMATELY 9.2 MILLION PEOPLE IN THE CITY PROPER, AND OVER 21 MILLION PEOPLE IN ITS METROPOLITAN AREA, MAKING IT ONE OF THE LARGEST URBAN AGGLOMERATIONS IN THE WORLD. IT IS BOTH THE POLITICAL AND ECONOMIC CENTER OF MEXICO, LOCATED IN THE VALLEY OF MEXICO IN THE CENTRAL PART OF THE COUNTRY."
+    )
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="I'll help you find the largest city in your country. Let me first check your country using the get_user_country tool."
+                    ),
+                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01EZuxfc6MsPsPgrAKQohw3e'),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=383,
+                    response_tokens=66,
+                    total_tokens=449,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 383,
+                        'output_tokens': 66,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_014NE4yfV1Yz2vLAJzapxxef',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id='toolu_01EZuxfc6MsPsPgrAKQohw3e',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="Based on the result, you are located in Mexico. The largest city in Mexico is Mexico City (Ciudad de México), which is also the nation's capital. Mexico City has a population of approximately 9.2 million people in the city proper, and over 21 million people in its metropolitan area, making it one of the largest urban agglomerations in the world. It is both the political and economic center of Mexico, located in the Valley of Mexico in the central part of the country."
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=461,
+                    response_tokens=107,
+                    total_tokens=568,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 461,
+                        'output_tokens': 107,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_0193srwo7TCx49h97wDwc7K7',
+            ),
+        ]
+    )
+
+
+async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run(
+        'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.'
+    )
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_017UryVwtsKsjonhFV3cgV3X')
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=459,
+                    response_tokens=38,
+                    total_tokens=497,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 459,
+                        'output_tokens': 38,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_014CpBKzioMqUyLWrMihpvsz',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id='toolu_017UryVwtsKsjonhFV3cgV3X',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=510,
+                    response_tokens=17,
+                    total_tokens=527,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 510,
+                        'output_tokens': 17,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_014JeWCouH6DpdqzMTaBdkpJ',
+            ),
+        ]
+    )
+
+
+async def test_anthropic_prompted_output_multiple(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    class CountryLanguage(BaseModel):
+        country: str
+        language: str
+
+    agent = Agent(m, output_type=PromptedOutput([CityLocation, CountryLanguage]))
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='{"result": {"kind": "CityLocation", "data": {"city": "Mexico City", "country": "Mexico"}}}'
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=281,
+                    response_tokens=31,
+                    total_tokens=312,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 281,
+                        'output_tokens': 31,
+                    },
+                ),
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id='msg_013ttUi3HCcKt7PkJpoWs5FT',
+            ),
+        ]
+    )
+
+
+async def test_anthropic_native_output(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=NativeOutput(CityLocation))
+
+    with pytest.raises(UserError, match='Structured output is not supported by the model.'):
+        await agent.run('What is the largest city in the user country?')
+
+
+async def test_anthropic_tool_with_thinking(allow_model_requests: None, anthropic_api_key: str):
+    """When using thinking with tool calls in Anthropic, we need to send the thinking part back to the provider.
+
+    This tests the issue raised in https://github.com/pydantic/pydantic-ai/issues/2040.
+    """
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
+    agent = Agent(m, model_settings=settings)
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run('What is the largest city in the user country?')
+    assert result.output == snapshot("""\
+Based on the information that you're in Mexico, the largest city in your country is **Mexico City** (Ciudad de México). \n\
+
+Mexico City is not only the largest city in Mexico but also one of the largest metropolitan areas in the world, with a metropolitan population of over 21 million people. The city proper has a population of approximately 9 million people and serves as the capital and political, cultural, and economic center of Mexico.\
 """)

@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import io
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -23,6 +24,7 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -31,14 +33,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    cached_async_http_client,
-    check_allow_model_requests,
-    get_user_agent,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
@@ -59,9 +54,15 @@ try:
         BetaRawMessageStartEvent,
         BetaRawMessageStopEvent,
         BetaRawMessageStreamEvent,
+        BetaRedactedThinkingBlock,
+        BetaSignatureDelta,
         BetaTextBlock,
         BetaTextBlockParam,
         BetaTextDelta,
+        BetaThinkingBlock,
+        BetaThinkingBlockParam,
+        BetaThinkingConfigParam,
+        BetaThinkingDelta,
         BetaToolChoiceParam,
         BetaToolParam,
         BetaToolResultBlockParam,
@@ -97,7 +98,14 @@ class AnthropicModelSettings(ModelSettings, total=False):
     anthropic_metadata: BetaMetadataParam
     """An object describing metadata about the request.
 
-    Contains `user_id`, an external identifier for the user who is associated with the request."""
+    Contains `user_id`, an external identifier for the user who is associated with the request.
+    """
+
+    anthropic_thinking: BetaThinkingConfigParam
+    """Determine whether the model should generate a thinking block.
+
+    See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking) for more information.
+    """
 
 
 @dataclass(init=False)
@@ -227,13 +235,14 @@ class AnthropicModel(Model):
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.beta.messages.create(
-                max_tokens=model_settings.get('max_tokens', 1024),
+                max_tokens=model_settings.get('max_tokens', 4096),
                 system=system_prompt or NOT_GIVEN,
                 messages=anthropic_messages,
                 model=self._model_name,
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
                 stream=stream,
+                thinking=model_settings.get('anthropic_thinking', NOT_GIVEN),
                 stop_sequences=model_settings.get('stop_sequences', NOT_GIVEN),
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
@@ -253,6 +262,14 @@ class AnthropicModel(Model):
         for item in response.content:
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
+            elif isinstance(item, BetaRedactedThinkingBlock):  # pragma: no cover
+                warnings.warn(
+                    'PydanticAI currently does not handle redacted thinking blocks. '
+                    'If you have a suggestion on how we should handle them, please open an issue.',
+                    UserWarning,
+                )
+            elif isinstance(item, BetaThinkingBlock):
+                items.append(ThinkingPart(content=item.thinking, signature=item.signature))
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 items.append(
@@ -283,7 +300,7 @@ class AnthropicModel(Model):
             tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
-    async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:
+    async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:  # noqa: C901
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
@@ -319,10 +336,19 @@ class AnthropicModel(Model):
                 if len(user_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
             elif isinstance(m, ModelResponse):
-                assistant_content_params: list[BetaTextBlockParam | BetaToolUseBlockParam] = []
+                assistant_content_params: list[BetaTextBlockParam | BetaToolUseBlockParam | BetaThinkingBlockParam] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
-                        assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
+                        if response_part.content:  # Only add non-empty text
+                            assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
+                    elif isinstance(response_part, ThinkingPart):
+                        # NOTE: We only send thinking part back for Anthropic, otherwise they raise an error.
+                        if response_part.signature is not None:  # pragma: no branch
+                            assistant_content_params.append(
+                                BetaThinkingBlockParam(
+                                    thinking=response_part.content, signature=response_part.signature, type='thinking'
+                                )
+                            )
                     else:
                         tool_use_block_param = BetaToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),
@@ -331,7 +357,8 @@ class AnthropicModel(Model):
                             input=response_part.args_as_dict(),
                         )
                         assistant_content_params.append(tool_use_block_param)
-                anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
+                if len(assistant_content_params) > 0:
+                    anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
         system_prompt = '\n\n'.join(system_prompt_parts)
@@ -344,11 +371,13 @@ class AnthropicModel(Model):
         part: UserPromptPart,
     ) -> AsyncGenerator[BetaContentBlockParam]:
         if isinstance(part.content, str):
-            yield BetaTextBlockParam(text=part.content, type='text')
+            if part.content:  # Only yield non-empty text
+                yield BetaTextBlockParam(text=part.content, type='text')
         else:
             for item in part.content:
                 if isinstance(item, str):
-                    yield BetaTextBlockParam(text=item, type='text')
+                    if item:  # Only yield non-empty text
+                        yield BetaTextBlockParam(text=item, type='text')
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         yield BetaImageBlockParam(
@@ -372,11 +401,10 @@ class AnthropicModel(Model):
                     if item.media_type == 'application/pdf':
                         yield BetaBase64PDFBlockParam(source={'url': item.url, 'type': 'url'}, type='document')
                     elif item.media_type == 'text/plain':
-                        response = await cached_async_http_client().get(item.url)
-                        response.raise_for_status()
+                        downloaded_item = await download_item(item, data_format='text')
                         yield BetaBase64PDFBlockParam(
                             source=BetaPlainTextSourceParam(
-                                data=response.text, media_type=item.media_type, type='text'
+                                data=downloaded_item['data'], media_type=item.media_type, type='text'
                             ),
                             type='document',
                         )
@@ -449,10 +477,14 @@ class AnthropicStreamedResponse(StreamedResponse):
             if isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, BetaTextBlock) and current_block.text:
-                    yield self._parts_manager.handle_text_delta(  # pragma: lax no cover
-                        vendor_part_id='content', content=current_block.text
+                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=current_block.text)
+                elif isinstance(current_block, BetaThinkingBlock):
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='thinking',
+                        content=current_block.thinking,
+                        signature=current_block.signature,
                     )
-                elif isinstance(current_block, BetaToolUseBlock):  # pragma: no branch
+                elif isinstance(current_block, BetaToolUseBlock):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=current_block.id,
                         tool_name=current_block.name,
@@ -464,14 +496,20 @@ class AnthropicStreamedResponse(StreamedResponse):
 
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
                 if isinstance(event.delta, BetaTextDelta):
-                    yield self._parts_manager.handle_text_delta(  # pragma: no cover
-                        vendor_part_id='content', content=event.delta.text
+                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=event.delta.text)
+                elif isinstance(event.delta, BetaThinkingDelta):
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='thinking', content=event.delta.thinking
                     )
-                elif (  # pragma: no branch
+                elif isinstance(event.delta, BetaSignatureDelta):
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='thinking', signature=event.delta.signature
+                    )
+                elif (
                     current_block
                     and event.delta.type == 'input_json_delta'
                     and isinstance(current_block, BetaToolUseBlock)
-                ):
+                ):  # pragma: no branch
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=current_block.id,
                         tool_name='',

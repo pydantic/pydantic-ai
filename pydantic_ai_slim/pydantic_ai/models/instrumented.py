@@ -92,6 +92,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         event_logger_provider: EventLoggerProvider | None = None,
         include_binary_content: bool = True,
+        include_content: bool = True,
     ):
         """Create instrumentation options.
 
@@ -109,6 +110,8 @@ class InstrumentationSettings:
                 Calling `logfire.configure()` sets the global event logger provider, so most users don't need this.
                 This is only used if `event_mode='logs'`.
             include_binary_content: Whether to include binary content in the instrumentation events.
+            include_content: Whether to include prompts, completions, and tool call arguments and responses
+                in the instrumentation events.
         """
         from pydantic_ai import __version__
 
@@ -121,6 +124,7 @@ class InstrumentationSettings:
         self.event_logger = event_logger_provider.get_event_logger(scope_name, __version__)
         self.event_mode = event_mode
         self.include_binary_content = include_binary_content
+        self.include_content = include_content
 
         # As specified in the OpenTelemetry GenAI metrics spec:
         # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
@@ -134,7 +138,7 @@ class InstrumentationSettings:
                 **tokens_histogram_kwargs,
                 explicit_bucket_boundaries_advisory=TOKEN_HISTOGRAM_BOUNDARIES,
             )
-        except TypeError:
+        except TypeError:  # pragma: lax no cover
             # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
             self.tokens_histogram = self.meter.create_histogram(
                 **tokens_histogram_kwargs,  # pyright: ignore
@@ -161,7 +165,7 @@ class InstrumentationSettings:
                     if hasattr(part, 'otel_event'):
                         message_events.append(part.otel_event(self))
             elif isinstance(message, ModelResponse):  # pragma: no branch
-                message_events = message.otel_events()
+                message_events = message.otel_events(self)
             for event in message_events:
                 event.attributes = {
                     'gen_ai.message.index': message_index,

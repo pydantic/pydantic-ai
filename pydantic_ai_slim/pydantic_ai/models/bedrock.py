@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import typing
+import warnings
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -27,17 +28,13 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    cached_async_http_client,
-)
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.profiles import ModelProfileSpec
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile
@@ -55,6 +52,7 @@ if TYPE_CHECKING:
         ConverseResponseTypeDef,
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
+        DocumentBlockTypeDef,
         GuardrailConfigurationTypeDef,
         ImageBlockTypeDef,
         InferenceConfigurationTypeDef,
@@ -269,11 +267,16 @@ class BedrockConverseModel(Model):
         items: list[ModelResponsePart] = []
         if message := response['output'].get('message'):  # pragma: no branch
             for item in message['content']:
+                if reasoning_content := item.get('reasoningContent'):
+                    reasoning_text = reasoning_content.get('reasoningText')
+                    if reasoning_text:  # pragma: no branch
+                        thinking_part = ThinkingPart(content=reasoning_text['text'])
+                        if reasoning_signature := reasoning_text.get('signature'):
+                            thinking_part.signature = reasoning_signature
+                        items.append(thinking_part)
                 if text := item.get('text'):
                     items.append(TextPart(content=text))
-                else:
-                    tool_use = item.get('toolUse')
-                    assert tool_use is not None, f'Found a content that is not a text or tool use: {item}'
+                elif tool_use := item.get('toolUse'):
                     items.append(
                         ToolCallPart(
                             tool_name=tool_use['name'],
@@ -389,7 +392,7 @@ class BedrockConverseModel(Model):
 
         return tool_config
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage]
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
         """Maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`.
@@ -452,6 +455,9 @@ class BedrockConverseModel(Model):
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
+                    elif isinstance(item, ThinkingPart):
+                        # NOTE: We don't pass the thinking part to Bedrock since it raises an error.
+                        pass
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
@@ -507,25 +513,37 @@ class BedrockConverseModel(Model):
                     else:
                         raise NotImplementedError('Binary content is not supported yet.')
                 elif isinstance(item, (ImageUrl, DocumentUrl, VideoUrl)):
-                    response = await cached_async_http_client().get(item.url)
-                    response.raise_for_status()
+                    downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
+                    format = downloaded_item['data_type']
                     if item.kind == 'image-url':
                         format = item.media_type.split('/')[1]
                         assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
-                        image: ImageBlockTypeDef = {'format': format, 'source': {'bytes': response.content}}
+                        image: ImageBlockTypeDef = {'format': format, 'source': {'bytes': downloaded_item['data']}}
                         content.append({'image': image})
 
                     elif item.kind == 'document-url':
                         name = f'Document {next(document_count)}'
-                        data = response.content
-                        content.append({'document': {'name': name, 'format': item.format, 'source': {'bytes': data}}})
+                        document: DocumentBlockTypeDef = {
+                            'name': name,
+                            'format': item.format,
+                            'source': {'bytes': downloaded_item['data']},
+                        }
+                        content.append({'document': document})
 
                     elif item.kind == 'video-url':  # pragma: no branch
                         format = item.media_type.split('/')[1]
-                        assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp'), (
-                            f'Unsupported video format: {format}'
-                        )
-                        video: VideoBlockTypeDef = {'format': format, 'source': {'bytes': response.content}}
+                        assert format in (
+                            'mkv',
+                            'mov',
+                            'mp4',
+                            'webm',
+                            'flv',
+                            'mpeg',
+                            'mpg',
+                            'wmv',
+                            'three_gp',
+                        ), f'Unsupported video format: {format}'
+                        video: VideoBlockTypeDef = {'format': format, 'source': {'bytes': downloaded_item['data']}}
                         content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
@@ -584,6 +602,15 @@ class BedrockStreamedResponse(StreamedResponse):
             if 'contentBlockDelta' in chunk:
                 index = chunk['contentBlockDelta']['contentBlockIndex']
                 delta = chunk['contentBlockDelta']['delta']
+                if 'reasoningContent' in delta:
+                    if text := delta['reasoningContent'].get('text'):
+                        yield self._parts_manager.handle_thinking_delta(vendor_part_id=index, content=text)
+                    else:  # pragma: no cover
+                        warnings.warn(
+                            f'Only text reasoning content is supported yet, but you got {delta["reasoningContent"]}. '
+                            'Please report this to the maintainers.',
+                            UserWarning,
+                        )
                 if 'text' in delta:
                     yield self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
                 if 'toolUse' in delta:

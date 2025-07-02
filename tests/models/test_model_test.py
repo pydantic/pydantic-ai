@@ -193,7 +193,7 @@ async def test_multiple_concurrent_tool_retries():
     await asyncio.gather(*[agent.run('Hello', model=TestModel(), deps=AgentRunDeps(run_id)) for run_id in run_ids])
 
 
-def test_output_tool_retry_error_handled_with_custom_args(set_event_loop: None):
+def test_output_tool_retry_error_handled_with_custom_args():
     class ResultModel(BaseModel):
         x: int
         y: str
@@ -336,6 +336,6 @@ def test_max_items():
 )
 def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | BinaryContent):
     agent = Agent()
-    result = agent.run_sync('x', model=TestModel(custom_output_text='custom'))
+    result = agent.run_sync(['x', content], model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
     assert result.usage() == snapshot(Usage(requests=1, request_tokens=51, response_tokens=1, total_tokens=52))

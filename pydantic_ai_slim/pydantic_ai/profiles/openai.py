@@ -15,13 +15,25 @@ class OpenAIModelProfile(ModelProfile):
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    # This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions
     openai_supports_strict_tool_definition: bool = True
+    """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions."""
+
+    openai_supports_sampling_settings: bool = True
+    """Turn off to don't send sampling settings like `temperature` and `top_p` to models that don't support them, like OpenAI's o-series reasoning models."""
 
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
-    return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
+    is_reasoning_model = model_name.startswith('o')
+    # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18, and gpt-4o-2024-08-06 model snapshots and later.
+    # We leave it in here for all models because the `default_structured_output_mode` is `'tool'`, so `native` is only used
+    # when the user specifically uses the `NativeOutput` marker, so an error from the API is acceptable.
+    return OpenAIModelProfile(
+        json_schema_transformer=OpenAIJsonSchemaTransformer,
+        supports_json_schema_output=True,
+        supports_json_object_output=True,
+        openai_supports_sampling_settings=not is_reasoning_model,
+    )
 
 
 _STRICT_INCOMPATIBLE_KEYS = [

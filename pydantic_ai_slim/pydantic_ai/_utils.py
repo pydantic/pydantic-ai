@@ -1,22 +1,37 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import functools
+import inspect
+import re
 import time
 import uuid
-from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, overload
 
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import ParamSpec, TypeAlias, TypeGuard, is_typeddict
+from typing_extensions import (
+    ParamSpec,
+    TypeAlias,
+    TypeGuard,
+    TypeIs,
+    get_args,
+    get_origin,
+    is_typeddict,
+)
+from typing_inspection import typing_objects
+from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import AbstractSpan
+
+from . import exceptions
 
 AbstractSpan = AbstractSpan
 
@@ -302,3 +317,139 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
 
 def number_to_datetime(x: int | float) -> datetime:
     return TypeAdapter(datetime).validate_python(x)
+
+
+AwaitableCallable = Callable[..., Awaitable[T]]
+
+
+@overload
+def is_async_callable(obj: AwaitableCallable[T]) -> TypeIs[AwaitableCallable[T]]: ...
+
+
+@overload
+def is_async_callable(obj: Any) -> TypeIs[AwaitableCallable[Any]]: ...
+
+
+def is_async_callable(obj: Any) -> Any:
+    """Correctly check if a callable is async.
+
+    This function was copied from Starlette:
+    https://github.com/encode/starlette/blob/78da9b9e218ab289117df7d62aee200ed4c59617/starlette/_utils.py#L36-L40
+    """
+    while isinstance(obj, functools.partial):
+        obj = obj.func
+
+    return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))  # type: ignore
+
+
+def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
+    """Update $refs in a schema to use the new names from name_mapping."""
+    if '$ref' in s:
+        ref = s['$ref']
+        if ref.startswith('#/$defs/'):  # pragma: no branch
+            original_name = ref[8:]  # Remove '#/$defs/'
+            new_name = name_mapping.get(original_name, original_name)
+            s['$ref'] = f'#/$defs/{new_name}'
+
+    # Recursively update refs in properties
+    if 'properties' in s:
+        props: dict[str, dict[str, Any]] = s['properties']
+        for prop in props.values():
+            _update_mapped_json_schema_refs(prop, name_mapping)
+
+    # Handle arrays
+    if 'items' in s and isinstance(s['items'], dict):
+        items: dict[str, Any] = s['items']
+        _update_mapped_json_schema_refs(items, name_mapping)
+    if 'prefixItems' in s:
+        prefix_items: list[dict[str, Any]] = s['prefixItems']
+        for item in prefix_items:
+            _update_mapped_json_schema_refs(item, name_mapping)
+
+    # Handle unions
+    for union_type in ['anyOf', 'oneOf']:
+        if union_type in s:
+            union_items: list[dict[str, Any]] = s[union_type]
+            for item in union_items:
+                _update_mapped_json_schema_refs(item, name_mapping)
+
+
+def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Merges the `$defs` from different JSON schemas into a single deduplicated `$defs`, handling name collisions of `$defs` that are not the same, and rewrites `$ref`s to point to the new `$defs`.
+
+    Returns a tuple of the rewritten schemas and a dictionary of the new `$defs`.
+    """
+    all_defs: dict[str, dict[str, Any]] = {}
+    rewritten_schemas: list[dict[str, Any]] = []
+
+    for schema in schemas:
+        if '$defs' not in schema:
+            rewritten_schemas.append(schema)
+            continue
+
+        schema = schema.copy()
+        defs = schema.pop('$defs', None)
+        schema_name_mapping: dict[str, str] = {}
+
+        # Process definitions and build mapping
+        for name, def_schema in defs.items():
+            if name not in all_defs:
+                all_defs[name] = def_schema
+                schema_name_mapping[name] = name
+            elif def_schema != all_defs[name]:
+                new_name = name
+                if title := schema.get('title'):
+                    new_name = f'{title}_{name}'
+
+                i = 1
+                original_new_name = new_name
+                new_name = f'{new_name}_{i}'
+                while new_name in all_defs:
+                    i += 1
+                    new_name = f'{original_new_name}_{i}'
+
+                all_defs[new_name] = def_schema
+                schema_name_mapping[name] = new_name
+
+        _update_mapped_json_schema_refs(schema, schema_name_mapping)
+        rewritten_schemas.append(schema)
+
+    return rewritten_schemas, all_defs
+
+
+def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
+    """Validate that no unknown kwargs remain after processing.
+
+    Args:
+        _kwargs: Dictionary of remaining kwargs after specific ones have been processed.
+
+    Raises:
+        UserError: If any unknown kwargs remain.
+    """
+    if _kwargs:
+        unknown_kwargs = ', '.join(f'`{k}`' for k in _kwargs.keys())
+        raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
+
+
+def strip_markdown_fences(text: str) -> str:
+    if text.startswith('{'):
+        return text
+
+    regex = r'```(?:\w+)?\n(\{.*\})\n```'
+    match = re.search(regex, text, re.DOTALL)
+    if match:
+        return match.group(1)
+
+    return text
+
+
+def get_union_args(tp: Any) -> tuple[Any, ...]:
+    """Extract the arguments of a Union type if `tp` is a union, otherwise return an empty tuple."""
+    if typing_objects.is_typealiastype(tp):
+        tp = tp.__value__
+
+    origin = get_origin(tp)
+    if is_union_origin(origin):
+        return get_args(tp)
+    else:
+        return ()
