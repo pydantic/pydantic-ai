@@ -8,8 +8,8 @@ from ..tools import (
     ToolDefinition,
     ToolPrepareFunc,
 )
-from .mapped import MappedToolset
-from .run import RunToolset
+from ._mapped import MappedToolset
+from ._run import RunToolset
 from .wrapper import WrapperToolset
 
 

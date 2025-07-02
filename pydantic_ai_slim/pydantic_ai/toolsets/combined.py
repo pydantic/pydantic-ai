@@ -14,7 +14,7 @@ from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
 from ..tools import ToolDefinition
 from . import AbstractToolset
-from .run import RunToolset
+from ._run import RunToolset
 
 if TYPE_CHECKING:
     from ..models import Model
@@ -25,11 +25,13 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     """A toolset that combines multiple toolsets."""
 
     toolsets: list[AbstractToolset[AgentDepsT]]
-    _exit_stack: AsyncExitStack | None
     _toolset_per_tool_name: dict[str, AbstractToolset[AgentDepsT]]
+    _exit_stack: AsyncExitStack | None
+    _running_count: int
 
     def __init__(self, toolsets: Sequence[AbstractToolset[AgentDepsT]]):
         self._exit_stack = None
+        self._running_count = 0
         self.toolsets = list(toolsets)
 
         self._toolset_per_tool_name = {}
@@ -45,16 +47,18 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                 self._toolset_per_tool_name[name] = toolset
 
     async def __aenter__(self) -> Self:
-        # TODO: running_count thing like in MCPServer?
-        self._exit_stack = AsyncExitStack()
-        for toolset in self.toolsets:
-            await self._exit_stack.enter_async_context(toolset)
+        if self._running_count == 0:
+            self._exit_stack = AsyncExitStack()
+            for toolset in self.toolsets:
+                await self._exit_stack.enter_async_context(toolset)
+        self._running_count += 1
         return self
 
     async def __aexit__(
         self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
     ) -> bool | None:
-        if self._exit_stack is not None:
+        self._running_count -= 1
+        if self._running_count <= 0 and self._exit_stack is not None:
             await self._exit_stack.aclose()
             self._exit_stack = None
         return None
@@ -88,9 +92,9 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         return await self._toolset_for_tool_name(name).call_tool(ctx, name, tool_args, *args, **kwargs)
 
-    def set_mcp_sampling_model(self, model: Model) -> None:
+    def _set_mcp_sampling_model(self, model: Model) -> None:
         for toolset in self.toolsets:
-            toolset.set_mcp_sampling_model(model)
+            toolset._set_mcp_sampling_model(model)
 
     def _toolset_for_tool_name(self, name: str) -> AbstractToolset[AgentDepsT]:
         try:

@@ -19,13 +19,13 @@ from ..tools import (
     ToolPrepareFunc,
 )
 from . import AbstractToolset
-from .individually_prepared import IndividuallyPreparedToolset
-from .run import RunToolset
+from ._individually_prepared import IndividuallyPreparedToolset
+from ._run import RunToolset
 
 
 @dataclass(init=False)
 class FunctionToolset(AbstractToolset[AgentDepsT]):
-    """A toolset that functions can be registered to as tools."""
+    """A toolset that lets Python functions be used as tools."""
 
     max_retries: int = field(default=1)
     tools: dict[str, Tool[Any]] = field(default_factory=dict)
@@ -188,7 +188,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
     async def _prepare_tool_def(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_name = tool_def.name
-        ctx = replace(ctx, tool_name=tool_name, retry=ctx.retries.get(tool_name, 0))
+        ctx = replace(ctx, tool_name=tool_name, retry=ctx.retries[tool_name])
         return await self.tools[tool_name].prepare_tool_def(ctx)
 
     @property

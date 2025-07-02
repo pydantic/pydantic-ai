@@ -29,7 +29,7 @@ from .output import (
 )
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets import AbstractToolset
-from .toolsets.run import RunToolset
+from .toolsets._run import RunToolset
 
 if TYPE_CHECKING:
     from .profiles import ModelProfile

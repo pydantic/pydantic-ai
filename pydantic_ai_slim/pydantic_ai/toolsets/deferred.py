@@ -8,7 +8,7 @@ from pydantic_core import SchemaValidator
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
 from . import AbstractToolset
-from .run import RunToolset
+from ._run import RunToolset
 
 
 class DeferredToolset(AbstractToolset[AgentDepsT]):

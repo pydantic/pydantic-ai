@@ -12,7 +12,7 @@ from ..tools import ToolDefinition
 
 if TYPE_CHECKING:
     from ..models import Model
-    from .run import RunToolset
+    from ._run import RunToolset
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):
@@ -80,5 +80,5 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     ) -> Any:
         raise NotImplementedError()
 
-    def set_mcp_sampling_model(self, model: Model) -> None:
+    def _set_mcp_sampling_model(self, model: Model) -> None:
         pass

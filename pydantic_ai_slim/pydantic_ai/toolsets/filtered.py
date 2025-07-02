@@ -6,7 +6,7 @@ from typing import Callable
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
 from . import AbstractToolset
-from .individually_prepared import IndividuallyPreparedToolset
+from ._individually_prepared import IndividuallyPreparedToolset
 
 
 @dataclass(init=False)

@@ -257,12 +257,10 @@ async def test_agent_with_prefix_tool_name(openai_api_key: str):
             await agent.run('No conflict')
 
 
-async def test_agent_with_server_not_running(openai_api_key: str):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model, toolsets=[server])
-    with pytest.raises(UserError, match='MCP server is not running'):
-        await agent.run('What is 0 degrees Celsius in Fahrenheit?')
+@pytest.mark.vcr()
+async def test_agent_with_server_not_running(agent: Agent, allow_model_requests: None):
+    result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
+    assert result.output == snapshot('0 degrees Celsius is 32.0 degrees Fahrenheit.')
 
 
 async def test_log_level_unset(run_context: RunContext[int]):

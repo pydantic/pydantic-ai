@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import field
 from typing import TYPE_CHECKING, Generic
@@ -31,8 +32,8 @@ class RunContext(Generic[AgentDepsT]):
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""
-    retries: dict[str, int] = field(default_factory=dict)
-    """Number of retries for each tool."""
+    retries: defaultdict[str, int] = field(default_factory=lambda: defaultdict(int))
+    """Number of retries for each tool so far."""
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None

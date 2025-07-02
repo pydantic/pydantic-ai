@@ -19,11 +19,10 @@ from typing_extensions import Self, assert_never, deprecated
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import ToolDefinition
 
-from .exceptions import UserError
 from .toolsets import AbstractToolset
+from .toolsets._run import RunToolset
 from .toolsets.prefixed import PrefixedToolset
 from .toolsets.processed import ProcessedToolset, ToolProcessFunc
-from .toolsets.run import RunToolset
 
 try:
     from mcp import types as mcp_types
@@ -104,9 +103,8 @@ class MCPServer(AbstractToolset[Any], ABC):
         - We don't cache tools as they might change.
         - We also don't subscribe to the server to avoid complexity.
         """
-        if not self.is_running:  # pragma: no cover
-            raise UserError(f'MCP server is not running: {self}')
-        result = await self._client.list_tools()
+        async with self:
+            result = await self._client.list_tools()
         return result.tools
 
     async def call_tool(
@@ -134,25 +132,24 @@ class MCPServer(AbstractToolset[Any], ABC):
         Raises:
             ModelRetry: If the tool call fails.
         """
-        if not self.is_running:  # pragma: no cover
-            raise UserError(f'MCP server is not running: {self}')
-        try:
-            # meta param is not provided by session yet, so build and can send_request directly.
-            result = await self._client.send_request(
-                mcp_types.ClientRequest(
-                    mcp_types.CallToolRequest(
-                        method='tools/call',
-                        params=mcp_types.CallToolRequestParams(
-                            name=name,
-                            arguments=tool_args,
-                            _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
-                        ),
-                    )
-                ),
-                mcp_types.CallToolResult,
-            )
-        except McpError as e:
-            raise exceptions.ModelRetry(e.error.message)
+        async with self:
+            try:
+                # meta param is not provided by session yet, so build and can send_request directly.
+                result = await self._client.send_request(
+                    mcp_types.ClientRequest(
+                        mcp_types.CallToolRequest(
+                            method='tools/call',
+                            params=mcp_types.CallToolRequestParams(
+                                name=name,
+                                arguments=tool_args,
+                                _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
+                            ),
+                        )
+                    ),
+                    mcp_types.CallToolResult,
+                )
+            except McpError as e:
+                raise exceptions.ModelRetry(e.error.message)
 
         content = [self._map_tool_result_part(part) for part in result.content]
 
@@ -196,7 +193,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     def _max_retries_for_tool(self, name: str) -> int:
         return self.max_retries
 
-    def set_mcp_sampling_model(self, model: models.Model) -> None:
+    def _set_mcp_sampling_model(self, model: models.Model) -> None:
         self.sampling_model = model
 
     async def __aenter__(self) -> Self:

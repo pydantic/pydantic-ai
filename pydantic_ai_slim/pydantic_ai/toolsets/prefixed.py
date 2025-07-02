@@ -7,7 +7,7 @@ from pydantic_core import SchemaValidator
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
-from .run import RunToolset
+from ._run import RunToolset
 from .wrapper import WrapperToolset
 
 

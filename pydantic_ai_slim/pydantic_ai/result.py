@@ -10,7 +10,7 @@ from typing import Generic, cast
 from pydantic import ValidationError
 from typing_extensions import TypeVar, deprecated, overload
 
-from pydantic_ai.toolsets.run import RunToolset
+from pydantic_ai.toolsets._run import RunToolset
 
 from . import _utils, exceptions, messages as _messages, models
 from ._output import (

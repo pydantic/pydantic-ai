@@ -624,7 +624,7 @@ async def test_exhaustive_strategy_executes_all_tools():
                         tool_name='another_tool', content=2, timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                     ),
                     RetryPromptPart(
-                        content="Unknown tool name: 'unknown_tool'. Available tools: final_result, regular_tool, another_tool",
+                        content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool'",
                         tool_name='unknown_tool',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
@@ -737,7 +737,7 @@ async def test_early_strategy_with_final_result_in_middle():
                         part_kind='tool-return',
                     ),
                     RetryPromptPart(
-                        content="Unknown tool name: 'unknown_tool'. Available tools: final_result, regular_tool, another_tool",
+                        content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool'",
                         tool_name='unknown_tool',
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=datetime.timezone.utc),
@@ -992,7 +992,7 @@ async def test_unknown_tool_call_events():
             ),
             FunctionToolResultEvent(
                 result=RetryPromptPart(
-                    content="Unknown tool name: 'unknown_tool'. Available tools: known_tool",
+                    content="Unknown tool name: 'unknown_tool'. Available tools: 'known_tool'",
                     tool_name='unknown_tool',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),

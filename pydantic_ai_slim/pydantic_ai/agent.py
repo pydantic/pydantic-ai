@@ -1783,18 +1783,18 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     @asynccontextmanager
     async def run_toolsets(
-        self, model: models.Model | models.KnownModelName | str | None = None
+        self, sampling_model: models.Model | models.KnownModelName | str | None = None
     ) -> AsyncIterator[None]:
-        """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] so they can be used by the agent.
+        """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] among toolsets so they can be used by the agent.
 
         Returns: a context manager to start and shutdown the servers.
         """
         try:
-            sampling_model: models.Model | None = self._get_model(model)
+            model: models.Model | None = self._get_model(sampling_model)
         except exceptions.UserError:  # pragma: no cover
-            sampling_model = None
-        if sampling_model is not None:  # pragma: no branch
-            self._toolset.set_mcp_sampling_model(sampling_model)
+            model = None
+        if model is not None:  # pragma: no branch
+            self._toolset._set_mcp_sampling_model(model)  # type: ignore[reportPrivateUsage]
 
         async with self._toolset:
             yield

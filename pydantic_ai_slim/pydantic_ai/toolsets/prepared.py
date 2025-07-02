@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
 from ..tools import ToolsPrepareFunc
-from .run import RunToolset
+from ._run import RunToolset
 from .wrapper import WrapperToolset
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -19,12 +20,12 @@ from .wrapper import WrapperToolset
 
 @dataclass(init=False)
 class RunToolset(WrapperToolset[AgentDepsT]):
-    """A toolset that is frozen for a specific run."""
+    """A toolset that caches the wrapped toolset's tool definitions for a specific run step and handles retries."""
 
     ctx: RunContext[AgentDepsT]
     _tool_defs: list[ToolDefinition]
     _tool_names: list[str]
-    _retries: dict[str, int]
+    _retries: defaultdict[str, int]
     _original: AbstractToolset[AgentDepsT]
 
     def __init__(
@@ -102,19 +103,19 @@ class RunToolset(WrapperToolset[AgentDepsT]):
         try:
             if name not in self.tool_names:
                 if self.tool_names:
-                    msg = f'Available tools: {", ".join(self.tool_names)}'
+                    msg = f'Available tools: {", ".join(f"{name!r}" for name in self.tool_names)}'
                 else:
                     msg = 'No tools available.'
                 raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
 
-            ctx = replace(ctx, tool_name=name, retry=self._retries.get(name, 0), retries={})
+            ctx = replace(ctx, tool_name=name, retry=self._retries[name], retries={})
             yield ctx
         except (ValidationError, ModelRetry, UnexpectedModelBehavior, ToolRetryError) as e:
             try:
                 max_retries = self._max_retries_for_tool(name)
             except Exception:
                 max_retries = 1
-            current_retry = self._retries.get(name, 0)
+            current_retry = self._retries[name]
 
             if isinstance(e, UnexpectedModelBehavior) and e.__cause__ is not None:
                 e = e.__cause__

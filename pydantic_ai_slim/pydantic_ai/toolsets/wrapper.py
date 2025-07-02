@@ -14,7 +14,7 @@ from . import AbstractToolset
 
 if TYPE_CHECKING:
     from ..models import Model
-    from .run import RunToolset
+    from ._run import RunToolset
 
 
 @dataclass
@@ -59,8 +59,8 @@ class WrapperToolset(AbstractToolset[AgentDepsT], ABC):
     ) -> Any:
         return await self.wrapped.call_tool(ctx, name, tool_args, *args, **kwargs)
 
-    def set_mcp_sampling_model(self, model: Model) -> None:
-        self.wrapped.set_mcp_sampling_model(model)
+    def _set_mcp_sampling_model(self, model: Model) -> None:
+        self.wrapped._set_mcp_sampling_model(model)
 
     def __getattr__(self, item: str):
         return getattr(self.wrapped, item)  # pragma: no cover

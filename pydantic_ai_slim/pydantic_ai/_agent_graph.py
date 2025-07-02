@@ -17,7 +17,7 @@ from typing_extensions import TypeGuard, TypeVar, assert_never
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._utils import is_async_callable, run_in_executor
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai.toolsets.run import RunToolset
+from pydantic_ai.toolsets._run import RunToolset
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
@@ -505,7 +505,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         elif deferred_tool_calls := ctx.deps.toolset.get_deferred_tool_calls(tool_calls):
             if not ctx.deps.output_schema.allows_deferred_tool_calls:
                 raise exceptions.UserError(
-                    'There are deferred tool calls but DeferredToolCalls is not among output types.'
+                    'A deferred tool call was present, but `DeferredToolCalls` is not among output types. To resolve this, add `DeferredToolCalls` to the list of output types for this agent.'
                 )
             final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_calls), None, None)
             self._next_node = self._handle_final_result(ctx, final_result, output_parts)
@@ -586,7 +586,7 @@ async def process_function_tools(  # noqa: C901
 
     Also add stub return parts for any other tools that need it.
 
-    Because async iterators can't have return values, we use `parts` as an output argument.
+    Because async iterators can't have return values, we use `output_parts` and `output_final_result` as output arguments.
     """
     run_context = build_run_context(ctx)
 

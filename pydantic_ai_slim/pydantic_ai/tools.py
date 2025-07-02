@@ -366,8 +366,8 @@ class ToolDefinition:
     """The kind of tool:
     - `'function'`: a tool that can be executed by Pydantic AI and has its result returned to the model
     - `'output'`: a tool that passes through an output value that ends the run
-    - `'deferred'`: a tool that cannot be executed by Pydantic AI and needs to get a result from the outside.
-        When the model calls a deferred tool, the agent run ends with a `DeferredToolCalls` object and a new run is expected to be started at a later point with the message history and new `ToolReturnPart`s for each deferred call.
+    - `'deferred'`: a tool that will be executed not by Pydantic AI, but by the upstream service that called the agent, such as a web application that supports frontend-defined tools provided to Pydantic AI via e.g. [AG-UI](https://docs.ag-ui.com/concepts/tools#frontend-defined-tools).
+        When the model calls a deferred tool, the agent run ends with a `DeferredToolCalls` object and a new run is expected to be started at a later point with the message history and new `ToolReturnPart`s corresponding to each deferred call.
     """
 
     __repr__ = _utils.dataclasses_no_defaults_repr

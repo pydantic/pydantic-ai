@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any, Callable, Protocol
 
 from .._run_context import AgentDepsT, RunContext
-from .run import RunToolset
+from ._run import RunToolset
 from .wrapper import WrapperToolset
 
 
@@ -29,7 +29,7 @@ ToolProcessFunc = Callable[
 
 @dataclass
 class ProcessedToolset(WrapperToolset[AgentDepsT]):
-    """A toolset that lets the tool call arguments and return value be customized using a process function."""
+    """A toolset that lets the tool call arguments and return value be customized using a wrapper function."""
 
     process: ToolProcessFunc[AgentDepsT]
 
