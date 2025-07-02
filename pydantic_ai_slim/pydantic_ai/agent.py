@@ -1740,7 +1740,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         try:
             for mcp_server in self._mcp_servers:
                 if sampling_model is not None:  # pragma: no branch
-                    mcp_server.sampling_model = sampling_model
+                    exit_stack.enter_context(mcp_server.override_sampling_model(sampling_model))
                 await exit_stack.enter_async_context(mcp_server)
             yield
         finally:
