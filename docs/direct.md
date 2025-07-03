@@ -9,6 +9,7 @@ The following functions are available:
 - [`model_request`][pydantic_ai.direct.model_request]: Make a non-streamed async request to a model
 - [`model_request_sync`][pydantic_ai.direct.model_request_sync]: Make a non-streamed synchronous request to a model
 - [`model_request_stream`][pydantic_ai.direct.model_request_stream]: Make a streamed async request to a model
+- [`model_request_stream_sync`][pydantic_ai.direct.model_request_stream_sync]: Make a streamed sync request to a model
 
 ## Basic Example
 

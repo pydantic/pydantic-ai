@@ -541,6 +541,7 @@ class StreamedResponseSync:
         self._cleanup()
 
     def __iter__(self) -> Iterator[ModelResponseStreamEvent]:
+        """Stream the response as an iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
         self._check_context_manager_usage()
 
         while True:
