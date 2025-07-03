@@ -69,9 +69,13 @@ def test_github_model_profiles():
     assert isinstance(microsoft_model.profile, OpenAIModelProfile)
     assert microsoft_model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
-
-def test_github_model_profile_fallback():
+    # Test fallback for unknown models
     provider = GitHubProvider(api_key='ghp_test_token')
     unknown_model = OpenAIModel('some-unknown-model', provider=provider)
     assert isinstance(unknown_model.profile, OpenAIModelProfile)
     assert unknown_model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+    # Test model with unknown provider prefix (has '/' but provider not in dictionary)
+    unknown_provider_model = OpenAIModel('unknown-provider/some-model', provider=provider)
+    assert isinstance(unknown_provider_model.profile, OpenAIModelProfile)
+    assert unknown_provider_model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
