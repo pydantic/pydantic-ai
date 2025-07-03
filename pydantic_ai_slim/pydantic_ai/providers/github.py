@@ -4,7 +4,6 @@ import os
 from typing import overload
 
 from httpx import AsyncClient as AsyncHTTPClient
-from openai import AsyncOpenAI
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
@@ -66,7 +65,7 @@ class GitHubProvider(Provider[AsyncOpenAI]):
             model_name, *_ = model_name.split(':', 1)  # drop tags
             profile = provider_to_profile[provider](model_name)
 
-        # As OpenRouterProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # As GitHubProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
         return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
 
