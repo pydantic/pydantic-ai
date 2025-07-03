@@ -1788,6 +1788,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         return isinstance(node, End)
 
     async def __aenter__(self) -> Self:
+        """Enter the agent. This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered with the agent so they can be used in a run."""
         if self._running_count == 0:
             self._exit_stack = AsyncExitStack()
             await self._exit_stack.enter_async_context(self._toolset)
@@ -1827,6 +1828,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self, model: models.Model | models.KnownModelName | str | None = None
     ) -> AsyncIterator[None]:
         """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] so they can be used by the agent.
+
+        Deprecated: use [`async with agent`][pydantic_ai.agent.Agent.__aenter__] instead.
+        If you need to set a sampling model on all MCP servers, use [`agent.set_mcp_sampling_model(...)`][pydantic_ai.agent.Agent.set_mcp_sampling_model].
 
         Returns: a context manager to start and shutdown the servers.
         """
