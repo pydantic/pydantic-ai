@@ -8,7 +8,7 @@ These methods are thin wrappers around [`Model`][pydantic_ai.models.Model] imple
 
 from __future__ import annotations as _annotations
 
-from contextlib import AbstractAsyncContextManager, AbstractContextManager
+from contextlib import AbstractAsyncContextManager
 
 from pydantic_graph._utils import get_event_loop as _get_event_loop
 
@@ -193,7 +193,7 @@ def model_request_stream_sync(
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
     instrument: instrumented_models.InstrumentationSettings | bool | None = None,
-) -> AbstractContextManager[models.StreamedResponseSync]:
+) -> models.StreamedResponseSync:
     """Make a streamed synchronous request to a model.
 
     This is the synchronous version of [`model_request_stream`][pydantic_ai.direct.model_request_stream].

@@ -1,7 +1,6 @@
 """Tests for the synchronous streaming functionality in the direct module."""
 
 import re
-from typing import cast
 
 import pytest
 
@@ -14,7 +13,6 @@ from pydantic_ai.messages import (
     TextPart,
     TextPartDelta,
 )
-from pydantic_ai.models import StreamedResponseSync
 
 
 def test_model_request_stream_sync_basic():
@@ -135,7 +133,7 @@ def test_model_request_stream_sync_without_context_manager():
     )
 
     # Create stream object without entering context manager
-    stream_cm = cast(StreamedResponseSync, model_request_stream_sync('test', messages))
+    stream_cm = model_request_stream_sync('test', messages)
 
     # Test that accessing model_name raises RuntimeError
     with pytest.raises(RuntimeError, match=expected_error_msg):

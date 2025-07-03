@@ -516,7 +516,7 @@ class StreamedResponse(ABC):
 class StreamedResponseSync:
     """Synchronous wrapper to async streaming responses by running the async producer in a background thread and providing a synchronous iterator.
 
-    This class MUST be used as a context manager with the `with` statement.
+    This class must be used as a context manager with the `with` statement.
     """
 
     _async_stream_cm: Any
@@ -617,17 +617,11 @@ class StreamedResponseSync:
 
     def get(self) -> ModelResponse:
         """Build a ModelResponse from the data received from the stream so far."""
-        self._check_context_manager_usage()
-        if self._stream_response is None:
-            raise RuntimeError('Stream has not been started yet')
-        return self._stream_response.get()
+        return self._ensure_stream_ready().get()
 
     def usage(self) -> Usage:
         """Get the usage of the response so far."""
-        self._check_context_manager_usage()
-        if self._stream_response is None:
-            return Usage()
-        return self._stream_response.usage()
+        return self._ensure_stream_ready().usage()
 
     @property
     def model_name(self) -> str:
