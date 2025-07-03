@@ -554,7 +554,6 @@ class StreamedResponseSync:
                 yield item
 
     def _ensure_stream_ready(self) -> StreamedResponse:
-        """Ensure the stream is ready and return it, raising appropriate errors if not."""
         self._check_context_manager_usage()
 
         if self._stream_response is None:
@@ -562,7 +561,7 @@ class StreamedResponseSync:
             if not self._stream_ready.wait(timeout=STREAM_INITIALIZATION_TIMEOUT):
                 raise RuntimeError('Stream failed to initialize within timeout')
 
-            if self._stream_response is None:
+            if self._stream_response is None:  # pragma: no cover
                 raise RuntimeError('Stream failed to initialize')
 
         return self._stream_response
@@ -576,7 +575,6 @@ class StreamedResponseSync:
     __str__ = __repr__
 
     def _check_context_manager_usage(self) -> None:
-        """Check that the context manager was properly entered."""
         if not self._context_entered:
             raise RuntimeError(
                 'StreamedResponseSync must be used as a context manager. '
@@ -584,16 +582,10 @@ class StreamedResponseSync:
             )
 
     def _start_producer(self):
-        """Start the background thread to consume the async stream."""
-        if self._thread is not None:
-            return
-
         self._thread = threading.Thread(target=self._async_producer, daemon=True)
         self._thread.start()
 
     def _async_producer(self):
-        """Run in background thread to consume async stream."""
-
         async def _consume_async_stream():
             try:
                 async with self._async_stream_cm as stream:
@@ -612,7 +604,6 @@ class StreamedResponseSync:
         get_event_loop().run_until_complete(_consume_async_stream())
 
     def _cleanup(self):
-        """Clean up resources when exiting context."""
         if self._thread and self._thread.is_alive():
             self._thread.join()
 

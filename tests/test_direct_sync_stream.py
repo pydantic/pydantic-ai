@@ -72,3 +72,15 @@ def test_model_request_stream_sync_timeout():
         with stream_sync:
             with pytest.raises(RuntimeError, match='Stream failed to initialize within timeout'):
                 stream_sync.get()
+
+
+def test_model_request_stream_sync_intermediate_get():
+    """Test getting properties of StreamedResponse before consuming all events."""
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('x')]
+
+    with model_request_stream_sync('test', messages) as stream:
+        response = stream.get()
+        assert response is not None
+
+        usage = stream.usage()
+        assert usage is not None
