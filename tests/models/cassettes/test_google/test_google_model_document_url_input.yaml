@@ -292,7 +292,7 @@ interactions:
       - application/json
       host:
       - generativelanguage.googleapis.com
-    method: post
+    method: POST
     parsed_body:
       contents:
       - parts:

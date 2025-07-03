@@ -19,7 +19,7 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
 from typing_extensions import TypeAlias
-from vcr import VCR
+from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai.messages import BinaryContent
@@ -193,6 +193,12 @@ def pytest_recording_configure(config: Any, vcr: VCR):
     from . import json_body_serializer
 
     vcr.register_serializer('yaml', json_body_serializer)
+
+    def method_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
+        if r1.method.upper() != r2.method.upper():
+            raise AssertionError(f'{r1.method} != {r2.method}')
+
+    vcr.register_matcher('method', method_matcher)
 
 
 @pytest.fixture(scope='module')

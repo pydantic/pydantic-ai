@@ -12,7 +12,7 @@ interactions:
           - "268"
         content-type:
           - application/x-www-form-urlencoded
-      method: post
+      method: POST
       uri: https://oauth2.googleapis.com/token
     response:
       headers:
@@ -57,7 +57,7 @@ interactions:
           - application/json
         host:
           - us-central1-aiplatform.googleapis.com
-      method: post
+      method: POST
       parsed_body:
         contents:
           - parts:
