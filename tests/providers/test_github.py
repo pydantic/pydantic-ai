@@ -105,3 +105,8 @@ def test_github_provider_model_profile(mocker: MockerFixture):
     openai_model_profile_mock.assert_called_with('some-unknown-model')
     assert unknown_profile is not None
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+    unknown_profile_with_prefix = provider.model_profile('unknown-publisher/some-unknown-model')
+    openai_model_profile_mock.assert_called_with('some-unknown-model')
+    assert unknown_profile_with_prefix is not None
+    assert unknown_profile_with_prefix.json_schema_transformer == OpenAIJsonSchemaTransformer
