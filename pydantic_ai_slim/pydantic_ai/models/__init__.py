@@ -553,19 +553,6 @@ class StreamedResponseSync:
             else:
                 yield item
 
-    def _ensure_stream_ready(self) -> StreamedResponse:
-        self._check_context_manager_usage()
-
-        if self._stream_response is None:
-            # Wait for the background thread to signal that the stream is ready
-            if not self._stream_ready.wait(timeout=STREAM_INITIALIZATION_TIMEOUT):
-                raise RuntimeError('Stream failed to initialize within timeout')
-
-            if self._stream_response is None:  # pragma: no cover
-                raise RuntimeError('Stream failed to initialize')
-
-        return self._stream_response
-
     def __repr__(self) -> str:
         if self._stream_response:
             return repr(self._stream_response)
@@ -580,6 +567,19 @@ class StreamedResponseSync:
                 'StreamedResponseSync must be used as a context manager. '
                 'Use: `with model_request_stream_sync(...) as stream:`'
             )
+
+    def _ensure_stream_ready(self) -> StreamedResponse:
+        self._check_context_manager_usage()
+
+        if self._stream_response is None:
+            # Wait for the background thread to signal that the stream is ready
+            if not self._stream_ready.wait(timeout=STREAM_INITIALIZATION_TIMEOUT):
+                raise RuntimeError('Stream failed to initialize within timeout')
+
+            if self._stream_response is None:  # pragma: no cover
+                raise RuntimeError('Stream failed to initialize')
+
+        return self._stream_response
 
     def _start_producer(self):
         self._thread = threading.Thread(target=self._async_producer, daemon=True)
