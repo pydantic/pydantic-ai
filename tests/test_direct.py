@@ -9,6 +9,7 @@ from pydantic_ai.direct import (
     _prepare_model,  # pyright: ignore[reportPrivateUsage]
     model_request,
     model_request_stream,
+    model_request_stream_sync,
     model_request_sync,
 )
 from pydantic_ai.messages import (
@@ -49,14 +50,24 @@ async def test_model_request_tool_call():
         [ModelRequest.user_text_prompt('x')],
         model_request_parameters=ModelRequestParameters(
             function_tools=[
-                ToolDefinition(name='tool_name', description='', parameters_json_schema={'type': 'object'})
+                ToolDefinition(
+                    name='tool_name',
+                    description='',
+                    parameters_json_schema={'type': 'object'},
+                )
             ],
             allow_text_output=False,
         ),
     )
     assert model_response == snapshot(
         ModelResponse(
-            parts=[ToolCallPart(tool_name='tool_name', args={}, tool_call_id=IsStr(regex='pyd_ai_.*'))],
+            parts=[
+                ToolCallPart(
+                    tool_name='tool_name',
+                    args={},
+                    tool_call_id=IsStr(regex='pyd_ai_.*'),
+                )
+            ],
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             usage=Usage(requests=1, request_tokens=51, response_tokens=2, total_tokens=53),
@@ -74,6 +85,24 @@ def test_model_request_sync():
             usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
         )
     )
+
+
+def test_model_request_stream_sync():
+    with model_request_stream_sync('test', [ModelRequest.user_text_prompt('x')]) as stream:
+        chunks = list(stream)
+        assert chunks == snapshot(
+            [
+                PartStartEvent(index=0, part=TextPart(content='')),
+                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='success ')),
+                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='(no ')),
+                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='tool ')),
+                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='calls)')),
+            ]
+        )
+
+        repr_str = repr(stream)
+        assert 'TestStreamedResponse' in repr_str
+        assert 'test' in repr_str
 
 
 async def test_model_request_stream():
