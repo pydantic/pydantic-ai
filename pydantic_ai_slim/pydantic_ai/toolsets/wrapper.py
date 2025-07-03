@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from types import TracebackType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
@@ -57,6 +57,9 @@ class WrapperToolset(AbstractToolset[AgentDepsT], ABC):
         self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
     ) -> Any:
         return await self.wrapped.call_tool(ctx, name, tool_args, *args, **kwargs)
+
+    def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
+        return self.wrapped.accept(visitor)
 
     def __getattr__(self, item: str):
         return getattr(self.wrapped, item)  # pragma: no cover

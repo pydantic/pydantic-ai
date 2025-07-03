@@ -22,7 +22,6 @@ def build_run_context(deps: T) -> RunContext[T]:
         deps=deps,
         model=TestModel(),
         usage=Usage(),
-        sampling_model=TestModel(),
         prompt=None,
         messages=[],
         run_step=0,

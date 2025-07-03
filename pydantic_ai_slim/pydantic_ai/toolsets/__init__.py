@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Generic, Literal
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal
 
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
@@ -78,3 +78,6 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
     ) -> Any:
         raise NotImplementedError()
+
+    def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
+        return visitor(self)

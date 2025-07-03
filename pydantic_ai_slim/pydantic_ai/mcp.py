@@ -3,9 +3,8 @@ from __future__ import annotations
 import base64
 import functools
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterator, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager, nullcontext
-from contextvars import ContextVar
+from collections.abc import AsyncIterator, Sequence
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -70,22 +69,6 @@ class MCPServer(AbstractToolset[Any], ABC):
     _exit_stack: AsyncExitStack
     sampling_model: models.Model | None = None
 
-    def __post_init__(self):
-        self._override_sampling_model: ContextVar[models.Model | None] = ContextVar(
-            '_override_sampling_model', default=None
-        )
-
-    @contextmanager
-    def override_sampling_model(
-        self,
-        model: models.Model,
-    ) -> Iterator[None]:
-        token = self._override_sampling_model.set(model)
-        try:
-            yield
-        finally:
-            self._override_sampling_model.reset(token)
-
     @abstractmethod
     @asynccontextmanager
     async def client_streams(
@@ -149,28 +132,23 @@ class MCPServer(AbstractToolset[Any], ABC):
         Raises:
             ModelRetry: If the tool call fails.
         """
-        sampling_contextmanager = (
-            nullcontext() if self._get_sampling_model() else self.override_sampling_model(ctx.sampling_model)
-        )
-        with sampling_contextmanager:
-            async with self:  # Ensure server is running
-                try:
-                    # meta param is not provided by session yet, so build and can send_request directly.
-                    result = await self._client.send_request(
-                        mcp_types.ClientRequest(
-                            mcp_types.CallToolRequest(
-                                method='tools/call',
-                                params=mcp_types.CallToolRequestParams(
-                                    name=name,
-                                    arguments=tool_args,
-                                    _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
-                                ),
-                            )
-                        ),
-                        mcp_types.CallToolResult,
-                    )
-                except McpError as e:
-                    raise exceptions.ModelRetry(e.error.message)
+        async with self:  # Ensure server is running
+            try:
+                result = await self._client.send_request(
+                    mcp_types.ClientRequest(
+                        mcp_types.CallToolRequest(
+                            method='tools/call',
+                            params=mcp_types.CallToolRequestParams(
+                                name=name,
+                                arguments=tool_args,
+                                _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
+                            ),
+                        )
+                    ),
+                    mcp_types.CallToolResult,
+                )
+            except McpError as e:
+                raise exceptions.ModelRetry(e.error.message)
 
         content = [self._map_tool_result_part(part) for part in result.content]
 
@@ -245,15 +223,11 @@ class MCPServer(AbstractToolset[Any], ABC):
         if self._running_count <= 0:
             await self._exit_stack.aclose()
 
-    def _get_sampling_model(self) -> models.Model | None:
-        return self._override_sampling_model.get() or self.sampling_model
-
     async def _sampling_callback(
         self, context: RequestContext[ClientSession, Any], params: mcp_types.CreateMessageRequestParams
     ) -> mcp_types.CreateMessageResult | mcp_types.ErrorData:
         """MCP sampling callback."""
-        sampling_model = self._get_sampling_model()
-        if sampling_model is None:
+        if self.sampling_model is None:
             raise ValueError('Sampling model is not set')  # pragma: no cover
 
         pai_messages = _mcp.map_from_mcp_params(params)
@@ -265,7 +239,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         if stop_sequences := params.stopSequences:  # pragma: no branch
             model_settings['stop_sequences'] = stop_sequences
 
-        model_response = await sampling_model.request(
+        model_response = await self.sampling_model.request(
             pai_messages,
             model_settings,
             models.ModelRequestParameters(),
@@ -273,7 +247,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         return mcp_types.CreateMessageResult(
             role='assistant',
             content=_mcp.map_from_model_response(model_response),
-            model=sampling_model.model_name,
+            model=self.sampling_model.model_name,
         )
 
     def _map_tool_result_part(

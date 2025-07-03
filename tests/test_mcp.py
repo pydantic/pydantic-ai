@@ -68,7 +68,7 @@ def agent(model: Model, mcp_server: MCPServerStdio) -> Agent:
 
 @pytest.fixture
 def run_context(model: Model) -> RunContext[int]:
-    return RunContext(deps=0, model=model, usage=Usage(), sampling_model=model)
+    return RunContext(deps=0, model=model, usage=Usage())
 
 
 async def test_stdio_server(run_context: RunContext[int]):

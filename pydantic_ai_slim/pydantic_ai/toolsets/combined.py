@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any
+from typing import Any, Callable
 
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
@@ -88,6 +88,10 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
     ) -> Any:
         return await self._toolset_for_tool_name(name).call_tool(ctx, name, tool_args, *args, **kwargs)
+
+    def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
+        for toolset in self.toolsets:
+            toolset.accept(visitor)
 
     def _toolset_for_tool_name(self, name: str) -> AbstractToolset[AgentDepsT]:
         try:
