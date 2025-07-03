@@ -2,16 +2,22 @@ import re
 
 import httpx
 import pytest
+from pytest_mock import MockerFixture
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai.profiles.cohere import cohere_model_profile
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.github import GitHubProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
@@ -49,33 +55,53 @@ def test_github_pass_openai_client() -> None:
     assert provider.client == openai_client
 
 
-def test_github_model_profiles():
-    from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
-
+def test_github_provider_model_profile(mocker: MockerFixture):
     provider = GitHubProvider(api_key='ghp_test_token')
 
-    # Test Grok models (returns None profile, so gets OpenAI defaults)
-    grok_model = OpenAIModel('xai/grok-3-mini', provider=provider)
-    assert isinstance(grok_model.profile, OpenAIModelProfile)
-    assert grok_model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    ns = 'pydantic_ai.providers.github'
+    meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
+    deepseek_model_profile_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
+    mistral_model_profile_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
+    cohere_model_profile_mock = mocker.patch(f'{ns}.cohere_model_profile', wraps=cohere_model_profile)
+    grok_model_profile_mock = mocker.patch(f'{ns}.grok_model_profile', wraps=grok_model_profile)
+    openai_model_profile_mock = mocker.patch(f'{ns}.openai_model_profile', wraps=openai_model_profile)
 
-    # Test Meta models (returns profile with InlineDefsJsonSchemaTransformer)
-    meta_model = OpenAIModel('meta/Llama-3.2-11B-Vision-Instruct', provider=provider)
-    assert isinstance(meta_model.profile, OpenAIModelProfile)
-    assert meta_model.profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    meta_profile = provider.model_profile('meta/Llama-3.2-11B-Vision-Instruct')
+    meta_model_profile_mock.assert_called_with('llama-3.2-11b-vision-instruct')
+    assert meta_profile is not None
+    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
-    # Test Microsoft models (uses OpenAI profile)
-    microsoft_model = OpenAIModel('microsoft/Phi-3.5-mini-instruct', provider=provider)
-    assert isinstance(microsoft_model.profile, OpenAIModelProfile)
-    assert microsoft_model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    meta_profile = provider.model_profile('meta/Llama-3.1-405B-Instruct')
+    meta_model_profile_mock.assert_called_with('llama-3.1-405b-instruct')
+    assert meta_profile is not None
+    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
-    # Test fallback for unknown models
-    provider = GitHubProvider(api_key='ghp_test_token')
-    unknown_model = OpenAIModel('some-unknown-model', provider=provider)
-    assert isinstance(unknown_model.profile, OpenAIModelProfile)
-    assert unknown_model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    deepseek_profile = provider.model_profile('deepseek/deepseek-coder')
+    deepseek_model_profile_mock.assert_called_with('deepseek-coder')
+    assert deepseek_profile is not None
+    assert deepseek_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
-    # Test model with unknown provider prefix (has '/' but provider not in dictionary)
-    unknown_provider_model = OpenAIModel('unknown-provider/some-model', provider=provider)
-    assert isinstance(unknown_provider_model.profile, OpenAIModelProfile)
-    assert unknown_provider_model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    mistral_profile = provider.model_profile('mistral-ai/mixtral-8x7b-instruct')
+    mistral_model_profile_mock.assert_called_with('mixtral-8x7b-instruct')
+    assert mistral_profile is not None
+    assert mistral_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+    cohere_profile = provider.model_profile('cohere/command-r-plus')
+    cohere_model_profile_mock.assert_called_with('command-r-plus')
+    assert cohere_profile is not None
+    assert cohere_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+    grok_profile = provider.model_profile('xai/grok-3-mini')
+    grok_model_profile_mock.assert_called_with('grok-3-mini')
+    assert grok_profile is not None
+    assert grok_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+    microsoft_profile = provider.model_profile('microsoft/Phi-3.5-mini-instruct')
+    openai_model_profile_mock.assert_called_with('phi-3.5-mini-instruct')
+    assert microsoft_profile is not None
+    assert microsoft_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+    unknown_profile = provider.model_profile('some-unknown-model')
+    openai_model_profile_mock.assert_called_with('some-unknown-model')
+    assert unknown_profile is not None
+    assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
