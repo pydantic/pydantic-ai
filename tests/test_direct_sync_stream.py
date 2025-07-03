@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import threading
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -202,6 +203,18 @@ def test_model_request_stream_sync_repr_no_stream():
     repr_str = repr(stream_sync)
     assert 'StreamedResponseSync' in repr_str
     assert 'context_entered=False' in repr_str
+
+
+def test_streamed_response_sync_start_producer_and_repr():
+    mock_cm = Mock()
+    srs = StreamedResponseSync(_async_stream_cm=mock_cm)
+    srs._start_producer()  # pyright: ignore[reportPrivateUsage]
+    t = srs._thread  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(t, threading.Thread)
+    srs._start_producer()  # pyright: ignore[reportPrivateUsage]
+    assert srs._thread is t  # pyright: ignore[reportPrivateUsage]
+    r = repr(srs)
+    assert r.startswith('StreamedResponseSync') and 'context_entered' in r
 
 
 def test_model_request_stream_sync_stream_ready_failure():
