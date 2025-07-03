@@ -522,6 +522,64 @@ agent = Agent('openai:gpt-4o', history_processors=[filter_responses, summarize_o
 In this case, the `filter_responses` processor will be applied first, and the
 `summarize_old_messages` processor will be applied second.
 
+### Modifying Message History
+
+By default, history processors only modify the messages sent to the model without changing the original conversation history. However, you can use `HistoryProcessors` with `replace_history=True` to actually modify the original message history stored in the agent.
+
+This is useful for scenarios like permanently compressing long conversations, implementing sliding window memory management, or removing sensitive information from the conversation history.
+
+```python {title="modify_message_history.py"}
+from pydantic_ai import Agent, HistoryProcessors
+from pydantic_ai.messages import ModelMessage, ModelRequest
+
+def keep_recent_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Keep only the last 3 messages to manage memory."""
+    return messages[-3:] if len(messages) > 3 else messages
+
+# Create HistoryProcessors with replace_history=True
+processors = HistoryProcessors(
+    funcs=[keep_recent_messages],
+    replace_history=True
+)
+
+agent = Agent('openai:gpt-4o', history_processors=processors)
+
+# Long conversation history
+long_history = [
+    # ... assume this contains many messages
+]
+
+result = agent.run_sync('What did we discuss recently?', message_history=long_history)
+
+# The original history has been modified - only recent messages remain
+print(len(result.all_messages()))  # Much shorter than the original long_history
+```
+
+You can also combine multiple processors with `replace_history=True`:
+
+```python {title="multiple_processors_with_replace.py"}
+from pydantic_ai import Agent
+from pydantic_ai._agent_graph import HistoryProcessors
+from pydantic_ai.messages import ModelMessage, ModelRequest
+
+def remove_system_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    # Remove system messages for privacy
+    return [msg for msg in messages if not is_system_message(msg)]
+
+def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    # Keep only the last 5 messages
+    return messages[-5:] if len(messages) > 5 else messages
+
+processors = HistoryProcessors(
+    funcs=[remove_system_messages, summarize_old_messages],
+    replace_history=True
+)
+
+agent = Agent('openai:gpt-4o', history_processors=processors)
+```
+
+**Note:** When `replace_history=False` (the default), the behavior is the same as using a list of processors directly - the original conversation history remains unchanged.
+
 ## Examples
 
 For a more complete example of using messages in conversations, see the [chat app](examples/chat-app.md) example.

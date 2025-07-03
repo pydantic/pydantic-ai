@@ -35,6 +35,7 @@ __all__ = (
     'build_run_context',
     'capture_run_messages',
     'HistoryProcessor',
+    'HistoryProcessors',
 )
 
 
@@ -66,6 +67,16 @@ HistoryProcessor = Union[
 
 Can optionally accept a `RunContext` as a parameter.
 """
+
+
+@dataclasses.dataclass
+class HistoryProcessors[DepsT]:
+    """A wrapper for a list of history processors."""
+
+    funcs: list[HistoryProcessor[DepsT]]
+    """A list of functions to process the message history."""
+    replace_history: bool = False
+    """Whether to replace the message history with the processed history."""
 
 
 @dataclasses.dataclass
@@ -106,7 +117,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     output_schema: _output.OutputSchema[OutputDataT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
 
-    history_processors: Sequence[HistoryProcessor[DepsT]]
+    history_processors: HistoryProcessors[DepsT]
 
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
     mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
@@ -358,9 +369,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = await _process_message_history(
-            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
-        )
+        message_history = await _process_message_history(ctx.state, ctx.deps.history_processors, build_run_context(ctx))
         async with ctx.deps.model.request_stream(
             message_history, model_settings, model_request_parameters
         ) as streamed_response:
@@ -384,9 +393,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = await _process_message_history(
-            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
-        )
+        message_history = await _process_message_history(ctx.state, ctx.deps.history_processors, build_run_context(ctx))
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.incr(_usage.Usage())
 
@@ -955,12 +962,13 @@ def build_agent_graph(
 
 
 async def _process_message_history(
-    messages: list[_messages.ModelMessage],
-    processors: Sequence[HistoryProcessor[DepsT]],
+    state: GraphAgentState,
+    processors: HistoryProcessors[DepsT],
     run_context: RunContext[DepsT],
 ) -> list[_messages.ModelMessage]:
     """Process message history through a sequence of processors."""
-    for processor in processors:
+    messages = state.message_history
+    for processor in processors.funcs:
         takes_ctx = is_takes_ctx(processor)
 
         if is_async_callable(processor):
@@ -976,4 +984,6 @@ async def _process_message_history(
             else:
                 sync_processor = cast(_HistoryProcessorSync, processor)
                 messages = await run_in_executor(sync_processor, messages)
+    if processors.replace_history:
+        state.message_history = messages
     return messages
