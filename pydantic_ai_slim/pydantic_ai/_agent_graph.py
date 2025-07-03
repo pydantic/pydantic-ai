@@ -70,7 +70,7 @@ Can optionally accept a `RunContext` as a parameter.
 
 
 @dataclasses.dataclass
-class HistoryProcessors[DepsT]:
+class HistoryProcessors(Generic[DepsT]):
     """A wrapper for a list of history processors."""
 
     funcs: list[HistoryProcessor[DepsT]]
