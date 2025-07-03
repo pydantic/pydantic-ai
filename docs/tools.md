@@ -772,7 +772,7 @@ from pydantic_ai.ext.aci import tool_from_aci
 
 tavily_search = tool_from_aci(
     "TAVILY__SEARCH",
-    linked_account_owner_id=os.getenv(LINKED_ACCOUNT_OWNER_ID)
+    linked_account_owner_id=os.getenv("LINKED_ACCOUNT_OWNER_ID")
 )
 
 agent = Agent(

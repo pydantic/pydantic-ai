@@ -2,22 +2,24 @@
 try:
     from aci import ACI
 except ImportError as _import_error:
-    raise ImportError( 
-      'Please install `aci-sdk` to use the ACI Functions/Tools' 
+    raise ImportError(
+        'Please install `aci-sdk` to use the ACI Functions/Tools'
     ) from _import_error
 
 from aci import ACI
 from pydantic_ai import Tool
 from typing import Any
 
+
 def _clean_schema(schema):
     if isinstance(schema, dict):
         # Remove non-standard keys (e.g., 'visible')
-        return {k: clean_schema(v) for k, v in schema.items() if k not in {'visible'}}
+        return {k: _clean_schema(v) for k, v in schema.items() if k not in {'visible'}}
     elif isinstance(schema, list):
-        return [clean_schema(item) for item in schema]
+        return [_clean_schema(item) for item in schema]
     else:
         return schema
+
 
 def tool_from_aci(
     aci_function: str,
@@ -36,14 +38,14 @@ def tool_from_aci(
     ```python
     tavily_search = tool_from_aci(
         "TAVILY__SEARCH",
-        linked_account_owner_id=LINKED_ACCOUNT_OWNER_ID
+        linked_account_owner_id=os.getenv("LINKED_ACCOUNT_OWNER_ID")
     )
 
     agent = Agent(
         "openai:gpt-4.1",
         tools=[tavily_search]
     )
-    
+
     result = agent.run_sync("Search the web and tell me the next match Chelsea will play and when the match is")
     print(result.output)
     ```
@@ -58,7 +60,8 @@ def tool_from_aci(
         'additionalProperties': inputs.get('additionalProperties', False),
         'properties': inputs.get('properties', {}),
         'required': inputs.get('required', []),
-        'type': inputs.get('type', 'object'), # Default to 'object' if not specified
+        # Default to 'object' if not specified
+        'type': inputs.get('type', 'object'),
     }
 
     # Clean the schema
