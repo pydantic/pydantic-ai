@@ -528,54 +528,32 @@ By default, history processors only modify the messages sent to the model withou
 
 This is useful for scenarios like permanently compressing long conversations, implementing sliding window memory management, or removing sensitive information from the conversation history.
 
-```python {title="modify_message_history.py"}
+```python {title="modify_message_history_with_replace_history.py"}
 from pydantic_ai import Agent, HistoryProcessors
-from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.messages import ModelMessage
 
-def keep_recent_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Keep only the last 3 messages to manage memory."""
-    return messages[-3:] if len(messages) > 3 else messages
-
-# Create HistoryProcessors with replace_history=True
-processors = HistoryProcessors(
-    funcs=[keep_recent_messages],
-    replace_history=True
+# Use a cheaper model to summarize old messages.
+summarize_agent = Agent(
+    'openai:gpt-4o-mini',
+    instructions="""
+Summarize this conversation, omitting small talk and unrelated topics.
+Focus on the technical discussion and next steps.
+""",
 )
 
-agent = Agent('openai:gpt-4o', history_processors=processors)
 
-# Long conversation history
-long_history = [
-    # ... assume this contains many messages
-]
+async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    # Summarize the oldest 10 messages
+    if len(messages) > 10:
+        oldest_messages = messages[:10]
+        summary = await summarize_agent.run(message_history=oldest_messages)
+        # Return the last message and the summary
+        return summary.new_messages() + messages[-1:]
 
-result = agent.run_sync('What did we discuss recently?', message_history=long_history)
+    return messages
 
-# The original history has been modified - only recent messages remain
-print(len(result.all_messages()))  # Much shorter than the original long_history
-```
 
-You can also combine multiple processors with `replace_history=True`:
-
-```python {title="multiple_processors_with_replace.py"}
-from pydantic_ai import Agent
-from pydantic_ai._agent_graph import HistoryProcessors
-from pydantic_ai.messages import ModelMessage, ModelRequest
-
-def remove_system_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
-    # Remove system messages for privacy
-    return [msg for msg in messages if not is_system_message(msg)]
-
-def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
-    # Keep only the last 5 messages
-    return messages[-5:] if len(messages) > 5 else messages
-
-processors = HistoryProcessors(
-    funcs=[remove_system_messages, summarize_old_messages],
-    replace_history=True
-)
-
-agent = Agent('openai:gpt-4o', history_processors=processors)
+agent = Agent('openai:gpt-4o', history_processors=HistoryProcessors(funcs=[summarize_old_messages], replace_history=True))
 ```
 
 **Note:** When `replace_history=False` (the default), the behavior is the same as using a list of processors directly - the original conversation history remains unchanged.
