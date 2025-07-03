@@ -612,7 +612,7 @@ interactions:
       - application/json
       host:
       - generativelanguage.googleapis.com
-    method: POST
+    method: post
     parsed_body:
       contents:
       - parts:

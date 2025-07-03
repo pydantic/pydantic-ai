@@ -100,14 +100,10 @@ class FileUrl(ABC):
     """
 
     vendor_metadata: dict[str, Any] | None = None
-    """The vendor specific metadata for the file.
-    Currently supports only those keys:
+    """Vendor-specific metadata for the file.
 
-    fps: float,
-    start_offset: str (ex. 1800s),
-    end_offset: str (ex. 1800s)
-
-    And works only for google models for video analysis.
+    Supported by:
+    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     """
 
     @property
@@ -275,14 +271,10 @@ class BinaryContent:
     """The media type of the binary data."""
 
     vendor_metadata: dict[str, Any] | None = None
-    """The vendor specific metadata for the file.
-    Currently supports only those keys:
+    """Vendor-specific metadata for the file.
 
-    fps: float,
-    start_offset: str (ex. 1800s),
-    end_offset: str (ex. 1800s)
-
-    And works only for google models for video analysis.
+    Supported by:
+    - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     """
 
     kind: Literal['binary'] = 'binary'

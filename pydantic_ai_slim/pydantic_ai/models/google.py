@@ -63,7 +63,6 @@ try:
         ToolConfigDict,
         ToolDict,
         ToolListUnionDict,
-        VideoMetadata,
     )
 
     from ..providers.google import GoogleProvider
@@ -409,25 +408,13 @@ class GoogleModel(Model):
                     # NOTE: The type from Google GenAI is incorrect, it should be `str`, not `bytes`.
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     inline_data_dict = {'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}}
-
                     if item.vendor_metadata:
-                        video_metadata = VideoMetadata(
-                            fps=item.vendor_metadata.get('fps', None),
-                            start_offset=item.vendor_metadata.get('start_offset', None),
-                            end_offset=item.vendor_metadata.get('end_offset', None),
-                        )
-                        inline_data_dict['video_metadata'] = video_metadata  # type: ignore
-
+                        inline_data_dict['video_metadata'] = item.vendor_metadata
                     content.append(inline_data_dict)  # type: ignore
                 elif isinstance(item, VideoUrl) and item.is_youtube:
                     file_data_dict = {'file_data': {'file_uri': item.url, 'mime_type': item.media_type}}
                     if item.vendor_metadata:
-                        video_metadata = VideoMetadata(
-                            fps=item.vendor_metadata.get('fps', None),
-                            start_offset=item.vendor_metadata.get('start_offset', None),
-                            end_offset=item.vendor_metadata.get('end_offset', None),
-                        )
-                        inline_data_dict['video_metadata'] = video_metadata  # type: ignore
+                        file_data_dict['video_metadata'] = item.vendor_metadata
                     content.append(file_data_dict)  # type: ignore
                 elif isinstance(item, FileUrl):
                     if self.system == 'google-gla' or item.force_download:
