@@ -5,7 +5,7 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Self, Union, cast, overload
 
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator
@@ -26,6 +26,7 @@ from .output import (
     TextOutput,
     TextOutputFunc,
     ToolOutput,
+    _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets import AbstractToolset
@@ -233,7 +234,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
             else:
                 other_outputs.append(output)
 
-        toolset = cls._build_toolset(tool_outputs + other_outputs, name=name, description=description, strict=strict)
+        toolset = OutputToolset.build(tool_outputs + other_outputs, name=name, description=description, strict=strict)
 
         if len(text_outputs) > 0:
             if len(text_outputs) > 1:
@@ -267,73 +268,6 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
             return schema
 
         raise UserError('At least one output type must be provided.')
-
-    @staticmethod
-    def _build_toolset(
-        outputs: list[OutputTypeOrFunction[OutputDataT] | ToolOutput[OutputDataT]],
-        name: str | None = None,
-        description: str | None = None,
-        strict: bool | None = None,
-    ) -> OutputToolset[Any] | None:
-        if len(outputs) == 0:
-            return None
-
-        processors: dict[str, ObjectOutputProcessor[Any]] = {}
-        tool_defs: list[ToolDefinition] = []
-
-        default_name = name or DEFAULT_OUTPUT_TOOL_NAME
-        default_description = description
-        default_strict = strict
-
-        multiple = len(outputs) > 1
-        for output in outputs:
-            name = None
-            description = None
-            strict = None
-            if isinstance(output, ToolOutput):
-                # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
-                name = output.name
-                description = output.description
-                strict = output.strict
-
-                output = output.output
-
-            if name is None:
-                name = default_name
-                if multiple:
-                    name += f'_{output.__name__}'
-
-            i = 1
-            original_name = name
-            while name in processors:
-                i += 1
-                name = f'{original_name}_{i}'
-
-            description = description or default_description
-            if strict is None:
-                strict = default_strict
-
-            processor = ObjectOutputProcessor(output=output, description=description, strict=strict)
-            object_def = processor.object_def
-
-            description = object_def.description
-            if not description:
-                description = DEFAULT_OUTPUT_TOOL_DESCRIPTION
-                if multiple:
-                    description = f'{object_def.name}: {description}'
-
-            tool_def = ToolDefinition(
-                name=name,
-                description=description,
-                parameters_json_schema=object_def.json_schema,
-                strict=object_def.strict,
-                outer_typed_dict_key=processor.outer_typed_dict_key,
-                kind='output',
-            )
-            processors[name] = processor
-            tool_defs.append(tool_def)
-
-        return OutputToolset(processors=processors, tool_defs=tool_defs)
 
     @staticmethod
     def _build_processor(
@@ -908,6 +842,74 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     max_retries: int = field(default=1)
     output_validators: list[OutputValidator[AgentDepsT, Any]] = field(default_factory=list)
 
+    @classmethod
+    def build(
+        cls,
+        outputs: list[OutputTypeOrFunction[OutputDataT] | ToolOutput[OutputDataT]],
+        name: str | None = None,
+        description: str | None = None,
+        strict: bool | None = None,
+    ) -> Self | None:
+        if len(outputs) == 0:
+            return None
+
+        processors: dict[str, ObjectOutputProcessor[Any]] = {}
+        tool_defs: list[ToolDefinition] = []
+
+        default_name = name or DEFAULT_OUTPUT_TOOL_NAME
+        default_description = description
+        default_strict = strict
+
+        multiple = len(outputs) > 1
+        for output in outputs:
+            name = None
+            description = None
+            strict = None
+            if isinstance(output, ToolOutput):
+                # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
+                name = output.name
+                description = output.description
+                strict = output.strict
+
+                output = output.output
+
+            if name is None:
+                name = default_name
+                if multiple:
+                    name += f'_{output.__name__}'
+
+            i = 1
+            original_name = name
+            while name in processors:
+                i += 1
+                name = f'{original_name}_{i}'
+
+            description = description or default_description
+            if strict is None:
+                strict = default_strict
+
+            processor = ObjectOutputProcessor(output=output, description=description, strict=strict)
+            object_def = processor.object_def
+
+            description = object_def.description
+            if not description:
+                description = DEFAULT_OUTPUT_TOOL_DESCRIPTION
+                if multiple:
+                    description = f'{object_def.name}: {description}'
+
+            tool_def = ToolDefinition(
+                name=name,
+                description=description,
+                parameters_json_schema=object_def.json_schema,
+                strict=object_def.strict,
+                outer_typed_dict_key=processor.outer_typed_dict_key,
+                kind='output',
+            )
+            processors[name] = processor
+            tool_defs.append(tool_def)
+
+        return cls(processors=processors, tool_defs=tool_defs)
+
     def __init__(
         self,
         tool_defs: list[ToolDefinition],
@@ -942,17 +944,29 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         return output
 
 
-def _flatten_output_spec(output_spec: T | Sequence[T]) -> list[T]:
-    outputs: Sequence[T]
+@overload
+def _flatten_output_spec(
+    output_spec: OutputTypeOrFunction[T] | Sequence[OutputTypeOrFunction[T]],
+) -> Sequence[OutputTypeOrFunction[T]]: ...
+
+
+@overload
+def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem[T]]: ...
+
+
+def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem[T]]:
+    outputs: Sequence[OutputSpec[T]]
     if isinstance(output_spec, Sequence):
         outputs = output_spec
     else:
         outputs = (output_spec,)
 
-    outputs_flat: list[T] = []
+    outputs_flat: list[_OutputSpecItem[T]] = []
     for output in outputs:
+        if isinstance(output, Sequence):
+            outputs_flat.extend(_flatten_output_spec(cast(OutputSpec[T], output)))
         if union_types := _utils.get_union_args(output):
             outputs_flat.extend(union_types)
         else:
-            outputs_flat.append(output)
+            outputs_flat.append(cast(_OutputSpecItem[T], output))
     return outputs_flat

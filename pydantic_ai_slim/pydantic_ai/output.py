@@ -267,15 +267,17 @@ class TextOutput(Generic[OutputDataT]):
     """The function that will be called to process the model's plain text output. The function must take a single string argument."""
 
 
+_OutputSpecItem = TypeAliasType(
+    '_OutputSpecItem',
+    Union[OutputTypeOrFunction[T_co], ToolOutput[T_co], NativeOutput[T_co], PromptedOutput[T_co], TextOutput[T_co]],
+    type_params=(T_co,),
+)
+
 OutputSpec = TypeAliasType(
     'OutputSpec',
     Union[
-        OutputTypeOrFunction[T_co],
-        ToolOutput[T_co],
-        NativeOutput[T_co],
-        PromptedOutput[T_co],
-        TextOutput[T_co],
-        Sequence[Union[OutputTypeOrFunction[T_co], ToolOutput[T_co], TextOutput[T_co]]],
+        _OutputSpecItem[T_co],
+        Sequence['OutputSpec[T_co]'],
     ],
     type_params=(T_co,),
 )
