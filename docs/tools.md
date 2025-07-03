@@ -749,3 +749,42 @@ print(result.output)
 
 1. While this task is simple Gemini 1.5 didn't want to use the provided tool. Gemini 2.0 is still fast and cheap.
 2. The release date of this game is the 30th of May 2025, which was confirmed after the knowledge cutoff for Gemini 2.0 (August 2024).
+
+
+## Use ACI.dev Tools {#aci-tools}
+
+ACI enables to connect your AI Agents to 600+ Integrations/tools like Google Gmail, Slack, Zendesk etc which will make your Agent powerful and robust. 
+If you'd like to use a tool from [aci.dev tools](https://www.aci.dev/tools) with PydanticAI, you can use the `pydancic_ai.ext.aci.tool_from_aci` convenience method.
+Note that you're required to provide an `ACI_API_KEY` which you can get by registering an account with ACI. Ensure you provide the `ACI_API_KEY` in your environment variable. When creating ACI tools, you're required to passte name of the ACI function/tool you want to use and your `LINKED_ACCOUNT_OWNER_ID` which can be found in your ACI account.
+Before you use any ACI tool/function, ensure that you have authenticated and properly configured the required platform that's providing the tool.
+
+Note that PydanticAI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the ACI tool, and up to the ACI tool to raise an error if the arguments are invalid.
+
+Here is how you can use the `TAVILY__SEARCH` tool from ACI.dev to search the web. You need to install `aci-sdk` to have this work properly.
+
+The assumption in this example is that you have `ACI_API_KEY` and `LINKED_ACCOUNT_OWNER_ID` as environment variables.
+
+```python
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.ext.aci import tool_from_aci
+
+tavily_search = tool_from_aci(
+    "TAVILY__SEARCH",
+    linked_account_owner_id=os.getenv(LINKED_ACCOUNT_OWNER_ID)
+)
+
+agent = Agent(
+    "openai:gpt-4.1",
+    system_prompt=(
+        """
+        You are a highly capable assistant. Make sure to do the tasks you're assigned to do.
+        """
+    ),
+    tools=[tavily_search]
+)
+
+result = agent.run_sync("Search the web and tell me the next match Chelsea will play and when the match is")
+print(result.output)
+```

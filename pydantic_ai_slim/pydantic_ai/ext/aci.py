@@ -1,3 +1,11 @@
+# Checking whether aci-sdk is installed
+try:
+    from aci import ACI
+except ImportError as _import_error:
+    raise ImportError( 
+      'Please install `aci-sdk` to use the ACI Functions/Tools' 
+    ) from _import_error
+
 from aci import ACI
 from pydantic_ai import Tool
 from typing import Any
