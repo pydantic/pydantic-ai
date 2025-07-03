@@ -1,6 +1,8 @@
 """Tests for the synchronous streaming functionality in the direct module."""
 
+import asyncio
 import re
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -13,6 +15,7 @@ from pydantic_ai.messages import (
     TextPart,
     TextPartDelta,
 )
+from pydantic_ai.models import StreamedResponseSync
 
 
 def test_model_request_stream_sync_basic():
@@ -159,3 +162,65 @@ def test_model_request_stream_sync_without_context_manager():
     with pytest.raises(RuntimeError, match=expected_error_msg):
         for _ in stream_cm:
             break
+
+
+def test_model_request_stream_sync_exception_in_stream():
+    """Test handling of exceptions raised during streaming."""
+    # Create a mock async stream that raises an exception
+    async_stream_mock = AsyncMock()
+    async_stream_mock.__aenter__ = AsyncMock(side_effect=ValueError('Stream error'))
+
+    stream_sync = StreamedResponseSync(_async_stream_cm=async_stream_mock)
+
+    # Test that exception is propagated when iterating
+    with stream_sync:
+        with pytest.raises(ValueError, match='Stream error'):
+            list(stream_sync)
+
+
+def test_model_request_stream_sync_timeout():
+    """Test timeout when stream fails to initialize."""
+    async_stream_mock = AsyncMock()
+
+    # Mock a scenario where stream never becomes ready
+    async def slow_init():
+        await asyncio.sleep(0.1)
+
+    async_stream_mock.__aenter__ = AsyncMock(side_effect=slow_init)
+
+    stream_sync = StreamedResponseSync(_async_stream_cm=async_stream_mock)
+
+    with patch('pydantic_ai.models.STREAM_INITIALIZATION_TIMEOUT', 0.01):
+        with stream_sync:
+            with pytest.raises(RuntimeError, match='Stream failed to initialize within timeout'):
+                stream_sync.get()
+
+
+def test_model_request_stream_sync_repr_no_stream():
+    """Test __repr__ method for StreamedResponseSync when no stream is ready."""
+    stream_sync = StreamedResponseSync(_async_stream_cm=Mock())
+    repr_str = repr(stream_sync)
+    assert 'StreamedResponseSync' in repr_str
+    assert 'context_entered=False' in repr_str
+
+
+def test_model_request_stream_sync_stream_ready_failure():
+    """Test stream initialization failure after timeout."""
+    async_stream_mock = AsyncMock()
+
+    # Mock a scenario where stream initialization sets ready but stream is still None
+    async def mock_init():
+        pass
+
+    async_stream_mock.__aenter__ = AsyncMock(side_effect=mock_init)
+
+    stream_sync = StreamedResponseSync(_async_stream_cm=async_stream_mock)
+
+    with patch('pydantic_ai.models.STREAM_INITIALIZATION_TIMEOUT', 0.01):
+        with stream_sync:
+            # Wait a bit to let the thread start
+            import time
+
+            time.sleep(0.02)
+            with pytest.raises(RuntimeError, match='Stream failed to initialize'):
+                stream_sync.get()
