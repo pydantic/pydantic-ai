@@ -26,7 +26,7 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
-class GitHubModelsProvider(Provider[AsyncOpenAI]):
+class GitHubProvider(Provider[AsyncOpenAI]):
     """Provider for GitHub Models API.
 
     GitHub Models provides access to various AI models through an OpenAI-compatible API.
@@ -35,7 +35,7 @@ class GitHubModelsProvider(Provider[AsyncOpenAI]):
 
     @property
     def name(self) -> str:
-        return 'github_models'
+        return 'github'
 
     @property
     def base_url(self) -> str:
@@ -46,33 +46,29 @@ class GitHubModelsProvider(Provider[AsyncOpenAI]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        model_name_lower = model_name.lower()
-
-        # GitHub Models uses prefixes like "xai/", "microsoft/", "meta/", etc.
-        prefix_to_profile = {
-            'xai/': grok_model_profile,
-            'meta/': meta_model_profile,
-            'microsoft/': openai_model_profile,
-            'mistral-ai/': mistral_model_profile,
-            'cohere/': cohere_model_profile,
-            'deepseek/': deepseek_model_profile,
+        provider_to_profile = {
+            'xai': grok_model_profile,
+            'meta': meta_model_profile,
+            'microsoft': openai_model_profile,
+            'mistral-ai': mistral_model_profile,
+            'cohere': cohere_model_profile,
+            'deepseek': deepseek_model_profile,
         }
 
-        for prefix, profile_func in prefix_to_profile.items():
-            if model_name_lower.startswith(prefix):
-                # Remove the prefix when calling the profile function
-                stripped_name = model_name[len(prefix.rstrip('/')) :]
-                if stripped_name.startswith('/'):
-                    stripped_name = stripped_name[1:]
+        profile = None
 
-                profile = profile_func(stripped_name if stripped_name else model_name)
+        # If the model name does not contain a provider prefix, we assume it's an OpenAI model
+        if '/' not in model_name:
+            return openai_model_profile(model_name)
 
-                # GitHub Models uses OpenAI-compatible API, so we need OpenAIJsonSchemaTransformer
-                # unless json_schema_transformer is set explicitly
-                return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        provider, model_name = model_name.lower().split('/', 1)
+        if provider in provider_to_profile:
+            model_name, *_ = model_name.split(':', 1)  # drop tags
+            profile = provider_to_profile[provider](model_name)
 
-        # Default to OpenAI profile for unrecognized models
-        return openai_model_profile(model_name)
+        # As OpenRouterProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # we need to maintain that behavior unless json_schema_transformer is set explicitly
+        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
 
     @overload
     def __init__(self) -> None: ...
@@ -96,15 +92,15 @@ class GitHubModelsProvider(Provider[AsyncOpenAI]):
         """Create a new GitHub Models provider.
 
         Args:
-            api_key: The GitHub token to use for authentication. If not provided, the `GITHUB_TOKEN`
+            api_key: The GitHub token to use for authentication. If not provided, the `GITHUB_API_KEY`
                 environment variable will be used if available.
             openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        api_key = api_key or os.getenv('GITHUB_TOKEN')
+        api_key = api_key or os.getenv('GITHUB_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
-                'Set the `GITHUB_TOKEN` environment variable or pass it via `GitHubModelsProvider(api_key=...)`'
+                'Set the `GITHUB_API_KEY` environment variable or pass it via `GitHubProvider(api_key=...)`'
                 ' to use the GitHub Models provider.'
             )
 
@@ -113,5 +109,5 @@ class GitHubModelsProvider(Provider[AsyncOpenAI]):
         elif http_client is not None:
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = cached_async_http_client(provider='github_models')
+            http_client = cached_async_http_client(provider='github')
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)

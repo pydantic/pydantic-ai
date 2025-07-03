@@ -19,7 +19,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
-    from pydantic_ai.providers.github_models import GitHubModelsProvider
+    from pydantic_ai.providers.github import GitHubProvider
     from pydantic_ai.providers.google_gla import GoogleGLAProvider
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
     from pydantic_ai.providers.grok import GrokProvider
@@ -45,7 +45,7 @@ with try_import() as imports_successful:
         ('fireworks', FireworksProvider, 'FIREWORKS_API_KEY'),
         ('together', TogetherProvider, 'TOGETHER_API_KEY'),
         ('heroku', HerokuProvider, 'HEROKU_INFERENCE_KEY'),
-        ('github_models', GitHubModelsProvider, 'GITHUB_TOKEN'),
+        ('github', GitHubProvider, 'GITHUB_API_KEY'),
     ]
 
 if not imports_successful():

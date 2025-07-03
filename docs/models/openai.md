@@ -370,32 +370,28 @@ agent = Agent(model)
 
 To use [GitHub Models](https://docs.github.com/en/github-models), you'll need a GitHub personal access token with the `models: read` permission.
 
-Once you have the token, you can use it with the [`GitHubModelsProvider`][pydantic_ai.providers.github_models.GitHubModelsProvider]:
+Once you have the token, you can use it with the [`GitHubProvider`][pydantic_ai.providers.github.GitHubProvider]:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.github_models import GitHubModelsProvider
+from pydantic_ai.providers.github import GitHubProvider
 
 model = OpenAIModel(
     'xai/grok-3-mini',  # GitHub Models uses prefixed model names
-    provider=GitHubModelsProvider(api_key='your-github-token'),
+    provider=GitHubProvider(api_key='your-github-token'),
 )
 agent = Agent(model)
 ...
 ```
 
-You can also set the `GITHUB_TOKEN` environment variable:
+You can also set the `GITHUB_API_KEY` environment variable:
 
 ```bash
-export GITHUB_TOKEN='your-github-token'
+export GITHUB_API_KEY='your-github-token'
 ```
 
-GitHub Models supports various model families with different prefixes:
-- `xai/grok-3-mini` - Grok models from xAI
-- `openai/gpt-4.1` - OpenAI models
-- `microsoft/Phi-3.5-mini-instruct` - Microsoft Phi models
-- `mistral-ai/ministral-3b` - Mistral models
+GitHub Models supports various model families with different prefixes. You can see the full list on the [GitHub Marketplace](https://github.com/marketplace?type=models) or the public [catalog endpoint](https://models.github.ai/catalog/models).
 
 ### Perplexity
 

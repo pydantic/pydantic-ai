@@ -191,7 +191,7 @@ class OpenAIModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
-            'openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku', 'github_models'
+            'openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku', 'github'
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,

@@ -578,7 +578,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
         'fireworks',
         'together',
         'heroku',
-        'github_models',
+        'github',
     ):
         from .openai import OpenAIModel
 
