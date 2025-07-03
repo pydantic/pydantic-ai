@@ -5,11 +5,11 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Self, Union, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast, overload
 
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator
-from typing_extensions import TypedDict, TypeVar, assert_never
+from typing_extensions import Self, TypedDict, TypeVar, assert_never
 
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
