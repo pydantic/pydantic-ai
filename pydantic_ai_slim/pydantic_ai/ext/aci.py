@@ -33,28 +33,12 @@ def tool_from_aci(
 
     Returns:
         A PydanticAI tool that can be used in an Agent.
-
-    Example:
-    ```python
-    tavily_search = tool_from_aci(
-        "TAVILY__SEARCH",
-        linked_account_owner_id=os.getenv("LINKED_ACCOUNT_OWNER_ID")
-    )
-
-    agent = Agent(
-        "openai:gpt-4.1",
-        tools=[tavily_search]
-    )
-
-    result = agent.run_sync("Search the web and tell me the next match Chelsea will play and when the match is")
-    print(result.output)
-    ```
     """
     aci = ACI()
     function_definition = aci.functions.get_definition(aci_function)
-    function_name = function_definition["function"]['name']
-    function_description = function_definition["function"]['description']
-    inputs = function_definition["function"]['parameters']
+    function_name = function_definition['function']['name']
+    function_description = function_definition['function']['description']
+    inputs = function_definition['function']['parameters']
 
     json_schema = {
         'additionalProperties': inputs.get('additionalProperties', False),
