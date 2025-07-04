@@ -9,13 +9,13 @@ from contextvars import ContextVar
 from weakref import WeakValueDictionary
 
 from opentelemetry.sdk.trace import ReadableSpan
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
+from opentelemetry.sdk.trace.export import (SimpleSpanProcessor, SpanExporter,
+                                            SpanExportResult)
 from opentelemetry.trace import ProxyTracerProvider, get_tracer_provider
 
 try:
-    from logfire._internal.tracer import (
-        ProxyTracerProvider as LogfireProxyTracerProvider,  # pyright: ignore
-    )
+    from logfire._internal.tracer import \
+        ProxyTracerProvider as LogfireProxyTracerProvider  # pyright: ignore
 
     _LOGFIRE_IS_INSTALLED = True
 except ImportError:  # pragma: no cover

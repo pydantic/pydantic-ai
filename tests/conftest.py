@@ -15,15 +15,14 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
+import pydantic_ai.models
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from pydantic_ai.messages import BinaryContent
+from pydantic_ai.models import Model, cached_async_http_client
 from pytest_mock import MockerFixture
 from typing_extensions import TypeAlias
 from vcr import VCR
-
-import pydantic_ai.models
-from pydantic_ai.messages import BinaryContent
-from pydantic_ai.models import Model, cached_async_http_client
 
 __all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'IsInstance', 'TestEnv', 'ClientWithHandler', 'try_import'
 
@@ -44,7 +43,9 @@ if TYPE_CHECKING:
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
 else:
-    from dirty_equals import IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
+    from dirty_equals import IsDatetime, IsFloat, IsInstance, IsInt
+    from dirty_equals import IsNow as _IsNow
+    from dirty_equals import IsStr
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
@@ -301,7 +302,6 @@ def heroku_inference_key() -> str:
 def bedrock_provider():
     try:
         import boto3
-
         from pydantic_ai.providers.bedrock import BedrockProvider
 
         bedrock_client = boto3.client(
@@ -349,7 +349,6 @@ async def vertex_provider():
 
     try:
         from google import genai
-
         from pydantic_ai.providers.google import GoogleProvider
     except ImportError:  # pragma: lax no cover
         pytest.skip('google is not installed')

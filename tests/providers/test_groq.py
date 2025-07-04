@@ -4,21 +4,20 @@ import re
 
 import httpx
 import pytest
-from pytest_mock import MockerFixture
-
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
+from pydantic_ai.profiles.google import (GoogleJsonSchemaTransformer,
+                                         google_model_profile)
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pytest_mock import MockerFixture
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from groq import AsyncGroq
-
     from pydantic_ai.providers.groq import GroqProvider
 
 

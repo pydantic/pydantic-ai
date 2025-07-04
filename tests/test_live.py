@@ -11,7 +11,6 @@ from typing import Callable
 import httpx
 import pytest
 from pydantic import BaseModel
-
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models import Model
 

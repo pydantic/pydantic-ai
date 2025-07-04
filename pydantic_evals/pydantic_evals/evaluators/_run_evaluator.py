@@ -3,14 +3,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from pydantic import (
-    TypeAdapter,
-    ValidationError,
-)
+from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypeVar
 
 from .context import EvaluatorContext
-from .evaluator import EvaluationReason, EvaluationResult, EvaluationScalar, Evaluator, EvaluatorOutput
+from .evaluator import (EvaluationReason, EvaluationResult, EvaluationScalar,
+                        Evaluator, EvaluatorOutput)
 
 InputsT = TypeVar('InputsT', default=Any, contravariant=True)
 OutputT = TypeVar('OutputT', default=Any, contravariant=True)

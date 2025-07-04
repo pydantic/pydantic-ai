@@ -66,22 +66,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .broker import Broker
-from .schema import (
-    CancelTaskRequest,
-    CancelTaskResponse,
-    GetTaskPushNotificationRequest,
-    GetTaskPushNotificationResponse,
-    GetTaskRequest,
-    GetTaskResponse,
-    ResubscribeTaskRequest,
-    SendTaskRequest,
-    SendTaskResponse,
-    SendTaskStreamingRequest,
-    SendTaskStreamingResponse,
-    SetTaskPushNotificationRequest,
-    SetTaskPushNotificationResponse,
-    TaskNotFoundError,
-)
+from .schema import (CancelTaskRequest, CancelTaskResponse,
+                     GetTaskPushNotificationRequest,
+                     GetTaskPushNotificationResponse, GetTaskRequest,
+                     GetTaskResponse, ResubscribeTaskRequest, SendTaskRequest,
+                     SendTaskResponse, SendTaskStreamingRequest,
+                     SendTaskStreamingResponse, SetTaskPushNotificationRequest,
+                     SetTaskPushNotificationResponse, TaskNotFoundError)
 from .storage import Storage
 
 

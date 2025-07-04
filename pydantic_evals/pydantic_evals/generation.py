@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
+from pydantic_ai import Agent, models
 from typing_extensions import TypeVar
 
-from pydantic_ai import Agent, models
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators.evaluator import Evaluator
 

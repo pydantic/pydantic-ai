@@ -5,29 +5,21 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast, overload
+from typing import (TYPE_CHECKING, Any, Callable, Generic, Literal, Union,
+                    cast, overload)
 
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator
 from typing_extensions import TypedDict, TypeVar, assert_never
 
-from . import _function_schema, _utils, messages as _messages
+from . import _function_schema, _utils
+from . import messages as _messages
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, UserError
-from .output import (
-    NativeOutput,
-    OutputDataT,
-    OutputMode,
-    OutputSpec,
-    OutputTypeOrFunction,
-    PromptedOutput,
-    StructuredOutput,
-    StructuredOutputMode,
-    TextOutput,
-    TextOutputFunc,
-    ToolOutput,
-    structured
-)
+from .output import (NativeOutput, OutputDataT, OutputMode, OutputSpec,
+                     OutputTypeOrFunction, PromptedOutput, StructuredOutput,
+                     StructuredOutputMode, TextOutput, TextOutputFunc,
+                     ToolOutput, structured)
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 
 if TYPE_CHECKING:

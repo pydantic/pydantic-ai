@@ -7,7 +7,6 @@ from typing import Literal, overload
 
 import anyio.to_thread
 import httpx
-
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles import ModelProfile
@@ -18,7 +17,8 @@ try:
     import google.auth
     from google.auth.credentials import Credentials as BaseCredentials
     from google.auth.transport.requests import Request
-    from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+    from google.oauth2.service_account import \
+        Credentials as ServiceAccountCredentials
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-auth` package to use the Google Vertex AI provider, '

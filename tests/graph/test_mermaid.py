@@ -11,17 +11,9 @@ import httpx
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_graph import (
-    BaseNode,
-    Edge,
-    End,
-    EndSnapshot,
-    FullStatePersistence,
-    Graph,
-    GraphRunContext,
-    GraphSetupError,
-    NodeSnapshot,
-)
+from pydantic_graph import (BaseNode, Edge, End, EndSnapshot,
+                            FullStatePersistence, Graph, GraphRunContext,
+                            GraphSetupError, NodeSnapshot)
 from pydantic_graph.nodes import NodeDef
 
 from ..conftest import IsFloat, IsNow

@@ -6,11 +6,10 @@ from typing import Any, cast
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
-from pydantic_core import to_jsonable_python
-
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
+from pydantic_core import to_jsonable_python
 
 from ..conftest import try_import
 
@@ -20,23 +19,17 @@ with try_import() as imports_successful:
 
     from pydantic_evals.evaluators._run_evaluator import run_evaluator
     from pydantic_evals.evaluators._spec import EvaluatorSpec
-    from pydantic_evals.evaluators.common import (
-        Contains,
-        Equals,
-        EqualsExpected,
-        HasMatchingSpan,
-        IsInstance,
-        LLMJudge,
-        MaxDuration,
-        Python,
-    )
+    from pydantic_evals.evaluators.common import (Contains, Equals,
+                                                  EqualsExpected,
+                                                  HasMatchingSpan, IsInstance,
+                                                  LLMJudge, MaxDuration,
+                                                  Python)
     from pydantic_evals.evaluators.context import EvaluatorContext
-    from pydantic_evals.evaluators.evaluator import (
-        EvaluationReason,
-        Evaluator,
-        EvaluatorOutput,
-    )
-    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
+    from pydantic_evals.evaluators.evaluator import (EvaluationReason,
+                                                     Evaluator,
+                                                     EvaluatorOutput)
+    from pydantic_evals.otel._context_in_memory_span_exporter import \
+        context_subtree
     from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]

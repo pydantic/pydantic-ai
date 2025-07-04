@@ -6,9 +6,9 @@ from datetime import timezone
 
 import pytest
 from inline_snapshot import snapshot
-
 from pydantic_ai import Agent, ModelHTTPError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (ModelMessage, ModelRequest, ModelResponse,
+                                  TextPart, UserPromptPart)
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import Usage
@@ -16,7 +16,8 @@ from pydantic_ai.usage import Usage
 from ..conftest import IsNow, try_import
 
 if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
+    from exceptiongroup import \
+        ExceptionGroup as ExceptionGroup  # pragma: lax no cover
 else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 

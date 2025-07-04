@@ -2,9 +2,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import TypeAdapter
-from typing_extensions import TypedDict
-
 from pydantic_ai.tools import Tool
+from typing_extensions import TypedDict
 
 try:
     from tavily import AsyncTavilyClient

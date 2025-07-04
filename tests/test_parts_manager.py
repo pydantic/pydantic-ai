@@ -5,18 +5,11 @@ from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
-
 from pydantic_ai import UnexpectedModelBehavior
 from pydantic_ai._parts_manager import ModelResponsePartsManager
-from pydantic_ai.messages import (
-    PartDeltaEvent,
-    PartStartEvent,
-    TextPart,
-    TextPartDelta,
-    ThinkingPart,
-    ToolCallPart,
-    ToolCallPartDelta,
-)
+from pydantic_ai.messages import (PartDeltaEvent, PartStartEvent, TextPart,
+                                  TextPartDelta, ThinkingPart, ToolCallPart,
+                                  ToolCallPartDelta)
 
 from .conftest import IsStr
 

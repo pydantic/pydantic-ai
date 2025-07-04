@@ -9,72 +9,55 @@ from typing import Any, Literal, Union, cast
 
 import pydantic_core
 from httpx import Timeout
+from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from typing_extensions import assert_never
 
-from pydantic_ai._thinking_part import split_content_into_text_and_thinking
-
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
-from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..messages import (
-    BinaryContent,
-    DocumentUrl,
-    ImageUrl,
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    ModelResponsePart,
-    ModelResponseStreamEvent,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ThinkingPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-    VideoUrl,
-)
+from .._utils import generate_tool_call_id as _generate_tool_call_id
+from .._utils import now_utc as _now_utc
+from .._utils import number_to_datetime
+from ..messages import (BinaryContent, DocumentUrl, ImageUrl, ModelMessage,
+                        ModelRequest, ModelResponse, ModelResponsePart,
+                        ModelResponseStreamEvent, RetryPromptPart,
+                        SystemPromptPart, TextPart, ThinkingPart, ToolCallPart,
+                        ToolReturnPart, UserPromptPart, VideoUrl)
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import Usage
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    check_allow_model_requests,
-    get_user_agent,
-)
+from . import (Model, ModelRequestParameters, StreamedResponse,
+               check_allow_model_requests, get_user_agent)
 
 try:
-    from mistralai import (
-        UNSET,
-        CompletionChunk as MistralCompletionChunk,
-        Content as MistralContent,
-        ContentChunk as MistralContentChunk,
-        FunctionCall as MistralFunctionCall,
-        ImageURL as MistralImageURL,
-        ImageURLChunk as MistralImageURLChunk,
-        Mistral,
-        OptionalNullable as MistralOptionalNullable,
-        TextChunk as MistralTextChunk,
-        ToolChoiceEnum as MistralToolChoiceEnum,
-    )
-    from mistralai.models import (
-        ChatCompletionResponse as MistralChatCompletionResponse,
-        CompletionEvent as MistralCompletionEvent,
-        Messages as MistralMessages,
-        SDKError,
-        Tool as MistralTool,
-        ToolCall as MistralToolCall,
-    )
-    from mistralai.models.assistantmessage import AssistantMessage as MistralAssistantMessage
+    from mistralai import UNSET
+    from mistralai import CompletionChunk as MistralCompletionChunk
+    from mistralai import Content as MistralContent
+    from mistralai import ContentChunk as MistralContentChunk
+    from mistralai import FunctionCall as MistralFunctionCall
+    from mistralai import ImageURL as MistralImageURL
+    from mistralai import ImageURLChunk as MistralImageURLChunk
+    from mistralai import Mistral
+    from mistralai import OptionalNullable as MistralOptionalNullable
+    from mistralai import TextChunk as MistralTextChunk
+    from mistralai import ToolChoiceEnum as MistralToolChoiceEnum
+    from mistralai.models import \
+        ChatCompletionResponse as MistralChatCompletionResponse
+    from mistralai.models import CompletionEvent as MistralCompletionEvent
+    from mistralai.models import Messages as MistralMessages
+    from mistralai.models import SDKError
+    from mistralai.models import Tool as MistralTool
+    from mistralai.models import ToolCall as MistralToolCall
+    from mistralai.models.assistantmessage import \
+        AssistantMessage as MistralAssistantMessage
     from mistralai.models.function import Function as MistralFunction
-    from mistralai.models.systemmessage import SystemMessage as MistralSystemMessage
+    from mistralai.models.systemmessage import \
+        SystemMessage as MistralSystemMessage
     from mistralai.models.toolmessage import ToolMessage as MistralToolMessage
     from mistralai.models.usermessage import UserMessage as MistralUserMessage
     from mistralai.types.basemodel import Unset as MistralUnset
-    from mistralai.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
+    from mistralai.utils.eventstreaming import \
+        EventStreamAsync as MistralEventStreamAsync
 except ImportError as e:  # pragma: lax no cover
     raise ImportError(
         'Please install `mistral` to use the Mistral model, '

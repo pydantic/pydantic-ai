@@ -5,7 +5,6 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers import Provider, infer_provider
 
@@ -13,7 +12,6 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from openai import OpenAIError
-
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cohere import CohereProvider

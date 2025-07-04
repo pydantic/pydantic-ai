@@ -5,7 +5,6 @@ from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from openai import OpenAIError
-
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [

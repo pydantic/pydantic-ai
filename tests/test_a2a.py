@@ -3,7 +3,6 @@ import httpx
 import pytest
 from asgi_lifespan import LifespanManager
 from inline_snapshot import snapshot
-
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel

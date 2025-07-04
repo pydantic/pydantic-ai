@@ -1,7 +1,6 @@
 from importlib import import_module
 
 import pytest
-
 from pydantic_ai import UserError
 from pydantic_ai.models import infer_model
 

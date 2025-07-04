@@ -12,12 +12,11 @@ from typing import Annotated
 
 import logfire
 from pydantic import Field, ValidationError
+from pydantic_ai import Agent
 from rich.console import Console
 from rich.live import Live
 from rich.table import Table
 from typing_extensions import NotRequired, TypedDict
-
-from pydantic_ai import Agent
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')

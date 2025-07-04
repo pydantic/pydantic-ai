@@ -3,9 +3,9 @@ from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
-
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (ModelMessage, ModelRequest, ModelRequestPart,
+                                  ModelResponse, TextPart, UserPromptPart)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import Usage

@@ -14,13 +14,10 @@ from typing_extensions import TypedDict
 from pydantic_evals._utils import UNSET, Unset
 
 from ..evaluators import EvaluationResult
-from .render_numbers import (
-    default_render_duration,
-    default_render_duration_diff,
-    default_render_number,
-    default_render_number_diff,
-    default_render_percentage,
-)
+from .render_numbers import (default_render_duration,
+                             default_render_duration_diff,
+                             default_render_number, default_render_number_diff,
+                             default_render_percentage)
 
 __all__ = (
     'EvaluationReport',

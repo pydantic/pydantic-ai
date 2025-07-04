@@ -6,15 +6,11 @@ from collections.abc import Awaitable, Mapping
 from dataclasses import MISSING, dataclass, fields
 from typing import Any, Generic, Union, cast
 
-from pydantic import (
-    ConfigDict,
-    model_serializer,
-)
+from pydantic import ConfigDict, model_serializer
+from pydantic_ai import _utils
 from pydantic_core import to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo
 from typing_extensions import TypeVar, deprecated
-
-from pydantic_ai import _utils
 
 from .._utils import get_event_loop
 from ._spec import EvaluatorSpec

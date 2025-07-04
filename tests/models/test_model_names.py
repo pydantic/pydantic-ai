@@ -4,9 +4,8 @@ from typing import Any
 
 import httpx
 import pytest
-from typing_extensions import TypedDict, get_args
-
 from pydantic_ai.models import KnownModelName
+from typing_extensions import TypedDict, get_args
 
 from ..conftest import try_import
 

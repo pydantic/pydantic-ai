@@ -5,16 +5,9 @@ from typing import Any
 
 import pydantic
 
-from .schema import (
-    GetTaskRequest,
-    GetTaskResponse,
-    Message,
-    PushNotificationConfig,
-    SendTaskRequest,
-    SendTaskResponse,
-    TaskSendParams,
-    a2a_request_ta,
-)
+from .schema import (GetTaskRequest, GetTaskResponse, Message,
+                     PushNotificationConfig, SendTaskRequest, SendTaskResponse,
+                     TaskSendParams, a2a_request_ta)
 
 send_task_response_ta = pydantic.TypeAdapter(SendTaskResponse)
 get_task_response_ta = pydantic.TypeAdapter(GetTaskResponse)

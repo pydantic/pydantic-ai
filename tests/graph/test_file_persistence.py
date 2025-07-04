@@ -9,14 +9,8 @@ from typing import Union
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_graph import (
-    BaseNode,
-    End,
-    EndSnapshot,
-    Graph,
-    GraphRunContext,
-    NodeSnapshot,
-)
+from pydantic_graph import (BaseNode, End, EndSnapshot, Graph, GraphRunContext,
+                            NodeSnapshot)
 from pydantic_graph.persistence.file import FileStatePersistence
 
 from ..conftest import IsFloat, IsNow

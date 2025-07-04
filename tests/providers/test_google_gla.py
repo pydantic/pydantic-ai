@@ -1,7 +1,6 @@
 import re
 
 import pytest
-
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 

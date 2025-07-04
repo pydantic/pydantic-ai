@@ -5,7 +5,6 @@ from typing import overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from openai import AsyncOpenAI
-
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles import ModelProfile
@@ -17,7 +16,9 @@ from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import (OpenAIJsonSchemaTransformer,
+                                         OpenAIModelProfile,
+                                         openai_model_profile)
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 

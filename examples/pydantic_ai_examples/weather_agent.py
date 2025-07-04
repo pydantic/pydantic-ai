@@ -18,7 +18,6 @@ from typing import Any
 import logfire
 from httpx import AsyncClient
 from pydantic import BaseModel
-
 from pydantic_ai import Agent, RunContext
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured

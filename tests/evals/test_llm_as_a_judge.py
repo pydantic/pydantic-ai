@@ -7,14 +7,12 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.settings import ModelSettings
+
+    from pydantic_evals.evaluators.llm_as_a_judge import \
+        _stringify  # pyright: ignore[reportPrivateUsage]
     from pydantic_evals.evaluators.llm_as_a_judge import (
-        GradingOutput,
-        _stringify,  # pyright: ignore[reportPrivateUsage]
-        judge_input_output,
-        judge_input_output_expected,
-        judge_output,
-        judge_output_expected,
-    )
+        GradingOutput, judge_input_output, judge_input_output_expected,
+        judge_output, judge_output_expected)
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 

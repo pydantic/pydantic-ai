@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import json
 
 from httpx import AsyncClient
-
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai_examples.weather_agent import Deps, weather_agent
 

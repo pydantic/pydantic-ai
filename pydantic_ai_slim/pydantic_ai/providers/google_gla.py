@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import os
 
 import httpx
-
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles import ModelProfile

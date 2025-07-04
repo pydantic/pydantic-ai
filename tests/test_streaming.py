@@ -11,25 +11,20 @@ from typing import Any, Union
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
-
-from pydantic_ai import Agent, UnexpectedModelBehavior, UserError, capture_run_messages
+from pydantic_ai import (Agent, UnexpectedModelBehavior, UserError,
+                         capture_run_messages)
 from pydantic_ai.agent import AgentRun
-from pydantic_ai.messages import (
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    RetryPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.messages import (FunctionToolCallEvent,
+                                  FunctionToolResultEvent, ModelMessage,
+                                  ModelRequest, ModelResponse, RetryPromptPart,
+                                  TextPart, ToolCallPart, ToolReturnPart,
+                                  UserPromptPart)
+from pydantic_ai.models.function import (AgentInfo, DeltaToolCall,
+                                         DeltaToolCalls, FunctionModel)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
 from pydantic_ai.result import AgentStream, FinalResult, Usage
+
 from pydantic_graph import End
 
 from .conftest import IsInt, IsNow, IsStr

@@ -4,7 +4,6 @@ import os
 from typing import overload
 
 from httpx import AsyncClient as AsyncHTTPClient
-
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles import ModelProfile

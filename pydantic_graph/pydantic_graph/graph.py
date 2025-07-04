@@ -15,7 +15,8 @@ from typing_inspection import typing_objects
 
 from . import _utils, exceptions, mermaid
 from ._utils import AbstractSpan, get_traceparent
-from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT, StateT
+from .nodes import (BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT,
+                    StateT)
 from .persistence import BaseStatePersistence
 from .persistence.in_mem import SimpleStatePersistence
 

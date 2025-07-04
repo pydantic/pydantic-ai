@@ -12,59 +12,36 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast, overload
 
 import anyio
 import anyio.to_thread
-from typing_extensions import ParamSpec, assert_never
-
 from pydantic_ai import _utils, usage
-from pydantic_ai.messages import (
-    AudioUrl,
-    BinaryContent,
-    DocumentUrl,
-    ImageUrl,
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    ModelResponsePart,
-    ModelResponseStreamEvent,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ThinkingPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-    VideoUrl,
-)
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
+from pydantic_ai.messages import (AudioUrl, BinaryContent, DocumentUrl,
+                                  ImageUrl, ModelMessage, ModelRequest,
+                                  ModelResponse, ModelResponsePart,
+                                  ModelResponseStreamEvent, RetryPromptPart,
+                                  SystemPromptPart, TextPart, ThinkingPart,
+                                  ToolCallPart, ToolReturnPart, UserPromptPart,
+                                  VideoUrl)
+from pydantic_ai.models import (Model, ModelRequestParameters,
+                                StreamedResponse, download_item)
 from pydantic_ai.profiles import ModelProfileSpec
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+from typing_extensions import ParamSpec, assert_never
 
 if TYPE_CHECKING:
     from botocore.client import BaseClient
     from botocore.eventstream import EventStream
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.type_defs import (
-        ContentBlockOutputTypeDef,
-        ContentBlockUnionTypeDef,
-        ConverseRequestTypeDef,
-        ConverseResponseTypeDef,
-        ConverseStreamMetadataEventTypeDef,
-        ConverseStreamOutputTypeDef,
-        DocumentBlockTypeDef,
-        GuardrailConfigurationTypeDef,
-        ImageBlockTypeDef,
-        InferenceConfigurationTypeDef,
-        MessageUnionTypeDef,
-        PerformanceConfigurationTypeDef,
-        PromptVariableValuesTypeDef,
-        SystemContentBlockTypeDef,
-        ToolChoiceTypeDef,
-        ToolConfigurationTypeDef,
-        ToolTypeDef,
-        VideoBlockTypeDef,
-    )
+        ContentBlockOutputTypeDef, ContentBlockUnionTypeDef,
+        ConverseRequestTypeDef, ConverseResponseTypeDef,
+        ConverseStreamMetadataEventTypeDef, ConverseStreamOutputTypeDef,
+        DocumentBlockTypeDef, GuardrailConfigurationTypeDef, ImageBlockTypeDef,
+        InferenceConfigurationTypeDef, MessageUnionTypeDef,
+        PerformanceConfigurationTypeDef, PromptVariableValuesTypeDef,
+        SystemContentBlockTypeDef, ToolChoiceTypeDef, ToolConfigurationTypeDef,
+        ToolTypeDef, VideoBlockTypeDef)
 
 
 LatestBedrockModelNames = Literal[

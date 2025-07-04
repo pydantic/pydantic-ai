@@ -4,14 +4,12 @@ import re
 
 import httpx
 import pytest
-
 from pydantic_ai.exceptions import UserError
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from mistralai import Mistral
-
     from pydantic_ai.providers.mistral import MistralProvider
 
 

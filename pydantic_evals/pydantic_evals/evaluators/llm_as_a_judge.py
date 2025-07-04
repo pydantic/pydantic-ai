@@ -4,10 +4,9 @@ from textwrap import dedent
 from typing import Any
 
 from pydantic import BaseModel, Field
-from pydantic_core import to_json
-
 from pydantic_ai import Agent, models
 from pydantic_ai.settings import ModelSettings
+from pydantic_core import to_json
 
 __all__ = (
     'GradingOutput',

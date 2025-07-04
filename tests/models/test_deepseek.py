@@ -2,9 +2,9 @@ from __future__ import annotations as _annotations
 
 import pytest
 from inline_snapshot import snapshot
-
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
+from pydantic_ai.messages import (ModelRequest, ModelResponse, TextPart,
+                                  ThinkingPart, UserPromptPart)
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, IsStr, try_import

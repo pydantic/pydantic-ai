@@ -3,8 +3,6 @@ import re
 import httpx
 import pytest
 from inline_snapshot import snapshot
-from pytest_mock import MockerFixture
-
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
@@ -12,18 +10,20 @@ from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
+from pydantic_ai.profiles.google import (GoogleJsonSchemaTransformer,
+                                         google_model_profile)
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
+from pydantic_ai.profiles.openai import (OpenAIJsonSchemaTransformer,
+                                         openai_model_profile)
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pytest_mock import MockerFixture
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     import openai
-
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 

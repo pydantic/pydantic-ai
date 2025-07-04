@@ -6,10 +6,9 @@ from pydantic import ValidationError
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_evals.evaluators._spec import (
-        EvaluatorSpec,
-        _SerializedEvaluatorSpec,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_evals.evaluators._spec import \
+        _SerializedEvaluatorSpec  # pyright: ignore[reportPrivateUsage]
+    from pydantic_evals.evaluators._spec import EvaluatorSpec
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 

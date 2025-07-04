@@ -1,5 +1,4 @@
 from pydantic import TypeAdapter
-
 from pydantic_ai.models import ModelRequestParameters
 
 

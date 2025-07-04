@@ -2,10 +2,10 @@ from textwrap import dedent
 from types import NoneType
 
 import logfire
-
 ### [imports]
 from pydantic_ai import Agent, NativeOutput
-from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool  ### [/imports]
+from pydantic_ai.common_tools.duckduckgo import \
+    duckduckgo_search_tool  # ## [/imports]
 
 from .models import Analysis, Profile
 

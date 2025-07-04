@@ -4,9 +4,8 @@ from dataclasses import dataclass
 import anyio
 import anyio.to_thread
 from pydantic import TypeAdapter
-from typing_extensions import TypedDict
-
 from pydantic_ai.tools import Tool
+from typing_extensions import TypedDict
 
 try:
     from duckduckgo_search import DDGS

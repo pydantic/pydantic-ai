@@ -9,29 +9,16 @@ from datetime import datetime
 from itertools import chain
 from typing import Callable, Union
 
-from typing_extensions import TypeAlias, assert_never, overload
-
 from pydantic_ai.profiles import ModelProfileSpec
+from typing_extensions import TypeAlias, assert_never, overload
 
 from .. import _utils, usage
 from .._utils import PeekableAsyncStream
-from ..messages import (
-    AudioUrl,
-    BinaryContent,
-    ImageUrl,
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    ModelResponseStreamEvent,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ThinkingPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserContent,
-    UserPromptPart,
-)
+from ..messages import (AudioUrl, BinaryContent, ImageUrl, ModelMessage,
+                        ModelRequest, ModelResponse, ModelResponseStreamEvent,
+                        RetryPromptPart, SystemPromptPart, TextPart,
+                        ThinkingPart, ToolCallPart, ToolReturnPart,
+                        UserContent, UserPromptPart)
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse

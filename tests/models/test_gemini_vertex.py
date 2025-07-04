@@ -4,28 +4,19 @@ from typing import Union
 
 import pytest
 from inline_snapshot import Is, snapshot
-from pytest_mock import MockerFixture
-
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
-    AudioUrl,
-    DocumentUrl,
-    ImageUrl,
-    ModelRequest,
-    ModelResponse,
-    TextPart,
-    UserPromptPart,
-    VideoUrl,
-)
+from pydantic_ai.messages import (AudioUrl, DocumentUrl, ImageUrl,
+                                  ModelRequest, ModelResponse, TextPart,
+                                  UserPromptPart, VideoUrl)
 from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
 from pydantic_ai.usage import Usage
+from pytest_mock import MockerFixture
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     from google.auth.transport.requests import Request
-
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 
 

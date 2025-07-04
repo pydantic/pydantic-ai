@@ -1,7 +1,6 @@
 from typing import Union
 
 import pytest
-
 from pydantic_ai.messages import AudioUrl, DocumentUrl, ImageUrl, VideoUrl
 from pydantic_ai.models import UserError, download_item
 

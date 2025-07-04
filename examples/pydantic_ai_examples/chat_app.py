@@ -23,18 +23,12 @@ import fastapi
 import logfire
 from fastapi import Depends, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from typing_extensions import LiteralString, ParamSpec, TypedDict
-
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelMessagesTypeAdapter,
-    ModelRequest,
-    ModelResponse,
-    TextPart,
-    UserPromptPart,
-)
+from pydantic_ai.messages import (ModelMessage, ModelMessagesTypeAdapter,
+                                  ModelRequest, ModelResponse, TextPart,
+                                  UserPromptPart)
+from typing_extensions import LiteralString, ParamSpec, TypedDict
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')

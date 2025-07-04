@@ -12,23 +12,14 @@ from annotated_types import Ge, Gt, Le, Lt, MaxLen, MinLen
 from anyio import Event
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
-
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import (
-    AudioUrl,
-    BinaryContent,
-    ImageUrl,
-    ModelRequest,
-    ModelResponse,
-    RetryPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-    VideoUrl,
-)
-from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.messages import (AudioUrl, BinaryContent, ImageUrl,
+                                  ModelRequest, ModelResponse, RetryPromptPart,
+                                  TextPart, ToolCallPart, ToolReturnPart,
+                                  UserPromptPart, VideoUrl)
+from pydantic_ai.models.test import (  # pyright: ignore[reportPrivateUsage]
+    TestModel, _chars, _JsonSchemaTestData)
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsNow, IsStr

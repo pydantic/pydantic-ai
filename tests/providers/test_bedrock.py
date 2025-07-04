@@ -1,8 +1,6 @@
 from typing import cast
 
 import pytest
-from pytest_mock import MockerFixture
-
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
@@ -10,13 +8,14 @@ from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pytest_mock import MockerFixture
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
-
-    from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
+    from pydantic_ai.providers.bedrock import (BedrockModelProfile,
+                                               BedrockProvider)
 
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')

@@ -6,13 +6,13 @@ from typing import Any, Callable
 import pytest
 from dirty_equals import IsInstance, IsStr
 from inline_snapshot import snapshot
+from pydantic_ai import Agent
+from pydantic_ai.messages import (ModelMessage, ModelResponse, TextPart,
+                                  ToolCallPart)
+from pydantic_ai.models.test import TestModel
 from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
-
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.test import TestModel
 
 from .conftest import TestEnv, try_import
 
@@ -21,7 +21,6 @@ with try_import() as imports_successful:
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
-
     from pydantic_ai._cli import cli, cli_agent, handle_slash_command
     from pydantic_ai.models.openai import OpenAIModel
 

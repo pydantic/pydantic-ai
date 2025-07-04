@@ -12,23 +12,16 @@ import pydantic_core
 from typing_extensions import assert_never
 
 from .. import _utils
-from ..messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    ModelResponsePart,
-    ModelResponseStreamEvent,
-    RetryPromptPart,
-    TextPart,
-    ThinkingPart,
-    ToolCallPart,
-    ToolReturnPart,
-)
+from ..messages import (ModelMessage, ModelRequest, ModelResponse,
+                        ModelResponsePart, ModelResponseStreamEvent,
+                        RetryPromptPart, TextPart, ThinkingPart, ToolCallPart,
+                        ToolReturnPart)
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import Usage
 from . import Model, ModelRequestParameters, StreamedResponse
-from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
+from .function import (  # pyright: ignore[reportPrivateUsage]
+    _estimate_string_tokens, _estimate_usage)
 
 
 @dataclass
