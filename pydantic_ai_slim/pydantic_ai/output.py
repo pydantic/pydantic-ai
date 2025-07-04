@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
 from typing import Any, Callable, Generic, Literal, Union
 
-from typing_extensions import TypeAliasType, TypeVar, TypeAlias
+from typing_extensions import TypeAliasType, TypeVar
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler, BaseModel
 from pydantic_core.core_schema import any_schema, CoreSchema
 from pydantic.json_schema import JsonSchemaValue
@@ -347,4 +347,4 @@ class StructuredOutput:
     ) -> JsonSchemaValue:
         return self.json_schema
 
-structured: TypeAlias = StructuredOutput
+structured = StructuredOutput
