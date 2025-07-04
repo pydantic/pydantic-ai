@@ -67,7 +67,7 @@ def test_model_request_stream_sync_timeout():
 
     stream_sync = StreamedResponseSync(_async_stream_cm=async_stream_mock)
 
-    with patch('pydantic_ai.models.STREAM_INITIALIZATION_TIMEOUT', 0.01):
+    with patch('pydantic_ai.direct.STREAM_INITIALIZATION_TIMEOUT', 0.01):
         with stream_sync:
             with pytest.raises(RuntimeError, match='Stream failed to initialize within timeout'):
                 stream_sync.get()
