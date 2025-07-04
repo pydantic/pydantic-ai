@@ -1232,6 +1232,51 @@ def test_deferred_tool_with_output_type():
     assert result.output == snapshot(MyModel(foo='a'))
 
 
+def test_deferred_tool_with_tool_output_type():
+    class MyModel(BaseModel):
+        foo: str
+
+    deferred_toolset = DeferredToolset(
+        [
+            ToolDefinition(
+                name='my_tool',
+                description='',
+                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+            ),
+        ]
+    )
+    agent = Agent(
+        TestModel(call_tools=[]),
+        output_type=[[ToolOutput(MyModel), ToolOutput(MyModel)], DeferredToolCalls],
+        toolsets=[deferred_toolset],
+    )
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(MyModel(foo='a'))
+
+
+async def test_deferred_tool_without_output_type():
+    deferred_toolset = DeferredToolset(
+        [
+            ToolDefinition(
+                name='my_tool',
+                description='',
+                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+            ),
+        ]
+    )
+    agent = Agent(TestModel(), toolsets=[deferred_toolset])
+
+    msg = 'A deferred tool call was present, but `DeferredToolCalls` is not among output types. To resolve this, add `DeferredToolCalls` to the list of output types for this agent.'
+
+    with pytest.raises(UserError, match=msg):
+        await agent.run('Hello')
+
+    with pytest.raises(UserError, match=msg):
+        async with agent.run_stream('Hello') as result:
+            await result.get_output()
+
+
 def test_output_type_deferred_tool_calls_by_itself():
     with pytest.raises(UserError, match='At least one output type must be provided other than `DeferredToolCalls`.'):
         Agent(TestModel(), output_type=DeferredToolCalls)

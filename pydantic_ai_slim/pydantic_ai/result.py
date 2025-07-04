@@ -113,8 +113,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             return await self._toolset.call_tool(run_context, tool_call.tool_name, args_dict)
         elif deferred_tool_calls := self._toolset.get_deferred_tool_calls(message.parts):
             if not self._output_schema.allows_deferred_tool_calls:
-                raise exceptions.UserError(
-                    'There are deferred tool calls but DeferredToolCalls is not among output types.'
+                raise exceptions.UserError(  # pragma: no cover
+                    'A deferred tool call was present, but `DeferredToolCalls` is not among output types. To resolve this, add `DeferredToolCalls` to the list of output types for this agent.'
                 )
             return cast(OutputDataT, deferred_tool_calls)
         elif isinstance(self._output_schema, TextOutputSchema):
@@ -124,7 +124,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
             )
             for validator in self._output_validators:
-                result_data = await validator.validate(result_data, None, self._run_ctx)
+                result_data = await validator.validate(result_data, self._run_ctx)
             return result_data
         else:
             raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
@@ -450,7 +450,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         elif deferred_tool_calls := self._toolset.get_deferred_tool_calls(message.parts):
             if not self._output_schema.allows_deferred_tool_calls:
                 raise exceptions.UserError(
-                    'There are deferred tool calls but DeferredToolCalls is not among output types.'
+                    'A deferred tool call was present, but `DeferredToolCalls` is not among output types. To resolve this, add `DeferredToolCalls` to the list of output types for this agent.'
                 )
             return cast(OutputDataT, deferred_tool_calls)
         elif isinstance(self._output_schema, TextOutputSchema):
@@ -460,7 +460,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
             )
             for validator in self._output_validators:
-                result_data = await validator.validate(result_data, None, self._run_ctx)  # pragma: no cover
+                result_data = await validator.validate(result_data, self._run_ctx)  # pragma: no cover
             return result_data
         else:
             raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
@@ -469,7 +469,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     async def _validate_text_output(self, text: str) -> str:
         for validator in self._output_validators:
-            text = await validator.validate(text, None, self._run_ctx)  # pragma: no cover
+            text = await validator.validate(text, self._run_ctx)  # pragma: no cover
         return text
 
     async def _marked_completed(self, message: _messages.ModelResponse) -> None:

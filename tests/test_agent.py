@@ -24,6 +24,7 @@ from pydantic_ai._output import (
     ToolOutputSchema,
 )
 from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -46,7 +47,9 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 
@@ -3439,6 +3442,14 @@ def test_deprecated_kwargs_still_work():
         assert issubclass(w[0].category, DeprecationWarning)
         assert '`result_retries` is deprecated' in str(w[0].message)
 
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter('always')
+
+        agent = Agent('test', mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])])  # type: ignore[call-arg]
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert '`mcp_servers` is deprecated' in str(w[0].message)
+
 
 def test_deprecated_kwargs_mixed_valid_invalid():
     """Test that mix of valid deprecated and invalid kwargs raises error for invalid ones."""
@@ -3583,3 +3594,39 @@ def test_prepare_output_tools():
             ),
         ]
     )
+
+
+async def test_reentrant_context_manager():
+    agent = Agent('test')
+    async with agent:
+        async with agent:
+            pass
+
+
+def test_set_mcp_sampling_model():
+    test_model = TestModel()
+    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'], sampling_model=test_model)
+    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix_')])
+    agent = Agent(None, toolsets=[toolset])
+
+    with pytest.raises(UserError, match='No sampling model provided and no model set on the agent.'):
+        agent.set_mcp_sampling_model()
+    assert server1.sampling_model is None
+    assert server2.sampling_model is test_model
+
+    agent.model = test_model
+    agent.set_mcp_sampling_model()
+    assert server1.sampling_model is test_model
+    assert server2.sampling_model is test_model
+
+    function_model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Hello')]))
+    with agent.override(model=function_model):
+        agent.set_mcp_sampling_model()
+        assert server1.sampling_model is function_model
+        assert server2.sampling_model is function_model
+
+    function_model2 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Goodbye')]))
+    agent.set_mcp_sampling_model(function_model2)
+    assert server1.sampling_model is function_model2
+    assert server2.sampling_model is function_model2

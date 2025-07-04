@@ -4,7 +4,7 @@ import inspect
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast, overload
 
 from pydantic import TypeAdapter, ValidationError
@@ -83,7 +83,6 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
     async def validate(
         self,
         result: T,
-        tool_call: _messages.ToolCallPart | None,
         run_context: RunContext[AgentDepsT],
         wrap_validation_errors: bool = True,
     ) -> T:
@@ -91,7 +90,6 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
 
         Args:
             result: The result data after Pydantic validation the message content.
-            tool_call: The original tool call message, `None` if there was no tool call.
             run_context: The current run context.
             wrap_validation_errors: If true, wrap the validation errors in a retry message.
 
@@ -99,12 +97,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
             Result of either the validated result data (ok) or a retry message (Err).
         """
         if self._takes_ctx:
-            ctx = (
-                replace(run_context, tool_name=tool_call.tool_name, tool_call_id=tool_call.tool_call_id)
-                if tool_call
-                else run_context
-            )
-            args = ctx, result
+            args = run_context, result
         else:
             args = (result,)
 
@@ -117,10 +110,12 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
                 result_data = await _utils.run_in_executor(function, *args)
         except ModelRetry as r:
             if wrap_validation_errors:
-                m = _messages.RetryPromptPart(content=r.message)
-                if tool_call is not None:
-                    m.tool_name = tool_call.tool_name
-                    m.tool_call_id = tool_call.tool_call_id
+                m = _messages.RetryPromptPart(
+                    content=r.message,
+                    tool_name=run_context.tool_name,
+                )
+                if run_context.tool_call_id:
+                    m.tool_call_id = run_context.tool_call_id
                 raise ToolRetryError(m) from r
             else:
                 raise r
@@ -190,7 +185,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
 
         if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):
             if len(outputs) > 1:
-                raise UserError('`NativeOutput` must be the only output type.')
+                raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
 
             return NativeOutputSchema(
                 processor=cls._build_processor(
@@ -203,7 +198,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
             )
         elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):
             if len(outputs) > 1:
-                raise UserError('`PromptedOutput` must be the only output type.')
+                raise UserError('`PromptedOutput` must be the only output type.')  # pragma: no cover
 
             return PromptedOutputSchema(
                 processor=cls._build_processor(
@@ -940,7 +935,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         output = await self.processors[name].call(tool_args, ctx)
         for validator in self.output_validators:
-            output = await validator.validate(output, None, ctx, wrap_validation_errors=False)
+            output = await validator.validate(output, ctx, wrap_validation_errors=False)
         return output
 
 
@@ -965,7 +960,7 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
     for output in outputs:
         if isinstance(output, Sequence):
             outputs_flat.extend(_flatten_output_spec(cast(OutputSpec[T], output)))
-        if union_types := _utils.get_union_args(output):
+        elif union_types := _utils.get_union_args(output):
             outputs_flat.extend(union_types)
         else:
             outputs_flat.append(cast(_OutputSpecItem[T], output))

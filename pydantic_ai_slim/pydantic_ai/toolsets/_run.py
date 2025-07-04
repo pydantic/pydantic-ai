@@ -122,21 +122,22 @@ class RunToolset(WrapperToolset[AgentDepsT]):
             if current_retry == max_retries:
                 raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from e
             else:
-                if ctx.tool_call_id:
-                    if isinstance(e, ValidationError):
-                        m = _messages.RetryPromptPart(
-                            tool_name=name,
-                            content=e.errors(include_url=False, include_context=False),
-                            tool_call_id=ctx.tool_call_id,
-                        )
-                        e = ToolRetryError(m)
-                    elif isinstance(e, ModelRetry):
-                        m = _messages.RetryPromptPart(
-                            tool_name=name,
-                            content=e.message,
-                            tool_call_id=ctx.tool_call_id,
-                        )
-                        e = ToolRetryError(m)
+                if isinstance(e, ValidationError):
+                    m = _messages.RetryPromptPart(
+                        tool_name=name,
+                        content=e.errors(include_url=False, include_context=False),
+                    )
+                    if ctx.tool_call_id:  # pragma: no branch
+                        m.tool_call_id = ctx.tool_call_id
+                    e = ToolRetryError(m)
+                elif isinstance(e, ModelRetry):
+                    m = _messages.RetryPromptPart(
+                        tool_name=name,
+                        content=e.message,
+                    )
+                    if ctx.tool_call_id:  # pragma: no branch
+                        m.tool_call_id = ctx.tool_call_id
+                    e = ToolRetryError(m)
 
                 self._retries[name] = current_retry + 1
                 raise e

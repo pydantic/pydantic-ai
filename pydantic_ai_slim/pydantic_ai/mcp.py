@@ -59,6 +59,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     process_tool_call: ToolProcessFunc[Any] | None = None
     allow_sampling: bool = True
     max_retries: int = 1
+    sampling_model: models.Model | None = None
     # } end of "abstract fields"
 
     _running_count: int = 0
@@ -67,7 +68,6 @@ class MCPServer(AbstractToolset[Any], ABC):
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
     _exit_stack: AsyncExitStack
-    sampling_model: models.Model | None = None
 
     @abstractmethod
     @asynccontextmanager
@@ -82,11 +82,6 @@ class MCPServer(AbstractToolset[Any], ABC):
         """Create the streams for the MCP server."""
         raise NotImplementedError('MCP Server subclasses must implement this method.')
         yield
-
-    @property
-    def is_running(self) -> bool:
-        """Check if the MCP server is running."""
-        return bool(self._running_count)
 
     @property
     def name(self) -> str:
@@ -373,6 +368,9 @@ class MCPServerStdio(MCPServer):
     max_retries: int = 1
     """The maximum number of times to retry a tool call."""
 
+    sampling_model: models.Model | None = None
+    """The model to use for sampling."""
+
     @asynccontextmanager
     async def client_streams(
         self,
@@ -470,6 +468,9 @@ class _MCPServerHTTP(MCPServer):
 
     max_retries: int = 1
     """The maximum number of times to retry a tool call."""
+
+    sampling_model: models.Model | None = None
+    """The model to use for sampling."""
 
     @property
     @abstractmethod

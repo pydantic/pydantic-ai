@@ -538,8 +538,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
         text = '\n\n'.join(texts)
         try:
+            run_context = build_run_context(ctx)
             if isinstance(output_schema, _output.TextOutputSchema):
-                run_context = build_run_context(ctx)
                 result_data = await output_schema.process(text, run_context)
             else:
                 m = _messages.RetryPromptPart(
@@ -547,7 +547,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 )
                 raise ToolRetryError(m)
 
-            result_data = await _validate_output(result_data, ctx, None)
+            for validator in ctx.deps.output_validators:
+                result_data = await validator.validate(result_data, run_context)
         except ToolRetryError as e:
             ctx.state.increment_retries(ctx.deps.max_result_retries, e)
             return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
@@ -832,17 +833,6 @@ async def _call_tool(
     run_context = dataclasses.replace(run_context, tool_call_id=tool_call.tool_call_id)
     args_dict = toolset.validate_tool_args(run_context, tool_call.tool_name, tool_call.args)
     return await toolset.call_tool(run_context, tool_call.tool_name, args_dict)
-
-
-async def _validate_output(
-    result_data: T,
-    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
-    tool_call: _messages.ToolCallPart | None,
-) -> T:
-    for validator in ctx.deps.output_validators:
-        run_context = build_run_context(ctx)
-        result_data = await validator.validate(result_data, tool_call, run_context)
-    return result_data
 
 
 @dataclasses.dataclass
