@@ -54,7 +54,7 @@ logfire = ["logfire>=2.3"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev/a2a/fasta2a"
-Source = "https://github.com/pydantic/fasta2a"
+Source = "https://github.com/pydantic/pydantic-ai"
 Documentation = "https://ai.pydantic.dev/a2a"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
