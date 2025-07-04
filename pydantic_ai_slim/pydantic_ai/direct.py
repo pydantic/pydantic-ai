@@ -22,7 +22,13 @@ from pydantic_graph._utils import get_event_loop as _get_event_loop
 from . import agent, messages, models, settings
 from .models import StreamedResponse, instrumented as instrumented_models
 
-__all__ = ('model_request', 'model_request_sync', 'model_request_stream', 'model_request_stream_sync')
+__all__ = (
+    'model_request',
+    'model_request_sync',
+    'model_request_stream',
+    'model_request_stream_sync',
+    'StreamedResponseSync',
+)
 
 STREAM_INITIALIZATION_TIMEOUT = 30
 
@@ -352,7 +358,7 @@ def model_request_stream_sync(
             [`logfire.instrument_pydantic_ai`][logfire.Logfire.instrument_pydantic_ai] is used.
 
     Returns:
-        A [sync stream response][pydantic_ai.models.StreamedResponseSync] context manager.
+        A [sync stream response][pydantic_ai.direct.StreamedResponseSync] context manager.
     """
     async_stream_cm = model_request_stream(
         model=model,
