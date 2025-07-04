@@ -271,7 +271,7 @@ class Tool(Generic[AgentDepsT]):
         name: str,
         description: str,
         json_schema: JsonSchemaValue,
-        takes_ctx: bool = False
+        takes_ctx: bool = False,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
