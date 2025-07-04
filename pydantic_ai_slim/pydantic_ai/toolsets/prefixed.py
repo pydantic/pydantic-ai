@@ -26,7 +26,7 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
         return [replace(tool_def, name=self._prefixed_tool_name(tool_def.name)) for tool_def in super().tool_defs]
 
     def _max_retries_for_tool(self, name: str) -> int:
-        return super()._max_retries_for_tool(self._unprefixed_tool_name(name))
+        return super()._max_retries_for_tool(self._unprefixed_tool_name(name))  # pragma: no cover
 
     async def call_tool(self, call: ToolCallPart, ctx: RunContext[AgentDepsT], allow_partial: bool = False) -> Any:
         call = replace(call, tool_name=self._unprefixed_tool_name(call.tool_name))

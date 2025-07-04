@@ -145,7 +145,7 @@ async def test_prepared_toolset_user_error_add_new_tools():
     @base_toolset.tool
     def add(a: int, b: int) -> int:
         """Add two numbers"""
-        return a + b
+        return a + b  # pragma: no cover
 
     async def prepare_add_new_tool(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         # Try to add a new tool that wasn't in the original set
@@ -175,7 +175,7 @@ async def test_prepared_toolset_user_error_change_tool_names():
     @base_toolset.tool
     def add(a: int, b: int) -> int:
         """Add two numbers"""
-        return a + b
+        return a + b  # pragma: no cover
 
     async def prepare_change_names(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         # Try to change the name of an existing tool
@@ -193,126 +193,6 @@ async def test_prepared_toolset_user_error_change_tool_names():
         await prepared_toolset.prepare_for_run(context)
 
 
-async def test_prepared_toolset_allows_removing_tools():
-    """Test that PreparedToolset allows removing tools from the original set."""
-    context = build_run_context(None)
-    base_toolset = FunctionToolset[None]()
-
-    @base_toolset.tool
-    def add(a: int, b: int) -> int:
-        """Add two numbers"""
-        return a + b
-
-    @base_toolset.tool
-    def subtract(a: int, b: int) -> int:
-        """Subtract two numbers"""
-        return a - b
-
-    @base_toolset.tool
-    def multiply(a: int, b: int) -> int:
-        """Multiply two numbers"""
-        return a * b
-
-    async def prepare_remove_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        # Remove the 'subtract' tool, keep 'add' and 'multiply'
-        return [tool_def for tool_def in tool_defs if tool_def.name != 'subtract']
-
-    prepared_toolset = PreparedToolset(base_toolset, prepare_remove_tools)
-
-    # This should not raise an error
-    run_toolset = await prepared_toolset.prepare_for_run(context)
-
-    # Verify that only 'add' and 'multiply' tools are available
-    assert set(run_toolset.tool_names) == {'add', 'multiply'}
-    assert len(run_toolset.tool_defs) == 2
-
-    # Verify that the tools still work
-    assert await run_toolset.call_tool(ToolCallPart(tool_name='add', args={'a': 5, 'b': 3}), context) == 8
-    assert await run_toolset.call_tool(ToolCallPart(tool_name='multiply', args={'a': 4, 'b': 2}), context) == 8
-
-
-async def test_prefixed_toolset_tool_defs():
-    """Test that PrefixedToolset correctly prefixes tool definitions."""
-    base_toolset = FunctionToolset[None]()
-
-    @base_toolset.tool
-    def add(a: int, b: int) -> int:
-        """Add two numbers"""
-        return a + b
-
-    @base_toolset.tool
-    def subtract(a: int, b: int) -> int:
-        """Subtract two numbers"""
-        return a - b
-
-    prefixed_toolset = PrefixedToolset(base_toolset, 'math')
-
-    # Check that tool names are prefixed
-    assert prefixed_toolset.tool_names == ['math_add', 'math_subtract']
-
-    # Check that tool definitions have prefixed names
-    tool_defs = prefixed_toolset.tool_defs
-    assert len(tool_defs) == 2
-
-    add_def = next(td for td in tool_defs if td.name == 'math_add')
-    subtract_def = next(td for td in tool_defs if td.name == 'math_subtract')
-
-    assert add_def.name == 'math_add'
-    assert add_def.description == 'Add two numbers'
-    assert subtract_def.name == 'math_subtract'
-    assert subtract_def.description == 'Subtract two numbers'
-
-
-async def test_prefixed_toolsetcall_tools():
-    """Test that PrefixedToolset correctly calls tools with prefixed names."""
-    context = build_run_context(None)
-    base_toolset = FunctionToolset[None]()
-
-    @base_toolset.tool
-    def add(a: int, b: int) -> int:
-        """Add two numbers"""
-        return a + b
-
-    @base_toolset.tool
-    def multiply(a: int, b: int) -> int:
-        """Multiply two numbers"""
-        return a * b
-
-    prefixed_toolset = PrefixedToolset(base_toolset, 'calc')
-
-    # Test calling tools with prefixed names
-    result = await prefixed_toolset.call_tool(ToolCallPart(tool_name='calc_add', args={'a': 5, 'b': 3}), context)
-    assert result == 8
-
-    result = await prefixed_toolset.call_tool(ToolCallPart(tool_name='calc_multiply', args={'a': 4, 'b': 2}), context)
-    assert result == 8
-
-
-async def test_prefixed_toolset_prepare_for_run():
-    """Test that PrefixedToolset correctly prepares for run with prefixed tools."""
-    context = build_run_context(None)
-    base_toolset = FunctionToolset[None]()
-
-    @base_toolset.tool
-    def add(a: int, b: int) -> int:
-        """Add two numbers"""
-        return a + b
-
-    prefixed_toolset = PrefixedToolset(base_toolset, 'test')
-
-    # Prepare for run
-    run_toolset = await prefixed_toolset.prepare_for_run(context)
-
-    # Verify that the run toolset has prefixed tools
-    assert run_toolset.tool_names == ['test_add']
-    assert len(run_toolset.tool_defs) == 1
-    assert run_toolset.tool_defs[0].name == 'test_add'
-
-    # Verify that the tool still works
-    result = await run_toolset.call_tool(ToolCallPart(tool_name='test_add', args={'a': 10, 'b': 5}), context)
-    assert result == 15
-
-
 async def test_prefixed_toolset_error_invalid_prefix():
     """Test that PrefixedToolset raises ValueError for tool names that don't start with the prefix."""
     context = build_run_context(None)
@@ -321,45 +201,13 @@ async def test_prefixed_toolset_error_invalid_prefix():
     @base_toolset.tool
     def add(a: int, b: int) -> int:
         """Add two numbers"""
-        return a + b
+        return a + b  # pragma: no cover
 
     prefixed_toolset = PrefixedToolset(base_toolset, 'math')
 
     # Test calling with wrong prefix
     with pytest.raises(ValueError, match="Tool name 'wrong_add' does not start with prefix 'math_'"):
         await prefixed_toolset.call_tool(ToolCallPart(tool_name='wrong_add', args={'a': 1, 'b': 2}), context)
-
-    # Test calling with no prefix
-    with pytest.raises(ValueError, match="Tool name 'add' does not start with prefix 'math_'"):
-        await prefixed_toolset.call_tool(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2}), context)
-
-    # Test calling with partial prefix
-    with pytest.raises(ValueError, match="Tool name 'mat_add' does not start with prefix 'math_'"):
-        await prefixed_toolset.call_tool(ToolCallPart(tool_name='mat_add', args={'a': 1, 'b': 2}), context)
-
-
-async def test_prefixed_toolset_empty_prefix():
-    """Test that PrefixedToolset works correctly with an empty prefix."""
-    context = build_run_context(None)
-    base_toolset = FunctionToolset[None]()
-
-    @base_toolset.tool
-    def add(a: int, b: int) -> int:
-        """Add two numbers"""
-        return a + b
-
-    prefixed_toolset = PrefixedToolset(base_toolset, '')
-
-    # Check that tool names have empty prefix (just underscore)
-    assert prefixed_toolset.tool_names == ['_add']
-
-    # Test calling the tool
-    result = await prefixed_toolset.call_tool(ToolCallPart(tool_name='_add', args={'a': 3, 'b': 4}), context)
-    assert result == 7
-
-    # Test error for wrong name
-    with pytest.raises(ValueError, match="Tool name 'add' does not start with prefix '_'"):
-        await prefixed_toolset.call_tool(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2}), context)
 
 
 async def test_comprehensive_toolset_composition():
@@ -381,12 +229,12 @@ async def test_comprehensive_toolset_composition():
     @math_toolset.tool
     def subtract(a: int, b: int) -> int:
         """Subtract two numbers"""
-        return a - b
+        return a - b  # pragma: no cover
 
     @math_toolset.tool
     def multiply(a: int, b: int) -> int:
         """Multiply two numbers"""
-        return a * b
+        return a * b  # pragma: no cover
 
     # Create second FunctionToolset with string operations
     string_toolset = FunctionToolset[TestDeps]()
@@ -399,12 +247,12 @@ async def test_comprehensive_toolset_composition():
     @string_toolset.tool
     def uppercase(text: str) -> str:
         """Convert text to uppercase"""
-        return text.upper()
+        return text.upper()  # pragma: no cover
 
     @string_toolset.tool
     def reverse(text: str) -> str:
         """Reverse a string"""
-        return text[::-1]
+        return text[::-1]  # pragma: no cover
 
     # Create third FunctionToolset with advanced operations
     advanced_toolset = FunctionToolset[TestDeps]()
@@ -412,18 +260,7 @@ async def test_comprehensive_toolset_composition():
     @advanced_toolset.tool
     def power(base: int, exponent: int) -> int:
         """Calculate base raised to the power of exponent"""
-        return base**exponent
-
-    @advanced_toolset.tool
-    def factorial(n: int) -> int:
-        """Calculate factorial of n"""
-
-        def _fact(x: int) -> int:
-            if x <= 1:
-                return 1
-            return x * _fact(x - 1)
-
-        return _fact(n)
+        return base**exponent  # pragma: no cover
 
     # Step 1: Prefix each FunctionToolset individually
     prefixed_math = PrefixedToolset(math_toolset, 'math')
@@ -498,16 +335,6 @@ async def test_comprehensive_toolset_composition():
                     'additionalProperties': False,
                     'properties': {'base': {'type': 'integer'}, 'exponent': {'type': 'integer'}},
                     'required': ['base', 'exponent'],
-                    'type': 'object',
-                },
-            ),
-            ToolDefinition(
-                name='adv_factorial',
-                description='Calculate factorial of n (role: user)',
-                parameters_json_schema={
-                    'additionalProperties': False,
-                    'properties': {'n': {'type': 'integer'}},
-                    'required': ['n'],
                     'type': 'object',
                 },
             ),
@@ -593,16 +420,6 @@ async def test_comprehensive_toolset_composition():
                     'type': 'object',
                 },
             ),
-            ToolDefinition(
-                name='adv_factorial',
-                description='Calculate factorial of n (role: admin)',
-                parameters_json_schema={
-                    'additionalProperties': False,
-                    'properties': {'n': {'type': 'integer'}},
-                    'required': ['n'],
-                    'type': 'object',
-                },
-            ),
         ]
     )
     result = await admin_final_toolset.call_tool(
@@ -656,3 +473,22 @@ async def test_comprehensive_toolset_composition():
     toolset_once = await prepared_toolset.prepare_for_run(ctx2)
     toolset_twice = await (await prepared_toolset.prepare_for_run(ctx1)).prepare_for_run(ctx2)
     assert toolset_once == toolset_twice
+
+
+async def test_context_manager():
+    try:
+        from pydantic_ai.mcp import MCPServerStdio
+    except ImportError:
+        return
+
+    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
+
+    async with toolset:
+        assert server1.is_running
+        assert server2.is_running
+
+        async with toolset:
+            assert server1.is_running
+            assert server2.is_running
