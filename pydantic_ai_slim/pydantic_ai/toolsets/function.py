@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Callable, overload
 
 from pydantic.json_schema import GenerateJsonSchema
@@ -18,13 +18,13 @@ from ..tools import (
     ToolParams,
     ToolPrepareFunc,
 )
-from . import AbstractToolset
+from ._callable import CallableToolset
 from ._individually_prepared import IndividuallyPreparedToolset
 from ._run import RunToolset
 
 
 @dataclass(init=False)
-class FunctionToolset(AbstractToolset[AgentDepsT]):
+class FunctionToolset(CallableToolset[AgentDepsT]):
     """A toolset that lets Python functions be used as tools."""
 
     max_retries: int = field(default=1)
@@ -187,9 +187,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         return RunToolset(prepared_for_run, ctx, original=self)
 
     async def _prepare_tool_def(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
-        tool_name = tool_def.name
-        ctx = replace(ctx, tool_name=tool_name, retry=ctx.retries.get(tool_name, 0))
-        return await self.tools[tool_name].prepare_tool_def(ctx)
+        return await self.tools[tool_def.name].prepare_tool_def(ctx)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
@@ -202,7 +200,5 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         tool = self.tools[name]
         return tool.max_retries if tool.max_retries is not None else self.max_retries
 
-    async def call_tool(
-        self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
-    ) -> Any:
+    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         return await self.tools[name].function_schema.call(tool_args, ctx)

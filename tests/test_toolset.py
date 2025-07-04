@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable
-from dataclasses import dataclass, field, replace
-from typing import Any, Callable, TypeVar
+from dataclasses import dataclass, replace
+from typing import TypeVar
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.combined import CombinedToolset
@@ -16,7 +16,6 @@ from pydantic_ai.toolsets.filtered import FilteredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
-from pydantic_ai.toolsets.processed import ProcessedToolset
 from pydantic_ai.usage import Usage
 
 pytestmark = pytest.mark.anyio
@@ -69,13 +68,15 @@ async def test_function_toolset_prepare_for_run():
             )
         ]
     )
-    assert await toolset.call_tool(context, 'add', {'a': 1, 'b': 2}) == 3
+    assert await toolset.call_tool(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2}), context) == 3
 
     no_prefix_context = build_run_context(PrefixDeps())
     no_prefix_toolset = await toolset.prepare_for_run(no_prefix_context)
     assert no_prefix_toolset.tool_names == toolset.tool_names
     assert no_prefix_toolset.tool_defs == toolset.tool_defs
-    assert await no_prefix_toolset.call_tool(no_prefix_context, 'add', {'a': 1, 'b': 2}) == 3
+    assert (
+        await no_prefix_toolset.call_tool(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2}), no_prefix_context) == 3
+    )
 
     foo_context = build_run_context(PrefixDeps(prefix='foo'))
     foo_toolset = await toolset.prepare_for_run(foo_context)
@@ -94,7 +95,7 @@ async def test_function_toolset_prepare_for_run():
             )
         ]
     )
-    assert await foo_toolset.call_tool(foo_context, 'foo_add', {'a': 1, 'b': 2}) == 3
+    assert await foo_toolset.call_tool(ToolCallPart(tool_name='foo_add', args={'a': 1, 'b': 2}), foo_context) == 3
 
     @toolset.tool
     def subtract(a: int, b: int) -> int:
@@ -130,7 +131,7 @@ async def test_function_toolset_prepare_for_run():
             ),
         ]
     )
-    assert await bar_toolset.call_tool(bar_context, 'bar_add', {'a': 1, 'b': 2}) == 3
+    assert await bar_toolset.call_tool(ToolCallPart(tool_name='bar_add', args={'a': 1, 'b': 2}), bar_context) == 3
 
     bar_foo_toolset = await foo_toolset.prepare_for_run(bar_context)
     assert bar_foo_toolset == bar_toolset
@@ -226,8 +227,8 @@ async def test_prepared_toolset_allows_removing_tools():
     assert len(run_toolset.tool_defs) == 2
 
     # Verify that the tools still work
-    assert await run_toolset.call_tool(context, 'add', {'a': 5, 'b': 3}) == 8
-    assert await run_toolset.call_tool(context, 'multiply', {'a': 4, 'b': 2}) == 8
+    assert await run_toolset.call_tool(ToolCallPart(tool_name='add', args={'a': 5, 'b': 3}), context) == 8
+    assert await run_toolset.call_tool(ToolCallPart(tool_name='multiply', args={'a': 4, 'b': 2}), context) == 8
 
 
 async def test_prefixed_toolset_tool_defs():
@@ -262,7 +263,7 @@ async def test_prefixed_toolset_tool_defs():
     assert subtract_def.description == 'Subtract two numbers'
 
 
-async def test_prefixed_toolset_call_tools():
+async def test_prefixed_toolsetcall_tools():
     """Test that PrefixedToolset correctly calls tools with prefixed names."""
     context = build_run_context(None)
     base_toolset = FunctionToolset[None]()
@@ -280,10 +281,10 @@ async def test_prefixed_toolset_call_tools():
     prefixed_toolset = PrefixedToolset(base_toolset, 'calc')
 
     # Test calling tools with prefixed names
-    result = await prefixed_toolset.call_tool(context, 'calc_add', {'a': 5, 'b': 3})
+    result = await prefixed_toolset.call_tool(ToolCallPart(tool_name='calc_add', args={'a': 5, 'b': 3}), context)
     assert result == 8
 
-    result = await prefixed_toolset.call_tool(context, 'calc_multiply', {'a': 4, 'b': 2})
+    result = await prefixed_toolset.call_tool(ToolCallPart(tool_name='calc_multiply', args={'a': 4, 'b': 2}), context)
     assert result == 8
 
 
@@ -308,7 +309,7 @@ async def test_prefixed_toolset_prepare_for_run():
     assert run_toolset.tool_defs[0].name == 'test_add'
 
     # Verify that the tool still works
-    result = await run_toolset.call_tool(context, 'test_add', {'a': 10, 'b': 5})
+    result = await run_toolset.call_tool(ToolCallPart(tool_name='test_add', args={'a': 10, 'b': 5}), context)
     assert result == 15
 
 
@@ -326,15 +327,15 @@ async def test_prefixed_toolset_error_invalid_prefix():
 
     # Test calling with wrong prefix
     with pytest.raises(ValueError, match="Tool name 'wrong_add' does not start with prefix 'math_'"):
-        await prefixed_toolset.call_tool(context, 'wrong_add', {'a': 1, 'b': 2})
+        await prefixed_toolset.call_tool(ToolCallPart(tool_name='wrong_add', args={'a': 1, 'b': 2}), context)
 
     # Test calling with no prefix
     with pytest.raises(ValueError, match="Tool name 'add' does not start with prefix 'math_'"):
-        await prefixed_toolset.call_tool(context, 'add', {'a': 1, 'b': 2})
+        await prefixed_toolset.call_tool(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2}), context)
 
     # Test calling with partial prefix
     with pytest.raises(ValueError, match="Tool name 'mat_add' does not start with prefix 'math_'"):
-        await prefixed_toolset.call_tool(context, 'mat_add', {'a': 1, 'b': 2})
+        await prefixed_toolset.call_tool(ToolCallPart(tool_name='mat_add', args={'a': 1, 'b': 2}), context)
 
 
 async def test_prefixed_toolset_empty_prefix():
@@ -353,23 +354,21 @@ async def test_prefixed_toolset_empty_prefix():
     assert prefixed_toolset.tool_names == ['_add']
 
     # Test calling the tool
-    result = await prefixed_toolset.call_tool(context, '_add', {'a': 3, 'b': 4})
+    result = await prefixed_toolset.call_tool(ToolCallPart(tool_name='_add', args={'a': 3, 'b': 4}), context)
     assert result == 7
 
     # Test error for wrong name
     with pytest.raises(ValueError, match="Tool name 'add' does not start with prefix '_'"):
-        await prefixed_toolset.call_tool(context, 'add', {'a': 1, 'b': 2})
+        await prefixed_toolset.call_tool(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2}), context)
 
 
-async def test_comprehensive_toolset_composition():  # noqa: C901
+async def test_comprehensive_toolset_composition():
     """Test that all toolsets can be composed together and work correctly."""
 
     @dataclass
     class TestDeps:
         user_role: str = 'user'
         enable_advanced: bool = True
-        log_calls: bool = False
-        log: list[str] = field(default_factory=list)
 
     # Create first FunctionToolset with basic math operations
     math_toolset = FunctionToolset[TestDeps]()
@@ -444,7 +443,7 @@ async def test_comprehensive_toolset_composition():  # noqa: C901
             return False
         return True
 
-    filtered_toolset = FilteredToolset(combined_prefixed_toolset, filter_tools)
+    filtered_toolset = FilteredToolset[TestDeps](combined_prefixed_toolset, filter_tools)
 
     # Step 4: Apply prepared toolset to modify descriptions (add user role annotation)
     async def prepare_add_context(ctx: RunContext[TestDeps], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -454,31 +453,11 @@ async def test_comprehensive_toolset_composition():  # noqa: C901
 
     prepared_toolset = PreparedToolset(filtered_toolset, prepare_add_context)
 
-    # Step 5: Apply processed toolset to add logging (store on deps.log, optionally wrap result)
-    async def process_with_logging(
-        ctx: RunContext[TestDeps],
-        call_tool_func: Callable[[str, dict[str, Any], Any], Awaitable[Any]],
-        name: str,
-        tool_args: dict[str, Any],
-        *args: Any,
-        **kwargs: Any,
-    ) -> Any:
-        if ctx.deps.log_calls:
-            ctx.deps.log.append(f'Calling tool: {name} with args: {tool_args}')
-        result = await call_tool_func(name, tool_args, *args, **kwargs)
-        if ctx.deps.log_calls:
-            ctx.deps.log.append(f'Tool {name} returned: {result}')
-            # For demonstration, wrap the result in a dict if logging is enabled
-            return {'result': result}
-        return result
-
-    processed_toolset = ProcessedToolset(prepared_toolset, process_with_logging)
-
-    # Step 6: Test the fully composed toolset
-    # Test with regular user context (log_calls=False)
-    regular_deps = TestDeps(user_role='user', enable_advanced=True, log_calls=False)
+    # Step 5: Test the fully composed toolset
+    # Test with regular user context
+    regular_deps = TestDeps(user_role='user', enable_advanced=True)
     regular_context = build_run_context(regular_deps)
-    final_toolset = await processed_toolset.prepare_for_run(regular_context)
+    final_toolset = await prepared_toolset.prepare_for_run(regular_context)
     # Tool definitions should have role annotation
     assert final_toolset.tool_defs == snapshot(
         [
@@ -535,13 +514,13 @@ async def test_comprehensive_toolset_composition():  # noqa: C901
         ]
     )
     # Call a tool and check result
-    result = await final_toolset.call_tool(regular_context, 'math_add', {'a': 5, 'b': 3})
+    result = await final_toolset.call_tool(ToolCallPart(tool_name='math_add', args={'a': 5, 'b': 3}), regular_context)
     assert result == 8
 
-    # Test with admin user context (log_calls=False, should have string tools)
-    admin_deps = TestDeps(user_role='admin', enable_advanced=True, log_calls=False)
+    # Test with admin user context (should have string tools)
+    admin_deps = TestDeps(user_role='admin', enable_advanced=True)
     admin_context = build_run_context(admin_deps)
-    admin_final_toolset = await processed_toolset.prepare_for_run(admin_context)
+    admin_final_toolset = await prepared_toolset.prepare_for_run(admin_context)
     assert admin_final_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -626,21 +605,15 @@ async def test_comprehensive_toolset_composition():  # noqa: C901
             ),
         ]
     )
-    result = await admin_final_toolset.call_tool(admin_context, 'str_concat', {'s1': 'Hello', 's2': 'World'})
+    result = await admin_final_toolset.call_tool(
+        ToolCallPart(tool_name='str_concat', args={'s1': 'Hello', 's2': 'World'}), admin_context
+    )
     assert result == 'HelloWorld'
 
-    # Test with logging enabled (log_calls=True, result should be wrapped)
-    logging_deps = TestDeps(user_role='admin', enable_advanced=True, log_calls=True)
-    logging_context = build_run_context(logging_deps)
-    logging_final_toolset = await processed_toolset.prepare_for_run(logging_context)
-    result = await logging_final_toolset.call_tool(logging_context, 'math_add', {'a': 10, 'b': 20})
-    assert result == {'result': 30}
-    assert logging_deps.log == ["Calling tool: math_add with args: {'a': 10, 'b': 20}", 'Tool math_add returned: 30']
-
-    # Test with advanced features disabled (log_calls=False)
-    basic_deps = TestDeps(user_role='user', enable_advanced=False, log_calls=False)
+    # Test with advanced features disabled
+    basic_deps = TestDeps(user_role='user', enable_advanced=False)
     basic_context = build_run_context(basic_deps)
-    basic_final_toolset = await processed_toolset.prepare_for_run(basic_context)
+    basic_final_toolset = await prepared_toolset.prepare_for_run(basic_context)
     assert basic_final_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -678,8 +651,8 @@ async def test_comprehensive_toolset_composition():  # noqa: C901
 
     # Test prepare_for_run idempotency
     # toolset.prepare_for_run(ctx1).prepare_for_run(ctx2) == toolset.prepare_for_run(ctx2)
-    ctx1 = build_run_context(TestDeps(user_role='user', enable_advanced=True, log_calls=False))
-    ctx2 = build_run_context(TestDeps(user_role='admin', enable_advanced=True, log_calls=False))
-    toolset_once = await processed_toolset.prepare_for_run(ctx2)
-    toolset_twice = await (await processed_toolset.prepare_for_run(ctx1)).prepare_for_run(ctx2)
+    ctx1 = build_run_context(TestDeps(user_role='user', enable_advanced=True))
+    ctx2 = build_run_context(TestDeps(user_role='admin', enable_advanced=True))
+    toolset_once = await prepared_toolset.prepare_for_run(ctx2)
+    toolset_twice = await (await prepared_toolset.prepare_for_run(ctx1)).prepare_for_run(ctx2)
     assert toolset_once == toolset_twice

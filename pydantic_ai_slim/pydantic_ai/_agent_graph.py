@@ -618,7 +618,7 @@ async def process_function_tools(  # noqa: C901
             output_parts.append(part)
         else:
             try:
-                result_data = await _call_tool(toolset, call, run_context)
+                result_data = await toolset.call_tool(call, run_context)
             except exceptions.UnexpectedModelBehavior as e:
                 ctx.state.increment_retries(ctx.deps.max_result_retries, e)
                 raise e
@@ -755,7 +755,7 @@ async def _call_function_tool(
 
     with tracer.start_as_current_span('running tool', attributes=span_attributes) as span:
         try:
-            tool_result = await _call_tool(toolset, tool_call, run_context)
+            tool_result = await toolset.call_tool(tool_call, run_context)
         except ToolRetryError as e:
             part = e.tool_retry
             if include_content and span.is_recording():
@@ -825,14 +825,6 @@ async def _call_function_tool(
             part.content = process_content(tool_result)
 
         return (part, extra_parts)
-
-
-async def _call_tool(
-    toolset: AbstractToolset[DepsT], tool_call: _messages.ToolCallPart, run_context: RunContext[DepsT]
-) -> Any:
-    run_context = dataclasses.replace(run_context, tool_call_id=tool_call.tool_call_id)
-    args_dict = toolset.validate_tool_args(run_context, tool_call.tool_name, tool_call.args)
-    return await toolset.call_tool(run_context, tool_call.tool_name, args_dict)
 
 
 @dataclasses.dataclass

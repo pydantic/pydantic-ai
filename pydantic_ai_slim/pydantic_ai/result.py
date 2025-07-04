@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from copy import copy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Generic, cast
 
@@ -106,11 +106,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     f'Invalid response, unable to find tool call for {output_tool_name!r}'
                 )
-            run_context = replace(self._run_ctx, tool_call_id=tool_call.tool_call_id)
-            args_dict = self._toolset.validate_tool_args(
-                run_context, tool_call.tool_name, tool_call.args, allow_partial=allow_partial
-            )
-            return await self._toolset.call_tool(run_context, tool_call.tool_name, args_dict)
+            return await self._toolset.call_tool(tool_call, self._run_ctx, allow_partial=allow_partial)
         elif deferred_tool_calls := self._toolset.get_deferred_tool_calls(message.parts):
             if not self._output_schema.allows_deferred_tool_calls:
                 raise exceptions.UserError(  # pragma: no cover
@@ -442,11 +438,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     f'Invalid response, unable to find tool call for {self._output_tool_name!r}'
                 )
-            run_context = replace(self._run_ctx, tool_call_id=tool_call.tool_call_id)
-            args_dict = self._toolset.validate_tool_args(
-                run_context, tool_call.tool_name, tool_call.args, allow_partial=allow_partial
-            )
-            return await self._toolset.call_tool(run_context, tool_call.tool_name, args_dict)
+            return await self._toolset.call_tool(tool_call, self._run_ctx, allow_partial=allow_partial)
         elif deferred_tool_calls := self._toolset.get_deferred_tool_calls(message.parts):
             if not self._output_schema.allows_deferred_tool_calls:
                 raise exceptions.UserError(

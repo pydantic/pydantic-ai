@@ -3,11 +3,10 @@ from __future__ import annotations
 import base64
 import functools
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from types import TracebackType
 from typing import Any, Callable
 
 import anyio
@@ -19,10 +18,9 @@ from typing_extensions import Self, assert_never, deprecated
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import ToolDefinition
 
-from .toolsets import AbstractToolset
+from .toolsets._callable import CallableToolset
 from .toolsets._run import RunToolset
 from .toolsets.prefixed import PrefixedToolset
-from .toolsets.processed import ProcessedToolset, ToolProcessFunc
 
 try:
     from mcp import types as mcp_types
@@ -45,7 +43,7 @@ from . import _mcp, exceptions, messages, models
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
 
 
-class MCPServer(AbstractToolset[Any], ABC):
+class MCPServer(CallableToolset[Any], ABC):
     """Base class for attaching agents to MCP servers.
 
     See <https://modelcontextprotocol.io> for more information.
@@ -56,7 +54,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     log_level: mcp_types.LoggingLevel | None = None
     log_handler: LoggingFnT | None = None
     timeout: float = 5
-    process_tool_call: ToolProcessFunc[Any] | None = None
+    process_tool_call: ProcessToolCallback | None = None
     allow_sampling: bool = True
     max_retries: int = 1
     sampling_model: models.Model | None = None
@@ -102,14 +100,11 @@ class MCPServer(AbstractToolset[Any], ABC):
             result = await self._client.list_tools()
         return result.tools
 
-    async def call_tool(
+    async def _call_tool(
         self,
         ctx: RunContext[Any],
         name: str,
         tool_args: dict[str, Any],
-        *args: Any,
-        metadata: dict[str, Any] | None = None,
-        **kwargs: Any,
     ) -> ToolResult:
         """Call a tool on the server.
 
@@ -127,36 +122,41 @@ class MCPServer(AbstractToolset[Any], ABC):
         Raises:
             ModelRetry: If the tool call fails.
         """
-        async with self:  # Ensure server is running
-            try:
-                result = await self._client.send_request(
-                    mcp_types.ClientRequest(
-                        mcp_types.CallToolRequest(
-                            method='tools/call',
-                            params=mcp_types.CallToolRequestParams(
-                                name=name,
-                                arguments=tool_args,
-                                _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
-                            ),
-                        )
-                    ),
-                    mcp_types.CallToolResult,
-                )
-            except McpError as e:
-                raise exceptions.ModelRetry(e.error.message)
 
-        content = [self._map_tool_result_part(part) for part in result.content]
+        async def _call(name: str, args: dict[str, Any], metadata: dict[str, Any] | None = None) -> ToolResult:
+            async with self:  # Ensure server is running
+                try:
+                    result = await self._client.send_request(
+                        mcp_types.ClientRequest(
+                            mcp_types.CallToolRequest(
+                                method='tools/call',
+                                params=mcp_types.CallToolRequestParams(
+                                    name=name,
+                                    arguments=args,
+                                    _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
+                                ),
+                            )
+                        ),
+                        mcp_types.CallToolResult,
+                    )
+                except McpError as e:
+                    raise exceptions.ModelRetry(e.error.message)
 
-        if result.isError:
-            text = '\n'.join(str(part) for part in content)
-            raise exceptions.ModelRetry(text)
+            content = [self._map_tool_result_part(part) for part in result.content]
+
+            if result.isError:
+                text = '\n'.join(str(part) for part in content)
+                raise exceptions.ModelRetry(text)
+            else:
+                return content[0] if len(content) == 1 else content
+
+        if self.process_tool_call is not None:
+            return await self.process_tool_call(ctx, _call, name, tool_args)
         else:
-            return content[0] if len(content) == 1 else content
+            return await _call(name, tool_args)
 
     async def prepare_for_run(self, ctx: RunContext[Any]) -> RunToolset[Any]:
         frozen_toolset = RunToolset(self, ctx, await self.list_tool_defs())
-        if self.process_tool_call:
-            frozen_toolset = await ProcessedToolset(frozen_toolset, self.process_tool_call).prepare_for_run(ctx)
         if self.tool_prefix:
             frozen_toolset = await PrefixedToolset(frozen_toolset, self.tool_prefix).prepare_for_run(ctx)
         return RunToolset(frozen_toolset, ctx, original=self)
@@ -208,12 +208,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self._running_count += 1
         return self
 
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> bool | None:
+    async def __aexit__(self, *args: Any) -> bool | None:
         self._running_count -= 1
         if self._running_count <= 0:
             await self._exit_stack.aclose()
@@ -364,7 +359,7 @@ class MCPServerStdio(MCPServer):
     timeout: float = 5
     """The timeout in seconds to wait for the client to initialize."""
 
-    process_tool_call: ToolProcessFunc[Any] | None = None
+    process_tool_call: ProcessToolCallback | None = None
     """Hook to customize tool calling and optionally pass extra metadata."""
 
     allow_sampling: bool = True
@@ -465,7 +460,7 @@ class _MCPServerHTTP(MCPServer):
     If the connection cannot be established within this time, the operation will fail.
     """
 
-    process_tool_call: ToolProcessFunc[Any] | None = None
+    process_tool_call: ProcessToolCallback | None = None
     """Hook to customize tool calling and optionally pass extra metadata."""
 
     allow_sampling: bool = True
@@ -642,3 +637,23 @@ ToolResult = (
     | Sequence[str | messages.BinaryContent | dict[str, Any] | list[Any]]
 )
 """The result type of an MCP tool call."""
+
+CallToolFunc = Callable[[str, dict[str, Any], dict[str, Any] | None], Awaitable[ToolResult]]
+"""A function type that represents a tool call."""
+
+ProcessToolCallback = Callable[
+    [
+        RunContext[Any],
+        CallToolFunc,
+        str,
+        dict[str, Any],
+    ],
+    Awaitable[ToolResult],
+]
+"""A process tool callback.
+
+It accepts a run context, the original tool call function, a tool name, and arguments.
+
+Allows wrapping an MCP server tool call to customize it, including adding extra request
+metadata.
+"""

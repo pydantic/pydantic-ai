@@ -166,7 +166,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
 
-    _running_count: int = dataclasses.field(repr=False)
+    _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
 
     @overload
@@ -430,7 +430,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._override_model: ContextVar[_utils.Option[models.Model]] = ContextVar('_override_model', default=None)
 
         self._exit_stack = None
-        self._running_count = 0
+        self._entered_count = 0
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -1788,18 +1788,17 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     async def __aenter__(self) -> Self:
         """Enter the agent. This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered with the agent so they can be used in a run."""
-        if self._running_count == 0:
+        if self._entered_count == 0:
             self._exit_stack = AsyncExitStack()
             await self._exit_stack.enter_async_context(self._toolset)
-        self._running_count += 1
+        self._entered_count += 1
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        self._running_count -= 1
-        if self._running_count <= 0 and self._exit_stack is not None:
+        self._entered_count -= 1
+        if self._entered_count <= 0 and self._exit_stack is not None:
             await self._exit_stack.aclose()
             self._exit_stack = None
-        return None
 
     def set_mcp_sampling_model(self, model: models.Model | models.KnownModelName | str | None = None) -> None:
         """Set the sampling model on all MCP servers registered with the agent.

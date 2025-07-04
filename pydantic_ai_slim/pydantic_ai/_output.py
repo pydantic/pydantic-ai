@@ -29,7 +29,7 @@ from .output import (
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
-from .toolsets import AbstractToolset
+from .toolsets._callable import CallableToolset
 from .toolsets._run import RunToolset
 
 if TYPE_CHECKING:
@@ -829,7 +829,7 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
 
 
 @dataclass(init=False)
-class OutputToolset(AbstractToolset[AgentDepsT]):
+class OutputToolset(CallableToolset[AgentDepsT]):
     """A toolset that contains output tools."""
 
     _tool_defs: list[ToolDefinition]
@@ -930,9 +930,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     def _max_retries_for_tool(self, name: str) -> int:
         return self.max_retries
 
-    async def call_tool(
-        self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
-    ) -> Any:
+    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         output = await self.processors[name].call(tool_args, ctx)
         for validator in self.output_validators:
             output = await validator.validate(output, ctx, wrap_validation_errors=False)

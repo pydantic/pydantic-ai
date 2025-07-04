@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from types import TracebackType
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal
+from typing import TYPE_CHECKING, Any, Callable, Generic
 
-from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
+from ..messages import ToolCallPart
 from ..tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -34,9 +33,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(
-        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
-    ) -> bool | None:
+    async def __aexit__(self, *args: Any) -> bool | None:
         return None
 
     @abstractmethod
@@ -56,27 +53,11 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         return next((tool_def for tool_def in self.tool_defs if tool_def.name == name), None)
 
     @abstractmethod
-    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        raise NotImplementedError()
-
-    def validate_tool_args(
-        self, ctx: RunContext[AgentDepsT], name: str, args: str | dict[str, Any] | None, allow_partial: bool = False
-    ) -> dict[str, Any]:
-        pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
-        validator = self._get_tool_args_validator(ctx, name)
-        if isinstance(args, str):
-            return validator.validate_json(args or '{}', allow_partial=pyd_allow_partial)
-        else:
-            return validator.validate_python(args or {}, allow_partial=pyd_allow_partial)
-
-    @abstractmethod
     def _max_retries_for_tool(self, name: str) -> int:
         raise NotImplementedError()
 
     @abstractmethod
-    async def call_tool(
-        self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
-    ) -> Any:
+    async def call_tool(self, call: ToolCallPart, ctx: RunContext[AgentDepsT], allow_partial: bool = False) -> Any:
         raise NotImplementedError()
 
     def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:

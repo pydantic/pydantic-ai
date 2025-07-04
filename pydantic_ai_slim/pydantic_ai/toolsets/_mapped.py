@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
-from pydantic_core import SchemaValidator
-
 from .._run_context import AgentDepsT, RunContext
-from ..tools import (
-    ToolDefinition,
-)
+from ..messages import ToolCallPart
+from ..tools import ToolDefinition
 from . import AbstractToolset
 from ._run import RunToolset
 from .wrapper import WrapperToolset
@@ -40,16 +37,12 @@ class MappedToolset(WrapperToolset[AgentDepsT]):
     def tool_defs(self) -> list[ToolDefinition]:
         return self._tool_defs
 
-    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        return super()._get_tool_args_validator(ctx, self._map_name(name))
-
     def _max_retries_for_tool(self, name: str) -> int:
         return super()._max_retries_for_tool(self._map_name(name))
 
-    async def call_tool(
-        self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
-    ) -> Any:
-        return await super().call_tool(ctx, self._map_name(name), tool_args, *args, **kwargs)
+    async def call_tool(self, call: ToolCallPart, ctx: RunContext[AgentDepsT], allow_partial: bool = False) -> Any:
+        call = replace(call, tool_name=self._map_name(call.tool_name))
+        return await super().call_tool(call, ctx, allow_partial=allow_partial)
 
     def _map_name(self, name: str) -> str:
         return self.name_map.get(name, name)

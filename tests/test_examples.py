@@ -16,7 +16,6 @@ import httpx
 import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
-from pydantic_core import SchemaValidator, core_schema
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_mock import MockerFixture
 from rich.console import Console
@@ -275,15 +274,10 @@ class MockMCPServer(AbstractToolset[Any]):
     def tool_defs(self) -> list[ToolDefinition]:
         return []
 
-    def _get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> SchemaValidator:
-        return SchemaValidator(core_schema.any_schema())  # pragma: lax no cover
-
     def _max_retries_for_tool(self, name: str) -> int:
         return 0  # pragma: lax no cover
 
-    async def call_tool(
-        self, ctx: RunContext[Any], name: str, tool_args: dict[str, Any], *args: Any, **kwargs: Any
-    ) -> Any:
+    async def call_tool(self, call: ToolCallPart, ctx: RunContext[Any], allow_partial: bool = False) -> Any:
         return None  # pragma: lax no cover
 
 

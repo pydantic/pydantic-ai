@@ -28,7 +28,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.toolsets.processed import CallToolFunc
 from pydantic_ai.usage import Usage
 
 from .conftest import IsDatetime, IsNow, IsStr, try_import
@@ -38,7 +37,7 @@ with try_import() as imports_successful:
     from mcp.types import CreateMessageRequestParams, ImageContent, TextContent
 
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response
-    from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio, ToolResult
+    from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.google import GoogleProvider
@@ -80,7 +79,9 @@ async def test_stdio_server(run_context: RunContext[int]):
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
         # Test calling the temperature conversion tool
-        result = await server.call_tool(run_context, 'celsius_to_fahrenheit', {'celsius': 0})
+        result = await server.call_tool(
+            ToolCallPart(tool_name='celsius_to_fahrenheit', args={'celsius': 0}), run_context
+        )
         assert result == snapshot('32.0')
 
 
@@ -113,12 +114,12 @@ async def test_process_tool_call(run_context: RunContext[int]) -> int:
         ctx: RunContext[int],
         call_tool: CallToolFunc,
         name: str,
-        args: dict[str, Any],
+        tool_args: dict[str, Any],
     ) -> ToolResult:
         """A process_tool_call that sets a flag and sends deps as metadata."""
         nonlocal called
         called = True
-        return await call_tool(name, args, metadata={'deps': ctx.deps})
+        return await call_tool(name, tool_args, {'deps': ctx.deps})
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
     async with server:
@@ -271,7 +272,7 @@ async def test_log_level_unset(run_context: RunContext[int]):
         assert len(tools) == snapshot(13)
         assert tools[10].name == 'get_log_level'
 
-        result = await server.call_tool(run_context, 'get_log_level', {})
+        result = await server.call_tool(ToolCallPart(tool_name='get_log_level', args={}), run_context)
         assert result == snapshot('unset')
 
 
@@ -279,7 +280,7 @@ async def test_log_level_set(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
     assert server.log_level == 'info'
     async with server:
-        result = await server.call_tool(run_context, 'get_log_level', {})
+        result = await server.call_tool(ToolCallPart(tool_name='get_log_level', args={}), run_context)
         assert result == snapshot('info')
 
 
@@ -992,7 +993,7 @@ async def test_client_sampling(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     server.sampling_model = TestModel(custom_output_text='sampling model response')
     async with server:
-        result = await server.call_tool(run_context, 'use_sampling', {'foo': 'bar'})
+        result = await server.call_tool(ToolCallPart(tool_name='use_sampling', args={'foo': 'bar'}), run_context)
         assert result == snapshot(
             {
                 'meta': None,
@@ -1009,7 +1010,7 @@ async def test_client_sampling_disabled(run_context: RunContext[int]):
     server.sampling_model = TestModel(custom_output_text='sampling model response')
     async with server:
         with pytest.raises(ModelRetry, match='Error executing tool use_sampling: Sampling not supported'):
-            await server.call_tool(run_context, 'use_sampling', {'foo': 'bar'})
+            await server.call_tool(ToolCallPart(tool_name='use_sampling', args={'foo': 'bar'}), run_context)
 
 
 async def test_mcp_server_raises_mcp_error(
@@ -1024,7 +1025,7 @@ async def test_mcp_server_raises_mcp_error(
             new=AsyncMock(side_effect=mcp_error),
         ):
             with pytest.raises(ModelRetry, match='Test MCP error conversion'):
-                await mcp_server.call_tool(run_context, 'test_tool', {})
+                await mcp_server.call_tool(ToolCallPart(tool_name='test_tool', args={}), run_context)
 
 
 def test_map_from_mcp_params_model_request():

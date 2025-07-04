@@ -189,10 +189,12 @@ async def process_tool_call(
     ctx: RunContext[int],
     call_tool: CallToolFunc,
     name: str,
-    tool_args: dict[str, Any],
+    tool_args: str | dict[str, Any] None,
+    *args: Any,
+    **kwargs: Any
 ) -> ToolResult:
     """A tool call processor that passes along the deps."""
-    return await call_tool(name, tool_args, metadata={'deps': ctx.deps})
+    return await call_tool(name, tool_args, *args, metadata={'deps': ctx.deps}, **kwargs)
 
 
 server = MCPServerStdio('python', ['mcp_server.py'], process_tool_call=process_tool_call)

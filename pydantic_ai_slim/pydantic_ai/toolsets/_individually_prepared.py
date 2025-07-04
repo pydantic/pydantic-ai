@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
@@ -26,7 +26,9 @@ class IndividuallyPreparedToolset(WrapperToolset[AgentDepsT]):
         name_map: dict[str, str] = {}
         for original_tool_def in wrapped_for_run.tool_defs:
             original_name = original_tool_def.name
-            tool_def = await self.prepare_func(ctx, original_tool_def)
+
+            run_context = replace(ctx, tool_name=original_name, retry=ctx.retries.get(original_name, 0))
+            tool_def = await self.prepare_func(run_context, original_tool_def)
             if not tool_def:
                 continue
 
