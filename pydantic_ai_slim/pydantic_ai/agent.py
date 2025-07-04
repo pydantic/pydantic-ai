@@ -733,12 +733,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         output_toolset = self._output_toolset
         if output_schema != self._output_schema or output_validators:
-            output_toolset = output_schema.toolset
+            output_toolset = cast(OutputToolset[AgentDepsT], output_schema.toolset)
             if output_toolset:
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
-                if self._prepare_output_tools:
-                    output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
+        if output_toolset and self._prepare_output_tools:
+            output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
 
         # Build the graph
         graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (

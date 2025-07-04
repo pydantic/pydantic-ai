@@ -1109,7 +1109,7 @@ async def test_deferred_tool():
 
     @agent.tool_plain(prepare=prepare_tool)
     def my_tool(x: int) -> int:
-        return x + 1
+        return x + 1  # pragma: no cover
 
     async with agent.run_stream('Hello') as result:
         assert not result.is_complete
@@ -1143,7 +1143,7 @@ async def test_deferred_tool_iter():
 
     @agent.tool_plain(prepare=prepare_tool)
     def my_tool(x: int) -> int:
-        return x + 1
+        return x + 1  # pragma: no cover
 
     outputs: list[str | DeferredToolCalls] = []
     events: list[Any] = []
