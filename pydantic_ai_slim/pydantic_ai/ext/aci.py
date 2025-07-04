@@ -2,13 +2,13 @@
 try:
     from aci import ACI
 except ImportError as _import_error:
-    raise ImportError(
-        'Please install `aci-sdk` to use the ACI Functions/Tools'
-    ) from _import_error
+    raise ImportError('Please install `aci-sdk` to use ACI.dev tools') from _import_error
+
+from typing import Any
 
 from aci import ACI
+
 from pydantic_ai import Tool
-from typing import Any
 
 
 def _clean_schema(schema):
@@ -21,18 +21,15 @@ def _clean_schema(schema):
         return schema
 
 
-def tool_from_aci(
-    aci_function: str,
-    linked_account_owner_id: str
-) -> Tool:
-    """Creates a PydanticAI tool from an ACI function.
+def tool_from_aci(aci_function: str, linked_account_owner_id: str) -> Tool:
+    """Creates a Pydantic AI tool proxy from an ACI function.
 
     Args:
-        aci_function: The ACI function to use.
+        aci_function: The ACI function to wrao.
         linked_account_owner_id: The ACI user ID to execute the function on behalf of.
 
     Returns:
-        A PydanticAI tool that can be used in an Agent.
+        A Pydantic AI tool that corresponds to the ACI.dev tool.
     """
     aci = ACI()
     function_definition = aci.functions.get_definition(aci_function)
@@ -53,7 +50,7 @@ def tool_from_aci(
 
     def implementation(*args: Any, **kwargs: Any) -> str:
         if args:
-            raise TypeError("Positional arguments are not allowed")
+            raise TypeError('Positional arguments are not allowed')
         return aci.handle_function_call(
             function_name,
             kwargs,
