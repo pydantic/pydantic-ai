@@ -21,10 +21,12 @@ from .output import (
     OutputSpec,
     OutputTypeOrFunction,
     PromptedOutput,
+    StructuredOutput,
     StructuredOutputMode,
     TextOutput,
     TextOutputFunc,
     ToolOutput,
+    structured
 )
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 

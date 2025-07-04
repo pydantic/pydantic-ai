@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Generic, Literal, Union
+from typing import Any, Callable, Generic, Literal, Union
 
-from typing_extensions import TypeAliasType, TypeVar
+from typing_extensions import TypeAliasType, TypeVar, TypeAlias
+from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler, BaseModel
+from pydantic_core.core_schema import any_schema, CoreSchema
+from pydantic.json_schema import JsonSchemaValue
 
 from .tools import RunContext
 
 __all__ = (
     # classes
+    'StructuredOutput',
     'ToolOutput',
     'NativeOutput',
     'PromptedOutput',
@@ -21,6 +25,8 @@ __all__ = (
     'OutputSpec',
     'OutputTypeOrFunction',
     'TextOutputFunc',
+    # type aliases
+    'structured'
 )
 
 T = TypeVar('T')
@@ -290,3 +296,55 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
+
+class StructuredOutput:
+    """
+    A factory type that enables structured output behavior in Pydantic models.
+    
+    Example usage:
+    ```python
+    from pydantic_ai import Agent
+    from pydantic import BaseModel
+    from pydantic.output import structured
+    from pydantic.output import StructuredOutput
+    
+    # structured is a type alias for StructuredOutput
+    # StructuredOutput(Model) is equivalent to @structured <ModelDef>
+    
+    @structured
+    class FooBar(BaseModel):
+        foo: str
+        bar: int
+    
+    class BarBaz(BaseModel):
+        bar: str
+        baz: int
+    
+    agent  =  Agent()
+    result =  agent.run_sync(
+        "Generate a sample object",
+        output_type=[FooBar, StructuredOutput(BarBaz)]
+    )
+    
+    assert isinstance(result.output, dict)
+    ```
+    """
+    
+    def __init__(self, model: BaseModel) -> None:
+        self.json_schema = model.model_json_schema()
+        self._model = model
+        self.__name__ = model.__name__
+        self.__doc__ = model.__doc__
+        self.__qualname__ = model.__qualname__
+    
+    def __get_pydantic_core_schema__(
+        self, source_type: Any, handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        return any_schema()
+    
+    def __get_pydantic_json_schema__(
+        self, core_schema: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        return self.json_schema
+
+structured: TypeAlias = StructuredOutput
