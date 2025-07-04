@@ -2829,7 +2829,10 @@ def test_binary_content_all_messages_json():
             {
                 'parts': [
                     {
-                        'content': ['Hello', {'data': 'SGVsbG8=', 'media_type': 'text/plain', 'kind': 'binary'}],
+                        'content': [
+                            'Hello',
+                            {'data': 'SGVsbG8=', 'media_type': 'text/plain', 'vendor_metadata': None, 'kind': 'binary'},
+                        ],
                         'timestamp': IsStr(),
                         'part_kind': 'user-prompt',
                     }

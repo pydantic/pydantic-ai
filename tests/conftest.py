@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from functools import cached_property
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Callable
@@ -19,7 +20,7 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
 from typing_extensions import TypeAlias
-from vcr import VCR
+from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai.messages import BinaryContent
@@ -193,6 +194,29 @@ def pytest_recording_configure(config: Any, vcr: VCR):
     from . import json_body_serializer
 
     vcr.register_serializer('yaml', json_body_serializer)
+
+    def method_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
+        if r1.method.upper() != r2.method.upper():
+            raise AssertionError(f'{r1.method} != {r2.method}')
+
+    vcr.register_matcher('method', method_matcher)
+
+
+@pytest.fixture(autouse=True)
+def mock_vcr_aiohttp_content(mocker: MockerFixture):
+    try:
+        from vcr.stubs import aiohttp_stubs
+    except ImportError:
+        return
+
+    # google-genai calls `self.response_stream.content.readline()` where `self.response_stream` is a `MockClientResponse`,
+    # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
+    # So we turn `content` into a cached property to return the same one each time.
+    # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
+    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # type: ignore
+    cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
+    mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
+    mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
 
 
 @pytest.fixture(scope='module')
