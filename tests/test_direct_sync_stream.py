@@ -6,9 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pydantic_ai.direct import model_request_stream_sync
+from pydantic_ai.direct import StreamedResponseSync, model_request_stream_sync
 from pydantic_ai.messages import ModelMessage, ModelRequest
-from pydantic_ai.models import StreamedResponseSync
 
 
 def test_model_request_stream_sync_without_context_manager():

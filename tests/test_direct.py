@@ -50,24 +50,14 @@ async def test_model_request_tool_call():
         [ModelRequest.user_text_prompt('x')],
         model_request_parameters=ModelRequestParameters(
             function_tools=[
-                ToolDefinition(
-                    name='tool_name',
-                    description='',
-                    parameters_json_schema={'type': 'object'},
-                )
+                ToolDefinition(name='tool_name', description='', parameters_json_schema={'type': 'object'})
             ],
             allow_text_output=False,
         ),
     )
     assert model_response == snapshot(
         ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='tool_name',
-                    args={},
-                    tool_call_id=IsStr(regex='pyd_ai_.*'),
-                )
-            ],
+            parts=[ToolCallPart(tool_name='tool_name', args={}, tool_call_id=IsStr(regex='pyd_ai_.*'))],
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             usage=Usage(requests=1, request_tokens=51, response_tokens=2, total_tokens=53),
