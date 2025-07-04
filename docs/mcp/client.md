@@ -31,7 +31,7 @@ Examples of both are shown below; [mcp-run-python](run-python.md) is used as the
 !!! note
     [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] requires an MCP server to be running and accepting HTTP connections before calling [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers]. Running the server is not managed by PydanticAI.
 
-The name "HTTP" is used since this implemented will be adapted in future to use the new
+The name "HTTP" is used since this implementation will be adapted in future to use the new
 [Streamable HTTP](https://github.com/modelcontextprotocol/specification/pull/206) currently in development.
 
 Before creating the SSE client, we need to run the server (docs [here](run-python.md)):
@@ -371,7 +371,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" with Python 3.10+)_
 
-You can disallow sampling by settings [`allow_sampling=False`][pydantic_ai.mcp.MCPServerStdio.allow_sampling] when creating the server reference, e.g.:
+You can disallow sampling by setting [`allow_sampling=False`][pydantic_ai.mcp.MCPServerStdio.allow_sampling] when creating the server reference, e.g.:
 
 ```python {title="sampling_disallowed.py" hl_lines="6" py="3.10"}
 from pydantic_ai.mcp import MCPServerStdio

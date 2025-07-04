@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.output import PromptedOutput, TextOutput
 from pydantic_ai.result import AgentStream, FinalResult, Usage
 from pydantic_graph import End
 
@@ -192,6 +193,22 @@ async def test_streamed_text_stream():
     async with agent.run_stream('Hello') as result:
         assert [c async for c in result.stream_text(delta=True, debounce_by=None)] == snapshot(
             ['The ', 'cat ', 'sat ', 'on ', 'the ', 'mat.']
+        )
+
+    def upcase(text: str) -> str:
+        return text.upper()
+
+    async with agent.run_stream('Hello', output_type=TextOutput(upcase)) as result:
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+            [
+                'THE ',
+                'THE CAT ',
+                'THE CAT SAT ',
+                'THE CAT SAT ON ',
+                'THE CAT SAT ON THE ',
+                'THE CAT SAT ON THE MAT.',
+                'THE CAT SAT ON THE MAT.',
+            ]
         )
 
     async with agent.run_stream('Hello') as result:
@@ -971,8 +988,7 @@ async def test_unknown_tool_call_events():
                     tool_name='unknown_tool',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
-                ),
-                tool_call_id=IsStr(),
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='known_tool', args={'x': 5}, tool_call_id=IsStr()),
@@ -983,8 +999,7 @@ async def test_unknown_tool_call_events():
                     content=10,
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
-                ),
-                tool_call_id=IsStr(),
+                )
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -1035,8 +1050,47 @@ async def test_output_tool_validation_failure_events():
                     content='Output tool not used - result failed validation.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
-                ),
-                tool_call_id=IsStr(),
+                )
             ),
         ]
     )
+
+
+async def test_stream_prompted_output():
+    class CityLocation(BaseModel):
+        city: str
+        country: str | None = None
+
+    m = TestModel(custom_output_text='{"city": "Mexico City", "country": "Mexico"}')
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation))
+
+    async with agent.run_stream('') as result:
+        assert not result.is_complete
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+            [
+                CityLocation(city='Mexico '),
+                CityLocation(city='Mexico City'),
+                CityLocation(city='Mexico City'),
+                CityLocation(city='Mexico City', country='Mexico'),
+                CityLocation(city='Mexico City', country='Mexico'),
+            ]
+        )
+        assert result.is_complete
+
+
+def test_function_tool_event_tool_call_id_properties():
+    """Ensure that the `tool_call_id` property on function tool events mirrors the underlying part's ID."""
+    # Prepare a ToolCallPart with a fixed ID
+    call_part = ToolCallPart(tool_name='sample_tool', args={'a': 1}, tool_call_id='call_id_123')
+    call_event = FunctionToolCallEvent(part=call_part)
+
+    # The event should expose the same `tool_call_id` as the part
+    assert call_event.tool_call_id == call_part.tool_call_id == 'call_id_123'
+
+    # Prepare a ToolReturnPart with a fixed ID
+    return_part = ToolReturnPart(tool_name='sample_tool', content='ok', tool_call_id='return_id_456')
+    result_event = FunctionToolResultEvent(result=return_part)
+
+    # The event should expose the same `tool_call_id` as the result part
+    assert result_event.tool_call_id == return_part.tool_call_id == 'return_id_456'

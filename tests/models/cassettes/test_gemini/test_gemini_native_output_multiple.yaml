@@ -1,0 +1,120 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '791'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the primarily language spoken in Mexico?
+        role: user
+      generationConfig:
+        response_mime_type: application/json
+        response_schema:
+          properties:
+            result:
+              anyOf:
+              - description: CityLocation
+                properties:
+                  data:
+                    properties:
+                      city:
+                        type: string
+                      country:
+                        type: string
+                    required:
+                    - city
+                    - country
+                    type: object
+                  kind:
+                    enum:
+                    - CityLocation
+                    type: string
+                required:
+                - kind
+                - data
+                type: object
+              - description: CountryLanguage
+                properties:
+                  data:
+                    properties:
+                      country:
+                        type: string
+                      language:
+                        type: string
+                    required:
+                    - country
+                    - language
+                    type: object
+                  kind:
+                    enum:
+                    - CountryLanguage
+                    type: string
+                required:
+                - kind
+                - data
+                type: object
+          required:
+          - result
+          type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '800'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=963
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -3.3667640072172103e-06
+        content:
+          parts:
+          - text: |-
+              {
+                "result": {
+                  "data": {
+                    "country": "Mexico",
+                    "language": "Spanish"
+                  },
+                  "kind": "CountryLanguage"
+                }
+              }
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: 2jxIaPucEYCK7dcP3OzRiQQ
+      usageMetadata:
+        candidatesTokenCount: 46
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 46
+        promptTokenCount: 46
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 46
+        totalTokenCount: 92
+    status:
+      code: 200
+      message: OK
+version: 1

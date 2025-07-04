@@ -1,0 +1,183 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '511'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in the user country?
+        role: user
+      toolConfig:
+        function_calling_config:
+          allowed_function_names:
+          - get_user_country
+          - final_result
+          mode: ANY
+      tools:
+        functionDeclarations:
+        - description: ''
+          name: get_user_country
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '733'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=591
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: 5.670217797160149e-06
+        content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_user_country
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: SDxIaMqaGOS9nvgPzP-Y2QE
+      usageMetadata:
+        candidatesTokenCount: 5
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 5
+        promptTokenCount: 32
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 32
+        totalTokenCount: 37
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '705'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in the user country?
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            name: get_user_country
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_user_country
+            response:
+              return_value: Mexico
+        role: user
+      toolConfig:
+        function_calling_config:
+          allowed_function_names:
+          - get_user_country
+          - final_result
+          mode: ANY
+      tools:
+        functionDeclarations:
+        - description: ''
+          name: get_user_country
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '821'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=613
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -3.3069271012209356e-05
+        content:
+          parts:
+          - functionCall:
+              args:
+                city: Mexico City
+                country: Mexico
+              name: final_result
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: SDxIaNHrNcy3nvgPm5DhwQo
+      usageMetadata:
+        candidatesTokenCount: 8
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 8
+        promptTokenCount: 46
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 46
+        totalTokenCount: 54
+    status:
+      code: 200
+      message: OK
+version: 1

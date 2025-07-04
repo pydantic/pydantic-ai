@@ -34,6 +34,4 @@ This model uses `gemini-1.5-flash` by default since Gemini is good at single sho
 
 ## Example Code
 
-```python {title="sql_gen.py"}
-#! examples/pydantic_ai_examples/sql_gen.py
-```
+```snippet {path="/examples/pydantic_ai_examples/sql_gen.py"}```

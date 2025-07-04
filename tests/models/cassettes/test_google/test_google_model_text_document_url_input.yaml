@@ -49,7 +49,7 @@ interactions:
       etag:
       - W/"61efea10-a0e"
       expires:
-      - Sun, 25 May 2025 14:06:36 GMT
+      - Fri, 04 Jul 2025 08:48:34 GMT
       last-modified:
       - Tue, 25 Jan 2022 12:16:16 GMT
       transfer-encoding:
@@ -93,11 +93,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '964'
+      - '1189'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=906
+      - gfet4t7; dur=802
       transfer-encoding:
       - chunked
       vary:
@@ -106,24 +106,25 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.4558751242501395
+      - avgLogprobs: -0.6026712397939151
         content:
           parts:
           - text: |
-              The main content of this TXT document is an explanation of the placeholder names "John Doe" (and variations) used when the true identity of a person is unknown or withheld, primarily in legal contexts in the United States and Canada. It also discusses alternative names used in other countries, different uses of the name, and the origin of the practice.
+              The main content of the document is an example of a TXT file, specifically providing information about the placeholder names "John Doe" (and related variations) used for unidentified or anonymous individuals, particularly in legal contexts in the United States and Canada. It also explains alternative names used in other countries and some additional context and examples of when "John Doe" might be used. The document also includes attribution to Wikipedia for the example content and a link to the license under which it is shared.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
+      responseId: 4lpeaLX9EYzj1PIP0MPrsAg
       usageMetadata:
-        candidatesTokenCount: 70
+        candidatesTokenCount: 97
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 70
+          tokenCount: 97
         promptTokenCount: 614
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 614
-        totalTokenCount: 684
+        totalTokenCount: 711
     status:
       code: 200
       message: OK
