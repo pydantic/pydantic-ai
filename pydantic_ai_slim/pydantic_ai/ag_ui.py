@@ -452,18 +452,10 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
 
             history: _History = _convert_history(run_input.messages)
 
-            output_type_: OutputSpec[OutputDataT | DeferredToolCalls | RunOutputDataT]
-            if output_type is None:
-                # Use the agent's output type if not specified.
-                output_type_ = [self.agent.output_type, DeferredToolCalls]
-            else:
-                output_type_ = [output_type, DeferredToolCalls]
-
             run: AgentRun[AgentDepsT, Any]
             async with self.agent.iter(
                 user_prompt=None,
-                # TODO(steve): Could or should it just accept: [output_type, DeferredToolCalls]
-                output_type=output_type_,
+                output_type=[output_type or self.agent.output_type, DeferredToolCalls],
                 message_history=history.messages,
                 model=model,
                 deps=deps,
