@@ -1,0 +1,121 @@
+interactions:
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+    method: GET
+    uri: https://huggingface.co/api/models/Qwen/Qwen2.5-72B-Instruct?expand=inferenceProviderMapping
+  response:
+    headers:
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-length:
+      - '701'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"2bd-diYmxjldwbIbFgWNRPBqJ3SEIak"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    parsed_body:
+      _id: 66e81cefd1b1391042d0e47e
+      id: Qwen/Qwen2.5-72B-Instruct
+      inferenceProviderMapping:
+        featherless-ai:
+          providerId: Qwen/Qwen2.5-72B-Instruct
+          status: live
+          task: conversational
+        fireworks-ai:
+          providerId: accounts/fireworks/models/qwen2p5-72b-instruct
+          status: live
+          task: conversational
+        hyperbolic:
+          providerId: Qwen/Qwen2.5-72B-Instruct
+          status: live
+          task: conversational
+        nebius:
+          providerId: Qwen/Qwen2.5-72B-Instruct-fast
+          status: live
+          task: conversational
+        novita:
+          providerId: qwen/qwen-2.5-72b-instruct
+          status: live
+          task: conversational
+        together:
+          providerId: Qwen/Qwen2.5-72B-Instruct-Turbo
+          status: live
+          task: conversational
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/nebius/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-length:
+      - '560'
+      content-type:
+      - application/json
+      cross-origin-opener-policy:
+      - same-origin
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          audio: null
+          content: Paris
+          function_call: null
+          reasoning_content: null
+          refusal: null
+          role: assistant
+          tool_calls: []
+        stop_reason: null
+      created: 1751470757
+      id: chatcmpl-b3936940372c481b8d886e596dc75524
+      model: Qwen/Qwen2.5-72B-Instruct-fast
+      object: chat.completion
+      prompt_logprobs: null
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 2
+        completion_tokens_details: null
+        prompt_tokens: 26
+        prompt_tokens_details: null
+        total_tokens: 28
+    status:
+      code: 200
+      message: OK
+version: 1
