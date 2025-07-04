@@ -24,7 +24,6 @@ from pydantic_ai._output import (
     ToolOutputSchema,
 )
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -3442,13 +3441,18 @@ def test_deprecated_kwargs_still_work():
         assert issubclass(w[0].category, DeprecationWarning)
         assert '`result_retries` is deprecated' in str(w[0].message)
 
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter('always')
+    try:
+        from pydantic_ai.mcp import MCPServerStdio
 
-        agent = Agent('test', mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])])  # type: ignore[call-arg]
-        assert len(w) == 1
-        assert issubclass(w[0].category, DeprecationWarning)
-        assert '`mcp_servers` is deprecated' in str(w[0].message)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+
+            agent = Agent('test', mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])])  # type: ignore[call-arg]
+            assert len(w) == 1
+            assert issubclass(w[0].category, DeprecationWarning)
+            assert '`mcp_servers` is deprecated' in str(w[0].message)
+    except ImportError:
+        pass
 
 
 def test_deprecated_kwargs_mixed_valid_invalid():
@@ -3604,6 +3608,11 @@ async def test_reentrant_context_manager():
 
 
 def test_set_mcp_sampling_model():
+    try:
+        from pydantic_ai.mcp import MCPServerStdio
+    except ImportError:
+        return
+
     test_model = TestModel()
     server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'], sampling_model=test_model)
