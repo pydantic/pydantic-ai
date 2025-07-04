@@ -179,22 +179,19 @@ call needs.
 from typing import Any
 
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerStdio, ToolResult
+from pydantic_ai.mcp import CallToolFunc, MCPServerStdio, ToolResult
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.toolsets.processed import CallToolFunc
 
 
 async def process_tool_call(
     ctx: RunContext[int],
     call_tool: CallToolFunc,
     name: str,
-    tool_args: str | dict[str, Any] None,
-    *args: Any,
-    **kwargs: Any
+    tool_args: dict[str, Any],
 ) -> ToolResult:
     """A tool call processor that passes along the deps."""
-    return await call_tool(name, tool_args, *args, metadata={'deps': ctx.deps}, **kwargs)
+    return await call_tool(name, tool_args, {'deps': ctx.deps})
 
 
 server = MCPServerStdio('python', ['mcp_server.py'], process_tool_call=process_tool_call)
