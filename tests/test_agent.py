@@ -14,12 +14,10 @@ from typing_extensions import Self
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai._output import (
-    structured,
     NativeOutput,
     NativeOutputSchema,
     OutputSpec,
     PromptedOutput,
-    StructuredOutput,
     TextOutput,
     TextOutputSchema,
     ToolOutputSchema,
@@ -1592,24 +1590,6 @@ Don't include any text or Markdown fencing before or after.\
             ),
         ]
     )
-    
-
-def test_structured_output():
-    model = TestModel()
-    agent = Agent(model)
-    
-    @structured
-    class FooBar(BaseModel):
-        foo: int
-        bar: str
-        
-    class BarBaz(BaseModel):
-        bar: int
-        baz: str
-    
-    result = agent.run_sync('Hello', output_type=[FooBar, StructuredOutput(BarBaz)])
-    
-    assert isinstance(result.output, dict)
 
 
 def test_run_with_history_new():
