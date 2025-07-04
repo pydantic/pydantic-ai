@@ -320,7 +320,7 @@ class StructuredOutput:
         bar: str
         baz: int
     
-    agent  =  Agent()
+    agent  =  Agent('test')
     result =  agent.run_sync(
         "Generate a sample object",
         output_type=[FooBar, StructuredOutput(BarBaz)]
