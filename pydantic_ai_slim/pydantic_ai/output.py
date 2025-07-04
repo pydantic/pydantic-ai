@@ -305,8 +305,8 @@ class StructuredOutput:
     ```python
     from pydantic_ai import Agent
     from pydantic import BaseModel
-    from pydantic.output import structured
-    from pydantic.output import StructuredOutput
+    from pydantic_ai.output import structured
+    from pydantic_ai.output import StructuredOutput
     
     # structured is a type alias for StructuredOutput
     # StructuredOutput(Model) is equivalent to @structured <ModelDef>
