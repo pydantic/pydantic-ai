@@ -283,7 +283,9 @@ class Tool(Generic[AgentDepsT]):
             description: Used to tell the model how/when/why to use the tool.
                 You can provide few-shot examples as a part of the description.
             json_schema: The schema for the function arguments
-
+            takes_ctx: An optional boolean parameter indicating whether the function
+                accepts the context object as an argument.
+            
         Returns:
             A Pydantic tool that calls the function
         """
@@ -298,7 +300,7 @@ class Tool(Generic[AgentDepsT]):
 
         return cls(
             function,
-            takes_ctx=False,
+            takes_ctx=takes_ctx,
             name=name,
             description=description,
             function_schema=function_schema,
