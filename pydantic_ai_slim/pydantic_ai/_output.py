@@ -114,7 +114,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
                     content=r.message,
                     tool_name=run_context.tool_name,
                 )
-                if run_context.tool_call_id:
+                if run_context.tool_call_id:  # pragma: no cover
                     m.tool_call_id = run_context.tool_call_id
                 raise ToolRetryError(m) from r
             else:

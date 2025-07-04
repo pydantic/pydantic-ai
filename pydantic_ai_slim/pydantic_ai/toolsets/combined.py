@@ -24,11 +24,11 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     toolsets: list[AbstractToolset[AgentDepsT]]
     _toolset_per_tool_name: dict[str, AbstractToolset[AgentDepsT]]
     _exit_stack: AsyncExitStack | None
-    _running_count: int
+    _entered_count: int
 
     def __init__(self, toolsets: Sequence[AbstractToolset[AgentDepsT]]):
         self._exit_stack = None
-        self._running_count = 0
+        self._entered_count = 0
         self.toolsets = list(toolsets)
 
         self._toolset_per_tool_name = {}
@@ -44,18 +44,18 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                 self._toolset_per_tool_name[name] = toolset
 
     async def __aenter__(self) -> Self:
-        if self._running_count == 0:
+        if self._entered_count == 0:
             self._exit_stack = AsyncExitStack()
             for toolset in self.toolsets:
                 await self._exit_stack.enter_async_context(toolset)
-        self._running_count += 1
+        self._entered_count += 1
         return self
 
     async def __aexit__(
         self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
     ) -> bool | None:
-        self._running_count -= 1
-        if self._running_count <= 0 and self._exit_stack is not None:
+        self._entered_count -= 1
+        if self._entered_count <= 0 and self._exit_stack is not None:
             await self._exit_stack.aclose()
             self._exit_stack = None
         return None

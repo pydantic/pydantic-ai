@@ -3600,11 +3600,24 @@ def test_prepare_output_tools():
     )
 
 
-async def test_reentrant_context_manager():
-    agent = Agent('test')
+async def test_context_manager():
+    try:
+        from pydantic_ai.mcp import MCPServerStdio
+    except ImportError:
+        return
+
+    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
+    agent = Agent('test', toolsets=[toolset])
+
     async with agent:
+        assert server1.is_running
+        assert server2.is_running
+
         async with agent:
-            pass
+            assert server1.is_running
+            assert server2.is_running
 
 
 def test_set_mcp_sampling_model():
@@ -3616,7 +3629,7 @@ def test_set_mcp_sampling_model():
     test_model = TestModel()
     server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'], sampling_model=test_model)
-    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix_')])
+    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent(None, toolsets=[toolset])
 
     with pytest.raises(UserError, match='No sampling model provided and no model set on the agent.'):

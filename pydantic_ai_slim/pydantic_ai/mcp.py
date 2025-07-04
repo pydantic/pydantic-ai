@@ -218,6 +218,11 @@ class MCPServer(AbstractToolset[Any], ABC):
         if self._running_count <= 0:
             await self._exit_stack.aclose()
 
+    @property
+    def is_running(self) -> bool:
+        """Check if the MCP server is running."""
+        return bool(self._running_count)
+
     async def _sampling_callback(
         self, context: RequestContext[ClientSession, Any], params: mcp_types.CreateMessageRequestParams
     ) -> mcp_types.CreateMessageResult | mcp_types.ErrorData:
