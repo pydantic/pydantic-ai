@@ -220,15 +220,15 @@ def model_request_stream_sync(
         for chunk in stream:
             chunks.append(chunk)
         print(chunks)
-    '''
-    [
-        PartStartEvent(index=0, part=TextPart(content='Albert Einstein was ')),
-        PartDeltaEvent(
-            index=0, delta=TextPartDelta(content_delta='a German-born theoretical ')
-        ),
-        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='physicist.')),
-    ]
-    '''
+        '''
+        [
+            PartStartEvent(index=0, part=TextPart(content='Albert Einstein was ')),
+            PartDeltaEvent(
+                index=0, delta=TextPartDelta(content_delta='a German-born theoretical ')
+            ),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='physicist.')),
+        ]
+        '''
     ```
 
     Args:
