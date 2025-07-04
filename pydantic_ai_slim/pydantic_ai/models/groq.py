@@ -7,45 +7,29 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, Union, cast, overload
 
+from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from typing_extensions import assert_never
 
-from pydantic_ai._thinking_part import split_content_into_text_and_thinking
-
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..messages import (
-    BinaryContent,
-    DocumentUrl,
-    ImageUrl,
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    ModelResponsePart,
-    ModelResponseStreamEvent,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ThinkingPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
+from .._utils import guard_tool_call_id as _guard_tool_call_id
+from .._utils import number_to_datetime
+from ..messages import (BinaryContent, DocumentUrl, ImageUrl, ModelMessage,
+                        ModelRequest, ModelResponse, ModelResponsePart,
+                        ModelResponseStreamEvent, RetryPromptPart,
+                        SystemPromptPart, TextPart, ThinkingPart, ToolCallPart,
+                        ToolReturnPart, UserPromptPart)
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    check_allow_model_requests,
-    get_user_agent,
-)
+from . import (Model, ModelRequestParameters, StreamedResponse,
+               check_allow_model_requests, get_user_agent)
 
 try:
     from groq import NOT_GIVEN, APIStatusError, AsyncGroq, AsyncStream
     from groq.types import chat
-    from groq.types.chat.chat_completion_content_part_image_param import ImageURL
+    from groq.types.chat.chat_completion_content_part_image_param import \
+        ImageURL
 except ImportError as _import_error:
     raise ImportError(
         'Please install `groq` to use the Groq model, '

@@ -10,18 +10,10 @@ import pytest
 from dirty_equals import IsStr
 from inline_snapshot import snapshot
 
-from pydantic_graph import (
-    BaseNode,
-    End,
-    EndSnapshot,
-    FullStatePersistence,
-    Graph,
-    GraphRunContext,
-    GraphRuntimeError,
-    GraphSetupError,
-    NodeSnapshot,
-    SimpleStatePersistence,
-)
+from pydantic_graph import (BaseNode, End, EndSnapshot, FullStatePersistence,
+                            Graph, GraphRunContext, GraphRuntimeError,
+                            GraphSetupError, NodeSnapshot,
+                            SimpleStatePersistence)
 
 from ..conftest import IsFloat, IsNow
 

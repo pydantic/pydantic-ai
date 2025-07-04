@@ -12,41 +12,29 @@ from unittest.mock import patch
 import httpx
 import pytest
 from inline_snapshot import snapshot
+from pydantic_ai import (Agent, ModelHTTPError, ModelRetry,
+                         UnexpectedModelBehavior)
+from pydantic_ai.messages import (BinaryContent, ImageUrl, ModelRequest,
+                                  ModelResponse, RetryPromptPart,
+                                  SystemPromptPart, TextPart, ThinkingPart,
+                                  ToolCallPart, ToolReturnPart, UserPromptPart)
+from pydantic_ai.usage import Usage
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
-from pydantic_ai.messages import (
-    BinaryContent,
-    ImageUrl,
-    ModelRequest,
-    ModelResponse,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ThinkingPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
-from pydantic_ai.usage import Usage
-
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import (IsDatetime, IsInstance, IsNow, IsStr,
+                        raise_if_exception, try_import)
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from groq import APIStatusError, AsyncGroq
     from groq.types import chat
     from groq.types.chat.chat_completion import Choice
+    from groq.types.chat.chat_completion_chunk import Choice as ChunkChoice
     from groq.types.chat.chat_completion_chunk import (
-        Choice as ChunkChoice,
-        ChoiceDelta,
-        ChoiceDeltaToolCall,
-        ChoiceDeltaToolCallFunction,
-    )
+        ChoiceDelta, ChoiceDeltaToolCall, ChoiceDeltaToolCallFunction)
     from groq.types.chat.chat_completion_message import ChatCompletionMessage
     from groq.types.chat.chat_completion_message_tool_call import Function
     from groq.types.completion_usage import CompletionUsage
-
     from pydantic_ai.models.groq import GroqModel, GroqModelSettings
     from pydantic_ai.providers.groq import GroqProvider
 

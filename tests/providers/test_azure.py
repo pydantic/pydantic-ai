@@ -2,8 +2,6 @@ import os
 
 import pytest
 from inline_snapshot import snapshot
-from pytest_mock import MockerFixture
-
 from pydantic_ai.agent import Agent
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -11,13 +9,14 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
+from pydantic_ai.profiles.openai import (OpenAIJsonSchemaTransformer,
+                                         openai_model_profile)
+from pytest_mock import MockerFixture
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
     from openai import AsyncAzureOpenAI
-
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.azure import AzureProvider
 

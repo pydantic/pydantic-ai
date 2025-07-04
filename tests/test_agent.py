@@ -9,42 +9,27 @@ import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter, field_validator
-from pydantic_core import to_json
-from typing_extensions import Self
-
-from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
-from pydantic_ai._output import (
-    NativeOutput,
-    NativeOutputSchema,
-    OutputSpec,
-    PromptedOutput,
-    TextOutput,
-    TextOutputSchema,
-    ToolOutputSchema,
-)
+from pydantic_ai import (Agent, ModelRetry, RunContext,
+                         UnexpectedModelBehavior, UserError,
+                         capture_run_messages)
+from pydantic_ai._output import (NativeOutput, NativeOutputSchema, OutputSpec,
+                                 PromptedOutput, TextOutput, TextOutputSchema,
+                                 ToolOutputSchema)
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.messages import (
-    BinaryContent,
-    ImageUrl,
-    ModelMessage,
-    ModelMessagesTypeAdapter,
-    ModelRequest,
-    ModelResponse,
-    ModelResponsePart,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturn,
-    ToolReturnPart,
-    UserPromptPart,
-)
+from pydantic_ai.messages import (BinaryContent, ImageUrl, ModelMessage,
+                                  ModelMessagesTypeAdapter, ModelRequest,
+                                  ModelResponse, ModelResponsePart,
+                                  RetryPromptPart, SystemPromptPart, TextPart,
+                                  ToolCallPart, ToolReturn, ToolReturnPart,
+                                  UserPromptPart)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
+from pydantic_core import to_json
+from typing_extensions import Self
 
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 

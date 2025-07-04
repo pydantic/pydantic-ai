@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import httpx
 import pytest
-
 from pydantic_ai.exceptions import UserError
 
 from ..conftest import TestEnv, try_import
@@ -10,7 +9,6 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     from cohere import AsyncClientV2
     from cohere.core.http_client import AsyncHttpClient
-
     from pydantic_ai.providers.cohere import CohereProvider
 
 

@@ -2,14 +2,12 @@ from __future__ import annotations as _annotations
 
 import httpx
 import pytest
-
 from pydantic_ai.exceptions import UserError
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from anthropic import AsyncAnthropic
-
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 

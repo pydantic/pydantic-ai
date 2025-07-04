@@ -10,29 +10,16 @@ from inline_snapshot import snapshot
 from logfire_api import DEFAULT_LOGFIRE_INSTANCE
 from opentelemetry._events import NoOpEventLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
-
-from pydantic_ai.messages import (
-    AudioUrl,
-    BinaryContent,
-    DocumentUrl,
-    ImageUrl,
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    ModelResponseStreamEvent,
-    PartDeltaEvent,
-    PartStartEvent,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    TextPartDelta,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-    VideoUrl,
-)
+from pydantic_ai.messages import (AudioUrl, BinaryContent, DocumentUrl,
+                                  ImageUrl, ModelMessage, ModelRequest,
+                                  ModelResponse, ModelResponseStreamEvent,
+                                  PartDeltaEvent, PartStartEvent,
+                                  RetryPromptPart, SystemPromptPart, TextPart,
+                                  TextPartDelta, ToolCallPart, ToolReturnPart,
+                                  UserPromptPart, VideoUrl)
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
+from pydantic_ai.models.instrumented import (InstrumentationSettings,
+                                             InstrumentedModel)
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import Usage
 

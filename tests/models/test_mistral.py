@@ -10,52 +10,43 @@ from typing import Any, Union, cast
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
-from typing_extensions import TypedDict
-
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
-from pydantic_ai.messages import (
-    BinaryContent,
-    ImageUrl,
-    ModelRequest,
-    ModelResponse,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ThinkingPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-    VideoUrl,
-)
+from pydantic_ai.messages import (BinaryContent, ImageUrl, ModelRequest,
+                                  ModelResponse, RetryPromptPart,
+                                  SystemPromptPart, TextPart, ThinkingPart,
+                                  ToolCallPart, ToolReturnPart, UserPromptPart,
+                                  VideoUrl)
 from pydantic_ai.usage import Usage
+from typing_extensions import TypedDict
 
 from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from mistralai import (
-        AssistantMessage as MistralAssistantMessage,
-        ChatCompletionChoice as MistralChatCompletionChoice,
-        CompletionChunk as MistralCompletionChunk,
-        CompletionResponseStreamChoice as MistralCompletionResponseStreamChoice,
-        CompletionResponseStreamChoiceFinishReason as MistralCompletionResponseStreamChoiceFinishReason,
-        DeltaMessage as MistralDeltaMessage,
-        FunctionCall as MistralFunctionCall,
-        Mistral,
-        TextChunk as MistralTextChunk,
-        UsageInfo as MistralUsageInfo,
-    )
-    from mistralai.models import (
-        ChatCompletionResponse as MistralChatCompletionResponse,
-        CompletionEvent as MistralCompletionEvent,
-        SDKError,
-        ToolCall as MistralToolCall,
-    )
+    from mistralai import AssistantMessage as MistralAssistantMessage
+    from mistralai import ChatCompletionChoice as MistralChatCompletionChoice
+    from mistralai import CompletionChunk as MistralCompletionChunk
+    from mistralai import \
+        CompletionResponseStreamChoice as MistralCompletionResponseStreamChoice
+    from mistralai import \
+        CompletionResponseStreamChoiceFinishReason as \
+        MistralCompletionResponseStreamChoiceFinishReason
+    from mistralai import DeltaMessage as MistralDeltaMessage
+    from mistralai import FunctionCall as MistralFunctionCall
+    from mistralai import Mistral
+    from mistralai import TextChunk as MistralTextChunk
+    from mistralai import UsageInfo as MistralUsageInfo
+    from mistralai.models import \
+        ChatCompletionResponse as MistralChatCompletionResponse
+    from mistralai.models import CompletionEvent as MistralCompletionEvent
+    from mistralai.models import SDKError
+    from mistralai.models import ToolCall as MistralToolCall
     from mistralai.types.basemodel import Unset as MistralUnset
-
-    from pydantic_ai.models.mistral import MistralModel, MistralStreamedResponse
-    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.mistral import (MistralModel,
+                                            MistralStreamedResponse)
+    from pydantic_ai.models.openai import (OpenAIResponsesModel,
+                                           OpenAIResponsesModelSettings)
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 

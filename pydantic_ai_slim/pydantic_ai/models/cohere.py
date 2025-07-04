@@ -4,50 +4,28 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal, Union, cast
 
+from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from typing_extensions import assert_never
 
-from pydantic_ai._thinking_part import split_content_into_text_and_thinking
-
 from .. import ModelHTTPError, usage
-from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
-from ..messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    ModelResponsePart,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ThinkingPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
+from .._utils import generate_tool_call_id as _generate_tool_call_id
+from .._utils import guard_tool_call_id as _guard_tool_call_id
+from ..messages import (ModelMessage, ModelRequest, ModelResponse,
+                        ModelResponsePart, RetryPromptPart, SystemPromptPart,
+                        TextPart, ThinkingPart, ToolCallPart, ToolReturnPart,
+                        UserPromptPart)
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    check_allow_model_requests,
-)
+from . import Model, ModelRequestParameters, check_allow_model_requests
 
 try:
-    from cohere import (
-        AssistantChatMessageV2,
-        AsyncClientV2,
-        ChatMessageV2,
-        ChatResponse,
-        SystemChatMessageV2,
-        TextAssistantMessageContentItem,
-        ToolCallV2,
-        ToolCallV2Function,
-        ToolChatMessageV2,
-        ToolV2,
-        ToolV2Function,
-        UserChatMessageV2,
-    )
+    from cohere import (AssistantChatMessageV2, AsyncClientV2, ChatMessageV2,
+                        ChatResponse, SystemChatMessageV2,
+                        TextAssistantMessageContentItem, ToolCallV2,
+                        ToolCallV2Function, ToolChatMessageV2, ToolV2,
+                        ToolV2Function, UserChatMessageV2)
     from cohere.core.api_error import ApiError
     from cohere.v2.client import OMIT
 except ImportError as _import_error:

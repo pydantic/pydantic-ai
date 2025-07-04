@@ -9,14 +9,11 @@ from pydantic import BaseModel
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext
-    from pydantic_evals.reporting import (
-        EvaluationReport,
-        RenderNumberConfig,
-        RenderValueConfig,
-        ReportCase,
-        ReportCaseAggregate,
-    )
+    from pydantic_evals.evaluators import (EvaluationResult, Evaluator,
+                                           EvaluatorContext)
+    from pydantic_evals.reporting import (EvaluationReport, RenderNumberConfig,
+                                          RenderValueConfig, ReportCase,
+                                          ReportCaseAggregate)
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 

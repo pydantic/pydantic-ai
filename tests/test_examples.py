@@ -16,26 +16,20 @@ import httpx
 import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
-from pytest_examples import CodeExample, EvalExample, find_examples
-from pytest_mock import MockerFixture
-from rich.console import Console
-
 from pydantic_ai import ModelHTTPError
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelResponse,
-    RetryPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
+from pydantic_ai.messages import (ModelMessage, ModelResponse, RetryPromptPart,
+                                  TextPart, ToolCallPart, ToolReturnPart,
+                                  UserPromptPart)
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import (AgentInfo, DeltaToolCall,
+                                         DeltaToolCalls, FunctionModel)
 from pydantic_ai.models.test import TestModel
+from pytest_examples import CodeExample, EvalExample, find_examples
+from pytest_mock import MockerFixture
+from rich.console import Console
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 

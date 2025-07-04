@@ -12,9 +12,7 @@ with try_import() as imports_successful:
     import logfire
     from logfire.testing import CaptureLogfire
 
-    from pydantic_evals.otel._context_subtree import (
-        context_subtree,
-    )
+    from pydantic_evals.otel._context_subtree import context_subtree
     from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]

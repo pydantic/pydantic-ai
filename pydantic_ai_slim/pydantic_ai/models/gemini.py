@@ -10,42 +10,24 @@ from uuid import uuid4
 
 import httpx
 import pydantic
-from httpx import USE_CLIENT_DEFAULT, Response as HTTPResponse
-from typing_extensions import NotRequired, TypedDict, assert_never
-
+from httpx import USE_CLIENT_DEFAULT
+from httpx import Response as HTTPResponse
 from pydantic_ai.providers import Provider, infer_provider
+from typing_extensions import NotRequired, TypedDict, assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from ..exceptions import UserError
-from ..messages import (
-    BinaryContent,
-    FileUrl,
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    ModelResponsePart,
-    ModelResponseStreamEvent,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ThinkingPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-    VideoUrl,
-)
+from ..messages import (BinaryContent, FileUrl, ModelMessage, ModelRequest,
+                        ModelResponse, ModelResponsePart,
+                        ModelResponseStreamEvent, RetryPromptPart,
+                        SystemPromptPart, TextPart, ThinkingPart, ToolCallPart,
+                        ToolReturnPart, UserPromptPart, VideoUrl)
 from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    check_allow_model_requests,
-    download_item,
-    get_user_agent,
-)
+from . import (Model, ModelRequestParameters, StreamedResponse,
+               check_allow_model_requests, download_item, get_user_agent)
 
 LatestGeminiModelNames = Literal[
     'gemini-1.5-flash',

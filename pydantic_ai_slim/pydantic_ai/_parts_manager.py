@@ -18,18 +18,11 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Union
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import (
-    ModelResponsePart,
-    ModelResponseStreamEvent,
-    PartDeltaEvent,
-    PartStartEvent,
-    TextPart,
-    TextPartDelta,
-    ThinkingPart,
-    ThinkingPartDelta,
-    ToolCallPart,
-    ToolCallPartDelta,
-)
+from pydantic_ai.messages import (ModelResponsePart, ModelResponseStreamEvent,
+                                  PartDeltaEvent, PartStartEvent, TextPart,
+                                  TextPartDelta, ThinkingPart,
+                                  ThinkingPartDelta, ToolCallPart,
+                                  ToolCallPartDelta)
 
 from ._utils import generate_tool_call_id as _generate_tool_call_id
 

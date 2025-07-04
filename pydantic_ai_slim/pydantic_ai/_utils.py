@@ -12,20 +12,14 @@ from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, overload
+from typing import (TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union,
+                    overload)
 
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import (
-    ParamSpec,
-    TypeAlias,
-    TypeGuard,
-    TypeIs,
-    get_args,
-    get_origin,
-    is_typeddict,
-)
+from typing_extensions import (ParamSpec, TypeAlias, TypeGuard, TypeIs,
+                               get_args, get_origin, is_typeddict)
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
@@ -37,6 +31,7 @@ AbstractSpan = AbstractSpan
 
 if TYPE_CHECKING:
     from pydantic_ai.agent import AgentRun, AgentRunResult
+
     from pydantic_graph import GraphRun, GraphRunResult
 
     from . import messages as _messages

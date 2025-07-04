@@ -17,13 +17,9 @@ else:
 
 
 with try_import() as imports_successful:
-    from pydantic_evals._utils import (
-        UNSET,
-        Unset,
-        get_unwrapped_function_name,
-        is_set,
-        task_group_gather,
-    )
+    from pydantic_evals._utils import (UNSET, Unset,
+                                       get_unwrapped_function_name, is_set,
+                                       task_group_gather)
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 

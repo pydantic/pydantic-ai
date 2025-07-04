@@ -13,52 +13,35 @@ import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
-from typing_extensions import Literal, TypeAlias
-
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import (
-    BinaryContent,
-    DocumentUrl,
-    ImageUrl,
-    ModelRequest,
-    ModelResponse,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ThinkingPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-    VideoUrl,
-)
+from pydantic_ai.messages import (BinaryContent, DocumentUrl, ImageUrl,
+                                  ModelRequest, ModelResponse, RetryPromptPart,
+                                  SystemPromptPart, TextPart, ThinkingPart,
+                                  ToolCallPart, ToolReturnPart, UserPromptPart,
+                                  VideoUrl)
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.gemini import (
-    GeminiModel,
-    GeminiModelSettings,
-    _content_model_response,
-    _gemini_response_ta,
-    _gemini_streamed_response_ta,
-    _GeminiCandidates,
-    _GeminiContent,
-    _GeminiFunction,
-    _GeminiFunctionCall,
-    _GeminiFunctionCallingConfig,
-    _GeminiFunctionCallPart,
-    _GeminiResponse,
-    _GeminiSafetyRating,
-    _GeminiTextPart,
-    _GeminiThoughtPart,
-    _GeminiToolConfig,
-    _GeminiTools,
-    _GeminiUsageMetaData,
-)
-from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.models.gemini import (GeminiModel, GeminiModelSettings,
+                                       _content_model_response,
+                                       _gemini_response_ta,
+                                       _gemini_streamed_response_ta,
+                                       _GeminiCandidates, _GeminiContent,
+                                       _GeminiFunction, _GeminiFunctionCall,
+                                       _GeminiFunctionCallingConfig,
+                                       _GeminiFunctionCallPart,
+                                       _GeminiResponse, _GeminiSafetyRating,
+                                       _GeminiTextPart, _GeminiThoughtPart,
+                                       _GeminiToolConfig, _GeminiTools,
+                                       _GeminiUsageMetaData)
+from pydantic_ai.output import (NativeOutput, PromptedOutput, TextOutput,
+                                ToolOutput)
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
+from typing_extensions import Literal, TypeAlias
 
-from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
+from ..conftest import (ClientWithHandler, IsDatetime, IsInstance, IsNow,
+                        IsStr, TestEnv, try_import)
 
 pytestmark = pytest.mark.anyio
 
@@ -1370,7 +1353,8 @@ async def test_gemini_additional_properties_is_true(allow_model_requests: None, 
 @pytest.mark.vcr()
 async def test_gemini_model_thinking_part(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
     with try_import() as imports_successful:
-        from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+        from pydantic_ai.models.openai import (OpenAIResponsesModel,
+                                               OpenAIResponsesModelSettings)
         from pydantic_ai.providers.openai import OpenAIProvider
 
     if not imports_successful():  # pragma: lax no cover

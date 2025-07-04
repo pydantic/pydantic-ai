@@ -24,10 +24,12 @@ from typing import Any, Callable, Generic, Literal, Union, cast
 import anyio
 import logfire_api
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_serializer
+from pydantic import (BaseModel, ConfigDict, Field, TypeAdapter,
+                      ValidationError, model_serializer)
 from pydantic._internal import _typing_extra
 from pydantic_core import to_json
-from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
+from pydantic_core.core_schema import (SerializationInfo,
+                                       SerializerFunctionWrapHandler)
 from rich.progress import Progress
 from typing_extensions import NotRequired, Self, TypedDict, TypeVar
 

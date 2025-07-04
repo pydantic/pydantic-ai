@@ -17,11 +17,13 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import Concatenate, ParamSpec, TypeIs, TypeVar, get_origin
+from typing_extensions import (Concatenate, ParamSpec, TypeIs, TypeVar,
+                               get_origin)
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
-from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
+from ._utils import (check_object_json_schema, is_async_callable,
+                     is_model_like, run_in_executor)
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat, ObjectJsonSchema

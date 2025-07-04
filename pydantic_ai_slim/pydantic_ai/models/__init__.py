@@ -16,15 +16,16 @@ from functools import cache, cached_property
 from typing import Generic, TypeVar, overload
 
 import httpx
+from pydantic_ai.profiles import (DEFAULT_PROFILE, ModelProfile,
+                                  ModelProfileSpec)
 from typing_extensions import Literal, TypeAliasType, TypedDict
-
-from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 
 from .. import _utils
 from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
-from ..messages import FileUrl, ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent, VideoUrl
+from ..messages import (FileUrl, ModelMessage, ModelRequest, ModelResponse,
+                        ModelResponseStreamEvent, VideoUrl)
 from ..output import OutputMode
 from ..profiles._json_schema import JsonSchemaTransformer
 from ..settings import ModelSettings

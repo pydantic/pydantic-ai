@@ -8,19 +8,12 @@ import pydantic_core
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
-
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    SystemPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.messages import (ModelMessage, ModelRequest, ModelResponse,
+                                  SystemPromptPart, TextPart, ToolCallPart,
+                                  ToolReturnPart, UserPromptPart)
+from pydantic_ai.models.function import (AgentInfo, DeltaToolCall,
+                                         DeltaToolCalls, FunctionModel)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import Usage
 

@@ -20,8 +20,10 @@ with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
 
     from pydantic_evals import Case, Dataset
-    from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
-    from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, LLMJudge, Python
+    from pydantic_evals.dataset import (increment_eval_metric,
+                                        set_eval_attribute)
+    from pydantic_evals.evaluators import (EvaluationResult, Evaluator,
+                                           EvaluatorOutput, LLMJudge, Python)
     from pydantic_evals.evaluators.context import EvaluatorContext
 
     @dataclass

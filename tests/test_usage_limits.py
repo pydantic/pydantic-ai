@@ -5,15 +5,9 @@ from datetime import timezone
 
 import pytest
 from inline_snapshot import snapshot
-
 from pydantic_ai import Agent, RunContext, UsageLimitExceeded
-from pydantic_ai.messages import (
-    ModelRequest,
-    ModelResponse,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
+from pydantic_ai.messages import (ModelRequest, ModelResponse, ToolCallPart,
+                                  ToolReturnPart, UserPromptPart)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import Usage, UsageLimits
 

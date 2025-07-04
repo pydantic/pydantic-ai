@@ -3,23 +3,14 @@ from datetime import timezone
 
 import pytest
 from inline_snapshot import snapshot
-
 from pydantic_ai import Agent
-from pydantic_ai.direct import (
-    _prepare_model,  # pyright: ignore[reportPrivateUsage]
-    model_request,
-    model_request_stream,
-    model_request_sync,
-)
-from pydantic_ai.messages import (
-    ModelRequest,
-    ModelResponse,
-    PartDeltaEvent,
-    PartStartEvent,
-    TextPart,
-    TextPartDelta,
-    ToolCallPart,
-)
+from pydantic_ai.direct import \
+    _prepare_model  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.direct import (model_request, model_request_stream,
+                                model_request_sync)
+from pydantic_ai.messages import (ModelRequest, ModelResponse, PartDeltaEvent,
+                                  PartStartEvent, TextPart, TextPartDelta,
+                                  ToolCallPart)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel

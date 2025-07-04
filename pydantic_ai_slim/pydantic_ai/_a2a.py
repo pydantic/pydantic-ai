@@ -1,4 +1,5 @@
-from __future__ import annotations, annotations as _annotations
+from __future__ import annotations
+from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -6,22 +7,12 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, Generic
 
+from pydantic_ai.messages import (AudioUrl, BinaryContent, DocumentUrl,
+                                  ImageUrl, ModelMessage, ModelRequest,
+                                  ModelRequestPart, ModelResponse,
+                                  ModelResponsePart, TextPart, UserPromptPart,
+                                  VideoUrl)
 from typing_extensions import assert_never
-
-from pydantic_ai.messages import (
-    AudioUrl,
-    BinaryContent,
-    DocumentUrl,
-    ImageUrl,
-    ModelMessage,
-    ModelRequest,
-    ModelRequestPart,
-    ModelResponse,
-    ModelResponsePart,
-    TextPart,
-    UserPromptPart,
-    VideoUrl,
-)
 
 from .agent import Agent, AgentDepsT, OutputDataT
 
@@ -32,16 +23,9 @@ try:
 
     from fasta2a.applications import FastA2A
     from fasta2a.broker import Broker, InMemoryBroker
-    from fasta2a.schema import (
-        Artifact,
-        Message,
-        Part,
-        Provider,
-        Skill,
-        TaskIdParams,
-        TaskSendParams,
-        TextPart as A2ATextPart,
-    )
+    from fasta2a.schema import (Artifact, Message, Part, Provider, Skill,
+                                TaskIdParams, TaskSendParams)
+    from fasta2a.schema import TextPart as A2ATextPart
     from fasta2a.storage import InMemoryStorage, Storage
     from fasta2a.worker import Worker
 except ImportError as _import_error:

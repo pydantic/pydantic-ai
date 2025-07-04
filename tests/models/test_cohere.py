@@ -8,37 +8,23 @@ from typing import Any, Union, cast
 
 import pytest
 from inline_snapshot import snapshot
-
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry
-from pydantic_ai.messages import (
-    ImageUrl,
-    ModelRequest,
-    ModelResponse,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ThinkingPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
+from pydantic_ai.messages import (ImageUrl, ModelRequest, ModelResponse,
+                                  RetryPromptPart, SystemPromptPart, TextPart,
+                                  ThinkingPart, ToolCallPart, ToolReturnPart,
+                                  UserPromptPart)
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import Usage
 
-from ..conftest import IsDatetime, IsInstance, IsNow, raise_if_exception, try_import
+from ..conftest import (IsDatetime, IsInstance, IsNow, raise_if_exception,
+                        try_import)
 
 with try_import() as imports_successful:
     import cohere
-    from cohere import (
-        AssistantMessageResponse,
-        AsyncClientV2,
-        ChatResponse,
-        TextAssistantMessageResponseContentItem,
-        ToolCallV2,
-        ToolCallV2Function,
-    )
+    from cohere import (AssistantMessageResponse, AsyncClientV2, ChatResponse,
+                        TextAssistantMessageResponseContentItem, ToolCallV2,
+                        ToolCallV2Function)
     from cohere.core.api_error import ApiError
-
     from pydantic_ai.models.cohere import CohereModel
     from pydantic_ai.providers.cohere import CohereProvider
 
@@ -418,7 +404,8 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
 @pytest.mark.vcr()
 async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key: str, openai_api_key: str):
     with try_import() as imports_successful:
-        from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+        from pydantic_ai.models.openai import (OpenAIResponsesModel,
+                                               OpenAIResponsesModelSettings)
         from pydantic_ai.providers.openai import OpenAIProvider
 
     if not imports_successful():  # pragma: no cover

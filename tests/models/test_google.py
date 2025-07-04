@@ -8,41 +8,27 @@ import pytest
 from httpx import Timeout
 from inline_snapshot import Is, snapshot
 from pydantic import BaseModel
-from typing_extensions import TypedDict
-
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import (
-    AudioUrl,
-    BinaryContent,
-    DocumentUrl,
-    FinalResultEvent,
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
-    ImageUrl,
-    ModelRequest,
-    ModelResponse,
-    PartDeltaEvent,
-    PartStartEvent,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    TextPartDelta,
-    ThinkingPart,
-    ThinkingPartDelta,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-    VideoUrl,
-)
-from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.exceptions import (ModelRetry, UnexpectedModelBehavior,
+                                    UserError)
+from pydantic_ai.messages import (AudioUrl, BinaryContent, DocumentUrl,
+                                  FinalResultEvent, FunctionToolCallEvent,
+                                  FunctionToolResultEvent, ImageUrl,
+                                  ModelRequest, ModelResponse, PartDeltaEvent,
+                                  PartStartEvent, RetryPromptPart,
+                                  SystemPromptPart, TextPart, TextPartDelta,
+                                  ThinkingPart, ThinkingPartDelta,
+                                  ToolCallPart, ToolReturnPart, UserPromptPart,
+                                  VideoUrl)
+from pydantic_ai.output import (NativeOutput, PromptedOutput, TextOutput,
+                                ToolOutput)
 from pydantic_ai.result import Usage
+from typing_extensions import TypedDict
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     from google.genai.types import HarmBlockThreshold, HarmCategory
-
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import GoogleProvider
 

@@ -13,56 +13,30 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from ..exceptions import UserError
-from ..messages import (
-    BinaryContent,
-    FileUrl,
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    ModelResponsePart,
-    ModelResponseStreamEvent,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ThinkingPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-    VideoUrl,
-)
+from ..messages import (BinaryContent, FileUrl, ModelMessage, ModelRequest,
+                        ModelResponse, ModelResponsePart,
+                        ModelResponseStreamEvent, RetryPromptPart,
+                        SystemPromptPart, TextPart, ThinkingPart, ToolCallPart,
+                        ToolReturnPart, UserPromptPart, VideoUrl)
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    check_allow_model_requests,
-    download_item,
-    get_user_agent,
-)
+from . import (Model, ModelRequestParameters, StreamedResponse,
+               check_allow_model_requests, download_item, get_user_agent)
 
 try:
     from google import genai
-    from google.genai.types import (
-        ContentDict,
-        ContentUnionDict,
-        FunctionCallDict,
-        FunctionCallingConfigDict,
-        FunctionCallingConfigMode,
-        FunctionDeclarationDict,
-        GenerateContentConfigDict,
-        GenerateContentResponse,
-        HttpOptionsDict,
-        Part,
-        PartDict,
-        SafetySettingDict,
-        ThinkingConfigDict,
-        ToolConfigDict,
-        ToolDict,
-        ToolListUnionDict,
-    )
+    from google.genai.types import (ContentDict, ContentUnionDict,
+                                    FunctionCallDict,
+                                    FunctionCallingConfigDict,
+                                    FunctionCallingConfigMode,
+                                    FunctionDeclarationDict,
+                                    GenerateContentConfigDict,
+                                    GenerateContentResponse, HttpOptionsDict,
+                                    Part, PartDict, SafetySettingDict,
+                                    ThinkingConfigDict, ToolConfigDict,
+                                    ToolDict, ToolListUnionDict)
 
     from ..providers.google import GoogleProvider
 except ImportError as _import_error:

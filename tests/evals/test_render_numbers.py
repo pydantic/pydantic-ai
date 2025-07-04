@@ -7,11 +7,8 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_evals.reporting.render_numbers import (
-        default_render_duration,
-        default_render_duration_diff,
-        default_render_number,
-        default_render_number_diff,
-    )
+        default_render_duration, default_render_duration_diff,
+        default_render_number, default_render_number_diff)
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 

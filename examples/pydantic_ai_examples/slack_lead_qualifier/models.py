@@ -2,9 +2,8 @@ from typing import Annotated, Any
 
 from annotated_types import Ge, Le
 from pydantic import BaseModel
-
 ### [import-format_as_xml]
-from pydantic_ai import format_as_xml  ### [/import-format_as_xml]
+from pydantic_ai import format_as_xml  # ## [/import-format_as_xml]
 
 
 ### [profile,profile-intro]

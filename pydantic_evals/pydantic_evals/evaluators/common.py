@@ -4,14 +4,14 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Literal, cast
 
-from typing_extensions import TypedDict
-
 from pydantic_ai import models
 from pydantic_ai.settings import ModelSettings
+from typing_extensions import TypedDict
 
 from ..otel.span_tree import SpanQuery
 from .context import EvaluatorContext
-from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
+from .evaluator import (EvaluationReason, EvaluationScalar, Evaluator,
+                        EvaluatorOutput)
 
 __all__ = (
     'Equals',

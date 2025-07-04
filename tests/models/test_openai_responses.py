@@ -4,31 +4,25 @@ from dataclasses import replace
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
-from typing_extensions import TypedDict
-
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
-from pydantic_ai.messages import (
-    BinaryContent,
-    DocumentUrl,
-    ImageUrl,
-    ModelRequest,
-    ModelResponse,
-    RetryPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
-from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.messages import (BinaryContent, DocumentUrl, ImageUrl,
+                                  ModelRequest, ModelResponse, RetryPromptPart,
+                                  TextPart, ToolCallPart, ToolReturnPart,
+                                  UserPromptPart)
+from pydantic_ai.output import (NativeOutput, PromptedOutput, TextOutput,
+                                ToolOutput)
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import Usage
+from typing_extensions import TypedDict
 
 from ..conftest import IsDatetime, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIModelSettings, OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai import (OpenAIModelSettings,
+                                           OpenAIResponsesModel,
+                                           OpenAIResponsesModelSettings)
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [

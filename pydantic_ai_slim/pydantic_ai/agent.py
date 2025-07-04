@@ -5,49 +5,36 @@ import inspect
 import json
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import (AbstractAsyncContextManager, AsyncExitStack,
+                        asynccontextmanager, contextmanager)
 from contextvars import ContextVar
 from copy import deepcopy
 from types import FrameType
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
+from typing import (TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast,
+                    final, overload)
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
+from pydantic_ai.profiles import ModelProfile
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
-from pydantic_ai.profiles import ModelProfile
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
 
-from . import (
-    _agent_graph,
-    _output,
-    _system_prompt,
-    _utils,
-    exceptions,
-    messages as _messages,
-    models,
-    result,
-    usage as _usage,
-)
+from . import _agent_graph, _output, _system_prompt, _utils, exceptions
+from . import messages as _messages
+from . import models, result
+from . import usage as _usage
 from ._agent_graph import HistoryProcessor
-from .models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
+from .models.instrumented import (InstrumentationSettings, InstrumentedModel,
+                                  instrument_model)
 from .output import OutputDataT, OutputSpec
 from .result import FinalResult, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
-from .tools import (
-    AgentDepsT,
-    DocstringFormat,
-    GenerateToolJsonSchema,
-    RunContext,
-    Tool,
-    ToolFuncContext,
-    ToolFuncEither,
-    ToolFuncPlain,
-    ToolParams,
-    ToolPrepareFunc,
-    ToolsPrepareFunc,
-)
+from .tools import (AgentDepsT, DocstringFormat, GenerateToolJsonSchema,
+                    RunContext, Tool, ToolFuncContext, ToolFuncEither,
+                    ToolFuncPlain, ToolParams, ToolPrepareFunc,
+                    ToolsPrepareFunc)
 
 # Re-exporting like this improves auto-import behavior in PyCharm
 capture_run_messages = _agent_graph.capture_run_messages
@@ -57,6 +44,7 @@ ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
 
 if TYPE_CHECKING:
+    from pydantic_ai.mcp import MCPServer
     from starlette.middleware import Middleware
     from starlette.routing import Route
     from starlette.types import ExceptionHandler, Lifespan
@@ -65,7 +53,6 @@ if TYPE_CHECKING:
     from fasta2a.broker import Broker
     from fasta2a.schema import Provider, Skill
     from fasta2a.storage import Storage
-    from pydantic_ai.mcp import MCPServer
 
 
 __all__ = (
@@ -1819,9 +1806,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             await agent.to_cli()
         ```
         """
-        from rich.console import Console
-
         from pydantic_ai._cli import run_chat
+        from rich.console import Console
 
         await run_chat(stream=True, agent=self, deps=deps, console=Console(), code_theme='monokai', prog_name=prog_name)
 

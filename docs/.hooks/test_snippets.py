@@ -6,17 +6,10 @@ from pathlib import Path
 
 import pytest
 from inline_snapshot import snapshot
-from snippets import (
-    REPO_ROOT,
-    LineRange,
-    ParsedFile,
-    RenderedSnippet,
-    SnippetDirective,
-    format_highlight_lines,
-    inject_snippets,
-    parse_file_sections,
-    parse_snippet_directive,
-)
+from snippets import (REPO_ROOT, LineRange, ParsedFile, RenderedSnippet,
+                      SnippetDirective, format_highlight_lines,
+                      inject_snippets, parse_file_sections,
+                      parse_snippet_directive)
 
 
 def test_parse_snippet_directive_basic():

@@ -3,10 +3,9 @@ import logfire
 ### [imports]
 from .agent import analyze_profile
 from .models import Profile
-
 ### [imports-daily_summary]
 from .slack import send_slack_message
-from .store import AnalysisStore  ### [/imports,/imports-daily_summary]
+from .store import AnalysisStore  # ## [/imports,/imports-daily_summary]
 
 ### [constant-new_lead_channel]
 NEW_LEAD_CHANNEL = '#new-slack-leads'

@@ -9,6 +9,7 @@ import importlib
 import logging
 import re
 import sys
+import tomllib
 import traceback
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -18,7 +19,6 @@ from typing import Any, Literal, TypedDict
 
 import micropip
 import pyodide_js
-import tomllib
 from pyodide.code import find_imports
 
 __all__ = 'prepare_env', 'dump_json'

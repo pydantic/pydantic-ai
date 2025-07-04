@@ -8,62 +8,48 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 
-from typing_extensions import assert_never
-
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers import Provider, infer_provider
+from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
-from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..messages import (
-    AudioUrl,
-    BinaryContent,
-    DocumentUrl,
-    ImageUrl,
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    ModelResponsePart,
-    ModelResponseStreamEvent,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ThinkingPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-    VideoUrl,
-)
+from .._utils import guard_tool_call_id as _guard_tool_call_id
+from .._utils import number_to_datetime
+from ..messages import (AudioUrl, BinaryContent, DocumentUrl, ImageUrl,
+                        ModelMessage, ModelRequest, ModelResponse,
+                        ModelResponsePart, ModelResponseStreamEvent,
+                        RetryPromptPart, SystemPromptPart, TextPart,
+                        ThinkingPart, ToolCallPart, ToolReturnPart,
+                        UserPromptPart, VideoUrl)
 from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    check_allow_model_requests,
-    download_item,
-    get_user_agent,
-)
+from . import (Model, ModelRequestParameters, StreamedResponse,
+               check_allow_model_requests, download_item, get_user_agent)
 
 try:
-    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream, NotGiven
+    from openai import (NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream,
+                        NotGiven)
     from openai.types import ChatModel, chat, responses
-    from openai.types.chat import (
-        ChatCompletionChunk,
-        ChatCompletionContentPartImageParam,
-        ChatCompletionContentPartInputAudioParam,
-        ChatCompletionContentPartParam,
-        ChatCompletionContentPartTextParam,
-    )
-    from openai.types.chat.chat_completion_content_part_image_param import ImageURL
-    from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
-    from openai.types.chat.chat_completion_content_part_param import File, FileFile
-    from openai.types.chat.chat_completion_prediction_content_param import ChatCompletionPredictionContentParam
-    from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
-    from openai.types.responses.response_input_param import FunctionCallOutput, Message
+    from openai.types.chat import (ChatCompletionChunk,
+                                   ChatCompletionContentPartImageParam,
+                                   ChatCompletionContentPartInputAudioParam,
+                                   ChatCompletionContentPartParam,
+                                   ChatCompletionContentPartTextParam)
+    from openai.types.chat.chat_completion_content_part_image_param import \
+        ImageURL
+    from openai.types.chat.chat_completion_content_part_input_audio_param import \
+        InputAudio
+    from openai.types.chat.chat_completion_content_part_param import (File,
+                                                                      FileFile)
+    from openai.types.chat.chat_completion_prediction_content_param import \
+        ChatCompletionPredictionContentParam
+    from openai.types.responses import (ComputerToolParam, FileSearchToolParam,
+                                        WebSearchToolParam)
+    from openai.types.responses.response_input_param import (
+        FunctionCallOutput, Message)
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 except ImportError as _import_error:

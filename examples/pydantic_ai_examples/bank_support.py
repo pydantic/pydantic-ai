@@ -8,7 +8,6 @@ Run with:
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
-
 from pydantic_ai import Agent, RunContext
 
 

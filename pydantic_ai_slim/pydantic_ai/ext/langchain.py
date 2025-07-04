@@ -1,7 +1,6 @@
 from typing import Any, Protocol
 
 from pydantic.json_schema import JsonSchemaValue
-
 from pydantic_ai.tools import Tool
 
 

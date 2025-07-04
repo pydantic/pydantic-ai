@@ -4,7 +4,6 @@ from typing import Any, Union
 import pytest
 from inline_snapshot import snapshot
 from pydantic.json_schema import JsonSchemaValue
-
 from pydantic_ai import Agent
 from pydantic_ai.ext.langchain import tool_from_langchain
 

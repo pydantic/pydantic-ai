@@ -7,22 +7,21 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 from urllib.parse import urlparse
 
-from opentelemetry._events import (
-    Event,  # pyright: ignore[reportPrivateImportUsage]
-    EventLogger,  # pyright: ignore[reportPrivateImportUsage]
-    EventLoggerProvider,  # pyright: ignore[reportPrivateImportUsage]
-    get_event_logger_provider,  # pyright: ignore[reportPrivateImportUsage]
-)
+from opentelemetry._events import \
+    Event  # pyright: ignore[reportPrivateImportUsage]
+from opentelemetry._events import \
+    EventLogger  # pyright: ignore[reportPrivateImportUsage]
+from opentelemetry._events import \
+    EventLoggerProvider  # pyright: ignore[reportPrivateImportUsage]
+from opentelemetry._events import \
+    get_event_logger_provider  # pyright: ignore[reportPrivateImportUsage]
 from opentelemetry.metrics import MeterProvider, get_meter_provider
-from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
+from opentelemetry.trace import (Span, Tracer, TracerProvider,
+                                 get_tracer_provider)
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
-from ..messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-)
+from ..messages import ModelMessage, ModelRequest, ModelResponse
 from ..settings import ModelSettings
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel

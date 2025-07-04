@@ -6,11 +6,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
 from opentelemetry.trace import get_current_span
-
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelHTTPError
-from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
+from . import (KnownModelName, Model, ModelRequestParameters, StreamedResponse,
+               infer_model)
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage, ModelResponse

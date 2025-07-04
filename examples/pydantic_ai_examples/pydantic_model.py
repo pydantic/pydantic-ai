@@ -9,7 +9,6 @@ import os
 
 import logfire
 from pydantic import BaseModel
-
 from pydantic_ai import Agent
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured

@@ -12,61 +12,42 @@ import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
-
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
-    BinaryContent,
-    DocumentUrl,
-    FinalResultEvent,
-    ImageUrl,
-    ModelRequest,
-    ModelResponse,
-    PartDeltaEvent,
-    PartStartEvent,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    TextPartDelta,
-    ThinkingPart,
-    ThinkingPartDelta,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
-from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.messages import (BinaryContent, DocumentUrl, FinalResultEvent,
+                                  ImageUrl, ModelRequest, ModelResponse,
+                                  PartDeltaEvent, PartStartEvent,
+                                  RetryPromptPart, SystemPromptPart, TextPart,
+                                  TextPartDelta, ThinkingPart,
+                                  ThinkingPartDelta, ToolCallPart,
+                                  ToolReturnPart, UserPromptPart)
+from pydantic_ai.output import (NativeOutput, PromptedOutput, TextOutput,
+                                ToolOutput)
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
+from ..conftest import (IsDatetime, IsInstance, IsNow, IsStr, TestEnv,
+                        raise_if_exception, try_import)
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic
     from anthropic.resources.beta import AsyncBeta
-    from anthropic.types.beta import (
-        BetaContentBlock,
-        BetaInputJSONDelta,
-        BetaMessage,
-        BetaMessageDeltaUsage,
-        BetaRawContentBlockDeltaEvent,
-        BetaRawContentBlockStartEvent,
-        BetaRawContentBlockStopEvent,
-        BetaRawMessageDeltaEvent,
-        BetaRawMessageStartEvent,
-        BetaRawMessageStopEvent,
-        BetaRawMessageStreamEvent,
-        BetaTextBlock,
-        BetaToolUseBlock,
-        BetaUsage,
-    )
+    from anthropic.types.beta import (BetaContentBlock, BetaInputJSONDelta,
+                                      BetaMessage, BetaMessageDeltaUsage,
+                                      BetaRawContentBlockDeltaEvent,
+                                      BetaRawContentBlockStartEvent,
+                                      BetaRawContentBlockStopEvent,
+                                      BetaRawMessageDeltaEvent,
+                                      BetaRawMessageStartEvent,
+                                      BetaRawMessageStopEvent,
+                                      BetaRawMessageStreamEvent, BetaTextBlock,
+                                      BetaToolUseBlock, BetaUsage)
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
-
-    from pydantic_ai.models.anthropic import (
-        AnthropicModel,
-        AnthropicModelSettings,
-        _map_usage,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_ai.models.anthropic import \
+        _map_usage  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.anthropic import (AnthropicModel,
+                                              AnthropicModelSettings)
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
     # note: we use Union here so that casting works with Python 3.9
@@ -1309,14 +1290,9 @@ What specifically would you like to know about potatoes?\
 async def test_anthropic_empty_content_filtering(env: TestEnv):
     """Test the empty content filtering logic directly."""
 
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        SystemPromptPart,
-        TextPart,
-        UserPromptPart,
-    )
+    from pydantic_ai.messages import (ModelMessage, ModelRequest,
+                                      ModelResponse, SystemPromptPart,
+                                      TextPart, UserPromptPart)
 
     # Initialize model for all tests
     env.set('ANTHROPIC_API_KEY', 'test-key')

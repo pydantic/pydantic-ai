@@ -16,16 +16,8 @@ import pydantic
 
 from .. import exceptions
 from ..nodes import BaseNode, End
-from . import (
-    BaseStatePersistence,
-    EndSnapshot,
-    NodeSnapshot,
-    RunEndT,
-    Snapshot,
-    StateT,
-    _utils,
-    build_snapshot_list_type_adapter,
-)
+from . import (BaseStatePersistence, EndSnapshot, NodeSnapshot, RunEndT,
+               Snapshot, StateT, _utils, build_snapshot_list_type_adapter)
 
 
 @dataclass

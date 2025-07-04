@@ -5,10 +5,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic_ai.settings import ModelSettings
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
-
-from pydantic_ai.settings import ModelSettings
 
 from ..conftest import try_import
 
@@ -17,19 +16,13 @@ with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
 
     from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
-    from pydantic_evals.evaluators.common import (
-        DEFAULT_EVALUATORS,
-        Contains,
-        Equals,
-        EqualsExpected,
-        HasMatchingSpan,
-        IsInstance,
-        LLMJudge,
-        MaxDuration,
-        OutputConfig,
-        Python,
-    )
-    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
+    from pydantic_evals.evaluators.common import (DEFAULT_EVALUATORS, Contains,
+                                                  Equals, EqualsExpected,
+                                                  HasMatchingSpan, IsInstance,
+                                                  LLMJudge, MaxDuration,
+                                                  OutputConfig, Python)
+    from pydantic_evals.otel._context_in_memory_span_exporter import \
+        context_subtree
     from pydantic_evals.otel._errors import SpanTreeRecordingError
     from pydantic_evals.otel.span_tree import SpanQuery
 

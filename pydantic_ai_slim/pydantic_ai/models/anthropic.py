@@ -12,63 +12,43 @@ from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
-from ..messages import (
-    BinaryContent,
-    DocumentUrl,
-    ImageUrl,
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    ModelResponsePart,
-    ModelResponseStreamEvent,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ThinkingPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
+from ..messages import (BinaryContent, DocumentUrl, ImageUrl, ModelMessage,
+                        ModelRequest, ModelResponse, ModelResponsePart,
+                        ModelResponseStreamEvent, RetryPromptPart,
+                        SystemPromptPart, TextPart, ThinkingPart, ToolCallPart,
+                        ToolReturnPart, UserPromptPart)
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
+from . import (Model, ModelRequestParameters, StreamedResponse,
+               check_allow_model_requests, download_item, get_user_agent)
 
 try:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
-    from anthropic.types.beta import (
-        BetaBase64PDFBlockParam,
-        BetaBase64PDFSourceParam,
-        BetaContentBlock,
-        BetaContentBlockParam,
-        BetaImageBlockParam,
-        BetaMessage,
-        BetaMessageParam,
-        BetaMetadataParam,
-        BetaPlainTextSourceParam,
-        BetaRawContentBlockDeltaEvent,
-        BetaRawContentBlockStartEvent,
-        BetaRawContentBlockStopEvent,
-        BetaRawMessageDeltaEvent,
-        BetaRawMessageStartEvent,
-        BetaRawMessageStopEvent,
-        BetaRawMessageStreamEvent,
-        BetaRedactedThinkingBlock,
-        BetaSignatureDelta,
-        BetaTextBlock,
-        BetaTextBlockParam,
-        BetaTextDelta,
-        BetaThinkingBlock,
-        BetaThinkingBlockParam,
-        BetaThinkingConfigParam,
-        BetaThinkingDelta,
-        BetaToolChoiceParam,
-        BetaToolParam,
-        BetaToolResultBlockParam,
-        BetaToolUseBlock,
-        BetaToolUseBlockParam,
-    )
+    from anthropic import (NOT_GIVEN, APIStatusError, AsyncAnthropic,
+                           AsyncStream)
+    from anthropic.types.beta import (BetaBase64PDFBlockParam,
+                                      BetaBase64PDFSourceParam,
+                                      BetaContentBlock, BetaContentBlockParam,
+                                      BetaImageBlockParam, BetaMessage,
+                                      BetaMessageParam, BetaMetadataParam,
+                                      BetaPlainTextSourceParam,
+                                      BetaRawContentBlockDeltaEvent,
+                                      BetaRawContentBlockStartEvent,
+                                      BetaRawContentBlockStopEvent,
+                                      BetaRawMessageDeltaEvent,
+                                      BetaRawMessageStartEvent,
+                                      BetaRawMessageStopEvent,
+                                      BetaRawMessageStreamEvent,
+                                      BetaRedactedThinkingBlock,
+                                      BetaSignatureDelta, BetaTextBlock,
+                                      BetaTextBlockParam, BetaTextDelta,
+                                      BetaThinkingBlock,
+                                      BetaThinkingBlockParam,
+                                      BetaThinkingConfigParam,
+                                      BetaThinkingDelta, BetaToolChoiceParam,
+                                      BetaToolParam, BetaToolResultBlockParam,
+                                      BetaToolUseBlock, BetaToolUseBlockParam)
     from anthropic.types.model_param import ModelParam
 
 except ImportError as _import_error:

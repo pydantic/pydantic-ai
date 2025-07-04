@@ -9,7 +9,8 @@ from typing import Any
 from ..messages import ModelMessage, ModelResponse
 from ..profiles import ModelProfile
 from ..settings import ModelSettings
-from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
+from . import (KnownModelName, Model, ModelRequestParameters, StreamedResponse,
+               infer_model)
 
 
 @dataclass(init=False)

@@ -4,7 +4,8 @@ import base64
 import functools
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from contextlib import (AbstractAsyncContextManager, AsyncExitStack,
+                        asynccontextmanager)
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -13,7 +14,8 @@ from typing import Any, Callable
 import anyio
 import httpx
 import pydantic_core
-from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from anyio.streams.memory import (MemoryObjectReceiveStream,
+                                  MemoryObjectSendStream)
 from typing_extensions import Self, assert_never, deprecated
 
 try:
@@ -21,7 +23,8 @@ try:
     from mcp.client.session import ClientSession, LoggingFnT
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
-    from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
+    from mcp.client.streamable_http import (GetSessionIdCallback,
+                                            streamablehttp_client)
     from mcp.shared.context import RequestContext
     from mcp.shared.exceptions import McpError
     from mcp.shared.message import SessionMessage

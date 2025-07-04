@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING, Generic
 
 from typing_extensions import TypeVar
 
-from . import _utils, messages as _messages
+from . import _utils
+from . import messages as _messages
 
 if TYPE_CHECKING:
     from .models import Model

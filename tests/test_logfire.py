@@ -6,12 +6,12 @@ from typing import Any, Callable
 import pytest
 from dirty_equals import IsInt, IsJson, IsList
 from inline_snapshot import snapshot
-from typing_extensions import NotRequired, TypedDict
-
 from pydantic_ai import Agent
 from pydantic_ai._utils import get_traceparent
-from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
+from pydantic_ai.models.instrumented import (InstrumentationSettings,
+                                             InstrumentedModel)
 from pydantic_ai.models.test import TestModel
+from typing_extensions import NotRequired, TypedDict
 
 from .conftest import IsStr
 

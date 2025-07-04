@@ -9,18 +9,12 @@ import pytest
 from dirty_equals import IsStr
 from inline_snapshot import snapshot
 
-from pydantic_graph import (
-    BaseNode,
-    End,
-    EndSnapshot,
-    FullStatePersistence,
-    Graph,
-    GraphRunContext,
-    NodeSnapshot,
-    SimpleStatePersistence,
-)
+from pydantic_graph import (BaseNode, End, EndSnapshot, FullStatePersistence,
+                            Graph, GraphRunContext, NodeSnapshot,
+                            SimpleStatePersistence)
 from pydantic_graph.exceptions import GraphNodeStatusError, GraphRuntimeError
-from pydantic_graph.persistence import BaseStatePersistence, build_snapshot_list_type_adapter
+from pydantic_graph.persistence import (BaseStatePersistence,
+                                        build_snapshot_list_type_adapter)
 
 from ..conftest import IsFloat, IsNow
 

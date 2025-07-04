@@ -5,41 +5,27 @@ from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
-from typing_extensions import TypedDict
-
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import (
-    BinaryContent,
-    DocumentUrl,
-    FinalResultEvent,
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
-    ImageUrl,
-    ModelRequest,
-    ModelResponse,
-    PartDeltaEvent,
-    PartStartEvent,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    TextPartDelta,
-    ThinkingPart,
-    ThinkingPartDelta,
-    ToolCallPart,
-    ToolCallPartDelta,
-    ToolReturnPart,
-    UserPromptPart,
-    VideoUrl,
-)
+from pydantic_ai.messages import (BinaryContent, DocumentUrl, FinalResultEvent,
+                                  FunctionToolCallEvent,
+                                  FunctionToolResultEvent, ImageUrl,
+                                  ModelRequest, ModelResponse, PartDeltaEvent,
+                                  PartStartEvent, RetryPromptPart,
+                                  SystemPromptPart, TextPart, TextPartDelta,
+                                  ThinkingPart, ThinkingPartDelta,
+                                  ToolCallPart, ToolCallPartDelta,
+                                  ToolReturnPart, UserPromptPart, VideoUrl)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import Usage
+from typing_extensions import TypedDict
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+    from pydantic_ai.models.bedrock import (BedrockConverseModel,
+                                            BedrockModelSettings)
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 pytestmark = [

@@ -13,64 +13,49 @@ import pytest
 from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Discriminator, Field, Tag
-from typing_extensions import TypedDict
-
-from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
-from pydantic_ai.messages import (
-    AudioUrl,
-    BinaryContent,
-    DocumentUrl,
-    FinalResultEvent,
-    ImageUrl,
-    ModelRequest,
-    ModelResponse,
-    PartDeltaEvent,
-    PartStartEvent,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    TextPartDelta,
-    ThinkingPart,
-    ThinkingPartDelta,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
+from pydantic_ai import (Agent, ModelHTTPError, ModelRetry,
+                         UnexpectedModelBehavior)
+from pydantic_ai.messages import (AudioUrl, BinaryContent, DocumentUrl,
+                                  FinalResultEvent, ImageUrl, ModelRequest,
+                                  ModelResponse, PartDeltaEvent,
+                                  PartStartEvent, RetryPromptPart,
+                                  SystemPromptPart, TextPart, TextPartDelta,
+                                  ThinkingPart, ThinkingPartDelta,
+                                  ToolCallPart, ToolReturnPart, UserPromptPart)
 from pydantic_ai.models.gemini import GeminiModel
-from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.output import (NativeOutput, PromptedOutput, TextOutput,
+                                ToolOutput)
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import (OpenAIModelProfile,
+                                         openai_model_profile)
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+from typing_extensions import TypedDict
 
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import (IsDatetime, IsInstance, IsNow, IsStr,
+                        raise_if_exception, try_import)
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI
     from openai.types import chat
     from openai.types.chat.chat_completion import Choice, ChoiceLogprobs
+    from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
     from openai.types.chat.chat_completion_chunk import (
-        Choice as ChunkChoice,
-        ChoiceDelta,
-        ChoiceDeltaToolCall,
-        ChoiceDeltaToolCallFunction,
-    )
+        ChoiceDelta, ChoiceDeltaToolCall, ChoiceDeltaToolCallFunction)
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
     from openai.types.chat.chat_completion_message_tool_call import Function
-    from openai.types.chat.chat_completion_token_logprob import ChatCompletionTokenLogprob
-    from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
-
-    from pydantic_ai.models.openai import (
-        OpenAIModel,
-        OpenAIModelSettings,
-        OpenAIResponsesModel,
-        OpenAIResponsesModelSettings,
-        OpenAISystemPromptRole,
-    )
+    from openai.types.chat.chat_completion_token_logprob import \
+        ChatCompletionTokenLogprob
+    from openai.types.completion_usage import (CompletionUsage,
+                                               PromptTokensDetails)
+    from pydantic_ai.models.openai import (OpenAIModel, OpenAIModelSettings,
+                                           OpenAIResponsesModel,
+                                           OpenAIResponsesModelSettings,
+                                           OpenAISystemPromptRole)
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.openai import OpenAIProvider
 

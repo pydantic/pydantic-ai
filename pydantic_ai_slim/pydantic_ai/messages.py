@@ -6,18 +6,18 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
+from typing import (TYPE_CHECKING, Annotated, Any, Literal, Union, cast,
+                    overload)
 
 import pydantic
 import pydantic_core
-from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
+from opentelemetry._events import \
+    Event  # pyright: ignore[reportPrivateImportUsage]
 from typing_extensions import TypeAlias, deprecated
 
 from . import _utils
-from ._utils import (
-    generate_tool_call_id as _generate_tool_call_id,
-    now_utc as _now_utc,
-)
+from ._utils import generate_tool_call_id as _generate_tool_call_id
+from ._utils import now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
 from .usage import Usage
 
