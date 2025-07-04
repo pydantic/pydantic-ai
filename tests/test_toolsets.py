@@ -177,6 +177,11 @@ async def test_prepared_toolset_user_error_change_tool_names():
         """Add two numbers"""
         return a + b  # pragma: no cover
 
+    @base_toolset.tool
+    def subtract(a: int, b: int) -> int:
+        """Subtract two numbers"""
+        return a - b  # pragma: no cover
+
     async def prepare_change_names(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         # Try to change the name of an existing tool
         modified_tool_defs: list[ToolDefinition] = []
