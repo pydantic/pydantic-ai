@@ -305,6 +305,7 @@ class StructuredOutput:
     ```python
     from pydantic_ai import Agent
     from pydantic import BaseModel
+    from pydantic_ai.models.test import TestModel
     from pydantic_ai.output import structured
     from pydantic_ai.output import StructuredOutput
     
@@ -320,7 +321,7 @@ class StructuredOutput:
         bar: str
         baz: int
     
-    agent  =  Agent('test')
+    agent  =  Agent(TestModel())
     result =  agent.run_sync(
         "Generate a sample object",
         output_type=[FooBar, StructuredOutput(BarBaz)]
