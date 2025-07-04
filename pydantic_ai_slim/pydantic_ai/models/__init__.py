@@ -31,8 +31,6 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import Usage
 
-STREAM_INITIALIZATION_TIMEOUT = 30.0
-
 KnownModelName = TypeAliasType(
     'KnownModelName',
     Literal[
