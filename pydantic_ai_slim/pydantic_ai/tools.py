@@ -271,6 +271,7 @@ class Tool(Generic[AgentDepsT]):
         name: str,
         description: str,
         json_schema: JsonSchemaValue,
+        takes_ctx: bool = False
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
@@ -291,7 +292,7 @@ class Tool(Generic[AgentDepsT]):
             description=description,
             validator=SchemaValidator(schema=core_schema.any_schema()),
             json_schema=json_schema,
-            takes_ctx=False,
+            takes_ctx=takes_ctx,
             is_async=_utils.is_async_callable(function),
         )
 
