@@ -421,12 +421,6 @@ class GeminiModel(Model):
         sys_prompt_parts, contents = await self._message_to_gemini_content(messages)
 
         request_data = _GeminiCountTokensRequest(contents=contents)
-        if sys_prompt_parts:
-            request_data['systemInstruction'] = _GeminiTextContent(role='user', parts=sys_prompt_parts)
-        if tools is not None:
-            request_data['tools'] = tools
-        if tool_config is not None:
-            request_data['toolConfig'] = tool_config
 
         generation_config = _settings_to_generation_config(model_settings)
         if model_request_parameters.output_mode == 'native':
@@ -450,13 +444,6 @@ class GeminiModel(Model):
                 request_data['generateContentRequest']['tools'] = tools
             if tool_config is not None:
                 request_data['generateContentRequest']['toolConfig'] = tool_config
-
-        if gemini_safety_settings := model_settings.get('gemini_safety_settings'):
-            request_data['safetySettings'] = gemini_safety_settings
-
-        if gemini_labels := model_settings.get('gemini_labels'):
-            if self._system == 'google-vertex':
-                request_data['labels'] = gemini_labels
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         url = f'/models/{self._model_name}:countTokens'
