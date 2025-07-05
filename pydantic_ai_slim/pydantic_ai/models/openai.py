@@ -196,6 +196,7 @@ class OpenAIModel(Model):
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize an OpenAI model.
 
@@ -207,7 +208,9 @@ class OpenAIModel(Model):
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             system_prompt_role: The role to use for the system prompt message. If not provided, defaults to `'system'`.
                 In the future, this may be inferred from the model name.
+            settings: Default model settings for this model instance.
         """
+        super().__init__(settings=settings)
         self._model_name = model_name
 
         if isinstance(provider, str):
@@ -599,6 +602,7 @@ class OpenAIResponsesModel(Model):
         provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together']
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize an OpenAI Responses model.
 
@@ -606,7 +610,9 @@ class OpenAIResponsesModel(Model):
             model_name: The name of the OpenAI model to use.
             provider: The provider to use. Defaults to `'openai'`.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Default model settings for this model instance.
         """
+        super().__init__(settings=settings)
         self._model_name = model_name
 
         if isinstance(provider, str):

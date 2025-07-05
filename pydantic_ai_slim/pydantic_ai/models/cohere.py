@@ -112,6 +112,7 @@ class CohereModel(Model):
         *,
         provider: Literal['cohere'] | Provider[AsyncClientV2] = 'cohere',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize an Cohere model.
 
@@ -122,7 +123,9 @@ class CohereModel(Model):
                 'cohere' or an instance of `Provider[AsyncClientV2]`. If not provided, a new provider will be
                 created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Model-specific settings that will be used as defaults for this model.
         """
+        super().__init__(settings=settings)
         self._model_name = model_name
 
         if isinstance(provider, str):
