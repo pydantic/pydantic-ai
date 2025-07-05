@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
     from .storage import Storage
 
 tracer = get_tracer(__name__)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -52,8 +54,12 @@ class Worker(ABC):
                         await self.cancel_task(task_operation['params'])
                     else:
                         assert_never(task_operation)
-        except Exception:
-            await self.storage.update_task(task_operation['params']['id'], state='failed')
+        except Exception as e:
+            task_id = task_operation['params']['id']
+            logger.exception(
+                f'Error handling {task_operation["operation"]} operation for task {task_id}: {type(e).__name__}: {e}'
+            )
+            await self.storage.update_task(task_id, state='failed')
 
     @abstractmethod
     async def run_task(self, params: TaskSendParams) -> None: ...
@@ -62,7 +68,7 @@ class Worker(ABC):
     async def cancel_task(self, params: TaskIdParams) -> None: ...
 
     @abstractmethod
-    def build_message_history(self, task_history: list[Message]) -> list[Any]: ...
+    def build_message_history(self, history: list[Message]) -> list[Any]: ...
 
     @abstractmethod
     def build_artifacts(self, result: Any) -> list[Artifact]: ...

@@ -53,6 +53,7 @@ nav:
       - examples/pydantic-model.md
       - examples/weather-agent.md
       - examples/bank-support.md
+      - examples/bank-support-a2a.md
       - examples/sql-gen.md
       - examples/flight-booking.md
       - examples/rag.md

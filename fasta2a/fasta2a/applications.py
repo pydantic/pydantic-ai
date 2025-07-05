@@ -1,9 +1,11 @@
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
+from sse_starlette import EventSourceResponse
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -21,6 +23,9 @@ from .schema import (
     a2a_request_ta,
     a2a_response_ta,
     agent_card_ta,
+    send_message_request_ta,
+    stream_event_ta,
+    stream_message_request_ta,
 )
 from .storage import Storage
 from .task_manager import TaskManager
@@ -90,7 +95,7 @@ class FastA2A(Starlette):
                 skills=self.skills,
                 default_input_modes=self.default_input_modes,
                 default_output_modes=self.default_output_modes,
-                capabilities=Capabilities(streaming=False, push_notifications=False, state_transition_history=False),
+                capabilities=Capabilities(streaming=True, push_notifications=False, state_transition_history=False),
                 authentication=Authentication(schemes=[]),
             )
             if self.description is not None:
@@ -105,7 +110,7 @@ class FastA2A(Starlette):
 
         Although the specification allows freedom of choice and implementation, I'm pretty sure about some decisions.
 
-        1. The server will always either send a "submitted" or a "failed" on `tasks/send`.
+        1. The server will always either send a "submitted" or a "failed" on `message/send`.
             Never a "completed" on the first message.
         2. There are three possible ends for the task:
             2.1. The task was "completed" successfully.
@@ -116,8 +121,29 @@ class FastA2A(Starlette):
         data = await request.body()
         a2a_request = a2a_request_ta.validate_json(data)
 
-        if a2a_request['method'] == 'tasks/send':
-            jsonrpc_response = await self.task_manager.send_task(a2a_request)
+        if a2a_request['method'] == 'message/send':
+            # Handle new message/send method
+            message_request = send_message_request_ta.validate_json(data)
+            jsonrpc_response = await self.task_manager.send_message(message_request)
+        elif a2a_request['method'] == 'message/stream':
+            # Parse the streaming request
+            stream_request = stream_message_request_ta.validate_json(data)
+
+            # Create an async generator wrapper that formats events as JSON-RPC responses
+            async def sse_generator():
+                request_id = stream_request.get('id')
+                async for event in self.task_manager.stream_message(stream_request):
+                    # Serialize event to ensure proper camelCase conversion
+                    event_dict = stream_event_ta.dump_python(event, mode='json', by_alias=True)
+
+                    # Wrap in JSON-RPC response
+                    jsonrpc_response = {'jsonrpc': '2.0', 'id': request_id, 'result': event_dict}
+
+                    # Convert to JSON string
+                    yield json.dumps(jsonrpc_response)
+
+            # Return SSE response
+            return EventSourceResponse(sse_generator())
         elif a2a_request['method'] == 'tasks/get':
             jsonrpc_response = await self.task_manager.get_task(a2a_request)
         elif a2a_request['method'] == 'tasks/cancel':

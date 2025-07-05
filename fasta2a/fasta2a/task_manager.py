@@ -61,6 +61,7 @@ The flow:
 from __future__ import annotations as _annotations
 
 import uuid
+from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Any
@@ -73,14 +74,18 @@ from .schema import (
     GetTaskPushNotificationResponse,
     GetTaskRequest,
     GetTaskResponse,
+    Message,
     ResubscribeTaskRequest,
-    SendTaskRequest,
-    SendTaskResponse,
-    SendTaskStreamingRequest,
-    SendTaskStreamingResponse,
+    SendMessageRequest,
+    SendMessageResponse,
     SetTaskPushNotificationRequest,
     SetTaskPushNotificationResponse,
+    StreamMessageRequest,
+    Task,
+    TaskArtifactUpdateEvent,
     TaskNotFoundError,
+    TaskSendParams,
+    TaskStatusUpdateEvent,
 )
 from .storage import Storage
 
@@ -111,19 +116,35 @@ class TaskManager:
         await self._aexit_stack.__aexit__(exc_type, exc_value, traceback)
         self._aexit_stack = None
 
-    async def send_task(self, request: SendTaskRequest) -> SendTaskResponse:
-        """Send a task to the worker."""
-        request_id = str(uuid.uuid4())
-        task_id = request['params']['id']
-        task = await self.storage.load_task(task_id)
+    async def send_message(self, request: SendMessageRequest) -> SendMessageResponse:
+        """Send a message using the new protocol."""
+        request_id = request['id']
+        task_id = str(uuid.uuid4())
+        message = request['params']['message']
 
-        if task is None:
-            session_id = request['params'].get('session_id', str(uuid.uuid4()))
-            message = request['params']['message']
-            task = await self.storage.submit_task(task_id, session_id, message)
+        # Use provided context_id or create new one
+        context_id = message.get('context_id') or str(uuid.uuid4())
 
-        await self.broker.run_task(request['params'])
-        return SendTaskResponse(jsonrpc='2.0', id=request_id, result=task)
+        metadata = request['params'].get('metadata')
+        config = request['params'].get('configuration', {})
+
+        # Create a new task
+        task = await self.storage.submit_task(task_id, context_id, message, metadata)
+
+        # Prepare params for broker
+        broker_params: TaskSendParams = {
+            'id': task_id,
+            'context_id': context_id,
+            'message': message,
+        }
+        if metadata is not None:
+            broker_params['metadata'] = metadata
+        history_length = config.get('history_length')
+        if history_length is not None:
+            broker_params['history_length'] = history_length
+
+        await self.broker.run_task(broker_params)
+        return SendMessageResponse(jsonrpc='2.0', id=request_id, result=task)
 
     async def get_task(self, request: GetTaskRequest) -> GetTaskResponse:
         """Get a task, and return it to the client.
@@ -152,8 +173,52 @@ class TaskManager:
             )
         return CancelTaskResponse(jsonrpc='2.0', id=request['id'], result=task)
 
-    async def send_task_streaming(self, request: SendTaskStreamingRequest) -> SendTaskStreamingResponse:
-        raise NotImplementedError('SendTaskStreaming is not implemented yet.')
+    async def stream_message(
+        self, request: StreamMessageRequest
+    ) -> AsyncGenerator[TaskStatusUpdateEvent | TaskArtifactUpdateEvent | Task | Message, None]:
+        """Stream task updates using Server-Sent Events.
+
+        Returns an async generator that yields Task, Message, TaskStatusUpdateEvent and
+        TaskArtifactUpdateEvent objects for the message/stream protocol.
+        """
+        # Extract request parameters
+        task_id = str(uuid.uuid4())
+        message = request['params']['message']
+
+        # Use provided context_id or create new one
+        context_id = message.get('context_id') or str(uuid.uuid4())
+
+        metadata = request['params'].get('metadata')
+        config = request['params'].get('configuration', {})
+
+        # Create a new task
+        task = await self.storage.submit_task(task_id, context_id, message, metadata)
+
+        # Yield the initial task
+        yield task
+
+        # Subscribe to events BEFORE starting execution to avoid race conditions
+        event_stream = self.broker.subscribe_to_stream(task_id)
+
+        # Prepare params for broker
+        broker_params: TaskSendParams = {
+            'id': task_id,
+            'context_id': context_id,
+            'message': message,
+        }
+        if metadata is not None:
+            broker_params['metadata'] = metadata
+        history_length = config.get('history_length')
+        if history_length is not None:
+            broker_params['history_length'] = history_length
+
+        # Start task execution asynchronously
+        await self.broker.run_task(broker_params)
+
+        # Stream events from broker - they're already in A2A format!
+        async for event in event_stream:
+            yield event
+            # The subscribe_to_stream method already handles checking for final events
 
     async def set_task_push_notification(
         self, request: SetTaskPushNotificationRequest
@@ -165,5 +230,12 @@ class TaskManager:
     ) -> GetTaskPushNotificationResponse:
         raise NotImplementedError('GetTaskPushNotification is not implemented yet.')
 
-    async def resubscribe_task(self, request: ResubscribeTaskRequest) -> SendTaskStreamingResponse:
-        raise NotImplementedError('Resubscribe is not implemented yet.')
+    async def resubscribe_task(
+        self, request: ResubscribeTaskRequest
+    ) -> AsyncGenerator[TaskStatusUpdateEvent | TaskArtifactUpdateEvent, None]:
+        """Resubscribe to task updates.
+
+        Similar to stream_message, returns an async generator for SSE events.
+        """
+        raise NotImplementedError('tasks/resubscribe is not implemented yet.')
+        yield  # type: ignore[unreachable]
