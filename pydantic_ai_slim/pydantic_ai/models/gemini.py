@@ -929,7 +929,11 @@ class _GeminiCountTokensResponse(TypedDict):
     cachedContentTokenCount: NotRequired[int]
     promptTokensDetails: NotRequired[list[_GeminiModalityTokenCount]]
     cacheTokensDetails: NotRequired[list[_GeminiModalityTokenCount]]
-    
+
+
+_gemini_count_tokens_request_ta = pydantic.TypeAdapter(_GeminiCountTokensRequest)
+_gemini_count_tokens_response_ta = pydantic.TypeAdapter(_GeminiCountTokensResponse)
+
 
 class _GeminiCandidates(TypedDict):
     """See <https://ai.google.dev/api/generate-content#v1beta.Candidate>."""
