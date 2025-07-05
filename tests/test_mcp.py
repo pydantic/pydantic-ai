@@ -982,7 +982,7 @@ async def test_client_sampling():
             {
                 'meta': None,
                 'role': 'assistant',
-                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None},
+                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None, 'meta': None},
                 'model': 'test',
                 'stopReason': None,
             }
