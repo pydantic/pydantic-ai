@@ -61,6 +61,7 @@ try:
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
+    from openai.types.chat.chat_completion_prediction_content_param import ChatCompletionPredictionContentParam
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.shared import ReasoningEffort
@@ -126,6 +127,12 @@ class OpenAIModelSettings(ModelSettings, total=False):
     For more information, see [OpenAI's service tiers documentation](https://platform.openai.com/docs/api-reference/chat/object#chat/object-service_tier).
     """
 
+    openai_prediction: ChatCompletionPredictionContentParam
+    """Enables [predictive outputs](https://platform.openai.com/docs/guides/predicted-outputs).
+
+    This feature is currently only supported for some OpenAI models.
+    """
+
 
 class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
     """Settings used for an OpenAI Responses model request.
@@ -183,7 +190,9 @@ class OpenAIModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku']
+        provider: Literal[
+            'openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku', 'github'
+        ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
@@ -320,6 +329,7 @@ class OpenAIModel(Model):
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
+                prediction=model_settings.get('openai_prediction', NOT_GIVEN),
                 temperature=sampling_settings.get('temperature', NOT_GIVEN),
                 top_p=sampling_settings.get('top_p', NOT_GIVEN),
                 presence_penalty=sampling_settings.get('presence_penalty', NOT_GIVEN),
