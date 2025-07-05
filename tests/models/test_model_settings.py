@@ -11,16 +11,18 @@ from pydantic_ai.settings import ModelSettings
 try:
     from pydantic_ai.models.gemini import GeminiModel
 
-    GEMINI_AVAILABLE = True
+    gemini_available = True
 except ImportError:
-    GEMINI_AVAILABLE = False
+    GeminiModel = None
+    gemini_available = False
 
 try:
     from pydantic_ai.models.openai import OpenAIResponsesModel
 
-    OPENAI_AVAILABLE = True
+    openai_available = True
 except ImportError:
-    OPENAI_AVAILABLE = False
+    OpenAIResponsesModel = None
+    openai_available = False
 
 
 def test_model_settings_initialization():
@@ -117,7 +119,7 @@ def test_agent_iter_settings_merge():
 
 def test_gemini_model_settings():
     """Test that GeminiModel can be initialized with settings."""
-    if not GEMINI_AVAILABLE:
+    if not gemini_available or GeminiModel is None:
         return  # Skip if dependencies not available
 
     settings = ModelSettings(max_tokens=300, temperature=0.6)
@@ -133,7 +135,7 @@ def test_gemini_model_settings():
 
 def test_openai_responses_model_settings():
     """Test that OpenAIResponsesModel can be initialized with settings."""
-    if not OPENAI_AVAILABLE:
+    if not openai_available or OpenAIResponsesModel is None:
         return  # Skip if dependencies not available
 
     settings = ModelSettings(max_tokens=400, temperature=0.7)

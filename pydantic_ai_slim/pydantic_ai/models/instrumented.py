@@ -182,15 +182,12 @@ GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
 GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
 
 
-@dataclass
+@dataclass(init=False)
 class InstrumentedModel(WrapperModel):
     """Model which wraps another model so that requests are instrumented with OpenTelemetry.
 
     See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
     """
-
-    settings: InstrumentationSettings
-    """Configuration for instrumenting requests."""
 
     def __init__(
         self,
