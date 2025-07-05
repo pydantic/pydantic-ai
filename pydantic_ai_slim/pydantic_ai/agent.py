@@ -30,7 +30,7 @@ from . import (
     result,
     usage as _usage,
 )
-from ._agent_graph import HistoryProcessor
+from ._agent_graph import HistoryProcessor, HistoryProcessors
 from .models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from .output import OutputDataT, OutputSpec
 from .result import FinalResult, StreamedRunResult
@@ -78,6 +78,7 @@ __all__ = (
     'ModelRequestNode',
     'UserPromptNode',
     'InstrumentationSettings',
+    'HistoryProcessors',
 )
 
 
@@ -181,7 +182,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
-        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | HistoryProcessors[AgentDepsT] | None = None,
     ) -> None: ...
 
     @overload
@@ -211,7 +212,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
-        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | HistoryProcessors[AgentDepsT] | None = None,
     ) -> None: ...
 
     def __init__(
@@ -236,7 +237,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
-        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | HistoryProcessors[AgentDepsT] | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -359,7 +360,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._mcp_servers = mcp_servers
         self._prepare_tools = prepare_tools
-        self.history_processors = history_processors or []
+        history_processors = history_processors or []
+        self.history_processors = cast(
+            HistoryProcessors[AgentDepsT],
+            HistoryProcessors(funcs=list(history_processors))
+            if not isinstance(history_processors, HistoryProcessors)
+            else history_processors,
+        )
         for tool in tools:
             if isinstance(tool, Tool):
                 self._register_tool(tool)
