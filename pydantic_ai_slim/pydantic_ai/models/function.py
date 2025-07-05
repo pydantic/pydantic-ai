@@ -52,7 +52,12 @@ class FunctionModel(Model):
 
     @overload
     def __init__(
-        self, function: FunctionDef, *, model_name: str | None = None, profile: ModelProfileSpec | None = None
+        self,
+        function: FunctionDef,
+        *,
+        model_name: str | None = None,
+        profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ) -> None: ...
 
     @overload
@@ -62,6 +67,7 @@ class FunctionModel(Model):
         stream_function: StreamFunctionDef,
         model_name: str | None = None,
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ) -> None: ...
 
     @overload
@@ -72,6 +78,7 @@ class FunctionModel(Model):
         stream_function: StreamFunctionDef,
         model_name: str | None = None,
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ) -> None: ...
 
     def __init__(
@@ -81,6 +88,7 @@ class FunctionModel(Model):
         stream_function: StreamFunctionDef | None = None,
         model_name: str | None = None,
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a `FunctionModel`.
 
@@ -91,9 +99,11 @@ class FunctionModel(Model):
             stream_function: The function to call for streamed requests.
             model_name: The name of the model. If not provided, a name is generated from the function names.
             profile: The model profile to use.
+            settings: Model-specific settings that will be used as defaults for this model.
         """
         if function is None and stream_function is None:
             raise TypeError('Either `function` or `stream_function` must be provided')
+        super().__init__(settings=settings)
         self.function = function
         self.stream_function = stream_function
 

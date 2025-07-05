@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Generic, TypeVar, overload
+from typing import TYPE_CHECKING, Generic, TypeVar, overload
 
 import httpx
 from typing_extensions import Literal, TypeAliasType, TypedDict
@@ -30,6 +30,9 @@ from ..profiles._json_schema import JsonSchemaTransformer
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import Usage
+
+if TYPE_CHECKING:
+    from .instrumented import InstrumentationSettings
 
 KnownModelName = TypeAliasType(
     'KnownModelName',
@@ -321,6 +324,15 @@ class Model(ABC):
     """Abstract class for a model."""
 
     _profile: ModelProfileSpec | None = None
+
+    def __init__(self, *, settings: ModelSettings | InstrumentationSettings | None = None) -> None:
+        """Initialize the model with optional settings.
+
+        Args:
+            settings: Model-specific settings that will be used as defaults for this model.
+                     For InstrumentedModel, this can also be InstrumentationSettings.
+        """
+        self.settings: ModelSettings | InstrumentationSettings | None = settings
 
     @abstractmethod
     async def request(

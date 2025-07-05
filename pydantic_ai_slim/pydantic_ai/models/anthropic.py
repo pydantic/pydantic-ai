@@ -128,6 +128,7 @@ class AnthropicModel(Model):
         *,
         provider: Literal['anthropic'] | Provider[AsyncAnthropic] = 'anthropic',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize an Anthropic model.
 
@@ -137,7 +138,9 @@ class AnthropicModel(Model):
             provider: The provider to use for the Anthropic API. Can be either the string 'anthropic' or an
                 instance of `Provider[AsyncAnthropic]`. If not provided, the other parameters will be used.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Default model settings for this model instance.
         """
+        super().__init__(settings=settings)
         self._model_name = model_name
 
         if isinstance(provider, str):
