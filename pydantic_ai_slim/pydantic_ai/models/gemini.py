@@ -401,7 +401,8 @@ class GeminiModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: GeminiModelSettings | None,
-        model_request_parameters: ModelRequestParameters,) -> usage.Usage:
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.Usage:
         check_allow_model_requests()
         async with self._make_count_request(messages, model_settings or {}, model_request_parameters) as http_response:
             data = await http_response.aread()
@@ -462,7 +463,8 @@ class GeminiModel(Model):
                 if status_code >= 400:
                     raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=r.text)
                 raise UnexpectedModelBehavior(  # pragma: no cover
-                    f'Unexpected response from gemini {status_code}', r.text)
+                    f'Unexpected response from gemini {status_code}', r.text
+                )
             yield r
             
     def _process_count_tokens_response(self, response: _GeminiCountTokensResponse) -> usage.Usage:
