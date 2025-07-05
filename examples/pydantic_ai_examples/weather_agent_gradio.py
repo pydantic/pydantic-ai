@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import json
-import os
 
 from httpx import AsyncClient
 
@@ -18,10 +17,7 @@ except ImportError as e:
 TOOL_TO_DISPLAY_NAME = {'get_lat_lng': 'Geocoding API', 'get_weather': 'Weather API'}
 
 client = AsyncClient()
-weather_api_key = os.getenv('WEATHER_API_KEY')
-# create a free API key at https://geocode.maps.co/
-geo_api_key = os.getenv('GEO_API_KEY')
-deps = Deps(client=client, weather_api_key=weather_api_key, geo_api_key=geo_api_key)
+deps = Deps(client=client)
 
 
 async def stream_from_agent(prompt: str, chatbot: list[dict], past_messages: list):

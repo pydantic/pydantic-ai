@@ -1056,7 +1056,7 @@ async def test_output_tool_validation_failure_events():
     )
 
 
-async def test_stream_prompted_output():
+async def test_stream_structured_output():
     class CityLocation(BaseModel):
         city: str
         country: str | None = None
@@ -1077,6 +1077,30 @@ async def test_stream_prompted_output():
             ]
         )
         assert result.is_complete
+
+
+async def test_iter_stream_structured_output():
+    class CityLocation(BaseModel):
+        city: str
+        country: str | None = None
+
+    m = TestModel(custom_output_text='{"city": "Mexico City", "country": "Mexico"}')
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation))
+
+    async with agent.iter('') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    assert [c async for c in stream.stream_output(debounce_by=None)] == snapshot(
+                        [
+                            CityLocation(city='Mexico '),
+                            CityLocation(city='Mexico City'),
+                            CityLocation(city='Mexico City'),
+                            CityLocation(city='Mexico City', country='Mexico'),
+                            CityLocation(city='Mexico City', country='Mexico'),
+                        ]
+                    )
 
 
 def test_function_tool_event_tool_call_id_properties():
