@@ -401,8 +401,7 @@ class GeminiModel(Model):
         self,
         messages: list[ModelMessage],
         model_settings: GeminiModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-        ) -> usage.Usage:
+        model_request_parameters: ModelRequestParameters,) -> usage.Usage:
         check_allow_model_requests()
         async with self._make_count_request(messages, model_settings or {}, model_request_parameters) as http_response:
             data = await http_response.aread()
@@ -415,7 +414,7 @@ class GeminiModel(Model):
         messages: list[ModelMessage],
         model_settings: GeminiModelSettings,
         model_request_parameters: ModelRequestParameters,
-        ) -> AsyncIterator[HTTPResponse]:
+    ) -> AsyncIterator[HTTPResponse]:
         tools = self._get_tools(model_request_parameters)
         tool_config = self._get_tool_config(model_request_parameters, tools)
         sys_prompt_parts, contents = await self._message_to_gemini_content(messages)
@@ -439,7 +438,9 @@ class GeminiModel(Model):
                 'generationConfig': generation_config,
             }
             if sys_prompt_parts:
-                request_data['generateContentRequest']['systemInstruction'] = _GeminiTextContent(role='user', parts=sys_prompt_parts)
+                request_data['generateContentRequest']['systemInstruction'] = _GeminiTextContent(
+                    role='user', parts=sys_prompt_parts
+                )
             if tools is not None:
                 request_data['generateContentRequest']['tools'] = tools
             if tool_config is not None:
@@ -460,7 +461,7 @@ class GeminiModel(Model):
                 await r.aread()
                 if status_code >= 400:
                     raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=r.text)
-                raise UnexpectedModelBehavior( # pragma: no cover
+                raise UnexpectedModelBehavior(  # pragma: no cover
                     f'Unexpected response from gemini {status_code}', r.text)
             yield r
             
