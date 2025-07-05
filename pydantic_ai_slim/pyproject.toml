@@ -73,7 +73,7 @@ bedrock = ["boto3>=1.37.24"]
 duckduckgo = ["duckduckgo-search>=7.0.0"]
 tavily = ["tavily-python>=0.5.0"]
 # CLI
-cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0"]
+cli = ["rich>=13", "prompt-toolkit>=3", "click>=8.1.7"]
 # MCP
 mcp = ["mcp>=1.9.4; python_version >= '3.10'"]
 # Evals

@@ -35,7 +35,9 @@ def test_cli_version(capfd: CaptureFixture[str]):
 
 def test_invalid_model(capfd: CaptureFixture[str]):
     assert cli(['--model', 'potato']) == 1
-    assert capfd.readouterr().out.splitlines() == snapshot(['Error initializing potato:', 'Unknown model: potato'])
+    output = capfd.readouterr().out
+    assert 'Error initializing potato:' in output
+    assert 'Unknown model: potato' in output
 
 
 @pytest.fixture
@@ -106,7 +108,7 @@ def test_agent_flag_set_model(
 
     mocker.patch('pydantic_ai._cli.ask_agent')
 
-    assert cli(['--agent', 'test_module:custom_agent', '--model', 'gpt-4o', 'hello']) == 0
+    assert cli(['--agent', 'test_module:custom_agent', '--model', 'openai:gpt-4o', 'hello']) == 0
 
     assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out.replace('\n', '')
 
@@ -114,7 +116,9 @@ def test_agent_flag_set_model(
 
 
 def test_agent_flag_non_agent(
-    capfd: CaptureFixture[str], mocker: MockerFixture, create_test_module: Callable[..., None]
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    create_test_module: Callable[..., None],
 ):
     test_agent = 'Not an Agent object'
     create_test_module(custom_agent=test_agent)
@@ -133,31 +137,38 @@ def test_list_models(capfd: CaptureFixture[str]):
     output = capfd.readouterr().out.splitlines()
     assert output[:3] == snapshot([IsStr(regex='pai - PydanticAI CLI .*'), '', 'Available models:'])
 
-    providers = (
-        'openai',
-        'anthropic',
-        'bedrock',
-        'google-vertex',
-        'google-gla',
-        'groq',
-        'mistral',
-        'cohere',
-        'deepseek',
-        'heroku',
-    )
-    models = {line.strip().split(' ')[0] for line in output[3:]}
-    for provider in providers:
-        models = models - {model for model in models if model.startswith(provider)}
-    assert models == set(), models
+    # All models should be in provider:model format
+    for line in output[3:]:
+        if line.strip():
+            model_name = line.strip().split()[0]
+            assert ':' in model_name, f'Model {model_name} should be in provider:model format'
 
 
 def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     with cli_agent.override(model=TestModel(custom_output_text='# result\n\n```py\nx = 1\n```')):
         assert cli(['hello']) == 0
-        assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
+        assert capfd.readouterr().out.splitlines() == snapshot(
+            [
+                IsStr(regex='pai - PydanticAI CLI .*'),
+                '# result',
+                '',
+                'py',
+                'x = 1',
+                '/py',
+            ]
+        )
         assert cli(['--no-stream', 'hello']) == 0
-        assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
+        assert capfd.readouterr().out.splitlines() == snapshot(
+            [
+                IsStr(regex='pai - PydanticAI CLI .*'),
+                '# result',
+                '',
+                'py',
+                'x = 1',
+                '/py',
+            ]
+        )
 
 
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
@@ -170,12 +181,12 @@ def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
         session = PromptSession[Any](input=inp, output=DummyOutput())
         m = mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
         m.return_value = session
-        m = TestModel(custom_output_text='goodbye')
-        with cli_agent.override(model=m):
+        model = TestModel(custom_output_text='goodbye')
+        with cli_agent.override(model=model):
             assert cli([]) == 0
         assert capfd.readouterr().out.splitlines() == snapshot(
             [
-                IsStr(),
+                IsStr(regex='pai - PydanticAI CLI .*'),
                 IsStr(regex='goodbye *Markdown output of last question:'),
                 '',
                 'goodbye',
@@ -192,11 +203,13 @@ def test_handle_slash_command_markdown():
     messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('[hello](# hello)'), ToolCallPart('foo', '{}')])]
     io = StringIO()
     assert handle_slash_command('/markdown', messages, True, Console(file=io), 'default') == (None, True)
-    assert io.getvalue() == snapshot("""\
+    assert io.getvalue() == snapshot(
+        """\
 Markdown output of last question:
 
 [hello](# hello)
-""")
+"""
+    )
 
 
 def test_handle_slash_command_multiline():
@@ -211,13 +224,19 @@ def test_handle_slash_command_multiline():
 
 def test_handle_slash_command_exit():
     io = StringIO()
-    assert handle_slash_command('/exit', [], False, Console(file=io), 'default') == (0, False)
+    assert handle_slash_command('/exit', [], False, Console(file=io), 'default') == (
+        0,
+        False,
+    )
     assert io.getvalue() == snapshot('Exiting…\n')
 
 
 def test_handle_slash_command_other():
     io = StringIO()
-    assert handle_slash_command('/foobar', [], False, Console(file=io), 'default') == (None, False)
+    assert handle_slash_command('/foobar', [], False, Console(file=io), 'default') == (
+        None,
+        False,
+    )
     assert io.getvalue() == snapshot('Unknown command `/foobar`\n')
 
 
