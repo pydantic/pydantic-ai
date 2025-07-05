@@ -27,6 +27,8 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
+    ServerToolCallPart,
+    ServerToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -620,6 +622,14 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
         elif isinstance(item, TextPart):
             if item.content:
                 parts.append(_GeminiTextPart(text=item.content))
+        elif isinstance(item, ServerToolCallPart):
+            # Handle ServerToolCallPart the same as ToolCallPart
+            # Never returned from gemini
+            pass
+        elif isinstance(item, ServerToolReturnPart):
+            # Convert ServerToolReturnPart to a function response part
+            # Never returned from gemini
+            pass
         else:
             assert_never(item)
     return _GeminiContent(role='model', parts=parts)
