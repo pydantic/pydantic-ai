@@ -29,7 +29,7 @@ Examples of both are shown below; [mcp-run-python](run-python.md) is used as the
 [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] connects over HTTP using the [HTTP + Server Sent Events transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) to a server.
 
 !!! note
-    [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] requires an MCP server to be running and accepting HTTP connections before calling [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers]. Running the server is not managed by PydanticAI.
+    [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] requires an MCP server to be running and accepting HTTP connections before running the agent. Running the server is not managed by Pydantic AI.
 
 The name "HTTP" is used since this implementation will be adapted in future to use the new
 [Streamable HTTP](https://github.com/modelcontextprotocol/specification/pull/206) currently in development.
@@ -47,11 +47,11 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerSSE
 
 server = MCPServerSSE(url='http://localhost:3001/sse')  # (1)!
-agent = Agent('openai:gpt-4o', mcp_servers=[server])  # (2)!
+agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 
 async def main():
-    async with agent.run_mcp_servers():  # (3)!
+    async with agent:  # (3)!
         result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
@@ -92,9 +92,8 @@ Will display as follows:
 
 !!! note
     [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] requires an MCP server to be
-    running and accepting HTTP connections before calling
-    [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers]. Running the server is not
-    managed by PydanticAI.
+    running and accepting HTTP connections before running the agent. Running the server is not
+    managed by Pydantic AI.
 
 Before creating the Streamable HTTP client, we need to run a server that supports the Streamable HTTP transport.
 
@@ -118,10 +117,10 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
 server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
-agent = Agent('openai:gpt-4o', mcp_servers=[server])  # (2)!
+agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 async def main():
-    async with agent.run_mcp_servers():  # (3)!
+    async with agent:  # (3)!
         result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
@@ -138,7 +137,7 @@ _(This example is complete, it can be run "as is" with Python 3.10+ — you'll n
 The other transport offered by MCP is the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. In this case, you'd use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class.
 
 !!! note
-    When using [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] servers, the [`agent.run_mcp_servers()`][pydantic_ai.Agent.run_mcp_servers] context manager is responsible for starting and stopping the server.
+    When using [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] servers, the [`async with agent`][pydantic_ai.Agent.__aenter__] context manager is responsible for starting and stopping the server.
 
 ```python {title="mcp_stdio_client.py" py="3.10"}
 from pydantic_ai import Agent
@@ -156,11 +155,11 @@ server = MCPServerStdio(  # (1)!
         'stdio',
     ]
 )
-agent = Agent('openai:gpt-4o', mcp_servers=[server])
+agent = Agent('openai:gpt-4o', toolsets=[server])
 
 
 async def main():
-    async with agent.run_mcp_servers():
+    async with agent:
         result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
@@ -188,23 +187,23 @@ from pydantic_ai.tools import RunContext
 async def process_tool_call(
     ctx: RunContext[int],
     call_tool: CallToolFunc,
-    tool_name: str,
-    args: dict[str, Any],
+    name: str,
+    tool_args: dict[str, Any],
 ) -> ToolResult:
     """A tool call processor that passes along the deps."""
-    return await call_tool(tool_name, args, metadata={'deps': ctx.deps})
+    return await call_tool(name, tool_args, {'deps': ctx.deps})
 
 
 server = MCPServerStdio('python', ['mcp_server.py'], process_tool_call=process_tool_call)
 agent = Agent(
     model=TestModel(call_tools=['echo_deps']),
     deps_type=int,
-    mcp_servers=[server]
+    toolsets=[server]
 )
 
 
 async def main():
-    async with agent.run_mcp_servers():
+    async with agent:
         result = await agent.run('Echo with deps set to 42', deps=42)
     print(result.output)
     #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
@@ -242,7 +241,7 @@ calculator_server = MCPServerSSE(
 # Both servers might have a tool named 'get_data', but they'll be exposed as:
 # - 'weather_get_data'
 # - 'calc_get_data'
-agent = Agent('openai:gpt-4o', mcp_servers=[weather_server, calculator_server])
+agent = Agent('openai:gpt-4o', toolsets=[weather_server, calculator_server])
 ```
 
 ### Example with Stdio Server
@@ -272,7 +271,7 @@ js_server = MCPServerStdio(
     tool_prefix='js'  # Tools will be prefixed with 'js_'
 )
 
-agent = Agent('openai:gpt-4o', mcp_servers=[python_server, js_server])
+agent = Agent('openai:gpt-4o', toolsets=[python_server, js_server])
 ```
 
 When the model interacts with these servers, it will see the prefixed tool names, but the prefixes will be automatically handled when making tool calls.
@@ -359,11 +358,12 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio(command='python', args=['generate_svg.py'])
-agent = Agent('openai:gpt-4o', mcp_servers=[server])
+agent = Agent('openai:gpt-4o', toolsets=[server])
 
 
 async def main():
-    async with agent.run_mcp_servers():
+    async with agent:
+        agent.set_mcp_sampling_model()
         result = await agent.run('Create an image of a robot in a punk style.')
     print(result.output)
     #> Image file written to robot_punk.svg.

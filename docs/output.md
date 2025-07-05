@@ -200,8 +200,8 @@ async def hand_off_to_sql_agent(ctx: RunContext, query: str) -> list[Row]:
         return output
     except UnexpectedModelBehavior as e:
         # Bubble up potentially retryable errors to the router agent
-        if (cause := e.__cause__) and hasattr(cause, 'tool_retry'):
-            raise ModelRetry(f'SQL agent failed: {cause.tool_retry.content}') from e
+        if (cause := e.__cause__) and isinstance(cause, ModelRetry):
+            raise ModelRetry(f'SQL agent failed: {cause.message}') from e
         else:
             raise
 

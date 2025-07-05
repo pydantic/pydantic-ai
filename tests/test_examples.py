@@ -21,6 +21,7 @@ from pytest_mock import MockerFixture
 from rich.console import Console
 
 from pydantic_ai import ModelHTTPError
+from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -36,6 +37,9 @@ from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets._run import RunToolset
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
@@ -256,18 +260,25 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         raise ValueError(f'Unexpected prompt: {prompt}')
 
 
-class MockMCPServer:
-    is_running = True
-
+class MockMCPServer(AbstractToolset[Any]):
     async def __aenter__(self) -> MockMCPServer:
         return self
 
     async def __aexit__(self, *args: Any) -> None:
         pass
 
-    @staticmethod
-    async def list_tools() -> list[None]:
+    async def prepare_for_run(self, ctx: RunContext[Any]) -> RunToolset[Any]:
+        return RunToolset(self, ctx)
+
+    @property
+    def tool_defs(self) -> list[ToolDefinition]:
         return []
+
+    def _max_retries_for_tool(self, name: str) -> int:
+        return 0  # pragma: lax no cover
+
+    async def call_tool(self, call: ToolCallPart, ctx: RunContext[Any], allow_partial: bool = False) -> Any:
+        return None  # pragma: lax no cover
 
 
 text_responses: dict[str, str | ToolCallPart] = {

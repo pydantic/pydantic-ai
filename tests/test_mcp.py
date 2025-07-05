@@ -1,5 +1,7 @@
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
+from __future__ import annotations
+
 import base64
 import re
 from datetime import timezone
@@ -23,6 +25,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import Usage
@@ -48,22 +51,37 @@ pytestmark = [
 
 
 @pytest.fixture
-def agent(openai_api_key: str):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    return Agent(model, mcp_servers=[server])
+def mcp_server() -> MCPServerStdio:
+    return MCPServerStdio('python', ['-m', 'tests.mcp_server'])
 
 
-async def test_stdio_server():
+@pytest.fixture
+def model(openai_api_key: str) -> Model:
+    return OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+
+
+@pytest.fixture
+def agent(model: Model, mcp_server: MCPServerStdio) -> Agent:
+    return Agent(model, toolsets=[mcp_server])
+
+
+@pytest.fixture
+def run_context(model: Model) -> RunContext[int]:
+    return RunContext(deps=0, model=model, usage=Usage())
+
+
+async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
-        tools = await server.list_tools()
+        tools = (await server.prepare_for_run(run_context)).tool_defs
         assert len(tools) == snapshot(13)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
         # Test calling the temperature conversion tool
-        result = await server.call_tool('celsius_to_fahrenheit', {'celsius': 0})
+        result = await server.call_tool(
+            ToolCallPart(tool_name='celsius_to_fahrenheit', args={'celsius': 0}), run_context
+        )
         assert result == snapshot('32.0')
 
 
@@ -74,38 +92,38 @@ async def test_reentrant_context_manager():
             pass
 
 
-async def test_stdio_server_with_tool_prefix():
+async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
     async with server:
-        tools = await server.list_tools()
+        tools = (await server.prepare_for_run(run_context)).tool_defs
         assert all(tool.name.startswith('foo_') for tool in tools)
 
 
-async def test_stdio_server_with_cwd():
+async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     test_dir = Path(__file__).parent
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
-        tools = await server.list_tools()
+        tools = (await server.prepare_for_run(run_context)).tool_defs
         assert len(tools) == snapshot(13)
 
 
-async def test_process_tool_call() -> None:
+async def test_process_tool_call(run_context: RunContext[int]) -> int:
     called: bool = False
 
     async def process_tool_call(
         ctx: RunContext[int],
         call_tool: CallToolFunc,
-        tool_name: str,
-        args: dict[str, Any],
+        name: str,
+        tool_args: dict[str, Any],
     ) -> ToolResult:
         """A process_tool_call that sets a flag and sends deps as metadata."""
         nonlocal called
         called = True
-        return await call_tool(tool_name, args, {'deps': ctx.deps})
+        return await call_tool(name, tool_args, {'deps': ctx.deps})
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
     async with server:
-        agent = Agent(deps_type=int, model=TestModel(call_tools=['echo_deps']), mcp_servers=[server])
+        agent = Agent(deps_type=int, model=TestModel(call_tools=['echo_deps']), toolsets=[server])
         result = await agent.run('Echo with deps set to 42', deps=42)
         assert result.output == snapshot('{"echo_deps":{"echo":"This is an echo message","deps":42}}')
         assert called, 'process_tool_call should have been called'
@@ -134,7 +152,7 @@ def test_sse_server_with_header_and_timeout():
 
 @pytest.mark.vcr()
 async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent):
-    async with agent.run_mcp_servers():
+    async with agent:
         result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
         assert result.output == snapshot('0 degrees Celsius is equal to 32 degrees Fahrenheit.')
         assert result.all_messages() == snapshot(
@@ -211,11 +229,11 @@ async def test_agent_with_conflict_tool_name(agent: Agent):
         """Return nothing"""
         return None
 
-    async with agent.run_mcp_servers():
+    async with agent:
         with pytest.raises(
             UserError,
             match=re.escape(
-                "MCP Server 'MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'], tool_prefix=None)' defines a tool whose name conflicts with existing tool: 'get_none'. Consider using `tool_prefix` to avoid name conflicts."
+                "MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'], tool_prefix=None) defines a tool whose name conflicts with existing tool from Function toolset: 'get_none'. Consider setting `tool_prefix` to avoid name conflicts."
             ),
         ):
             await agent.run('Get me a conflict')
@@ -226,7 +244,7 @@ async def test_agent_with_prefix_tool_name(openai_api_key: str):
     model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
         model,
-        mcp_servers=[server],
+        toolsets=[server],
     )
 
     @agent.tool_plain
@@ -234,43 +252,41 @@ async def test_agent_with_prefix_tool_name(openai_api_key: str):
         """Return nothing"""
         return None
 
-    async with agent.run_mcp_servers():
+    async with agent:
         # This means that we passed the _prepare_request_parameters check and there is no conflict in the tool name
         with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
             await agent.run('No conflict')
 
 
-async def test_agent_with_server_not_running(openai_api_key: str):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model, mcp_servers=[server])
-    with pytest.raises(UserError, match='MCP server is not running'):
-        await agent.run('What is 0 degrees Celsius in Fahrenheit?')
+@pytest.mark.vcr()
+async def test_agent_with_server_not_running(agent: Agent, allow_model_requests: None):
+    result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
+    assert result.output == snapshot('0 degrees Celsius is 32.0 degrees Fahrenheit.')
 
 
-async def test_log_level_unset():
+async def test_log_level_unset(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     assert server.log_level is None
     async with server:
-        tools = await server.list_tools()
+        tools = (await server.prepare_for_run(run_context)).tool_defs
         assert len(tools) == snapshot(13)
         assert tools[10].name == 'get_log_level'
 
-        result = await server.call_tool('get_log_level', {})
+        result = await server.call_tool(ToolCallPart(tool_name='get_log_level', args={}), run_context)
         assert result == snapshot('unset')
 
 
-async def test_log_level_set():
+async def test_log_level_set(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
     assert server.log_level == 'info'
     async with server:
-        result = await server.call_tool('get_log_level', {})
+        result = await server.call_tool(ToolCallPart(tool_name='get_log_level', args={}), run_context)
         assert result == snapshot('info')
 
 
 @pytest.mark.vcr()
 async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
-    async with agent.run_mcp_servers():
+    async with agent:
         result = await agent.run('What is the weather in Mexico City?')
         assert result.output == snapshot(
             'The weather in Mexico City is currently sunny with a temperature of 26 degrees Celsius.'
@@ -349,7 +365,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
 
 @pytest.mark.vcr()
 async def test_tool_returning_text_resource(allow_model_requests: None, agent: Agent):
-    async with agent.run_mcp_servers():
+    async with agent:
         result = await agent.run('Get me the product name')
         assert result.output == snapshot('The product name is "PydanticAI".')
         assert result.all_messages() == snapshot(
@@ -422,7 +438,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
 
 @pytest.mark.vcr()
 async def test_tool_returning_image_resource(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
-    async with agent.run_mcp_servers():
+    async with agent:
         result = await agent.run('Get me the image resource')
         assert result.output == snapshot(
             'This is an image of a sliced kiwi with a vibrant green interior and black seeds.'
@@ -505,7 +521,7 @@ async def test_tool_returning_audio_resource(
     allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
 ):
     model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
-    async with agent.run_mcp_servers():
+    async with agent:
         result = await agent.run("What's the content of the audio resource?", model=model)
         assert result.output == snapshot('The audio resource contains a voice saying "Hello, my name is Marcelo."')
         assert result.all_messages() == snapshot(
@@ -556,7 +572,7 @@ async def test_tool_returning_audio_resource(
 
 @pytest.mark.vcr()
 async def test_tool_returning_image(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
-    async with agent.run_mcp_servers():
+    async with agent:
         result = await agent.run('Get me an image')
         assert result.output == snapshot('Here is an image of a sliced kiwi on a white background.')
         assert result.all_messages() == snapshot(
@@ -636,7 +652,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
 
 @pytest.mark.vcr()
 async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
-    async with agent.run_mcp_servers():
+    async with agent:
         result = await agent.run('Get me a dict, respond on one line')
         assert result.output == snapshot('{"foo":"bar","baz":123}')
         assert result.all_messages() == snapshot(
@@ -703,7 +719,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
 
 @pytest.mark.vcr()
 async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
-    async with agent.run_mcp_servers():
+    async with agent:
         result = await agent.run('Get me an error, pass False as a value, unless the tool tells you otherwise')
         assert result.output == snapshot(
             'I called the tool with the correct parameter, and it returned: "This is not an error."'
@@ -817,7 +833,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
 
 @pytest.mark.vcr()
 async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
-    async with agent.run_mcp_servers():
+    async with agent:
         result = await agent.run('Call the none tool and say Hello')
         assert result.output == snapshot('Hello! How can I assist you today?')
         assert result.all_messages() == snapshot(
@@ -884,7 +900,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
 
 @pytest.mark.vcr()
 async def test_tool_returning_multiple_items(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
-    async with agent.run_mcp_servers():
+    async with agent:
         result = await agent.run('Get me multiple items and summarize in one sentence')
         assert result.output == snapshot(
             'The data includes two strings, a dictionary with a key-value pair, and an image of a sliced kiwi.'
@@ -973,11 +989,11 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
         )
 
 
-async def test_client_sampling():
+async def test_client_sampling(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     server.sampling_model = TestModel(custom_output_text='sampling model response')
     async with server:
-        result = await server.call_tool('use_sampling', {'foo': 'bar'})
+        result = await server.call_tool(ToolCallPart(tool_name='use_sampling', args={'foo': 'bar'}), run_context)
         assert result == snapshot(
             {
                 'meta': None,
@@ -989,27 +1005,27 @@ async def test_client_sampling():
         )
 
 
-async def test_client_sampling_disabled():
+async def test_client_sampling_disabled(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], allow_sampling=False)
     server.sampling_model = TestModel(custom_output_text='sampling model response')
     async with server:
         with pytest.raises(ModelRetry, match='Error executing tool use_sampling: Sampling not supported'):
-            await server.call_tool('use_sampling', {'foo': 'bar'})
+            await server.call_tool(ToolCallPart(tool_name='use_sampling', args={'foo': 'bar'}), run_context)
 
 
-async def test_mcp_server_raises_mcp_error(allow_model_requests: None, agent: Agent) -> None:
-    server = agent._mcp_servers[0]  # pyright: ignore[reportPrivateUsage]
-
+async def test_mcp_server_raises_mcp_error(
+    allow_model_requests: None, mcp_server: MCPServerStdio, agent: Agent, run_context: RunContext[int]
+) -> None:
     mcp_error = McpError(error=ErrorData(code=400, message='Test MCP error conversion'))
 
-    async with agent.run_mcp_servers():
+    async with agent:
         with patch.object(
-            server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
             'send_request',
             new=AsyncMock(side_effect=mcp_error),
         ):
             with pytest.raises(ModelRetry, match='Test MCP error conversion'):
-                await server.call_tool('test_tool', {})
+                await mcp_server.call_tool(ToolCallPart(tool_name='test_tool', args={}), run_context)
 
 
 def test_map_from_mcp_params_model_request():
