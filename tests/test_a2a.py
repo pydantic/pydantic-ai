@@ -3,6 +3,7 @@ import httpx
 import pytest
 from asgi_lifespan import LifespanManager
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
@@ -30,6 +31,83 @@ def return_string(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
 
 
 model = FunctionModel(return_string)
+
+
+# Define a test Pydantic model
+class UserProfile(BaseModel):
+    name: str
+    age: int
+    email: str
+
+
+def return_pydantic_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    assert info.output_tools is not None
+    args_json = '{"name": "John Doe", "age": 30, "email": "john@example.com"}'
+    return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+
+pydantic_model = FunctionModel(return_pydantic_model)
+
+
+async def test_a2a_pydantic_model_output():
+    """Test that Pydantic model outputs have correct metadata including JSON schema."""
+    agent = Agent(model=pydantic_model, output_type=UserProfile)
+    app = agent.to_a2a()
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            message = Message(role='user', parts=[TextPart(text='Get user profile', kind='text')], kind='message')
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+            result = response['result']
+            assert is_task(result)
+
+            task_id = result['id']
+
+            # Wait for completion
+            await anyio.sleep(0.1)
+            task = await a2a_client.get_task(task_id)
+
+            assert 'result' in task
+            result = task['result']
+            assert result['status']['state'] == 'completed'
+
+            # Check artifacts
+            assert 'artifacts' in result
+            assert len(result['artifacts']) == 1
+            artifact = result['artifacts'][0]
+
+            # Verify the data
+            assert artifact['parts'][0]['kind'] == 'data'
+            assert artifact['parts'][0]['data'] == {'name': 'John Doe', 'age': 30, 'email': 'john@example.com'}
+
+            # Verify metadata
+            assert 'metadata' in artifact
+            metadata = artifact['metadata']
+            assert metadata['type'] == 'UserProfile'
+
+            # Verify JSON schema is present and correct
+            assert 'json_schema' in metadata
+            json_schema = metadata['json_schema']
+            assert json_schema['type'] == 'object'
+            assert 'properties' in json_schema
+            assert set(json_schema['properties'].keys()) == {'name', 'age', 'email'}
+            assert json_schema['properties']['name']['type'] == 'string'
+            assert json_schema['properties']['age']['type'] == 'integer'
+            assert json_schema['properties']['email']['type'] == 'string'
+            assert json_schema['required'] == ['name', 'age', 'email']
+
+            # Check the message history also has the data
+            assert 'history' in result
+            assert len(result['history']) == 2
+            agent_message = result['history'][1]
+            assert agent_message['role'] == 'agent'
+            assert agent_message['parts'][0]['kind'] == 'data'
+            assert agent_message['parts'][0]['data'] == {'name': 'John Doe', 'age': 30, 'email': 'john@example.com'}
 
 
 async def test_a2a_runtime_error_without_lifespan():
