@@ -485,6 +485,7 @@ class GeminiModel(Model):
             total_tokens=response.get('totalTokens', 0),
             details=details,
         )
+        
 
 def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _GeminiGenerationConfig:
     config: _GeminiGenerationConfig = {}
@@ -911,7 +912,6 @@ class _GeminiCountTokensRequest(TypedDict):
 @pydantic.with_config(pydantic.ConfigDict(defer_build=True))
 class _GeminiCountTokensResponse(TypedDict):
     """Schema for the response from the Gemini countTokens API.
-    
     See <https://ai.google.dev/api/tokens#endpoint> for API docs.
     """
 
