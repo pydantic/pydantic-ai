@@ -922,10 +922,9 @@ def _ensure_decodeable(content: bytearray) -> bytearray:
 
     This is a temporary workaround until https://github.com/pydantic/pydantic-core/issues/1633 is resolved
     """
-    while True:
-        try:
-            content.decode()
-        except UnicodeDecodeError:
-            content = content[:-1]  # this will definitely succeed before we run out of bytes
-        else:
-            return content
+    try:
+        content.decode()
+        return content
+    except UnicodeDecodeError as e:
+        # e.end marks the end of the valid decoded bytes, so cut up to before the first invalid byte
+        return content[: e.start]
