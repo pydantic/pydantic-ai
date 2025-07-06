@@ -7,7 +7,7 @@ from typing import Annotated, Any, Generic, Literal, TypeVar, Union
 import pydantic
 from pydantic import Discriminator, TypeAdapter
 from pydantic.alias_generators import to_camel
-from typing_extensions import NotRequired, TypeAlias, TypedDict
+from typing_extensions import NotRequired, TypeAlias, TypedDict, TypeGuard
 
 
 @pydantic.with_config({'alias_generator': to_camel})
@@ -137,6 +137,9 @@ class Artifact(TypedDict):
     Artifacts.
     """
 
+    artifact_id: str
+    """Unique identifier for the artifact."""
+
     name: NotRequired[str]
     """The name of the artifact."""
 
@@ -149,8 +152,8 @@ class Artifact(TypedDict):
     metadata: NotRequired[dict[str, Any]]
     """Metadata about the artifact."""
 
-    index: int
-    """The index of the artifact."""
+    extensions: NotRequired[list[Any]]
+    """Array of extensions."""
 
     append: NotRequired[bool]
     """Whether to append this artifact to an existing one."""
@@ -183,6 +186,9 @@ class PushNotificationConfig(TypedDict):
     mobile Push Notification Service).
     """
 
+    id: NotRequired[str]
+    """Server-assigned identifier."""
+
     url: str
     """The URL to send push notifications to."""
 
@@ -204,6 +210,7 @@ class TaskPushNotificationConfig(TypedDict):
     """The push notification configuration."""
 
 
+@pydantic.with_config({'alias_generator': to_camel})
 class Message(TypedDict):
     """A Message contains any content that is not an Artifact.
 
@@ -222,8 +229,27 @@ class Message(TypedDict):
     parts: list[Part]
     """The parts of the message."""
 
+    kind: Literal['message']
+    """Event type."""
+
     metadata: NotRequired[dict[str, Any]]
     """Metadata about the message."""
+
+    # Additional fields
+    message_id: NotRequired[str]
+    """Identifier created by the message creator."""
+
+    context_id: NotRequired[str]
+    """The context the message is associated with."""
+
+    task_id: NotRequired[str]
+    """Identifier of task the message is related to."""
+
+    reference_task_ids: NotRequired[list[str]]
+    """Array of task IDs this message references."""
+
+    extensions: NotRequired[list[Any]]
+    """Array of extensions."""
 
 
 class _BasePart(TypedDict):
@@ -232,76 +258,73 @@ class _BasePart(TypedDict):
     metadata: NotRequired[dict[str, Any]]
 
 
+@pydantic.with_config({'alias_generator': to_camel})
 class TextPart(_BasePart):
     """A part that contains text."""
 
-    type: Literal['text']
-    """The type of the part."""
+    kind: Literal['text']
+    """The kind of the part."""
 
     text: str
     """The text of the part."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
-class FilePart(_BasePart):
-    """A part that contains a file."""
+class FileWithBytes(TypedDict):
+    """File with base64 encoded data."""
 
-    type: Literal['file']
-    """The type of the part."""
-
-    file: File
-    """The file of the part."""
-
-
-@pydantic.with_config({'alias_generator': to_camel})
-class _BaseFile(_BasePart):
-    """A base class for all file types."""
-
-    name: NotRequired[str]
-    """The name of the file."""
+    data: str
+    """The base64 encoded data."""
 
     mime_type: str
     """The mime type of the file."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
-class _BinaryFile(_BaseFile):
-    """A binary file."""
+class FileWithUri(TypedDict):
+    """File with URI reference."""
 
-    data: str
-    """The base64 encoded bytes of the file."""
+    uri: str
+    """The URI of the file."""
+
+    mime_type: NotRequired[str]
+    """The mime type of the file."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
-class _URLFile(_BaseFile):
-    """A file that is hosted on a remote URL."""
+class FilePart(_BasePart):
+    """A part that contains a file."""
 
-    url: str
-    """The URL of the file."""
+    kind: Literal['file']
+    """The kind of the part."""
 
-
-File: TypeAlias = Union[_BinaryFile, _URLFile]
-"""A file is a binary file or a URL file."""
+    file: FileWithBytes | FileWithUri
+    """The file content - either bytes or URI."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
 class DataPart(_BasePart):
-    """A part that contains data."""
+    """A part that contains structured data."""
 
-    type: Literal['data']
-    """The type of the part."""
+    kind: Literal['data']
+    """The kind of the part."""
 
-    data: dict[str, Any]
+    data: Any
     """The data of the part."""
 
+    description: NotRequired[str]
+    """A description of the data."""
 
-Part = Annotated[Union[TextPart, FilePart, DataPart], pydantic.Field(discriminator='type')]
+
+Part = Annotated[Union[TextPart, FilePart, DataPart], pydantic.Field(discriminator='kind')]
 """A fully formed piece of content exchanged between a client and a remote agent as part of a Message or an Artifact.
 
 Each Part has its own content type and metadata.
 """
 
-TaskState: TypeAlias = Literal['submitted', 'working', 'input-required', 'completed', 'canceled', 'failed', 'unknown']
+TaskState: TypeAlias = Literal[
+    'submitted', 'working', 'input-required', 'completed', 'canceled', 'failed', 'rejected', 'auth-required'
+]
 """The possible states of a task."""
 
 
@@ -330,8 +353,11 @@ class Task(TypedDict):
     id: str
     """Unique identifier for the task."""
 
-    session_id: NotRequired[str]
-    """Client-generated id for the session holding the task."""
+    context_id: str
+    """The context the task is associated with."""
+
+    kind: Literal['task']
+    """Event type."""
 
     status: TaskStatus
     """Current status of the task."""
@@ -348,10 +374,16 @@ class Task(TypedDict):
 
 @pydantic.with_config({'alias_generator': to_camel})
 class TaskStatusUpdateEvent(TypedDict):
-    """Sent by server during sendSubscribe or subscribe requests."""
+    """Sent by server during message/stream requests."""
 
-    id: str
+    task_id: str
     """The id of the task."""
+
+    context_id: str
+    """The context the task is associated with."""
+
+    kind: Literal['status-update']
+    """Event type."""
 
     status: TaskStatus
     """The status of the task."""
@@ -365,13 +397,25 @@ class TaskStatusUpdateEvent(TypedDict):
 
 @pydantic.with_config({'alias_generator': to_camel})
 class TaskArtifactUpdateEvent(TypedDict):
-    """Sent by server during sendSubscribe or subscribe requests."""
+    """Sent by server during message/stream requests."""
 
-    id: str
+    task_id: str
     """The id of the task."""
+
+    context_id: str
+    """The context the task is associated with."""
+
+    kind: Literal['artifact-update']
+    """Event type identification."""
 
     artifact: Artifact
     """The artifact that was updated."""
+
+    append: NotRequired[bool]
+    """Whether to append to existing artifact (true) or replace (false)."""
+
+    last_chunk: NotRequired[bool]
+    """Indicates this is the final chunk of the artifact."""
 
     metadata: NotRequired[dict[str, Any]]
     """Extension metadata."""
@@ -394,23 +438,55 @@ class TaskQueryParams(TaskIdParams):
 
 
 @pydantic.with_config({'alias_generator': to_camel})
-class TaskSendParams(TypedDict):
-    """Sent by the client to the agent to create, continue, or restart a task."""
+class MessageSendConfiguration(TypedDict):
+    """Configuration for the send message request."""
 
-    id: str
-    """The id of the task."""
+    accepted_output_modes: list[str]
+    """Accepted output modalities by the client."""
 
-    session_id: NotRequired[str]
-    """The server creates a new sessionId for new tasks if not set."""
-
-    message: Message
-    """The message to send to the agent."""
+    blocking: NotRequired[bool]
+    """If the server should treat the client as a blocking request."""
 
     history_length: NotRequired[int]
     """Number of recent messages to be retrieved."""
 
-    push_notification: NotRequired[PushNotificationConfig]
+    push_notification_config: NotRequired[PushNotificationConfig]
     """Where the server should send notifications when disconnected."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class MessageSendParams(TypedDict):
+    """Parameters for message/send method."""
+
+    configuration: NotRequired[MessageSendConfiguration]
+    """Send message configuration."""
+
+    message: Message
+    """The message being sent to the server."""
+
+    metadata: NotRequired[dict[str, Any]]
+    """Extension metadata."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class TaskSendParams(TypedDict):
+    """Internal parameters for task execution within the framework.
+
+    Note: This is not part of the A2A protocol - it's used internally
+    for broker/worker communication.
+    """
+
+    id: str
+    """The id of the task."""
+
+    context_id: str
+    """The context id for the task."""
+
+    message: Message
+    """The message to process."""
+
+    history_length: NotRequired[int]
+    """Number of recent messages to be retrieved."""
 
     metadata: NotRequired[dict[str, Any]]
     """Extension metadata."""
@@ -497,21 +573,21 @@ UnsupportedOperationError = JSONRPCError[Literal[-32004], Literal['This operatio
 ContentTypeNotSupportedError = JSONRPCError[Literal[-32005], Literal['Incompatible content types']]
 """A JSON RPC error for incompatible content types."""
 
+InvalidAgentResponseError = JSONRPCError[Literal[-32006], Literal['Invalid agent response']]
+"""A JSON RPC error for invalid agent response."""
+
 ###############################################################################################
 #######################################   Requests and responses   ############################
 ###############################################################################################
 
-SendTaskRequest = JSONRPCRequest[Literal['tasks/send'], TaskSendParams]
-"""A JSON RPC request to send a task."""
+SendMessageRequest = JSONRPCRequest[Literal['message/send'], MessageSendParams]
+"""A JSON RPC request to send a message."""
 
-SendTaskResponse = JSONRPCResponse[Task, JSONRPCError[Any, Any]]
-"""A JSON RPC response to send a task."""
+SendMessageResponse = JSONRPCResponse[Union[Task, Message], JSONRPCError[Any, Any]]
+"""A JSON RPC response to send a message."""
 
-SendTaskStreamingRequest = JSONRPCRequest[Literal['tasks/sendSubscribe'], TaskSendParams]
-"""A JSON RPC request to send a task and receive updates."""
-
-SendTaskStreamingResponse = JSONRPCResponse[Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent], InternalError]
-"""A JSON RPC response to send a task and receive updates."""
+StreamMessageRequest = JSONRPCRequest[Literal['message/stream'], MessageSendParams]
+"""A JSON RPC request to stream a message."""
 
 GetTaskRequest = JSONRPCRequest[Literal['tasks/get'], TaskQueryParams]
 """A JSON RPC request to get a task."""
@@ -542,7 +618,8 @@ ResubscribeTaskRequest = JSONRPCRequest[Literal['tasks/resubscribe'], TaskIdPara
 
 A2ARequest = Annotated[
     Union[
-        SendTaskRequest,
+        SendMessageRequest,
+        StreamMessageRequest,
         GetTaskRequest,
         CancelTaskRequest,
         SetTaskPushNotificationRequest,
@@ -554,7 +631,7 @@ A2ARequest = Annotated[
 """A JSON RPC request to the A2A server."""
 
 A2AResponse: TypeAlias = Union[
-    SendTaskResponse,
+    SendMessageResponse,
     GetTaskResponse,
     CancelTaskResponse,
     SetTaskPushNotificationResponse,
@@ -565,3 +642,16 @@ A2AResponse: TypeAlias = Union[
 
 a2a_request_ta: TypeAdapter[A2ARequest] = TypeAdapter(A2ARequest)
 a2a_response_ta: TypeAdapter[A2AResponse] = TypeAdapter(A2AResponse)
+send_message_request_ta: TypeAdapter[SendMessageRequest] = TypeAdapter(SendMessageRequest)
+send_message_response_ta: TypeAdapter[SendMessageResponse] = TypeAdapter(SendMessageResponse)
+stream_message_request_ta: TypeAdapter[StreamMessageRequest] = TypeAdapter(StreamMessageRequest)
+
+
+def is_task(response: Task | Message) -> TypeGuard[Task]:
+    """Type guard to check if a response is a Task."""
+    return 'id' in response and 'status' in response and 'context_id' in response and response.get('kind') == 'task'
+
+
+def is_message(response: Task | Message) -> TypeGuard[Message]:
+    """Type guard to check if a response is a Message."""
+    return 'role' in response and 'parts' in response and response.get('kind') == 'message'

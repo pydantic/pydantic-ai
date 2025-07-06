@@ -12,7 +12,7 @@ from .conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from fasta2a.client import A2AClient
-    from fasta2a.schema import DataPart, FilePart, Message, TextPart
+    from fasta2a.schema import DataPart, FilePart, Message, TextPart, is_task
     from fasta2a.storage import InMemoryStorage
 
 
@@ -40,10 +40,10 @@ async def test_a2a_runtime_error_without_lifespan():
     async with httpx.AsyncClient(transport=transport) as http_client:
         a2a_client = A2AClient(http_client=http_client)
 
-        message = Message(role='user', parts=[TextPart(text='Hello, world!', type='text')])
+        message = Message(role='user', parts=[TextPart(text='Hello, world!', kind='text')], kind='message')
 
         with pytest.raises(RuntimeError, match='TaskManager was not properly initialized.'):
-            await a2a_client.send_task(message=message)
+            await a2a_client.send_message(message=message)
 
 
 async def test_a2a_simple():
@@ -55,23 +55,31 @@ async def test_a2a_simple():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
-            message = Message(role='user', parts=[TextPart(text='Hello, world!', type='text')])
-            response = await a2a_client.send_task(message=message)
-            assert response == snapshot(
+            message = Message(role='user', parts=[TextPart(text='Hello, world!', kind='text')], kind='message')
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+            result = response['result']
+            assert is_task(result)
+            assert result == snapshot(
                 {
-                    'jsonrpc': '2.0',
                     'id': IsStr(),
-                    'result': {
-                        'id': IsStr(),
-                        'session_id': IsStr(),
-                        'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
-                        'history': [{'role': 'user', 'parts': [{'type': 'text', 'text': 'Hello, world!'}]}],
-                    },
+                    'context_id': IsStr(),
+                    'kind': 'task',
+                    'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
+                    'history': [
+                        {
+                            'role': 'user',
+                            'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                            'kind': 'message',
+                            'context_id': IsStr(),
+                            'task_id': IsStr(),
+                        }
+                    ],
                 }
             )
 
-            assert 'result' in response
-            task_id = response['result']['id']
+            task_id = result['id']
 
             while task := await a2a_client.get_task(task_id):  # pragma: no branch
                 if 'result' in task and task['result']['status']['state'] == 'completed':
@@ -83,11 +91,36 @@ async def test_a2a_simple():
                     'id': None,
                     'result': {
                         'id': IsStr(),
-                        'session_id': IsStr(),
+                        'context_id': IsStr(),
+                        'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
-                        'history': [{'role': 'user', 'parts': [{'type': 'text', 'text': 'Hello, world!'}]}],
+                        'history': [
+                            {
+                                'role': 'user',
+                                'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                                'kind': 'message',
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
+                            {
+                                'role': 'agent',
+                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'kind': 'message',
+                                'message_id': IsStr(),
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
+                        ],
                         'artifacts': [
-                            {'name': 'result', 'parts': [{'type': 'text', 'text': "('foo', 'bar')"}], 'index': 0}
+                            {
+                                'artifact_id': IsStr(),
+                                'name': 'result',
+                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'metadata': {
+                                    'type': 'tuple',
+                                    'json_schema': {'items': {}, 'type': 'array'},
+                                },
+                            }
                         ],
                     },
                 }
@@ -107,37 +140,41 @@ async def test_a2a_file_message_with_file():
                 role='user',
                 parts=[
                     FilePart(
-                        type='file',
-                        file={'url': 'https://example.com/file.txt', 'mime_type': 'text/plain'},
+                        kind='file',
+                        file={'uri': 'https://example.com/file.txt', 'mime_type': 'text/plain'},
                     )
                 ],
+                kind='message',
             )
-            response = await a2a_client.send_task(message=message)
-            assert response == snapshot(
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+            result = response['result']
+            assert is_task(result)
+            assert result == snapshot(
                 {
-                    'jsonrpc': '2.0',
                     'id': IsStr(),
-                    'result': {
-                        'id': IsStr(),
-                        'session_id': IsStr(),
-                        'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
-                        'history': [
-                            {
-                                'role': 'user',
-                                'parts': [
-                                    {
-                                        'type': 'file',
-                                        'file': {'mime_type': 'text/plain', 'url': 'https://example.com/file.txt'},
-                                    }
-                                ],
-                            }
-                        ],
-                    },
+                    'context_id': IsStr(),
+                    'kind': 'task',
+                    'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
+                    'history': [
+                        {
+                            'role': 'user',
+                            'parts': [
+                                {
+                                    'kind': 'file',
+                                    'file': {'mime_type': 'text/plain', 'uri': 'https://example.com/file.txt'},
+                                }
+                            ],
+                            'kind': 'message',
+                            'context_id': IsStr(),
+                            'task_id': IsStr(),
+                        }
+                    ],
                 }
             )
 
-            assert 'result' in response
-            task_id = response['result']['id']
+            task_id = result['id']
 
             while task := await a2a_client.get_task(task_id):  # pragma: no branch
                 if 'result' in task and task['result']['status']['state'] == 'completed':
@@ -149,21 +186,41 @@ async def test_a2a_file_message_with_file():
                     'id': None,
                     'result': {
                         'id': IsStr(),
-                        'session_id': IsStr(),
+                        'context_id': IsStr(),
+                        'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
                             {
                                 'role': 'user',
                                 'parts': [
                                     {
-                                        'type': 'file',
-                                        'file': {'mime_type': 'text/plain', 'url': 'https://example.com/file.txt'},
+                                        'kind': 'file',
+                                        'file': {'mime_type': 'text/plain', 'uri': 'https://example.com/file.txt'},
                                     }
                                 ],
-                            }
+                                'kind': 'message',
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
+                            {
+                                'role': 'agent',
+                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'kind': 'message',
+                                'message_id': IsStr(),
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
                         ],
                         'artifacts': [
-                            {'name': 'result', 'parts': [{'type': 'text', 'text': "('foo', 'bar')"}], 'index': 0}
+                            {
+                                'artifact_id': IsStr(),
+                                'name': 'result',
+                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'metadata': {
+                                    'type': 'tuple',
+                                    'json_schema': {'items': {}, 'type': 'array'},
+                                },
+                            }
                         ],
                     },
                 }
@@ -182,30 +239,34 @@ async def test_a2a_file_message_with_file_content():
             message = Message(
                 role='user',
                 parts=[
-                    FilePart(type='file', file={'data': 'foo', 'mime_type': 'text/plain'}),
+                    FilePart(file={'data': 'foo', 'mime_type': 'text/plain'}, kind='file'),
                 ],
+                kind='message',
             )
-            response = await a2a_client.send_task(message=message)
-            assert response == snapshot(
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+            result = response['result']
+            assert is_task(result)
+            assert result == snapshot(
                 {
-                    'jsonrpc': '2.0',
                     'id': IsStr(),
-                    'result': {
-                        'id': IsStr(),
-                        'session_id': IsStr(),
-                        'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
-                        'history': [
-                            {
-                                'role': 'user',
-                                'parts': [{'type': 'file', 'file': {'mime_type': 'text/plain', 'data': 'foo'}}],
-                            }
-                        ],
-                    },
+                    'context_id': IsStr(),
+                    'kind': 'task',
+                    'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
+                    'history': [
+                        {
+                            'role': 'user',
+                            'parts': [{'kind': 'file', 'file': {'mime_type': 'text/plain', 'data': 'foo'}}],
+                            'kind': 'message',
+                            'context_id': IsStr(),
+                            'task_id': IsStr(),
+                        }
+                    ],
                 }
             )
 
-            assert 'result' in response
-            task_id = response['result']['id']
+            task_id = result['id']
 
             while task := await a2a_client.get_task(task_id):  # pragma: no branch
                 if 'result' in task and task['result']['status']['state'] == 'completed':
@@ -217,16 +278,36 @@ async def test_a2a_file_message_with_file_content():
                     'id': None,
                     'result': {
                         'id': IsStr(),
-                        'session_id': IsStr(),
+                        'context_id': IsStr(),
+                        'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
                             {
                                 'role': 'user',
-                                'parts': [{'type': 'file', 'file': {'mime_type': 'text/plain', 'data': 'foo'}}],
-                            }
+                                'parts': [{'kind': 'file', 'file': {'mime_type': 'text/plain', 'data': 'foo'}}],
+                                'kind': 'message',
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
+                            {
+                                'role': 'agent',
+                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'kind': 'message',
+                                'message_id': IsStr(),
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
                         ],
                         'artifacts': [
-                            {'name': 'result', 'parts': [{'type': 'text', 'text': "('foo', 'bar')"}], 'index': 0}
+                            {
+                                'artifact_id': IsStr(),
+                                'name': 'result',
+                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'metadata': {
+                                    'type': 'tuple',
+                                    'json_schema': {'items': {}, 'type': 'array'},
+                                },
+                            }
                         ],
                     },
                 }
@@ -244,24 +325,33 @@ async def test_a2a_file_message_with_data():
 
             message = Message(
                 role='user',
-                parts=[DataPart(type='data', data={'foo': 'bar'})],
+                parts=[DataPart(kind='data', data={'foo': 'bar'})],
+                kind='message',
             )
-            response = await a2a_client.send_task(message=message)
-            assert response == snapshot(
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+            result = response['result']
+            assert is_task(result)
+            assert result == snapshot(
                 {
-                    'jsonrpc': '2.0',
                     'id': IsStr(),
-                    'result': {
-                        'id': IsStr(),
-                        'session_id': IsStr(),
-                        'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
-                        'history': [{'role': 'user', 'parts': [{'type': 'data', 'data': {'foo': 'bar'}}]}],
-                    },
+                    'context_id': IsStr(),
+                    'kind': 'task',
+                    'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
+                    'history': [
+                        {
+                            'role': 'user',
+                            'parts': [{'kind': 'data', 'data': {'foo': 'bar'}}],
+                            'kind': 'message',
+                            'context_id': IsStr(),
+                            'task_id': IsStr(),
+                        }
+                    ],
                 }
             )
 
-            assert 'result' in response
-            task_id = response['result']['id']
+            task_id = result['id']
 
             while task := await a2a_client.get_task(task_id):  # pragma: no branch
                 if 'result' in task and task['result']['status']['state'] == 'failed':
@@ -273,12 +363,53 @@ async def test_a2a_file_message_with_data():
                     'id': None,
                     'result': {
                         'id': IsStr(),
-                        'session_id': IsStr(),
+                        'context_id': IsStr(),
+                        'kind': 'task',
                         'status': {'state': 'failed', 'timestamp': IsDatetime(iso_string=True)},
-                        'history': [{'role': 'user', 'parts': [{'type': 'data', 'data': {'foo': 'bar'}}]}],
+                        'history': [
+                            {
+                                'role': 'user',
+                                'parts': [{'kind': 'data', 'data': {'foo': 'bar'}}],
+                                'kind': 'message',
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            }
+                        ],
                     },
                 }
             )
+
+
+async def test_a2a_error_handling():
+    """Test that errors during task execution properly update task state."""
+
+    def raise_error(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('Test error during agent execution')
+
+    error_model = FunctionModel(raise_error)
+    agent = Agent(model=error_model, output_type=str)
+    app = agent.to_a2a()
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            message = Message(role='user', parts=[TextPart(text='Hello, world!', kind='text')], kind='message')
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+            result = response['result']
+            assert is_task(result)
+
+            task_id = result['id']
+
+            # Wait for task to fail
+            await anyio.sleep(0.1)
+            task = await a2a_client.get_task(task_id)
+
+            assert 'result' in task
+            assert task['result']['status']['state'] == 'failed'
 
 
 async def test_a2a_multiple_messages():
@@ -291,27 +422,40 @@ async def test_a2a_multiple_messages():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
-            message = Message(role='user', parts=[TextPart(text='Hello, world!', type='text')])
-            response = await a2a_client.send_task(message=message)
+            message = Message(role='user', parts=[TextPart(text='Hello, world!', kind='text')], kind='message')
+            response = await a2a_client.send_message(message=message)
             assert response == snapshot(
                 {
                     'jsonrpc': '2.0',
                     'id': IsStr(),
                     'result': {
                         'id': IsStr(),
-                        'session_id': IsStr(),
+                        'context_id': IsStr(),
+                        'kind': 'task',
                         'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
-                        'history': [{'role': 'user', 'parts': [{'type': 'text', 'text': 'Hello, world!'}]}],
+                        'history': [
+                            {
+                                'role': 'user',
+                                'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                                'kind': 'message',
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            }
+                        ],
                     },
                 }
             )
 
             # NOTE: We include the agent history before we start working on the task.
             assert 'result' in response
-            task_id = response['result']['id']
+            result = response['result']
+            assert is_task(result)
+            task_id = result['id']
             task = storage.tasks[task_id]
             assert 'history' in task
-            task['history'].append(Message(role='agent', parts=[TextPart(text='Whats up?', type='text')]))
+            task['history'].append(
+                Message(role='agent', parts=[TextPart(text='Whats up?', kind='text')], kind='message')
+            )
 
             response = await a2a_client.get_task(task_id)
             assert response == snapshot(
@@ -320,11 +464,18 @@ async def test_a2a_multiple_messages():
                     'id': None,
                     'result': {
                         'id': IsStr(),
-                        'session_id': IsStr(),
+                        'context_id': IsStr(),
+                        'kind': 'task',
                         'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
-                            {'role': 'user', 'parts': [{'type': 'text', 'text': 'Hello, world!'}]},
-                            {'role': 'agent', 'parts': [{'type': 'text', 'text': 'Whats up?'}]},
+                            {
+                                'role': 'user',
+                                'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                                'kind': 'message',
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
+                            {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}], 'kind': 'message'},
                         ],
                     },
                 }
@@ -338,14 +489,37 @@ async def test_a2a_multiple_messages():
                     'id': None,
                     'result': {
                         'id': IsStr(),
-                        'session_id': IsStr(),
+                        'context_id': IsStr(),
+                        'kind': 'task',
                         'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
                         'history': [
-                            {'role': 'user', 'parts': [{'type': 'text', 'text': 'Hello, world!'}]},
-                            {'role': 'agent', 'parts': [{'type': 'text', 'text': 'Whats up?'}]},
+                            {
+                                'role': 'user',
+                                'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                                'kind': 'message',
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
+                            {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}], 'kind': 'message'},
+                            {
+                                'role': 'agent',
+                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'kind': 'message',
+                                'message_id': IsStr(),
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
                         ],
                         'artifacts': [
-                            {'name': 'result', 'parts': [{'type': 'text', 'text': "('foo', 'bar')"}], 'index': 0}
+                            {
+                                'artifact_id': IsStr(),
+                                'name': 'result',
+                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'metadata': {
+                                    'type': 'tuple',
+                                    'json_schema': {'items': {}, 'type': 'array'},
+                                },
+                            }
                         ],
                     },
                 }

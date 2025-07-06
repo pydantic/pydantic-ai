@@ -21,6 +21,7 @@ from .schema import (
     a2a_request_ta,
     a2a_response_ta,
     agent_card_ta,
+    send_message_request_ta,
 )
 from .storage import Storage
 from .task_manager import TaskManager
@@ -116,8 +117,17 @@ class FastA2A(Starlette):
         data = await request.body()
         a2a_request = a2a_request_ta.validate_json(data)
 
-        if a2a_request['method'] == 'tasks/send':
-            jsonrpc_response = await self.task_manager.send_task(a2a_request)
+        if a2a_request['method'] == 'message/send':
+            message_request = send_message_request_ta.validate_json(data)
+            jsonrpc_response = await self.task_manager.send_message(message_request)
+        elif a2a_request['method'] == 'message/stream':
+            # Streaming support not yet implemented
+            raise NotImplementedError(
+                'message/stream method is not implemented yet. Streaming support will be added in a future update.'
+            )
+        elif a2a_request['method'] == 'tasks/send':  # type: ignore[comparison-overlap]
+            # Legacy method - no longer supported
+            raise NotImplementedError('tasks/send is deprecated. Use message/send instead.')
         elif a2a_request['method'] == 'tasks/get':
             jsonrpc_response = await self.task_manager.get_task(a2a_request)
         elif a2a_request['method'] == 'tasks/cancel':
