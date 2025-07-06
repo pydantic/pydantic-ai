@@ -466,7 +466,7 @@ class GeminiModel(Model):
                     f'Unexpected response from gemini {status_code}', r.text
                 )
             yield r
-            
+
     def _process_count_tokens_response(self, response: _GeminiCountTokensResponse) -> usage.Usage:
         details: dict[str, int] = {}
         if cached_content_token_count := response.get('cachedContentTokenCount'):
@@ -485,7 +485,7 @@ class GeminiModel(Model):
             total_tokens=response.get('totalTokens', 0),
             details=details,
         )
-        
+
 
 def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _GeminiGenerationConfig:
     config: _GeminiGenerationConfig = {}
@@ -907,7 +907,7 @@ class _GeminiCountTokensRequest(TypedDict):
 
     contents: NotRequired[list[_GeminiContent]]
     generateContentRequest: NotRequired[_GeminiRequest]
-    
+
 
 @pydantic.with_config(pydantic.ConfigDict(defer_build=True))
 class _GeminiCountTokensResponse(TypedDict):
