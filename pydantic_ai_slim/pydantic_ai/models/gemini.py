@@ -912,7 +912,7 @@ class _GeminiCountTokensRequest(TypedDict):
 @pydantic.with_config(pydantic.ConfigDict(defer_build=True))
 class _GeminiCountTokensResponse(TypedDict):
     """Schema for the response from the Gemini countTokens API.
-    
+
     See <https://ai.google.dev/api/tokens#endpoint> for API docs.
     """
 
