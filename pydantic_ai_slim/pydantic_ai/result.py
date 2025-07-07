@@ -551,6 +551,7 @@ def coalesce_deprecated_return_content(
             warnings.warn(
                 '`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.',
                 DeprecationWarning,
+                stacklevel=3,
             )
         return result_tool_return_content
     return output_tool_return_content
