@@ -125,7 +125,7 @@ def test_binary_content_document(media_type: str, format: str):
     [
         pytest.param(AudioUrl('foobar.mp3'), 'audio/mpeg', 'mp3', id='mp3'),
         pytest.param(AudioUrl('foobar.wav'), 'audio/wav', 'wav', id='wav'),
-        pytest.param(AudioUrl('foobar.oga'), 'audio/ogg', 'oga', id='ogg'),
+        pytest.param(AudioUrl('foobar.oga'), 'audio/ogg', 'oga', id='oga'),
         pytest.param(AudioUrl('foobar.flac'), 'audio/flac', 'flac', id='flac'),
         pytest.param(AudioUrl('foobar.aiff'), 'audio/aiff', 'aiff', id='aiff'),
         pytest.param(AudioUrl('foobar.aac'), 'audio/aac', 'aac', id='aac'),
