@@ -3,10 +3,15 @@ from __future__ import annotations
 import secrets
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Self, overload
+from typing import TYPE_CHECKING, Any, Callable, Generic, Self, overload
+
+from typing_extensions import TypeVar
 
 from pydantic_graph.v2.id_types import ForkId, NodeId
 from pydantic_graph.v2.step import StepFunction
+
+StateT = TypeVar('StateT', infer_variance=True)
+OutputT = TypeVar('OutputT', infer_variance=True)
 
 if TYPE_CHECKING:
     from pydantic_graph.v2.node_types import AnyDestinationNode, DestinationNode, SourceNode
@@ -14,27 +19,37 @@ if TYPE_CHECKING:
 
 @dataclass
 class TransformMarker:
+    """A transform marker."""
+
     transform: StepFunction[Any, Any, Any]
 
 
 @dataclass
 class SpreadMarker:
+    """A spread marker."""
+
     fork_id: ForkId
 
 
 @dataclass
 class BroadcastMarker:
+    """A broadcast marker."""
+
     paths: Sequence[Path]
     fork_id: ForkId
 
 
 @dataclass
 class LabelMarker:
+    """A label marker."""
+
     label: str
 
 
 @dataclass
 class DestinationMarker:
+    """A destination marker."""
+
     destination_id: NodeId
 
 
@@ -43,6 +58,8 @@ type PathItem = TransformMarker | SpreadMarker | BroadcastMarker | LabelMarker |
 
 @dataclass
 class Path:
+    """A path."""
+
     items: Sequence[PathItem]
 
     @property
@@ -59,7 +76,9 @@ class Path:
 
 
 @dataclass
-class PathBuilder[StateT, OutputT]:
+class PathBuilder(Generic[StateT, OutputT]):
+    """A path builder."""
+
     working_items: Sequence[PathItem]
 
     @property
@@ -90,15 +109,13 @@ class PathBuilder[StateT, OutputT]:
         next_item = BroadcastMarker(paths=forks, fork_id=ForkId(NodeId(fork_id or 'broadcast_' + secrets.token_hex(8))))
         return Path(items=[*self.working_items, next_item])
 
-    def transform[NewOutputT](
-        self, func: StepFunction[StateT, OutputT, NewOutputT], /
-    ) -> PathBuilder[StateT, NewOutputT]:
+    def transform(self, func: StepFunction[StateT, OutputT, Any], /) -> PathBuilder[StateT, Any]:
         next_item = TransformMarker(func)
-        return PathBuilder[StateT, NewOutputT](working_items=[*self.working_items, next_item])
+        return PathBuilder[StateT, Any](working_items=[*self.working_items, next_item])
 
-    def spread[T](self: PathBuilder[StateT, Iterable[T]], *, fork_id: str | None = None) -> PathBuilder[StateT, T]:
+    def spread(self: PathBuilder[StateT, Iterable[Any]], *, fork_id: str | None = None) -> PathBuilder[StateT, Any]:
         next_item = SpreadMarker(fork_id=ForkId(NodeId(fork_id or 'spread_' + secrets.token_hex(8))))
-        return PathBuilder[StateT, T](working_items=[*self.working_items, next_item])
+        return PathBuilder[StateT, Any](working_items=[*self.working_items, next_item])
 
     def label(self, label: str, /) -> PathBuilder[StateT, OutputT]:
         next_item = LabelMarker(label)
@@ -106,13 +123,15 @@ class PathBuilder[StateT, OutputT]:
 
 
 @dataclass
-class EdgePath[StateT]:
+class EdgePath(Generic[StateT]):
+    """An edge path."""
+
     sources: Sequence[SourceNode[StateT, Any]]
     path: Path
     destinations: list[AnyDestinationNode]  # can be referenced by DestinationMarker in `path.items`
 
 
-class EdgePathBuilder[StateT, OutputT]:
+class EdgePathBuilder(Generic[StateT, OutputT]):
     """This can't be a dataclass due to variance issues.
 
     It could probably be converted back to one once ReadOnly is available in typing_extensions.
@@ -168,14 +187,12 @@ class EdgePathBuilder[StateT, OutputT]:
                 destinations=[first_item, *extra_destinations],
             )
 
-    def spread[T](
-        self: EdgePathBuilder[StateT, Iterable[T]], fork_id: str | None = None
+    def spread(
+        self: EdgePathBuilder[StateT, Iterable[Any]], fork_id: str | None = None
     ) -> EdgePathBuilder[StateT, Any]:
         return EdgePathBuilder(sources=self.sources, path_builder=self.path_builder.spread(fork_id=fork_id))
 
-    def transform[NewOutputT](
-        self, func: StepFunction[StateT, OutputT, NewOutputT], /
-    ) -> EdgePathBuilder[StateT, NewOutputT]:
+    def transform(self, func: StepFunction[StateT, OutputT, Any], /) -> EdgePathBuilder[StateT, Any]:
         return EdgePathBuilder(sources=self.sources, path_builder=self.path_builder.transform(func))
 
     def label(self, label: str) -> EdgePathBuilder[StateT, OutputT]:

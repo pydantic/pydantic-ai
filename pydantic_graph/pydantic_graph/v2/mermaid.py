@@ -30,6 +30,8 @@ NodeKind = Literal['broadcast', 'spread', 'join', 'start', 'end', 'step', 'decis
 
 @dataclass
 class MermaidNode:
+    """A mermaid node."""
+
     id: str
     kind: NodeKind
     label: str | None
@@ -38,12 +40,15 @@ class MermaidNode:
 
 @dataclass
 class MermaidEdge:
+    """A mermaid edge."""
+
     start_id: str
     end_id: str
     label: str | None
 
 
-def build_mermaid_graph(graph: Graph[Any, Any, Any]) -> MermaidGraph:
+def build_mermaid_graph(graph: Graph[Any, Any, Any]) -> MermaidGraph:  # noqa C901
+    """Build a mermaid graph."""
     nodes: list[MermaidNode] = []
     edges_by_source: dict[str, list[MermaidEdge]] = defaultdict(list)
 
@@ -101,6 +106,8 @@ def build_mermaid_graph(graph: Graph[Any, Any, Any]) -> MermaidGraph:
 
 @dataclass
 class MermaidGraph:
+    """A mermaid graph."""
+
     nodes: list[MermaidNode]
     edges: list[MermaidEdge]
 

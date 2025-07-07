@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Never, overload
+from typing import Any, Callable, Generic, Never, overload
+
+from typing_extensions import TypeAliasType, TypeVar
 
 from pydantic_graph.v2.decision import Decision, DecisionBranchBuilder
 from pydantic_graph.v2.graph import Graph
@@ -32,30 +34,40 @@ from pydantic_graph.v2.paths import (
 from pydantic_graph.v2.step import Step, StepFunction
 from pydantic_graph.v2.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
 
+StateT = TypeVar('StateT', infer_variance=True)
+InputT = TypeVar('InputT', infer_variance=True)
+OutputT = TypeVar('OutputT', infer_variance=True)
+SourceT = TypeVar('SourceT', infer_variance=True)
+SourceOutputT = TypeVar('SourceOutputT', infer_variance=True)
+GraphInputT = TypeVar('GraphInputT', infer_variance=True)
+GraphOutputT = TypeVar('GraphOutputT', infer_variance=True)
+T = TypeVar('T', infer_variance=True)
+
 
 # Node building:
 @overload
-def step[StateT, InputT, OutputT](
+def step(
     *,
     node_id: str | None = None,
     label: str | None = None,
     activity: bool = False,
 ) -> Callable[[StepFunction[StateT, InputT, OutputT]], Step[StateT, InputT, OutputT]]: ...
 @overload
-def step[StateT, InputT, OutputT](
+def step(
     call: StepFunction[StateT, InputT, OutputT],
     *,
     node_id: str | None = None,
     label: str | None = None,
     activity: bool = False,
 ) -> Step[StateT, InputT, OutputT]: ...
-def step[StateT, InputT, OutputT](
+def step(
     call: StepFunction[StateT, InputT, OutputT] | None = None,
     *,
     node_id: str | None = None,
     label: str | None = None,
     activity: bool = False,
 ) -> Step[StateT, InputT, OutputT] | Callable[[StepFunction[StateT, InputT, OutputT]], Step[StateT, InputT, OutputT]]:
+    """Get a Step instance from a step function."""
     if call is None:
 
         def decorator(
@@ -71,21 +83,22 @@ def step[StateT, InputT, OutputT](
 
 
 @overload
-def join[StateT, InputT, OutputT](
+def join(
     *,
     node_id: str | None = None,
 ) -> Callable[[type[Reducer[StateT, InputT, OutputT]]], Join[StateT, InputT, OutputT]]: ...
 @overload
-def join[StateT, InputT, OutputT](
+def join(
     reducer_type: type[Reducer[StateT, InputT, OutputT]],
     *,
     node_id: str | None = None,
 ) -> Join[StateT, InputT, OutputT]: ...
-def join[StateT](
+def join(
     reducer_type: type[Reducer[StateT, Any, Any]] | None = None,
     *,
     node_id: str | None = None,
 ) -> Join[StateT, Any, Any] | Callable[[type[Reducer[StateT, Any, Any]]], Join[StateT, Any, Any]]:
+    """Get a Join instance from a reducer type."""
     if reducer_type is None:
 
         def decorator(
@@ -105,7 +118,9 @@ def join[StateT](
 
 
 @dataclass
-class GraphBuilder[StateT, GraphInputT, GraphOutputT]:
+class GraphBuilder(Generic[StateT, GraphInputT, GraphOutputT]):
+    """A graph builder."""
+
     state_type: TypeOrTypeExpression[StateT]
     input_type: TypeOrTypeExpression[GraphInputT]
     output_type: TypeOrTypeExpression[GraphOutputT]
@@ -116,8 +131,8 @@ class GraphBuilder[StateT, GraphInputT, GraphOutputT]:
     _edges_by_source: dict[NodeId, list[Path]] = field(init=False, default_factory=lambda: defaultdict(list))
     _decision_index: int = field(init=False, default=1)
 
-    type Source[OutputT] = SourceNode[StateT, OutputT]
-    type Destination[InputT] = DestinationNode[StateT, InputT]
+    Source = TypeAliasType('Source', SourceNode[StateT, OutputT], type_params=(OutputT,))
+    Destination = TypeAliasType('Destination', DestinationNode[StateT, InputT], type_params=(InputT,))
 
     def __post_init__(self):
         self._start_node = StartNode[GraphInputT]()
@@ -133,7 +148,7 @@ class GraphBuilder[StateT, GraphInputT, GraphOutputT]:
         return self._end_node
 
     @overload
-    def step[InputT, OutputT](
+    def step(
         self,
         *,
         node_id: str | None = None,
@@ -141,7 +156,7 @@ class GraphBuilder[StateT, GraphInputT, GraphOutputT]:
         activity: bool = False,
     ) -> Callable[[StepFunction[StateT, InputT, OutputT]], Step[StateT, InputT, OutputT]]: ...
     @overload
-    def step[InputT, OutputT](
+    def step(
         self,
         call: StepFunction[StateT, InputT, OutputT],
         *,
@@ -149,7 +164,7 @@ class GraphBuilder[StateT, GraphInputT, GraphOutputT]:
         label: str | None = None,
         activity: bool = False,
     ) -> Step[StateT, InputT, OutputT]: ...
-    def step[InputT, OutputT](
+    def step(
         self,
         call: StepFunction[StateT, InputT, OutputT] | None = None,
         *,
@@ -165,13 +180,13 @@ class GraphBuilder[StateT, GraphInputT, GraphOutputT]:
             return step(call=call, node_id=node_id, label=label, activity=activity)
 
     @overload
-    def join[InputT, OutputT](
+    def join(
         self,
         *,
         node_id: str | None = None,
     ) -> Callable[[type[Reducer[StateT, InputT, OutputT]]], Join[StateT, InputT, OutputT]]: ...
     @overload
-    def join[InputT, OutputT](
+    def join(
         self,
         reducer_factory: type[Reducer[StateT, InputT, OutputT]],
         *,

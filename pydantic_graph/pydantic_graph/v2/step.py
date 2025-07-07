@@ -10,6 +10,7 @@ from pydantic_graph.v2.id_types import NodeId
 
 StateT = TypeVar('StateT', infer_variance=True)
 InputT = TypeVar('InputT', infer_variance=True)
+OutputT = TypeVar('OutputT', infer_variance=True)
 
 
 class StepContext(Generic[StateT, InputT]):
@@ -40,7 +41,7 @@ if not TYPE_CHECKING:
     StepContext = dataclass(StepContext)
 
 
-class StepFunction[StateT, InputT, OutputT](Protocol):
+class StepFunction(Protocol[StateT, InputT, OutputT]):
     """The purpose of this is to make it possible to deserialize step calls similar to how Evaluators work."""
 
     def __call__(self, ctx: StepContext[StateT, InputT]) -> Awaitable[OutputT]:
@@ -50,7 +51,7 @@ class StepFunction[StateT, InputT, OutputT](Protocol):
 AnyStepFunction = StepFunction[Any, Any, Any]
 
 
-class Step[StateT, InputT, OutputT]:
+class Step(Generic[StateT, InputT, OutputT]):
     """The main reason this is not a dataclass is that we need appropriate variance in the type parameters."""
 
     def __init__(

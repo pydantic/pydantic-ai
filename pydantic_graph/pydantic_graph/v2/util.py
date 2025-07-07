@@ -1,9 +1,13 @@
 import inspect
 from dataclasses import dataclass
-from typing import Any, cast, get_args, get_origin
+from typing import Any, Generic, TypeAliasType, cast, get_args, get_origin
+
+from typing_extensions import TypeVar
+
+T = TypeVar('T', infer_variance=True)
 
 
-class TypeExpression[T]:
+class TypeExpression(Generic[T]):
     """This is a workaround for the lack of TypeForm.
 
     This is used in places that require an argument of type `type[T]` when you want to use a `T` that type checkers
@@ -14,25 +18,30 @@ class TypeExpression[T]:
     pass
 
 
-type TypeOrTypeExpression[T] = type[TypeExpression[T]] | type[T]
+TypeOrTypeExpression = TypeAliasType('TypeOrTypeExpression', type[TypeExpression[T]] | type[T], type_params=(T,))
 """This is used to allow types directly when compatible with typecheckers, but also allow TypeExpression[T] to be used.
 
 The correct type should get inferred either way.
 """
 
 
-def unpack_type_expression[T](type_: TypeOrTypeExpression[T]) -> type[T]:
+def unpack_type_expression(type_: TypeOrTypeExpression[T]) -> type[T]:
+    """Unpack the type expression."""
     if get_origin(type_) is TypeExpression:
         return get_args(type_)[0]
     return cast(type[T], type_)
 
 
 @dataclass
-class Some[T]:
+class Some(Generic[T]):
+    """A marker that a value is present. Like a monadic version of `Optional`."""
+
     value: T
 
 
-type Maybe[T] = Some[T] | None  # like optional, but you can tell the difference between "no value" and "value is None"
+Maybe = TypeAliasType(
+    'Maybe', Some[T] | None, type_params=(T,)
+)  # like optional, but you can tell the difference between "no value" and "value is None"
 
 
 def get_callable_name(callable_: Any) -> str:

@@ -7,12 +7,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 from types import NoneType
-from typing import Any, Literal
+from typing import Any, Generic, Literal
 
 from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.worker import Worker
+from typing_extensions import TypeVar
 
 with workflow.unsafe.imports_passed_through():
     from pydantic_graph.v2.graph_builder import GraphBuilder
@@ -20,9 +21,11 @@ with workflow.unsafe.imports_passed_through():
     from pydantic_graph.v2.step import StepContext
     from pydantic_graph.v2.util import TypeExpression
 
+T = TypeVar('T', infer_variance=True)
+
 
 @dataclass
-class MyContainer[T]:
+class MyContainer(Generic[T]):
     field_1: T | None
     field_2: T | None
     field_3: list[T] | None

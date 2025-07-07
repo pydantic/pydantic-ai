@@ -11,29 +11,37 @@ from collections.abc import Hashable
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import cached_property
+from typing import Generic
+
+from typing_extensions import TypeVar
+
+T = TypeVar('T', bound=Hashable, infer_variance=True)
 
 
 @dataclass
-class ParentFork[T: Hashable]:
+class ParentFork(Generic[T]):
+    """A parent fork."""
+
     fork_id: T
     intermediate_nodes: set[T]
     """The set of node IDs of nodes upstream of the join and downstream of the parent fork.
-    
+
     If there are no graph walkers in these nodes that were a part of a previous fork, it is safe to proceed downstream
     of the join.
     """
 
 
 @dataclass
-class ParentForkFinder[T: Hashable]:
+class ParentForkFinder(Generic[T]):
+    """A parent fork finder."""
+
     nodes: set[T]
     start_ids: set[T]
     fork_ids: set[T]
     edges: dict[T, list[T]]  # source_id to list of destination_ids
 
     def find_parent_fork(self, join_id: T) -> ParentFork[T] | None:
-        """Return the farthest (most ancestral) parent fork of the join, together with the set of
-        nodes that lie strictly between that fork and the join.
+        """Return the most ancestral parent fork of the join along with the that lie strictly between the fork and join.
 
         If every dominating fork of J lets J participate in a cycle that avoids the
         fork, return `None`, since that means no "parent fork" exists.
@@ -108,8 +116,7 @@ class ParentForkFinder[T: Hashable]:
         return None
 
     def _get_upstream_nodes_if_parent(self, join_id: T, fork_id: T) -> set[T] | None:
-        """Return the set of node‑ids that can reach the join (J) in the graph where
-        the node `fork_id` is removed.
+        """Return the set of node‑ids that can reach the join (J) in the graph where the node `fork_id` is removed.
 
         If, in that pruned graph, a path exists that starts and ends at J
         (i.e. J is on a cycle that avoids the provided node) we return `None` instead,
@@ -131,6 +138,7 @@ class ParentForkFinder[T: Hashable]:
 
 
 def main_test():
+    """Basic smoke test of the functionality."""
     join_id = 'J'
     nodes = {'start', 'A', 'B', 'C', 'F', 'F2', 'I', 'J', 'end'}
     start_ids = {'start'}

@@ -5,9 +5,9 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, assert_never, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Generic, assert_never, cast, get_args, get_origin
 
-from typing_extensions import Literal
+from typing_extensions import Literal, TypeVar
 
 from pydantic_graph.v2.decision import Decision
 from pydantic_graph.v2.id_types import ForkStack, ForkStackItem, GraphRunId, JoinId, NodeId, NodeRunId, TaskId
@@ -27,20 +27,31 @@ if TYPE_CHECKING:
     from pydantic_graph.v2.mermaid import StateDiagramDirection
 
 
+StateT = TypeVar('StateT', infer_variance=True)
+InputT = TypeVar('InputT', infer_variance=True)
+OutputT = TypeVar('OutputT', infer_variance=True)
+
+
 @dataclass
-class EndMarker[OutputT]:
+class EndMarker(Generic[OutputT]):
+    """An end marker."""
+
     value: OutputT
 
 
 @dataclass
 class JoinItem:
+    """A join item."""
+
     join_id: JoinId
     inputs: Any
     fork_stack: ForkStack
 
 
 @dataclass(repr=False)
-class Graph[StateT, InputT, OutputT]:
+class Graph(Generic[StateT, InputT, OutputT]):
+    """A graph."""
+
     state_type: type[StateT]
     input_type: type[InputT]
     output_type: type[OutputT]
@@ -87,6 +98,8 @@ class Graph[StateT, InputT, OutputT]:
 
 @dataclass
 class GraphTask:
+    """A graph task."""
+
     # With our current BaseNode thing, next_node_id and next_node_inputs are merged into `next_node` itself
     node_id: NodeId
     inputs: Any
@@ -98,8 +111,10 @@ class GraphTask:
     task_id: TaskId = field(default_factory=lambda: TaskId(str(uuid.uuid4())))
 
 
-class GraphRun[StateT, OutputT]:
-    def __init__[InputT](
+class GraphRun(Generic[StateT, OutputT]):
+    """A graph run."""
+
+    def __init__(
         self,
         graph: Graph[StateT, InputT, OutputT],
         state: StateT,
@@ -121,7 +136,7 @@ class GraphRun[StateT, OutputT]:
 
     async def __anext__(self) -> EndMarker[OutputT] | JoinItem | Sequence[GraphTask]:
         if self._next is None:
-            self._next = await anext(self._iterator)
+            self._next = await self._iterator.__anext__()
         else:
             self._next = await self._iterator.asend(self._next)
         return self._next

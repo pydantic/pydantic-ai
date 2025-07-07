@@ -21,8 +21,10 @@ type AnyNode = AnySourceNode | AnyDestinationNode
 
 
 def is_source(node: AnyNode) -> TypeGuard[AnySourceNode]:
+    """Checks if the provided node is valid as a source."""
     return isinstance(node, (StartNode, Step, Join))
 
 
 def is_destination(node: AnyNode) -> TypeGuard[AnyDestinationNode]:
+    """Checks if the provided node is valid as a destination."""
     return isinstance(node, (EndNode, Step, Join, Decision))

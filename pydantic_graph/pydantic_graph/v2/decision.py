@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
 @dataclass
 class Decision[StateT, HandledT]:
+    """A decision."""
+
     id: NodeId
     branches: list[DecisionBranch[Any]]
     note: str | None
@@ -30,6 +32,8 @@ class Decision[StateT, HandledT]:
 
 @dataclass
 class DecisionBranch[SourceT]:
+    """A decision branch."""
+
     source: TypeOrTypeExpression[SourceT]
     matches: Callable[[Any], bool] | None
     path: Path
@@ -37,6 +41,8 @@ class DecisionBranch[SourceT]:
 
 @dataclass
 class DecisionBranchBuilder[StateT, OutputT, BranchSourceT, DecisionHandledT]:
+    """A builder for a decision branch."""
+
     decision: Decision[StateT, DecisionHandledT]
     source: TypeOrTypeExpression[BranchSourceT]
     matches: Callable[[Any], bool] | None
