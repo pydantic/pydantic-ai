@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
 
-AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', "audio/ogg", "audio/flac", "audio/aiff", "audio/aac"]
+AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 DocumentMediaType: TypeAlias = Literal[
     'application/pdf',
@@ -48,7 +48,7 @@ VideoMediaType: TypeAlias = Literal[
     'video/3gpp',
 ]
 
-AudioFormat: TypeAlias = Literal['wav', 'mp3']
+AudioFormat: TypeAlias = Literal['wav', 'mp3', 'oga', 'flac', 'aiff', 'aac']
 ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
 DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
 VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
@@ -180,16 +180,18 @@ class AudioUrl(FileUrl):
         References:
         - Gemini: https://ai.google.dev/gemini-api/docs/audio#supported-formats
         """
-        for suffix, mime_type in {
-            ('.mp3', 'audio/mpeg'),
-            ('.wav', 'audio/wav'),
-            ('.flac', 'audio/flac'),
-            ('.oga', 'audio/ogg'),
-            ('.aiff', 'audio/aiff'),
-            ('.aac', 'audio/aac'),
-        }:
-            if self.url.endswith(suffix):
-                return mime_type
+        if self.url.endswith('.mp3'):
+            return 'audio/mpeg'
+        if self.url.endswith('.wav'):
+            return 'audio/wav'
+        if self.url.endswith('.flac'):
+            return 'audio/flac'
+        if self.url.endswith('.oga'):
+            return 'audio/ogg'
+        if self.url.endswith('.aiff'):
+            return 'audio/aiff'
+        if self.url.endswith('.aac'):
+            return 'audio/aac'
 
         raise ValueError(f'Unknown audio file extension: {self.url}')
 
@@ -354,6 +356,10 @@ _document_format_lookup: dict[str, DocumentFormat] = {
 _audio_format_lookup: dict[str, AudioFormat] = {
     'audio/mpeg': 'mp3',
     'audio/wav': 'wav',
+    'audio/flac': 'flac',
+    'audio/ogg': 'oga',
+    'audio/aiff': 'aiff',
+    'audio/aac': 'aac',
 }
 _image_format_lookup: dict[str, ImageFormat] = {
     'image/jpeg': 'jpeg',
