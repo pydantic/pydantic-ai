@@ -471,7 +471,7 @@ If you'd like a more detailed explanation, please provide additional information
 """)
 
 
-async def test_google_model_video_url_input_with_vendor_metadata(
+async def test_google_model_youtube_video_url_input_with_vendor_metadata(
     allow_model_requests: None, google_provider: GoogleProvider
 ):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
@@ -481,7 +481,7 @@ async def test_google_model_video_url_input_with_vendor_metadata(
         [
             'Explain me this video',
             VideoUrl(
-                url='https://github.com/pydantic/pydantic-ai/raw/refs/heads/main/tests/assets/small_video.mp4',
+                url='https://youtu.be/lCdaVNyHtjU',
                 vendor_metadata={'fps': 0.2},
             ),
         ]
