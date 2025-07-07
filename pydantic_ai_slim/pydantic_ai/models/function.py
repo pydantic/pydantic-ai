@@ -325,10 +325,4 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
     return tokens
 
 
-# Provide a fast path for whitespace only splits
-def _quick_split_count(s: str) -> int:
-    # covers most common case: whitespace splitting, much faster than re.split
-    return len(s.strip().split())
-
-
 _TOKEN_SPLIT_RE = re.compile(r'[\s",.:]+')
