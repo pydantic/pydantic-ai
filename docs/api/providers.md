@@ -28,6 +28,8 @@
 
 ::: pydantic_ai.providers.heroku.HerokuProvider
 
+::: pydantic_ai.providers.github.GitHubProvider
+
 ::: pydantic_ai.providers.openrouter.OpenRouterProvider
 
 ::: pydantic_ai.providers.huggingface.HuggingFaceProvider
