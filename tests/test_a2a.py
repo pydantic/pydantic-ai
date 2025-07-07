@@ -493,7 +493,7 @@ async def test_a2a_error_handling():
 async def test_a2a_multiple_tasks_same_context():
     """Test that multiple tasks can share the same context_id with accumulated history."""
 
-    messages_received = []
+    messages_received: list[list[ModelMessage]] = []
 
     def track_messages(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Store a copy of the messages received by the model
@@ -533,7 +533,11 @@ async def test_a2a_multiple_tasks_same_context():
             assert len(messages_received) == 1
             first_run_history = messages_received[0]
             assert len(first_run_history) >= 1
-            assert first_run_history[0].parts[0].content == 'First message'
+            # Check first message is a ModelRequest with UserPromptPart
+            first_msg = first_run_history[0]
+            assert isinstance(first_msg, ModelRequest)
+            first_part = first_msg.parts[0]
+            assert hasattr(first_part, 'content') and first_part.content == 'First message'
 
             # Second message - reuse the same context_id
             message2 = Message(

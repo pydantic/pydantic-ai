@@ -146,8 +146,9 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
 
             # Add the current task's initial message to the history
             # Tasks start with a user message that triggered this task
-            if task.get('history'):
-                for a2a_msg in task['history']:
+            task_history = task.get('history')
+            if task_history:
+                for a2a_msg in task_history:
                     if a2a_msg['role'] == 'user':
                         # Convert user message to pydantic-ai format
                         message_history.append(ModelRequest(parts=self._request_parts_from_a2a(a2a_msg['parts'])))
