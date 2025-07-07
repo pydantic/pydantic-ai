@@ -137,9 +137,6 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
         try:
             await self.storage.update_task(task_id, state='working')
 
-            # TODO(Marcelo): We need to have a way to communicate when the task is set to `input-required`. Maybe
-            # a custom `output_type` with a `more_info_required` field, or something like that.
-
             # Load context - contains pydantic-ai message history from previous tasks in this conversation
             context = await self.storage.get_context(context_id)
             message_history: list[ModelMessage] = context if context else []
@@ -153,7 +150,6 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
                         # Convert user message to pydantic-ai format
                         message_history.append(ModelRequest(parts=self._request_parts_from_a2a(a2a_msg['parts'])))
 
-            # TODO(Marcelo): We need to make this more customizable e.g. pass deps.
             result = await self.agent.run(message_history=message_history)  # type: ignore
 
             # Create both a message and artifact for the result
@@ -324,7 +320,6 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
                 else:
                     raise ValueError('FilePart.file must have either data or uri')
             elif part['kind'] == 'data':
-                # TODO(Marcelo): Maybe we should use this for `ToolReturnPart`, and `RetryPromptPart`.
                 raise NotImplementedError('Data parts are not supported yet.')
             else:
                 assert_never(part)
