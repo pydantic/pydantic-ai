@@ -3,19 +3,17 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
-from ag_ui.core import EventType, RunAgentInput, StateDeltaEvent, StateSnapshotEvent
-from fastapi import APIRouter, Header
-from fastapi.responses import StreamingResponse
+from ag_ui.core import EventType, StateDeltaEvent, StateSnapshotEvent
 from pydantic import BaseModel, Field
 
-from pydantic_ai.ag_ui import SSE_CONTENT_TYPE
+from pydantic_ai.ag_ui import FastAGUI
 
-from .agent import AGUIAgent
+from .agent import agent
 
-router: APIRouter = APIRouter(prefix='/agentic_generative_ui')
-instructions: str = """When planning use tools only, without any other messages.
+app: FastAGUI = agent(
+    instructions="""When planning use tools only, without any other messages.
 IMPORTANT:
 - Use the `create_plan` tool to set the initial state of the steps
 - Use the `update_plan_step` tool to update the status of each step
@@ -26,7 +24,7 @@ IMPORTANT:
 Only one plan can be active at a time, so do not call the `create_plan` tool
 again until all the steps in current plan are completed.
 """
-agui: AGUIAgent = AGUIAgent(instructions=instructions)
+)
 
 
 class StepStatus(StrEnum):
@@ -73,7 +71,7 @@ class JSONPatchOp(BaseModel):
     )
 
 
-@agui.agent.tool_plain
+@app.adapter.agent.tool_plain
 def create_plan(steps: list[str]) -> StateSnapshotEvent:
     """Create a plan with multiple steps.
 
@@ -92,7 +90,7 @@ def create_plan(steps: list[str]) -> StateSnapshotEvent:
     )
 
 
-@agui.agent.tool_plain
+@app.adapter.agent.tool_plain
 def update_plan_step(
     index: int, description: str | None = None, status: StepStatus | None = None
 ) -> StateDeltaEvent:
@@ -120,23 +118,4 @@ def update_plan_step(
     return StateDeltaEvent(
         type=EventType.STATE_DELTA,
         delta=changes,
-    )
-
-
-@router.post('')
-async def handler(
-    input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_CONTENT_TYPE
-) -> StreamingResponse:
-    """Endpoint to handle AG-UI protocol requests and stream responses.
-
-    Args:
-        input_data: The AG-UI run input.
-        accept: The Accept header to specify the response format.
-
-    Returns:
-        A streaming response with event-stream media type.
-    """
-    return StreamingResponse(
-        agui.adapter.run(input_data, accept),
-        media_type=SSE_CONTENT_TYPE,
     )
