@@ -178,21 +178,35 @@ async def test_add_evaluator(
     }
 
 
+@pytest.mark.parametrize('async_task', [True, False])
 async def test_evaluate(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+    async_task: bool,
 ):
     """Test evaluating a dataset."""
     example_dataset.add_evaluator(simple_evaluator())
 
-    async def mock_task(inputs: TaskInput) -> TaskOutput:
-        if inputs.query == 'What is 2+2?':
-            return TaskOutput(answer='4')
-        elif inputs.query == 'What is the capital of France?':
-            return TaskOutput(answer='Paris')
-        return TaskOutput(answer='Unknown')  # pragma: no cover
+    if async_task:
 
-    report = await example_dataset.evaluate(mock_task)
+        async def mock_async_task(inputs: TaskInput) -> TaskOutput:
+            if inputs.query == 'What is 2+2?':
+                return TaskOutput(answer='4')
+            elif inputs.query == 'What is the capital of France?':
+                return TaskOutput(answer='Paris')
+            return TaskOutput(answer='Unknown')  # pragma: no cover
+
+        report = await example_dataset.evaluate(mock_async_task)
+    else:
+
+        def mock_sync_task(inputs: TaskInput) -> TaskOutput:
+            if inputs.query == 'What is 2+2?':
+                return TaskOutput(answer='4')
+            elif inputs.query == 'What is the capital of France?':
+                return TaskOutput(answer='Paris')
+            return TaskOutput(answer='Unknown')  # pragma: no cover
+
+        report = await example_dataset.evaluate(mock_sync_task)
 
     assert report is not None
     assert len(report.cases) == 2

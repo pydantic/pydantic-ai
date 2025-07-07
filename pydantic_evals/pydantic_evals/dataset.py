@@ -18,12 +18,14 @@ from collections.abc import Awaitable, Mapping, Sequence
 from contextlib import AsyncExitStack, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from inspect import iscoroutinefunction
 from pathlib import Path
 from typing import Any, Callable, Generic, Literal, Union, cast
 
 import anyio
 import logfire_api
 import yaml
+from anyio import to_thread
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_serializer
 from pydantic._internal import _typing_extra
 from pydantic_core import to_json
@@ -253,7 +255,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     async def evaluate(
         self,
-        task: Callable[[InputsT], Awaitable[OutputT]],
+        task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
@@ -308,7 +310,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
     def evaluate_sync(
         self,
-        task: Callable[[InputsT], Awaitable[OutputT]],
+        task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
@@ -811,7 +813,7 @@ class _TaskRun:
 
 
 async def _run_task(
-    task: Callable[[InputsT], Awaitable[OutputT]], case: Case[InputsT, OutputT, MetadataT]
+    task: Callable[[InputsT], Awaitable[OutputT] | OutputT], case: Case[InputsT, OutputT, MetadataT]
 ) -> EvaluatorContext[InputsT, OutputT, MetadataT]:
     """Run a task on a case and return the context for evaluators.
 
@@ -836,7 +838,10 @@ async def _run_task(
         with _logfire.span('execute {task}', task=get_unwrapped_function_name(task)) as task_span:
             with context_subtree() as span_tree:
                 t0 = time.perf_counter()
-                task_output = await task(case.inputs)
+                if iscoroutinefunction(task):
+                    task_output = cast(OutputT, await task(case.inputs))
+                else:
+                    task_output = cast(OutputT, await to_thread.run_sync(task, case.inputs))
                 fallback_duration = time.perf_counter() - t0
     finally:
         _CURRENT_TASK_RUN.reset(token)
@@ -873,7 +878,7 @@ async def _run_task(
 
 
 async def _run_task_and_evaluators(
-    task: Callable[[InputsT], Awaitable[OutputT]],
+    task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
     case: Case[InputsT, OutputT, MetadataT],
     report_case_name: str,
     dataset_evaluators: list[Evaluator[InputsT, OutputT, MetadataT]],
