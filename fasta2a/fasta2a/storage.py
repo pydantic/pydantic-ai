@@ -4,14 +4,17 @@ from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Any
 
 from .schema import Artifact, Message, Task, TaskState, TaskStatus
 
 
 class Storage(ABC):
-    """A storage to retrieve and save tasks.
+    """A storage to retrieve and save tasks, as well as retrieve and save context.
 
-    The storage is used to update the status of a task and to save the result of a task.
+    The storage serves two purposes:
+    1. Task storage: Stores tasks in A2A protocol format with their status, artifacts, and message history
+    2. Context storage: Stores conversation context in a format optimized for the specific agent implementation
     """
 
     @abstractmethod
@@ -30,21 +33,21 @@ class Storage(ABC):
         self,
         task_id: str,
         state: TaskState,
-        artifacts: list[Artifact] | None = None,
+        new_artifacts: list[Artifact] | None = None,
+        new_messages: list[Message] | None = None,
     ) -> Task:
-        """Update the state of a task."""
+        """Update the state of a task. Appends artifacts and messages, if specified."""
 
     @abstractmethod
-    async def add_message(self, message: Message) -> None:
-        """Add a message to the history for both its task and context.
+    async def update_context(self, context_id: str, context: Any) -> None:
+        """Updates the context for a context_id.
 
-        This should be called for messages created during task execution,
-        not for the initial message (which is handled by submit_task).
+        Implementing agent can decide what to store in context.
         """
 
     @abstractmethod
-    async def get_context_history(self, context_id: str, history_length: int | None = None) -> list[Message]:
-        """Get all messages across tasks in a context."""
+    async def get_context(self, context_id: str) -> Any:
+        """Retrieve the stored context for a context_id."""
 
 
 class InMemoryStorage(Storage):
@@ -52,7 +55,7 @@ class InMemoryStorage(Storage):
 
     def __init__(self):
         self.tasks: dict[str, Task] = {}
-        self.context_messages: dict[str, list[Message]] = {}
+        self.contexts: dict[str, Any] = {}
 
     async def load_task(self, task_id: str, history_length: int | None = None) -> Task | None:
         """Load a task from memory.
@@ -77,7 +80,7 @@ class InMemoryStorage(Storage):
         if task_id in self.tasks:
             raise ValueError(f'Task {task_id} already exists')
 
-        # Add IDs to the message
+        # Add IDs to the message for A2A protocol
         message['task_id'] = task_id
         message['context_id'] = context_id
 
@@ -85,47 +88,39 @@ class InMemoryStorage(Storage):
         task = Task(id=task_id, context_id=context_id, kind='task', status=task_status, history=[message])
         self.tasks[task_id] = task
 
-        # Add message to context storage directly (not via add_message to avoid duplication)
-        if context_id not in self.context_messages:
-            self.context_messages[context_id] = []
-        self.context_messages[context_id].append(message)
-
         return task
 
     async def update_task(
         self,
         task_id: str,
         state: TaskState,
-        artifacts: list[Artifact] | None = None,
+        new_artifacts: list[Artifact] | None = None,
+        new_messages: list[Message] | None = None,
     ) -> Task:
         """Update the state of a task."""
         task = self.tasks[task_id]
         task['status'] = TaskStatus(state=state, timestamp=datetime.now().isoformat())
-        if artifacts:
+
+        if new_artifacts:
             if 'artifacts' not in task:
                 task['artifacts'] = []
-            task['artifacts'].extend(artifacts)
-        return task
+            task['artifacts'].extend(new_artifacts)
 
-    async def add_message(self, message: Message) -> None:
-        """Add a message to the history for both its task and context."""
-        if 'task_id' in message and message['task_id']:
-            task_id = message['task_id']
-            if task_id in self.tasks:
-                task = self.tasks[task_id]
-                if 'history' not in task:
-                    task['history'] = []
+        if new_messages:
+            if 'history' not in task:
+                task['history'] = []
+            # Add IDs to messages for consistency
+            for message in new_messages:
+                message['task_id'] = task_id
+                message['context_id'] = task['context_id']
                 task['history'].append(message)
 
-        if 'context_id' in message and message['context_id']:
-            context_id = message['context_id']
-            if context_id not in self.context_messages:
-                self.context_messages[context_id] = []
-            self.context_messages[context_id].append(message)
+        return task
 
-    async def get_context_history(self, context_id: str, history_length: int | None = None) -> list[Message]:
-        """Get all messages across tasks in a context."""
-        messages = self.context_messages.get(context_id, [])
-        if history_length:
-            return messages[-history_length:]
-        return messages
+    async def update_context(self, context_id: str, context: Any) -> None:
+        """Updates the context for a context_id."""
+        self.contexts[context_id] = context
+
+    async def get_context(self, context_id: str) -> Any:
+        """Retrieve the stored context for a context_id."""
+        return self.contexts.get(context_id)

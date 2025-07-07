@@ -6,7 +6,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from .conftest import IsDatetime, IsStr, try_import
@@ -488,6 +488,100 @@ async def test_a2a_error_handling():
 
             assert 'result' in task
             assert task['result']['status']['state'] == 'failed'
+
+
+async def test_a2a_multiple_tasks_same_context():
+    """Test that multiple tasks can share the same context_id with accumulated history."""
+
+    messages_received = []
+
+    def track_messages(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Store a copy of the messages received by the model
+        messages_received.append(messages.copy())
+        # Return the standard response
+        assert info.output_tools is not None
+        args_json = '{"response": ["foo", "bar"]}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    tracking_model = FunctionModel(track_messages)
+    agent = Agent(model=tracking_model, output_type=tuple[str, str])
+    app = agent.to_a2a()
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            # First message - should create a new context
+            message1 = Message(role='user', parts=[TextPart(text='First message', kind='text')], kind='message')
+            response1 = await a2a_client.send_message(message=message1)
+            assert 'error' not in response1
+            assert 'result' in response1
+            result1 = response1['result']
+            assert is_task(result1)
+
+            task1_id = result1['id']
+            context_id = result1['context_id']
+
+            # Wait for first task to complete
+            await anyio.sleep(0.1)
+            task1 = await a2a_client.get_task(task1_id)
+            assert 'result' in task1
+            assert task1['result']['status']['state'] == 'completed'
+
+            # Verify the model received at least one message
+            assert len(messages_received) == 1
+            first_run_history = messages_received[0]
+            assert len(first_run_history) >= 1
+            assert first_run_history[0].parts[0].content == 'First message'
+
+            # Second message - reuse the same context_id
+            message2 = Message(
+                role='user', parts=[TextPart(text='Second message', kind='text')], kind='message', context_id=context_id
+            )
+            response2 = await a2a_client.send_message(message=message2)
+            assert 'error' not in response2
+            assert 'result' in response2
+            result2 = response2['result']
+            assert is_task(result2)
+
+            task2_id = result2['id']
+            # Verify we got a new task ID but same context ID
+            assert task2_id != task1_id
+            assert result2['context_id'] == context_id
+
+            # Wait for second task to complete
+            await anyio.sleep(0.1)
+            task2 = await a2a_client.get_task(task2_id)
+            assert 'result' in task2
+            if task2['result']['status']['state'] == 'failed':
+                print(f'Task 2 failed: {task2}')
+                print(f'Messages received so far: {messages_received}')
+            assert task2['result']['status']['state'] == 'completed'
+
+            # Verify the model received the full history on the second call
+            assert len(messages_received) == 2
+            second_run_history = messages_received[1]
+
+            # Check that history is monotonically increasing - all previous messages should be there
+            assert len(second_run_history) > len(first_run_history), (
+                f'Expected more messages, got {len(second_run_history)} <= {len(first_run_history)}'
+            )
+
+            # Check that all messages from first run are still in second run (in same order)
+            for i, msg in enumerate(first_run_history):
+                assert second_run_history[i] == msg, f'Message {i} changed between runs'
+
+            # Verify the new message is there
+            # Find the user message with 'Second message' in the new history
+            found_second_message = False
+            for msg in second_run_history:
+                if isinstance(msg, ModelRequest):
+                    for part in msg.parts:
+                        if hasattr(part, 'content') and part.content == 'Second message':
+                            found_second_message = True
+                            break
+            assert found_second_message, 'Second message not found in history'
 
 
 async def test_a2a_multiple_messages():

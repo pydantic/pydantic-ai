@@ -21,6 +21,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     ModelResponsePart,
     TextPart,
+    ThinkingPart,
+    ToolCallPart,
     UserPromptPart,
     VideoUrl,
 )
@@ -119,11 +121,15 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
     agent: Agent[AgentDepsT, WorkerOutputT]
 
     async def run_task(self, params: TaskSendParams) -> None:
-        task = await self.storage.load_task(params['id'], history_length=params.get('history_length'))
+        task = await self.storage.load_task(params['id'])
         if task is None:
             raise ValueError(f'Task {params["id"]} not found')
         if 'context_id' not in task:
             raise ValueError('Task must have a context_id')
+
+        # Ensure this task hasn't been run before
+        if task['status']['state'] != 'submitted':
+            raise ValueError(f'Task {params["id"]} has already been processed (state: {task["status"]["state"]})')
 
         task_id = task['id']
         context_id = task['context_id']
@@ -134,8 +140,17 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
             # TODO(Marcelo): We need to have a way to communicate when the task is set to `input-required`. Maybe
             # a custom `output_type` with a `more_info_required` field, or something like that.
 
-            history = task.get('history', [])
-            message_history = self.build_message_history(history)
+            # Load context - contains pydantic-ai message history from previous tasks in this conversation
+            context = await self.storage.get_context(context_id)
+            message_history: list[ModelMessage] = context if context else []
+
+            # Add the current task's initial message to the history
+            # Tasks start with a user message that triggered this task
+            if task.get('history'):
+                for a2a_msg in task['history']:
+                    if a2a_msg['role'] == 'user':
+                        # Convert user message to pydantic-ai format
+                        message_history.append(ModelRequest(parts=self._request_parts_from_a2a(a2a_msg['parts'])))
 
             # TODO(Marcelo): We need to make this more customizable e.g. pass deps.
             result = await self.agent.run(message_history=message_history)  # type: ignore
@@ -145,24 +160,55 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
             # also marking the output as a durable artifact
             message_id = str(uuid.uuid4())
 
-            # Create message parts based on output type
-            message_part = self._convert_result_to_part(result.output)
-            message_parts: list[Part] = [message_part]
+            # Update context with complete message history including new messages
+            # This preserves tool calls, thinking, and all internal state
+            all_messages = result.all_messages()
+            await self.storage.update_context(context_id, all_messages)
 
-            # Add result as a message to preserve conversation flow
-            result_message = Message(
-                role='agent',
-                parts=message_parts,
-                kind='message',
-                message_id=message_id,
-                task_id=task_id,
-                context_id=context_id,
-            )
-            await self.storage.add_message(result_message)
+            # Convert new messages to A2A format for task history
+            new_messages = result.new_messages()
+            a2a_messages: list[Message] = []
 
-            # Also create artifacts for durable outputs
+            for msg in new_messages:
+                if isinstance(msg, ModelRequest):
+                    # Skip user prompts - they're already in task history
+                    continue
+                elif isinstance(msg, ModelResponse):
+                    # Convert response parts to A2A format
+                    a2a_parts = self._response_parts_to_a2a(msg.parts)
+                    if a2a_parts:  # Add if there are visible parts (text/thinking)
+                        a2a_messages.append(
+                            Message(
+                                role='agent',
+                                parts=a2a_parts,
+                                kind='message',
+                                message_id=str(uuid.uuid4()),
+                            )
+                        )
+
+            # Also add the final output as a message if it's not just text
+            # This ensures structured outputs appear in the message history
+            if result.output and not isinstance(result.output, str):
+                output_part = self._convert_result_to_part(result.output)
+                a2a_messages.append(
+                    Message(
+                        role='agent',
+                        parts=[output_part],
+                        kind='message',
+                        message_id=message_id,
+                    )
+                )
+
+            # Create artifacts for durable outputs
             artifacts = self.build_artifacts(result.output)
-            await self.storage.update_task(task_id, state='completed', artifacts=artifacts)
+
+            # Update task with completion status, new A2A messages, and artifacts
+            await self.storage.update_task(
+                task_id,
+                state='completed',
+                new_artifacts=artifacts,
+                new_messages=a2a_messages if a2a_messages else None,
+            )
 
         except Exception:
             # Ensure task is marked as failed on any error
@@ -234,36 +280,48 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
         model_messages: list[ModelMessage] = []
         for message in history:
             if message['role'] == 'user':
-                model_messages.append(ModelRequest(parts=self._map_request_parts(message['parts'])))
+                model_messages.append(ModelRequest(parts=self._request_parts_from_a2a(message['parts'])))
             else:
-                model_messages.append(ModelResponse(parts=self._map_response_parts(message['parts'])))
+                model_messages.append(ModelResponse(parts=self._response_parts_from_a2a(message['parts'])))
         return model_messages
 
-    def _map_request_parts(self, parts: list[Part]) -> list[ModelRequestPart]:
+    def _request_parts_from_a2a(self, parts: list[Part]) -> list[ModelRequestPart]:
+        """Convert A2A Part objects to pydantic-ai ModelRequestPart objects.
+
+        This handles the conversion from A2A protocol parts (text, file, data) to
+        pydantic-ai's internal request parts (UserPromptPart with various content types).
+
+        Args:
+            parts: List of A2A Part objects from incoming messages
+
+        Returns:
+            List of ModelRequestPart objects for the pydantic-ai agent
+        """
         model_parts: list[ModelRequestPart] = []
         for part in parts:
             if part['kind'] == 'text':
                 model_parts.append(UserPromptPart(content=part['text']))
             elif part['kind'] == 'file':
-                file = part['file']
-                if 'data' in file:
-                    data = file['data'].encode('utf-8')
-                    content = BinaryContent(data=data, media_type=file['mime_type'])
+                file_content = part['file']
+                if 'data' in file_content:
+                    data = file_content['data'].encode('utf-8')
+                    mime_type = file_content.get('mime_type', 'application/octet-stream')
+                    content = BinaryContent(data=data, media_type=mime_type)
                     model_parts.append(UserPromptPart(content=[content]))
-                elif 'uri' in file:
-                    uri = file['uri']
-                    mime_type = file.get('mime_type', 'application/octet-stream')
-                    for url_cls in (DocumentUrl, AudioUrl, ImageUrl, VideoUrl):
-                        content = url_cls(url=uri)
-                        try:
-                            content.media_type
-                        except ValueError:  # pragma: no cover
-                            continue
-                        else:
-                            break
+                elif 'uri' in file_content:
+                    url = file_content['uri']
+                    mime_type = file_content.get('mime_type', '')
+                    if mime_type.startswith('image/'):
+                        content = ImageUrl(url=url)
+                    elif mime_type.startswith('audio/'):
+                        content = AudioUrl(url=url)
+                    elif mime_type.startswith('video/'):
+                        content = VideoUrl(url=url)
                     else:
-                        raise ValueError(f'Unknown file type: {mime_type}')  # pragma: no cover
+                        content = DocumentUrl(url=url)
                     model_parts.append(UserPromptPart(content=[content]))
+                else:
+                    raise ValueError('FilePart.file must have either data or uri')
             elif part['kind'] == 'data':
                 # TODO(Marcelo): Maybe we should use this for `ToolReturnPart`, and `RetryPromptPart`.
                 raise NotImplementedError('Data parts are not supported yet.')
@@ -271,7 +329,19 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
                 assert_never(part)
         return model_parts
 
-    def _map_response_parts(self, parts: list[Part]) -> list[ModelResponsePart]:
+    def _response_parts_from_a2a(self, parts: list[Part]) -> list[ModelResponsePart]:
+        """Convert A2A Part objects to pydantic-ai ModelResponsePart objects.
+
+        This handles the conversion from A2A protocol parts (text, file, data) to
+        pydantic-ai's internal response parts. Currently only supports text parts
+        as agent responses in A2A are expected to be text-based.
+
+        Args:
+            parts: List of A2A Part objects from stored agent messages
+
+        Returns:
+            List of ModelResponsePart objects for message history
+        """
         model_parts: list[ModelResponsePart] = []
         for part in parts:
             if part['kind'] == 'text':
@@ -283,3 +353,38 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
             else:  # pragma: no cover
                 assert_never(part)
         return model_parts
+
+    def _response_parts_to_a2a(self, parts: list[ModelResponsePart]) -> list[Part]:
+        """Convert pydantic-ai ModelResponsePart objects to A2A Part objects.
+
+        This handles the conversion from pydantic-ai's internal response parts to
+        A2A protocol parts. Different part types are handled as follows:
+        - TextPart: Converted directly to A2A TextPart
+        - ThinkingPart: Converted to TextPart with metadata indicating it's thinking
+        - ToolCallPart: Skipped (internal to agent execution)
+
+        Args:
+            parts: List of ModelResponsePart objects from agent response
+
+        Returns:
+            List of A2A Part objects suitable for sending via A2A protocol
+        """
+        a2a_parts: list[Part] = []
+        for part in parts:
+            if isinstance(part, TextPart):
+                if part.content:  # Only add non-empty text
+                    a2a_parts.append(A2ATextPart(kind='text', text=part.content))
+            elif isinstance(part, ThinkingPart):
+                if part.content:  # Only add non-empty thinking
+                    # Convert thinking to text with metadata
+                    a2a_parts.append(
+                        A2ATextPart(
+                            kind='text',
+                            text=part.content,
+                            metadata={'type': 'thinking', 'thinking_id': part.id, 'signature': part.signature},
+                        )
+                    )
+            elif isinstance(part, ToolCallPart):
+                # Skip tool calls - they're internal to agent execution
+                pass
+        return a2a_parts
