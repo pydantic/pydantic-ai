@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING
 
-from ag_ui.core import CustomEvent, EventType, RunAgentInput
-from fastapi import APIRouter, Header
-from fastapi.responses import StreamingResponse
+from ag_ui.core import CustomEvent, EventType
 from pydantic import BaseModel
 
-from pydantic_ai.ag_ui import SSE_CONTENT_TYPE, StateDeps
+from pydantic_ai.ag_ui import FastAGUI, StateDeps
 
-from .agent import AGUIAgent
+from .agent import agent
 
 if TYPE_CHECKING:  # pragma: no cover
     from pydantic_ai import RunContext
@@ -24,18 +22,15 @@ _LOGGER: logging.Logger = logging.getLogger(__name__)
 class DocumentState(BaseModel):
     """State for the document being written."""
 
-    document: str
+    document: str = ''
 
 
-router: APIRouter = APIRouter(prefix='/predictive_state_updates')
-agui: AGUIAgent[StateDeps[DocumentState]] = AGUIAgent(
-    deps_type=StateDeps[DocumentState]
-)
+app: FastAGUI = agent(deps=StateDeps(DocumentState()))
 
 
 # Tools which return AG-UI events will be sent to the client as part of the
 # event stream, single events and iterables of events are supported.
-@agui.agent.tool_plain
+@app.adapter.agent.tool_plain
 def document_predict_state() -> list[CustomEvent]:
     """Enable document state prediction.
 
@@ -58,7 +53,7 @@ def document_predict_state() -> list[CustomEvent]:
     ]
 
 
-@agui.agent.instructions()
+@app.adapter.agent.instructions()
 def story_instructions(ctx: RunContext[StateDeps[DocumentState]]) -> str:
     """Provide instructions for writing document if present.
 
@@ -86,22 +81,3 @@ This is the current document:
 
 {ctx.deps.state.document}
 """
-
-
-@router.post('')
-async def handler(
-    input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_CONTENT_TYPE
-) -> StreamingResponse:
-    """Endpoint to handle AG-UI protocol requests and stream responses.
-
-    Args:
-        input_data: The AG-UI run input.
-        accept: The Accept header to specify the response format.
-
-    Returns:
-        A streaming response with event-stream media type.
-    """
-    return StreamingResponse(
-        agui.adapter.run(input_data, accept, deps=StateDeps(state_type=DocumentState)),
-        media_type=SSE_CONTENT_TYPE,
-    )

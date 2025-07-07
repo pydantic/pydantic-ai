@@ -3,10 +3,9 @@ from __future__ import annotations as _annotations
 import dataclasses
 import inspect
 import json
-import logging
 import warnings
 from asyncio import Lock
-from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -71,7 +70,7 @@ if TYPE_CHECKING:
     from fasta2a.schema import AgentProvider, Skill
     from fasta2a.storage import Storage
     from starlette.middleware import Middleware
-    from starlette.routing import Route
+    from starlette.routing import BaseRoute, Route
     from starlette.types import ExceptionHandler, Lifespan
 
     from pydantic_ai.mcp import MCPServer
@@ -1880,13 +1879,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     def to_ag_ui(
         self,
-        # Adapter parameters.
-        path: str = '/',
         *,
-        tool_prefix: str = '',
-        logger: logging.Logger | None = None,
         # Agent.iter parameters
-        output_type: OutputSpec[OutputDataT] = str,
+        output_type: OutputSpec[OutputDataT] | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -1894,6 +1889,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage: Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        # Starlette
+        debug: bool = False,
+        routes: Sequence[BaseRoute] | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
+        on_startup: Sequence[Callable[[], Any]] | None = None,
+        on_shutdown: Sequence[Callable[[], Any]] | None = None,
+        lifespan: Lifespan[FastAGUI[AgentDepsT, OutputDataT]] | None = None,
     ) -> FastAGUI[AgentDepsT, OutputDataT]:
         """Convert the agent to an Adapter instance.
 
@@ -1901,13 +1904,25 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         The first two arguments are specific to `Adapter` the rest map directly to the `Agent.iter` method.
 
-        Args:
-            logger: Optional logger to use for the adapter.
-            path: Path to expose the agent at, defaults to the root path.
-            tool_prefix: Optional prefix to add to tool names in the AG-UI.
+        Example:
+        ```python
+        from pydantic_ai import Agent
 
-            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
-                output validators since output validators would expect an argument that matches the agent's output type.
+        agent = Agent('openai:gpt-4o')
+        app = agent.to_ag_ui()
+        ```
+
+        The `app` is an ASGI application that can be used with any ASGI server.
+
+        To run the application, you can use the following command:
+
+        ```bash
+        uvicorn app:app --host 0.0.0.0 --port 8000
+        ```
+        Args:
+            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
+                no output validators since output validators would expect an argument that matches the agent's
+                output type.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -1916,6 +1931,24 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional list of toolsets to use for this agent, defaults to the agent's toolset.
 
+            debug: Boolean indicating if debug tracebacks should be returned on errors.
+            routes: A list of routes to serve incoming HTTP and WebSocket requests.
+            middleware: A list of middleware to run for every request. A starlette application will always
+                automatically include two middleware classes. `ServerErrorMiddleware` is added as the very
+                outermost middleware, to handle any uncaught errors occurring anywhere in the entire stack.
+                `ExceptionMiddleware` is added as the very innermost middleware, to deal with handled
+                exception cases occurring in the routing or endpoints.
+            exception_handlers: A mapping of either integer status codes, or exception class types onto
+                callables which handle the exceptions. Exception handler callables should be of the form
+                `handler(request, exc) -> response` and may be either standard functions, or async functions.
+            on_startup: A list of callables to run on application startup. Startup handler callables do not
+                take any arguments, and may be either standard functions, or async functions.
+            on_shutdown: A list of callables to run on application shutdown. Shutdown handler callables do
+                not take any arguments, and may be either standard functions, or async functions.
+            lifespan: A lifespan context function, which can be used to perform startup and shutdown tasks.
+                This is a newer style that replaces the `on_startup` and `on_shutdown` handlers. Use one or
+                the other, not both.
+
         Returns:
             An adapter that converts between AG-UI protocol and PydanticAI.
         """
@@ -1923,15 +1956,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             from .ag_ui import agent_to_ag_ui
         except ImportError as e:  # pragma: no cover
             raise ImportError(
-                'Please install the `ag-ui` dependencies to use `Agent.to_ag_ui()` method, '
+                'Please install the `ag-ui-protocol` and `starlette` packages to use `Agent.to_ag_ui()` method, '
                 'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
             ) from e
 
         return agent_to_ag_ui(
             agent=self,
-            path=path,
-            tool_prefix=tool_prefix,
-            logger=logger,
             # Agent.iter parameters
             output_type=output_type,
             model=model,
@@ -1941,6 +1971,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage=usage,
             infer_name=infer_name,
             toolsets=toolsets,
+            # Starlette
+            debug=debug,
+            routes=routes,
+            middleware=middleware,
+            exception_handlers=exception_handlers,
+            on_startup=on_startup,
+            on_shutdown=on_shutdown,
+            lifespan=lifespan,
         )
 
     def to_a2a(

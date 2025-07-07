@@ -16,21 +16,29 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from .api import (
-    agentic_chat_router,
-    agentic_generative_ui_router,
-    human_in_the_loop_router,
-    predictive_state_updates_router,
-    shared_state_router,
-    tool_based_generative_ui_router,
+    agentic_chat_app,
+    agentic_generative_ui_app,
+    human_in_the_loop_app,
+    predictive_state_updates_app,
+    shared_state_app,
+    tool_based_generative_ui_app,
 )
 
 app = FastAPI(title='PydanticAI AG-UI server')
-app.include_router(agentic_chat_router, tags=['Agentic Chat'])
-app.include_router(agentic_generative_ui_router, tags=['Agentic Generative UI'])
-app.include_router(human_in_the_loop_router, tags=['Human in the Loop'])
-app.include_router(predictive_state_updates_router, tags=['Predictive State Updates'])
-app.include_router(shared_state_router, tags=['Shared State'])
-app.include_router(tool_based_generative_ui_router, tags=['Tool Based Generative UI'])
+app.mount('/agentic_chat', agentic_chat_app, 'Agentic Chat')
+app.mount('/agentic_generative_ui', agentic_generative_ui_app, 'Agentic Generative UI')
+app.mount('/human_in_the_loop', human_in_the_loop_app, 'Human in the Loop')
+app.mount(
+    '/predictive_state_updates',
+    predictive_state_updates_app,
+    'Predictive State Updates',
+)
+app.mount('/shared_state', shared_state_app, 'Shared State')
+app.mount(
+    '/tool_based_generative_ui',
+    tool_based_generative_ui_app,
+    'Tool Based Generative UI',
+)
 
 
 if __name__ == '__main__':

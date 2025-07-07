@@ -5,16 +5,14 @@ from __future__ import annotations
 import json
 import logging
 from enum import StrEnum
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING
 
-from ag_ui.core import EventType, RunAgentInput, StateSnapshotEvent
-from fastapi import APIRouter, Header
-from fastapi.responses import StreamingResponse
+from ag_ui.core import EventType, StateSnapshotEvent
 from pydantic import BaseModel, Field
 
-from pydantic_ai.ag_ui import SSE_CONTENT_TYPE, StateDeps
+from pydantic_ai.ag_ui import FastAGUI, StateDeps
 
-from .agent import AGUIAgent
+from .agent import agent
 
 if TYPE_CHECKING:  # pragma: no cover
     from pydantic_ai import RunContext
@@ -67,29 +65,37 @@ class Recipe(BaseModel):
     """A class representing a recipe."""
 
     skill_level: SkillLevel = Field(
-        description='The skill level required for the recipe'
+        default=SkillLevel.BEGINNER,
+        description='The skill level required for the recipe',
     )
     special_preferences: list[SpecialPreferences] = Field(
-        description='Any special preferences for the recipe'
+        default_factory=lambda: list[SpecialPreferences](),
+        description='Any special preferences for the recipe',
     )
-    cooking_time: CookingTime = Field(description='The cooking time of the recipe')
-    ingredients: list[Ingredient] = Field(description='Ingredients for the recipe')
-    instructions: list[str] = Field(description='Instructions for the recipe')
+    cooking_time: CookingTime = Field(
+        default=CookingTime.FIVE_MIN, description='The cooking time of the recipe'
+    )
+    ingredients: list[Ingredient] = Field(
+        default_factory=lambda: list[Ingredient](),
+        description='Ingredients for the recipe',
+    )
+    instructions: list[str] = Field(
+        default_factory=lambda: list[str](), description='Instructions for the recipe'
+    )
 
 
 class RecipeSnapshot(BaseModel):
     """A class representing the state of the recipe."""
 
-    recipe: Recipe = Field(description='The current state of the recipe')
+    recipe: Recipe = Field(
+        default_factory=Recipe, description='The current state of the recipe'
+    )
 
 
-router: APIRouter = APIRouter(prefix='/shared_state')
-agui: AGUIAgent[StateDeps[RecipeSnapshot]] = AGUIAgent(
-    deps_type=StateDeps[RecipeSnapshot]
-)
+app: FastAGUI = agent(deps=StateDeps(RecipeSnapshot()))
 
 
-@agui.agent.tool_plain
+@app.adapter.agent.tool_plain
 def display_recipe(recipe: Recipe) -> StateSnapshotEvent:
     """Display the recipe to the user.
 
@@ -105,7 +111,7 @@ def display_recipe(recipe: Recipe) -> StateSnapshotEvent:
     )
 
 
-@agui.agent.instructions
+@app.adapter.agent.instructions
 def recipe_instructions(ctx: RunContext[StateDeps[RecipeSnapshot]]) -> str:
     """Instructions for the recipe generation agent.
 
@@ -137,22 +143,3 @@ The current state of the recipe is:
 
 {ctx.deps.state.recipe.model_dump_json(indent=2)}
 """
-
-
-@router.post('')
-async def handler(
-    input_data: RunAgentInput, accept: Annotated[str, Header()] = SSE_CONTENT_TYPE
-) -> StreamingResponse:
-    """Endpoint to handle AG-UI protocol requests and stream responses.
-
-    Args:
-        input_data: The AG-UI run input.
-        accept: The Accept header to specify the response format.
-
-    Returns:
-        A streaming response with event-stream media type.
-    """
-    return StreamingResponse(
-        agui.adapter.run(input_data, accept, deps=StateDeps(state_type=RecipeSnapshot)),
-        media_type=SSE_CONTENT_TYPE,
-    )

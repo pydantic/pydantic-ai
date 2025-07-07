@@ -124,7 +124,7 @@ from pydantic_ai.ag_ui import StateDeps
 class DocumentState(BaseModel):
     """State for the document being written."""
 
-    document: str
+    document: str = ''
 
 
 agent = Agent(
@@ -132,7 +132,7 @@ agent = Agent(
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
-app = agent.to_ag_ui(deps=StateDeps(state_type=DocumentState))
+app = agent.to_ag_ui(deps=StateDeps(DocumentState()))
 ```
 
 Since `app` is an ASGI application, it can be used with any ASGI server e.g.
@@ -187,7 +187,7 @@ if TYPE_CHECKING:
 class DocumentState(BaseModel):
     """State for the document being written."""
 
-    document: str
+    document: str = ''
 
 
 agent = Agent(
@@ -195,7 +195,7 @@ agent = Agent(
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
-app = agent.to_ag_ui(deps=StateDeps(state_type=DocumentState))
+app = agent.to_ag_ui(deps=StateDeps(DocumentState()))
 
 
 @agent.tool

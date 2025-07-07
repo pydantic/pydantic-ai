@@ -125,7 +125,7 @@ async def create_adapter(
             ),
             deps_type=StateDeps[StateInt],  # type: ignore[reportUnknownArgumentType]
             tools=[send_snapshot, send_custom, current_time],
-        )
+        ),
     )
 
 
@@ -783,7 +783,7 @@ async def test_run_method(mock_uuid: _MockUUID, tc: AdapterRunTest) -> None:
     events: list[str] = []
     thread_id: str = f'{THREAD_ID_PREFIX}{mock_uuid()}'
     adapter: Adapter[StateDeps[StateInt], str] = await create_adapter(tc.call_tools)
-    deps: StateDeps[StateInt] = StateDeps[StateInt](state_type=StateInt)  # type: ignore[reportUnknownArgumentType]
+    deps: StateDeps[StateInt] = StateDeps(StateInt())
     for run in tc.runs:
         if run.nodes is not None:
             assert isinstance(adapter.agent.model, TestModel), (
@@ -797,11 +797,11 @@ async def test_run_method(mock_uuid: _MockUUID, tc: AdapterRunTest) -> None:
             run_id=f'{RUN_ID_PREFIX}{mock_uuid()}',
         )
 
-        events.extend([event async for event in adapter.run(run_input, deps=deps)])  # type: ignore[reportUnknownArgumentType]
+        events.extend([event async for event in adapter.run(run_input, deps=deps)])
 
     assert_events(events, tc.expected_events)
     if tc.expected_state is not None:
-        assert deps.state.value == tc.expected_state  # type: ignore[reportUnknownArgumentType]
+        assert deps.state.value == tc.expected_state
 
 
 async def test_concurrent_runs(mock_uuid: _MockUUID, adapter: Adapter[None, str]) -> None:
