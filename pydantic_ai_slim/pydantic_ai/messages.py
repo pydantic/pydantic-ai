@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
 
-AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
+AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', "audio/ogg", "audio/flac", "audio/aiff", "audio/aac"]
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 DocumentMediaType: TypeAlias = Literal[
     'application/pdf',
@@ -175,13 +175,23 @@ class AudioUrl(FileUrl):
 
     @property
     def media_type(self) -> AudioMediaType:
-        """Return the media type of the audio file, based on the url."""
-        if self.url.endswith('.mp3'):
-            return 'audio/mpeg'
-        elif self.url.endswith('.wav'):
-            return 'audio/wav'
-        else:
-            raise ValueError(f'Unknown audio file extension: {self.url}')
+        """Return the media type of the audio file, based on the url.
+
+        References:
+        - Gemini: https://ai.google.dev/gemini-api/docs/audio#supported-formats
+        """
+        for suffix, mime_type in {
+            ('.mp3', 'audio/mpeg'),
+            ('.wav', 'audio/wav'),
+            ('.flac', 'audio/flac'),
+            ('.oga', 'audio/ogg'),
+            ('.aiff', 'audio/aiff'),
+            ('.aac', 'audio/aac'),
+        }:
+            if self.url.endswith(suffix):
+                return mime_type
+
+        raise ValueError(f'Unknown audio file extension: {self.url}')
 
     @property
     def format(self) -> AudioFormat:
