@@ -15,6 +15,7 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
+from pydantic_ai.builtin_tools import AbstractBuiltinTool, WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
@@ -176,6 +177,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         retries: int = 1,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        builtin_tools: Sequence[Literal['web-search'] | AbstractBuiltinTool] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
@@ -206,6 +208,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         result_tool_description: str | None = None,
         result_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        builtin_tools: Sequence[Literal['web-search'] | AbstractBuiltinTool] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
@@ -231,6 +234,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         retries: int = 1,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        builtin_tools: Sequence[Literal['web-search'] | AbstractBuiltinTool] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
@@ -261,6 +265,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
+            builtin_tools: The builtin tools that the agent will use. This depends on the model, as some models may not
+                support certain tools. On models that don't support certain tools, the tool will be ignored.
             prepare_tools: custom method to prepare the tool definition of all tools for each step.
                 This is useful if you want to customize the definition of multiple tools or you want to register
                 a subset of tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
@@ -358,6 +364,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._default_retries = retries
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._mcp_servers = mcp_servers
+        self._builtin_tools: list[AbstractBuiltinTool] = []
+
+        for tool in builtin_tools:
+            if tool == 'web-search':
+                self._builtin_tools.append(WebSearchTool())
+            else:
+                self._builtin_tools.append(tool)
+
         self._prepare_tools = prepare_tools
         self.history_processors = history_processors or []
         for tool in tools:
@@ -722,6 +736,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_validators=output_validators,
             history_processors=self.history_processors,
             function_tools=run_function_tools,
+            builtin_tools=self._builtin_tools,
             mcp_servers=self._mcp_servers,
             default_retries=self._default_retries,
             tracer=tracer,
