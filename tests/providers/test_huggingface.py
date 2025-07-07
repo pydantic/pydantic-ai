@@ -65,7 +65,7 @@ def test_hf_provider_with_base_url() -> None:
 def test_huggingface_provider_properties():
     mock_client = Mock(spec=AsyncInferenceClient)
     mock_client.model = 'test-model'
-    provider = HuggingFaceProvider(hf_client=mock_client)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
     assert provider.name == 'huggingface'
     assert provider.base_url == 'test-model'
     assert provider.client is mock_client
