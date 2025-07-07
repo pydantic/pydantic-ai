@@ -107,7 +107,7 @@ def test_huggingface_provider_init_base_url_and_provider_name_error():
 
 def test_huggingface_provider_init_with_hf_client():
     mock_client = Mock(spec=AsyncInferenceClient)
-    provider = HuggingFaceProvider(hf_client=mock_client)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='key')
     assert provider.client is mock_client
 
 
