@@ -80,6 +80,8 @@ mcp = ["mcp>=1.9.4; python_version >= '3.10'"]
 evals = ["pydantic-evals=={{ version }}"]
 # A2A
 a2a = ["fasta2a=={{ version }}"]
+# Temporal
+temporal = ["temporalio>=1.13.0"]
 
 [dependency-groups]
 dev = [
