@@ -248,7 +248,7 @@ class Message(TypedDict):
     reference_task_ids: NotRequired[list[str]]
     """Array of task IDs this message references."""
 
-    extensions: NotRequired[list[Any]]
+    extensions: NotRequired[list[str]]
     """Array of extensions."""
 
 
