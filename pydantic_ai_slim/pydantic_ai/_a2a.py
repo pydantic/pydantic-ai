@@ -122,29 +122,22 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
     async def run_task(self, params: TaskSendParams) -> None:
         task = await self.storage.load_task(params['id'])
         if task is None:
-            raise ValueError(f'Task {params["id"]} not found')
+            raise ValueError(f'Task {params["id"]} not found')  # pragma: no cover
 
         # TODO(Marcelo): Should we lock `run_task` on the `context_id`?
         # Ensure this task hasn't been run before
         if task['status']['state'] != 'submitted':
-            raise ValueError(f'Task {params["id"]} has already been processed (state: {task["status"]["state"]})')
+            raise ValueError(  # pragma: no cover
+                f'Task {params["id"]} has already been processed (state: {task["status"]["state"]})'
+            )
 
         await self.storage.update_task(task['id'], state='working')
 
         # Load context - contains pydantic-ai message history from previous tasks in this conversation
-        message_history = await self.storage.load_context(task['context_id'])
-        if message_history is None:
-            message_history = []
+        message_history = await self.storage.load_context(task['context_id']) or []
+        message_history.extend(self.build_message_history(task.get('history', [])))
 
         try:
-            # Tasks start with a user message that triggered this task
-            # Add the current task's initial message to the history
-            task_history = task.get('history')
-            if task_history:
-                for a2a_msg in task_history:
-                    if a2a_msg['role'] == 'user':
-                        message_history.append(ModelRequest(parts=self._request_parts_from_a2a(a2a_msg['parts'])))
-
             result = await self.agent.run(message_history=message_history)  # type: ignore
 
             await self.storage.update_context(task['context_id'], result.all_messages())
@@ -156,7 +149,7 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
                 if isinstance(message, ModelRequest):
                     # Skip user prompts - they're already in task history
                     continue
-                elif isinstance(message, ModelResponse):
+                else:
                     # Convert response parts to A2A format
                     a2a_parts = self._response_parts_to_a2a(message.parts)
                     if a2a_parts:  # Add if there are visible parts (text/thinking)
@@ -234,20 +227,19 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
                     mime_type = file_content.get('mime_type', 'application/octet-stream')
                     content = BinaryContent(data=data, media_type=mime_type)
                     model_parts.append(UserPromptPart(content=[content]))
-                elif 'uri' in file_content:
-                    url = file_content['uri']
-                    mime_type = file_content.get('mime_type', '')
-                    if mime_type.startswith('image/'):
-                        content = ImageUrl(url=url)
-                    elif mime_type.startswith('audio/'):
-                        content = AudioUrl(url=url)
-                    elif mime_type.startswith('video/'):
-                        content = VideoUrl(url=url)
-                    else:
-                        content = DocumentUrl(url=url)
-                    model_parts.append(UserPromptPart(content=[content]))
                 else:
-                    raise ValueError('FilePart.file must have either data or uri')
+                    url = file_content['uri']
+                    for url_cls in (DocumentUrl, AudioUrl, ImageUrl, VideoUrl):
+                        content = url_cls(url=url)
+                        try:
+                            content.media_type
+                        except ValueError:  # pragma: no cover
+                            continue
+                        else:
+                            break
+                    else:
+                        raise ValueError(f'Unsupported file type: {url}')  # pragma: no cover
+                    model_parts.append(UserPromptPart(content=[content]))
             elif part['kind'] == 'data':
                 raise NotImplementedError('Data parts are not supported yet.')
             else:
@@ -297,18 +289,16 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
         a2a_parts: list[Part] = []
         for part in parts:
             if isinstance(part, TextPart):
-                if part.content:  # Only add non-empty text
-                    a2a_parts.append(A2ATextPart(kind='text', text=part.content))
+                a2a_parts.append(A2ATextPart(kind='text', text=part.content))
             elif isinstance(part, ThinkingPart):
-                if part.content:  # Only add non-empty thinking
-                    # Convert thinking to text with metadata
-                    a2a_parts.append(
-                        A2ATextPart(
-                            kind='text',
-                            text=part.content,
-                            metadata={'type': 'thinking', 'thinking_id': part.id, 'signature': part.signature},
-                        )
+                # Convert thinking to text with metadata
+                a2a_parts.append(
+                    A2ATextPart(
+                        kind='text',
+                        text=part.content,
+                        metadata={'type': 'thinking', 'thinking_id': part.id, 'signature': part.signature},
                     )
+                )
             elif isinstance(part, ToolCallPart):
                 # Skip tool calls - they're internal to agent execution
                 pass

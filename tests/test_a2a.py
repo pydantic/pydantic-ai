@@ -8,8 +8,18 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart as PydanticAITextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import Usage
 
 from .conftest import IsDatetime, IsStr, try_import
 
@@ -559,12 +569,9 @@ async def test_a2a_multiple_tasks_same_context():
             # Verify the model received at least one message
             assert len(messages_received) == 1
             first_run_history = messages_received[0]
-            assert len(first_run_history) >= 1
-            # Check first message is a ModelRequest with UserPromptPart
-            first_msg = first_run_history[0]
-            assert isinstance(first_msg, ModelRequest)
-            first_part = first_msg.parts[0]
-            assert hasattr(first_part, 'content') and first_part.content == 'First message'
+            assert first_run_history == snapshot(
+                [ModelRequest(parts=[UserPromptPart(content='First message', timestamp=IsDatetime())])]
+            )
 
             # Second message - reuse the same context_id
             message2 = Message(
@@ -589,34 +596,122 @@ async def test_a2a_multiple_tasks_same_context():
             await anyio.sleep(0.1)
             task2 = await a2a_client.get_task(task2_id)
             assert 'result' in task2
-            if task2['result']['status']['state'] == 'failed':
-                print(f'Task 2 failed: {task2}')
-                print(f'Messages received so far: {messages_received}')
             assert task2['result']['status']['state'] == 'completed'
 
             # Verify the model received the full history on the second call
             assert len(messages_received) == 2
             second_run_history = messages_received[1]
+            assert second_run_history[0] == first_run_history[0]
 
-            # Check that history is monotonically increasing - all previous messages should be there
-            assert len(second_run_history) > len(first_run_history), (
-                f'Expected more messages, got {len(second_run_history)} <= {len(first_run_history)}'
+            assert second_run_history == snapshot(
+                [
+                    ModelRequest(parts=[UserPromptPart(content='First message', timestamp=IsDatetime())]),
+                    ModelResponse(
+                        parts=[
+                            ToolCallPart(
+                                tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr()
+                            )
+                        ],
+                        usage=Usage(requests=1, request_tokens=52, response_tokens=7, total_tokens=59),
+                        model_name='function:track_messages:',
+                        timestamp=IsDatetime(),
+                    ),
+                    ModelRequest(
+                        parts=[
+                            ToolReturnPart(
+                                tool_name='final_result',
+                                content='Final result processed.',
+                                tool_call_id=IsStr(),
+                                timestamp=IsDatetime(),
+                            )
+                        ]
+                    ),
+                    ModelRequest(parts=[UserPromptPart(content='Second message', timestamp=IsDatetime())]),
+                ]
             )
 
-            # Check that all messages from first run are still in second run (in same order)
-            for i, msg in enumerate(first_run_history):
-                assert second_run_history[i] == msg, f'Message {i} changed between runs'
 
-            # Verify the new message is there
-            # Find the user message with 'Second message' in the new history
-            found_second_message = False
-            for msg in second_run_history:
-                if isinstance(msg, ModelRequest):
-                    for part in msg.parts:
-                        if hasattr(part, 'content') and part.content == 'Second message':
-                            found_second_message = True
-                            break
-            assert found_second_message, 'Second message not found in history'
+async def test_a2a_thinking_response():
+    """Test that ModelResponse messages with ThinkingPart are properly handled."""
+
+    def return_thinking_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        # Create a response with thinking part and text part
+        return ModelResponse(
+            parts=[
+                ThinkingPart(content='Let me think about this...', id='thinking_1'),
+                PydanticAITextPart(content="Here's my response"),
+            ]
+        )
+
+    thinking_model = FunctionModel(return_thinking_response)
+    agent = Agent(model=thinking_model, output_type=str)
+    app = agent.to_a2a()
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            message = Message(
+                role='user',
+                parts=[TextPart(text='Hello, world!', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+            )
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+            result = response['result']
+            assert result['kind'] == 'task'
+
+            task_id = result['id']
+
+            # Wait for completion
+            await anyio.sleep(0.1)
+            task = await a2a_client.get_task(task_id)
+
+            assert 'result' in task
+            assert task['result'] == snapshot(
+                {
+                    'id': IsStr(),
+                    'context_id': IsStr(),
+                    'kind': 'task',
+                    'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
+                    'history': [
+                        {
+                            'role': 'user',
+                            'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                            'kind': 'message',
+                            'message_id': IsStr(),
+                            'context_id': IsStr(),
+                            'task_id': IsStr(),
+                        },
+                        {
+                            'role': 'agent',
+                            'parts': [
+                                {
+                                    'metadata': {'type': 'thinking', 'thinking_id': 'thinking_1', 'signature': None},
+                                    'kind': 'text',
+                                    'text': 'Let me think about this...',
+                                },
+                                {'kind': 'text', 'text': "Here's my response"},
+                            ],
+                            'kind': 'message',
+                            'message_id': IsStr(),
+                            'context_id': IsStr(),
+                            'task_id': IsStr(),
+                        },
+                    ],
+                    'artifacts': [
+                        {
+                            'artifact_id': IsStr(),
+                            'name': 'result',
+                            'parts': [{'kind': 'text', 'text': "Here's my response"}],
+                        }
+                    ],
+                }
+            )
 
 
 async def test_a2a_multiple_messages():
@@ -746,5 +841,150 @@ async def test_a2a_multiple_messages():
                             }
                         ],
                     },
+                }
+            )
+
+
+async def test_a2a_multiple_send_task_messages():
+    agent = Agent(model=model, output_type=tuple[str, str])
+    storage = InMemoryStorage()
+    app = agent.to_a2a(storage=storage)
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            message = Message(
+                role='user',
+                parts=[TextPart(text='Hello, world!', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+            )
+            response = await a2a_client.send_message(message=message)
+            assert response == snapshot(
+                {
+                    'jsonrpc': '2.0',
+                    'id': IsStr(),
+                    'result': {
+                        'id': IsStr(),
+                        'context_id': IsStr(),
+                        'kind': 'task',
+                        'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
+                        'history': [
+                            {
+                                'role': 'user',
+                                'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                                'kind': 'message',
+                                'message_id': IsStr(),
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            }
+                        ],
+                    },
+                }
+            )
+            assert 'result' in response
+            result = response['result']
+            assert result['kind'] == 'task'
+            task_id = result['id']
+            context_id = result['context_id']
+
+            await anyio.sleep(0.1)
+            response = await a2a_client.get_task(task_id)
+            assert response.get('result') == snapshot(
+                {
+                    'id': IsStr(),
+                    'context_id': IsStr(),
+                    'kind': 'task',
+                    'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
+                    'history': [
+                        {
+                            'role': 'user',
+                            'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                            'kind': 'message',
+                            'message_id': IsStr(),
+                            'context_id': IsStr(),
+                            'task_id': IsStr(),
+                        }
+                    ],
+                    'artifacts': [
+                        {
+                            'artifact_id': IsStr(),
+                            'name': 'result',
+                            'parts': [
+                                {
+                                    'metadata': {'json_schema': {'items': {}, 'type': 'array'}},
+                                    'kind': 'data',
+                                    'data': {'result': ['foo', 'bar']},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            )
+
+            message = Message(
+                role='user',
+                parts=[TextPart(text='Did you get my first message?', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+                context_id=context_id,
+            )
+            response = await a2a_client.send_message(message=message)
+            assert response == snapshot(
+                {
+                    'jsonrpc': '2.0',
+                    'id': IsStr(),
+                    'result': {
+                        'id': IsStr(),
+                        'context_id': IsStr(),
+                        'kind': 'task',
+                        'status': {'state': 'submitted', 'timestamp': IsDatetime(iso_string=True)},
+                        'history': [
+                            {
+                                'role': 'user',
+                                'parts': [{'kind': 'text', 'text': 'Did you get my first message?'}],
+                                'kind': 'message',
+                                'message_id': IsStr(),
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            }
+                        ],
+                    },
+                }
+            )
+
+            await anyio.sleep(0.1)
+            response = await a2a_client.get_task(task_id)
+            assert response.get('result') == snapshot(
+                {
+                    'id': IsStr(),
+                    'context_id': IsStr(),
+                    'kind': 'task',
+                    'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
+                    'history': [
+                        {
+                            'role': 'user',
+                            'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                            'kind': 'message',
+                            'message_id': IsStr(),
+                            'context_id': IsStr(),
+                            'task_id': IsStr(),
+                        }
+                    ],
+                    'artifacts': [
+                        {
+                            'artifact_id': IsStr(),
+                            'name': 'result',
+                            'parts': [
+                                {
+                                    'metadata': {'json_schema': {'items': {}, 'type': 'array'}},
+                                    'kind': 'data',
+                                    'data': {'result': ['foo', 'bar']},
+                                }
+                            ],
+                        }
+                    ],
                 }
             )
