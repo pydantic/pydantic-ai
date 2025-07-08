@@ -294,7 +294,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
 @dataclass(init=False)
 class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
     processor: ObjectOutputProcessor[OutputDataT] | UnionOutputProcessor[OutputDataT]
-    _toolset: OutputToolset[Any] | None = None
+    _toolset: OutputToolset[Any] | None
 
     def __init__(
         self,
@@ -477,7 +477,7 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
 
 @dataclass(init=False)
 class ToolOutputSchema(OutputSchema[OutputDataT]):
-    _toolset: OutputToolset[Any] | None = None
+    _toolset: OutputToolset[Any] | None
 
     def __init__(self, toolset: OutputToolset[Any] | None, allows_deferred_tool_calls: bool):
         super().__init__(allows_deferred_tool_calls)
@@ -834,8 +834,8 @@ class OutputToolset(CallableToolset[AgentDepsT]):
 
     _tool_defs: list[ToolDefinition]
     processors: dict[str, ObjectOutputProcessor[Any]]
-    max_retries: int = field(default=1)
-    output_validators: list[OutputValidator[AgentDepsT, Any]] = field(default_factory=list)
+    max_retries: int
+    output_validators: list[OutputValidator[AgentDepsT, Any]]
 
     @classmethod
     def build(
@@ -910,12 +910,12 @@ class OutputToolset(CallableToolset[AgentDepsT]):
         tool_defs: list[ToolDefinition],
         processors: dict[str, ObjectOutputProcessor[Any]],
         max_retries: int = 1,
-        output_validators: list[OutputValidator[AgentDepsT, Any]] = [],
+        output_validators: list[OutputValidator[AgentDepsT, Any]] | None = None,
     ):
         self.processors = processors
         self._tool_defs = tool_defs
         self.max_retries = max_retries
-        self.output_validators = output_validators
+        self.output_validators = output_validators or []
 
     async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
         return RunToolset(self, ctx)

@@ -639,14 +639,16 @@ async def process_function_tools(  # noqa: C901
     # Then, we handle function tool calls
     calls_to_run: list[_messages.ToolCallPart] = []
     if final_result and ctx.deps.end_strategy == 'early':
-        for call in tool_calls_by_kind['function']:
-            output_parts.append(
+        output_parts.extend(
+            [
                 _messages.ToolReturnPart(
                     tool_name=call.tool_name,
                     content='Tool not executed - a final result was already processed.',
                     tool_call_id=call.tool_call_id,
                 )
-            )
+                for call in tool_calls_by_kind['function']
+            ]
+        )
     else:
         calls_to_run.extend(tool_calls_by_kind['function'])
 
@@ -776,8 +778,8 @@ async def _call_function_tool(
         def process_content(content: Any) -> Any:
             if isinstance(content, _messages.ToolReturn):
                 raise exceptions.UserError(
-                    f"{tool_call.tool_name}'s return contains invalid nested ToolReturn objects. "
-                    f'ToolReturn should be used directly.'
+                    f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
+                    f'`ToolReturn` should be used directly.'
                 )
             elif isinstance(content, _messages.MultiModalContentTypes):
                 if isinstance(content, _messages.BinaryContent):
@@ -792,8 +794,8 @@ async def _call_function_tool(
                     )
                 )
                 return f'See file {identifier}'
-            else:
-                return content
+
+            return content
 
         if isinstance(tool_result, _messages.ToolReturn):
             if (
@@ -805,7 +807,7 @@ async def _call_function_tool(
                 )
             ):
                 raise exceptions.UserError(
-                    f"{tool_call.tool_name}'s `return_value` contains invalid nested MultiModalContentTypes objects. "
+                    f'The `return_value` of tool {tool_call.tool_name!r} contains invalid nested `MultiModalContentTypes` objects. '
                     f'Please use `content` instead.'
                 )
 

@@ -4,6 +4,7 @@ import dataclasses
 import inspect
 import json
 import warnings
+from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -166,6 +167,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
 
+    _enter_lock: Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
 
@@ -433,8 +435,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
         self._override_model: ContextVar[_utils.Option[models.Model]] = ContextVar('_override_model', default=None)
 
-        self._exit_stack = None
+        self._enter_lock = Lock()
         self._entered_count = 0
+        self._exit_stack = None
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -1795,18 +1798,19 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         return isinstance(node, End)
 
     async def __aenter__(self) -> Self:
-        """Enter the agent. This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered with the agent so they can be used in a run."""
-        if self._entered_count == 0:
-            self._exit_stack = AsyncExitStack()
-            await self._exit_stack.enter_async_context(self._toolset)
-        self._entered_count += 1
+        async with self._enter_lock:
+            if self._entered_count == 0:
+                self._exit_stack = AsyncExitStack()
+                await self._exit_stack.enter_async_context(self._toolset)
+            self._entered_count += 1
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        self._entered_count -= 1
-        if self._entered_count <= 0 and self._exit_stack is not None:
-            await self._exit_stack.aclose()
-            self._exit_stack = None
+        async with self._enter_lock:
+            self._entered_count -= 1
+            if self._entered_count == 0 and self._exit_stack is not None:
+                await self._exit_stack.aclose()
+                self._exit_stack = None
 
     def set_mcp_sampling_model(self, model: models.Model | models.KnownModelName | str | None = None) -> None:
         """Set the sampling model on all MCP servers registered with the agent.

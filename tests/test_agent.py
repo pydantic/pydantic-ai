@@ -3345,7 +3345,7 @@ def test_many_multimodal_tool_response():
 
     with pytest.raises(
         UserError,
-        match="analyze_data's return contains invalid nested ToolReturn objects. ToolReturn should be used directly.",
+        match="The return value of tool 'analyze_data' contains invalid nested `ToolReturn` objects. `ToolReturn` should be used directly.",
     ):
         agent.run_sync('Please analyze the data')
 
@@ -3379,7 +3379,7 @@ def test_multimodal_tool_response_nested():
 
     with pytest.raises(
         UserError,
-        match="analyze_data's `return_value` contains invalid nested MultiModalContentTypes objects. Please use `content` instead.",
+        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContentTypes` objects. Please use `content` instead.",
     ):
         agent.run_sync('Please analyze the data')
 

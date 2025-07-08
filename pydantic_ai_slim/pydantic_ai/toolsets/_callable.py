@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from pydantic_core import SchemaValidator
 
@@ -28,7 +28,7 @@ class CallableToolset(AbstractToolset[AgentDepsT], ABC):
     async def call_tool(self, call: ToolCallPart, ctx: RunContext[AgentDepsT], allow_partial: bool = False) -> Any:
         ctx = replace(ctx, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
 
-        pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
+        pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
         validator = self._get_tool_args_validator(ctx, call.tool_name)
         if isinstance(call.args, str):
             args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)

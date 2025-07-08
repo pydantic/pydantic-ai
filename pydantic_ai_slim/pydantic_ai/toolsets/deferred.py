@@ -11,7 +11,10 @@ from ._run import RunToolset
 
 
 class DeferredToolset(AbstractToolset[AgentDepsT]):
-    """A toolset that holds deferred tool."""
+    """A toolset that holds deferred tools.
+
+    See [`ToolDefinition.kind`][pydantic_ai.tools.ToolDefinition.kind] for more information about deferred tools.
+    """
 
     _tool_defs: list[ToolDefinition]
 

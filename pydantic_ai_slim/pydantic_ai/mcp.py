@@ -3,9 +3,10 @@ from __future__ import annotations
 import base64
 import functools
 from abc import ABC, abstractmethod
+from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -60,12 +61,18 @@ class MCPServer(CallableToolset[Any], ABC):
     sampling_model: models.Model | None = None
     # } end of "abstract fields"
 
-    _running_count: int = 0
+    _enter_lock: Lock = field(compare=False)
+    _running_count: int
+    _exit_stack: AsyncExitStack | None
 
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
-    _exit_stack: AsyncExitStack
+
+    def __post_init__(self):
+        self._enter_lock = Lock()
+        self._running_count = 0
+        self._exit_stack = None
 
     @abstractmethod
     @asynccontextmanager
@@ -86,7 +93,7 @@ class MCPServer(CallableToolset[Any], ABC):
         return repr(self)
 
     @property
-    def tool_name_conflict_hint(self) -> str:
+    def _tool_name_conflict_hint(self) -> str:
         return 'Consider setting `tool_prefix` to avoid name conflicts.'
 
     async def list_tools(self) -> list[mcp_types.Tool]:
@@ -188,30 +195,35 @@ class MCPServer(CallableToolset[Any], ABC):
         return self.max_retries
 
     async def __aenter__(self) -> Self:
-        if self._running_count == 0:
-            self._exit_stack = AsyncExitStack()
+        async with self._enter_lock:
+            if self._running_count == 0:
+                self._exit_stack = AsyncExitStack()
 
-            self._read_stream, self._write_stream = await self._exit_stack.enter_async_context(self.client_streams())
-            client = ClientSession(
-                read_stream=self._read_stream,
-                write_stream=self._write_stream,
-                sampling_callback=self._sampling_callback if self.allow_sampling else None,
-                logging_callback=self.log_handler,
-            )
-            self._client = await self._exit_stack.enter_async_context(client)
+                self._read_stream, self._write_stream = await self._exit_stack.enter_async_context(
+                    self.client_streams()
+                )
+                client = ClientSession(
+                    read_stream=self._read_stream,
+                    write_stream=self._write_stream,
+                    sampling_callback=self._sampling_callback if self.allow_sampling else None,
+                    logging_callback=self.log_handler,
+                )
+                self._client = await self._exit_stack.enter_async_context(client)
 
-            with anyio.fail_after(self.timeout):
-                await self._client.initialize()
+                with anyio.fail_after(self.timeout):
+                    await self._client.initialize()
 
-                if log_level := self.log_level:
-                    await self._client.set_logging_level(log_level)
-        self._running_count += 1
+                    if log_level := self.log_level:
+                        await self._client.set_logging_level(log_level)
+            self._running_count += 1
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        self._running_count -= 1
-        if self._running_count <= 0:
-            await self._exit_stack.aclose()
+        async with self._enter_lock:
+            self._running_count -= 1
+            if self._running_count <= 0 and self._exit_stack is not None:
+                await self._exit_stack.aclose()
+                self._exit_stack = None
 
     @property
     def is_running(self) -> bool:

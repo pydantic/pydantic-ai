@@ -472,7 +472,6 @@ async def test_comprehensive_toolset_composition():
     )
 
     # Test prepare_for_run idempotency
-    # toolset.prepare_for_run(ctx1).prepare_for_run(ctx2) == toolset.prepare_for_run(ctx2)
     ctx1 = build_run_context(TestDeps(user_role='user', enable_advanced=True))
     ctx2 = build_run_context(TestDeps(user_role='admin', enable_advanced=True))
     toolset_once = await prepared_toolset.prepare_for_run(ctx2)
@@ -484,7 +483,7 @@ async def test_context_manager():
     try:
         from pydantic_ai.mcp import MCPServerStdio
     except ImportError:
-        return
+        pytest.skip('mcp is not installed')
 
     server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
