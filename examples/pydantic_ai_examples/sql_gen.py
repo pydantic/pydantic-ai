@@ -30,6 +30,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext, format_as_xml
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_asyncpg()
+logfire.instrument_pydantic_ai()
 
 DB_SCHEMA = """
 CREATE TABLE records (
@@ -91,12 +92,11 @@ class InvalidRequest(BaseModel):
 
 
 Response: TypeAlias = Union[Success, InvalidRequest]
-agent: Agent[Deps, Response] = Agent(
+agent = Agent[Deps, Response](
     'google-gla:gemini-1.5-flash',
     # Type ignore while we wait for PEP-0747, nonetheless unions will work fine everywhere else
     output_type=Response,  # type: ignore
     deps_type=Deps,
-    instrument=True,
 )
 
 

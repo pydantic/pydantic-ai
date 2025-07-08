@@ -11,6 +11,8 @@ from typing import Callable, Union
 
 from typing_extensions import TypeAlias, assert_never, overload
 
+from pydantic_ai.profiles import ModelProfileSpec
+
 from .. import _utils, usage
 from .._utils import PeekableAsyncStream
 from ..messages import (
@@ -24,6 +26,7 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserContent,
@@ -48,14 +51,27 @@ class FunctionModel(Model):
     _system: str = field(default='function', repr=False)
 
     @overload
-    def __init__(self, function: FunctionDef, *, model_name: str | None = None) -> None: ...
-
-    @overload
-    def __init__(self, *, stream_function: StreamFunctionDef, model_name: str | None = None) -> None: ...
+    def __init__(
+        self, function: FunctionDef, *, model_name: str | None = None, profile: ModelProfileSpec | None = None
+    ) -> None: ...
 
     @overload
     def __init__(
-        self, function: FunctionDef, *, stream_function: StreamFunctionDef, model_name: str | None = None
+        self,
+        *,
+        stream_function: StreamFunctionDef,
+        model_name: str | None = None,
+        profile: ModelProfileSpec | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        function: FunctionDef,
+        *,
+        stream_function: StreamFunctionDef,
+        model_name: str | None = None,
+        profile: ModelProfileSpec | None = None,
     ) -> None: ...
 
     def __init__(
@@ -64,6 +80,7 @@ class FunctionModel(Model):
         *,
         stream_function: StreamFunctionDef | None = None,
         model_name: str | None = None,
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize a `FunctionModel`.
 
@@ -73,6 +90,7 @@ class FunctionModel(Model):
             function: The function to call for non-streamed requests.
             stream_function: The function to call for streamed requests.
             model_name: The name of the model. If not provided, a name is generated from the function names.
+            profile: The model profile to use.
         """
         if function is None and stream_function is None:
             raise TypeError('Either `function` or `stream_function` must be provided')
@@ -82,13 +100,14 @@ class FunctionModel(Model):
         function_name = self.function.__name__ if self.function is not None else ''
         stream_function_name = self.stream_function.__name__ if self.stream_function is not None else ''
         self._model_name = model_name or f'function:{function_name}:{stream_function_name}'
+        self._profile = profile
 
     async def request(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, usage.Usage]:
+    ) -> ModelResponse:
         agent_info = AgentInfo(
             model_request_parameters.function_tools,
             model_request_parameters.allow_text_output,
@@ -105,8 +124,11 @@ class FunctionModel(Model):
             assert isinstance(response_, ModelResponse), response_
             response = response_
         response.model_name = self._model_name
-        # TODO is `messages` right here? Should it just be new messages?
-        return response, _estimate_usage(chain(messages, [response]))
+        # Add usage data if not already present
+        if not response.usage.has_values():  # pragma: no branch
+            response.usage = _estimate_usage(chain(messages, [response]))
+            response.usage.requests = 1
+        return response
 
     @asynccontextmanager
     async def request_stream(
@@ -265,6 +287,10 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
             for part in message.parts:
                 if isinstance(part, TextPart):
                     response_tokens += _estimate_string_tokens(part.content)
+                elif isinstance(part, ThinkingPart):
+                    # NOTE: We don't send ThinkingPart to the providers yet.
+                    # If you are unsatisfied with this, please open an issue.
+                    pass
                 elif isinstance(part, ToolCallPart):
                     call = part
                     response_tokens += 1 + _estimate_string_tokens(call.args_as_json_str())
@@ -273,7 +299,9 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
         else:
             assert_never(message)
     return usage.Usage(
-        request_tokens=request_tokens, response_tokens=response_tokens, total_tokens=request_tokens + response_tokens
+        request_tokens=request_tokens,
+        response_tokens=response_tokens,
+        total_tokens=request_tokens + response_tokens,
     )
 
 
@@ -282,7 +310,7 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
         return 0
     if isinstance(content, str):
         return len(re.split(r'[\s",.:]+', content.strip()))
-    else:  # pragma: no cover
+    else:
         tokens = 0
         for part in content:
             if isinstance(part, str):

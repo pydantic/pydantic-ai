@@ -13,7 +13,7 @@ export async function runCode(
   files: CodeFile[],
   log: (level: LoggingLevel, data: string) => void,
 ): Promise<RunSuccess | RunError> {
-  // remove once https://github.com/pyodide/pyodide/pull/5514 is released
+  // remove once we can upgrade to pyodide 0.27.7 and console.log is no longer used.
   const realConsoleLog = console.log
   // deno-lint-ignore no-explicit-any
   console.log = (...args: any[]) => log('debug', args.join(' '))

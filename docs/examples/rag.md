@@ -44,6 +44,4 @@ python/uv-run -m pydantic_ai_examples.rag search "How do I configure logfire to 
 
 ## Example Code
 
-```python {title="rag.py"}
-#! examples/pydantic_ai_examples/rag.py
-```
+```snippet {path="/examples/pydantic_ai_examples/rag.py"}```

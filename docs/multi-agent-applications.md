@@ -12,6 +12,7 @@ Of course, you can combine multiple strategies in a single application.
 ## Agent delegation
 
 "Agent delegation" refers to the scenario where an agent delegates work to another agent, then takes back control when the delegate agent (the agent called from within a tool) finishes.
+If you want to hand off control to another agent completely, without coming back to the first agent, you can use an [output function](output.md#output-functions).
 
 Since agents are stateless and designed to be global, you do not need to include the agent itself in agent [dependencies](dependencies.md).
 
@@ -52,11 +53,7 @@ result = joke_selection_agent.run_sync(
 print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 print(result.usage())
-"""
-Usage(
-    requests=3, request_tokens=204, response_tokens=24, total_tokens=228, details=None
-)
-"""
+#> Usage(requests=3, request_tokens=204, response_tokens=24, total_tokens=228)
 ```
 
 1. The "parent" or controlling agent.
@@ -147,15 +144,7 @@ async def main():
         print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
         print(result.usage())  # (6)!
-        """
-        Usage(
-            requests=4,
-            request_tokens=309,
-            response_tokens=32,
-            total_tokens=341,
-            details=None,
-        )
-        """
+        #> Usage(requests=4, request_tokens=309, response_tokens=32, total_tokens=341)
 ```
 
 1. Define a dataclass to hold the client and API key dependencies.

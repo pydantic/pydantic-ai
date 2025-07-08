@@ -1,0 +1,272 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '242'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: How do I cross the street?
+        role: user
+      generationConfig:
+        thinkingConfig:
+          includeThoughts: true
+      systemInstruction:
+        parts:
+        - text: You are a helpful assistant.
+        role: user
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-03-25:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Defining the Core Question**\\n\\nMy analysis
+        has begun. It's clear that the user's question, \\\"How do I cross the street?\\\" is deceptively simple. I'm focusing
+        on unpacking its inherent complexities and the potential for a layered response. I'm dissecting the core request,
+        recognizing the need for a comprehensive breakdown, rather than a cursory answer.\\n\\n\\n\",\"thought\": true}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"totalTokenCount\": 84,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 69},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Structuring
+        the Response**\\n\\nNow, I'm focusing on the structural framework. The goal is clarity and conciseness. I'm building
+        on the initial brainstorming to refine the \\\"Look, Listen, Wait, Walk\\\" sequence. I'm categorizing risks and identifying
+        vulnerable groups. I'm adding a layered approach to account for different scenarios and user needs. The draft is being
+        built section by section.\\n\\n\\n\",\"thought\": true}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        15,\"totalTokenCount\": 335,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\":
+        320},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \"**Analyzing Safety Priorities**\\n\\nI'm now diving deep into the critical
+        aspects of street crossing safety. I'm expanding on the \\\"Look, Listen, Wait, Walk\\\" sequence, building out each
+        component with greater detail. I'm prioritizing the identification of specific risks, like distracted driving and
+        blind spots, within each crossing scenario. My goal is to craft a comprehensive guide, ensuring it covers all essential
+        safety principles for every potential user.\\n\\n\\n\",\"thought\": true}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 15,\"totalTokenCount\": 587,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        15}],\"thoughtsTokenCount\": 572},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Elaborating Safety Protocols**\\n\\nI'm now concentrating
+        on specific safety protocols. The \\\"Stop, Look, Listen, Think\\\" framework is being enriched to clarify the 'Think'
+        component with more examples. I'm adding specific guidelines for understanding traffic signals and the implications
+        of flashing hands. I'm also incorporating the importance of making eye contact with drivers.\\n\\n\\n\",\"thought\":
+        true}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"totalTokenCount\": 839,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 824},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Developing Enhanced
+        Protocols**\\n\\nNow, I'm integrating specific safety protocols into the instructions. I'm focusing on making the
+        'Think' component more actionable with concrete examples, like anticipating a driver's actions. I'm clarifying the
+        meaning of traffic signals, and emphasizing the importance of eye contact with drivers. I'm adding tips for situations
+        with no crosswalks. My goal is a detailed and easy-to-follow guide.\\n\\n\\n\",\"thought\": true}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"totalTokenCount\": 1112,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1097},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Integrating
+        Risk Mitigation**\\n\\nI'm now integrating safety-specific details. My focus is the \\\"Stop, Look, Listen, Think\\\"
+        mantra. I'm prioritizing the \\\"Think\\\" component. I'm adding specific guidelines for understanding traffic signals
+        and the implications of flashing hands. I'm including the importance of making eye contact with drivers, in order
+        to maximize safety.\\n\\n\\n\",\"thought\": true}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        15,\"totalTokenCount\": 1340,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\":
+        1325},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \"**Developing Sectional Clarity**\\n\\nThe \\\"Section 1\\\" and \\\"Section
+        2\\\" structures are solidified, with clear distinctions and risk levels outlined. I'm focusing now on the importance
+        of visibility and distraction avoidance in \\\"Section 3\\\". I'm also considering global variations of the traffic
+        rules for wider application. I aim to create a concise, yet informative, conclusion.\\n\\n\\n\",\"thought\": true}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"totalTokenCount\": 1401,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"Of course! Crossing
+        the street seems simple, but doing it safely is a crucial\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 15,\"candidatesTokenCount\": 9,\"totalTokenCount\": 1410,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" skill. Here is
+        a step-by-step guide covering different situations.\\n\\n### The Golden Rule: Stop, Look, Listen\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 35,\"totalTokenCount\": 1436,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \", and Think\\n\\nThis
+        is the most important principle to remember every single time you cross a street.\\n\\n1.  **STOP\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 61,\"totalTokenCount\": 1462,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"** at the curb
+        or the edge of the road. Never step into the street without stopping first.\\n2.  **LOOK\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 87,\"totalTokenCount\": 1488,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"** left, then
+        right, then left again. The first car to reach you will come from the left (in countries with right\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 113,\"totalTokenCount\":
+        1514,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\":
+        \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
+        {\"parts\": [{\"text\": \"-hand traffic). Look for turning cars as well.\\n3.  **LISTEN** for the sound of approaching
+        vehicles\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\":
+        137,\"totalTokenCount\": 1538,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\":
+        1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \". Sometimes you can hear a car before you can see it, especially around a
+        blind corner.\\n4.  **THINK**\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\":
+        164,\"totalTokenCount\": 1565,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\":
+        1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \" about whether it is truly safe to cross. Is the car slowing down for you?
+        Is there enough time?\\n\\n---\\n\\n###\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        15,\"candidatesTokenCount\": 190,\"totalTokenCount\": 1591,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" How to Cross at a Designated Crosswalk (Safest Method)\\n\\nThis
+        is the best and safest place to cross the street.\\n\\n\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 15,\"candidatesTokenCount\": 216,\"totalTokenCount\": 1617,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"#### 1. At a Crosswalk
+        with a Traffic Light & Pedestrian Signal\\n\\n\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        15,\"candidatesTokenCount\": 232,\"totalTokenCount\": 1633,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\\n\\n1.  **Find and Press the Button:**\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 242,\"totalTokenCount\": 1643,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" If there's a
+        pedestrian signal button, press it once. This will signal your intent to cross.\\n2.  **\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 268,\"totalTokenCount\": 1669,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"Wait for the \\\"Walk\\\"
+        Signal:** Wait for the signal to show the \\\"Walk\\\" symbol (often a white walking person).\\n\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 294,\"totalTokenCount\": 1695,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"3.  **Look Left,
+        Right, and Left Again:** Even with the \\\"Walk\\\" signal, **do not assume cars\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 320,\"totalTokenCount\": 1721,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" will stop**.
+        Check for turning vehicles or drivers who might run the red light.\\n4.  **Make Eye Contact:**\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 345,\"totalTokenCount\": 1746,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" If possible,
+        make eye contact with drivers to ensure they see you.\\n5.  **Cross When Safe:** Walk\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 369,\"totalTokenCount\": 1770,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" briskly across
+        the street, staying within the marked lines of the crosswalk.\\n6.  **Pay Attention to the\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 395,\"totalTokenCount\": 1796,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" Countdown/Flashing
+        Hand:** If the signal starts flashing a red hand or counting down, it means \\\"don't start crossing\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 421,\"totalTokenCount\":
+        1822,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\":
+        \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
+        {\"parts\": [{\"text\": \".\\\" If you are already in the street, finish crossing quickly but safely. Do not turn
+        back.\\n\\n#### 2\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\":
+        445,\"totalTokenCount\": 1846,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\":
+        1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \". At a Crosswalk with No Signal (Zebra Stripes)\\n\\n1.  **Stop at the Edge:**
+        Stand\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\":
+        469,\"totalTokenCount\": 1870,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\":
+        1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \" at the curb where you are visible to drivers.\\n2.  **Wait for a Gap:**
+        Wait for a safe\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\":
+        493,\"totalTokenCount\": 1894,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\":
+        1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \" gap in traffic. While pedestrians often have the right-of-way in marked
+        crosswalks, **never assume a car\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        15,\"candidatesTokenCount\": 518,\"totalTokenCount\": 1919,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" will stop for you.**\\n3.  **Make Eye Contact:** Try to
+        make eye contact with the driver of an approaching\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        15,\"candidatesTokenCount\": 543,\"totalTokenCount\": 1944,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" car. A wave or a nod can confirm they see you.\\n4.  **Watch
+        for Cars in All Lanes:** When\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\":
+        569,\"totalTokenCount\": 1970,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\":
+        1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \" one car stops, be cautious of another car in the next lane that may not
+        have seen you and could try to pass\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        15,\"candidatesTokenCount\": 593,\"totalTokenCount\": 1994,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" the stopped vehicle.\\n5.  **Cross Quickly and Alertly:**
+        Once it's clear, cross the street,\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        15,\"candidatesTokenCount\": 618,\"totalTokenCount\": 2019,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" continuing to look both ways as you walk.\\n\\n---\\n\\n###
+        How to Cross When There Is NO Crosswalk (Use\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        15,\"candidatesTokenCount\": 643,\"totalTokenCount\": 2044,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" Extra Caution)\\n\\nThis is more dangerous and should be
+        avoided if possible. If you must, follow these steps:\\n\\n\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 15,\"candidatesTokenCount\": 666,\"totalTokenCount\": 2067,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"1.  **Find the
+        Safest Spot:** Walk to a location where you have the best view of traffic in both directions.\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 692,\"totalTokenCount\": 2093,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" Avoid crossing
+        between parked cars, on a curve, or at the crest of a hill.\\n2.  **Wait for a\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 718,\"totalTokenCount\": 2119,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" Large Gap:**
+        You need a much larger gap in traffic than you would at a crosswalk. Wait until there are no cars coming\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 744,\"totalTokenCount\":
+        2145,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\":
+        \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
+        {\"parts\": [{\"text\": \" for a long distance.\\n3.  **Apply \\\"Stop, Look, and Listen\\\":** This is more critical
+        than ever here\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\":
+        771,\"totalTokenCount\": 2172,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\":
+        1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \". Look left, right, and left again, and listen carefully.\\n4.  **Cross Quickly
+        and Directly:** Walk\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\":
+        796,\"totalTokenCount\": 2197,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\":
+        1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \", don't run, straight across the street. Continue to watch for traffic as
+        you cross.\\n\\n---\\n\\n### Cru\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        15,\"candidatesTokenCount\": 821,\"totalTokenCount\": 2222,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"cial Safety Tips for Everyone\\n\\n*   **Be Visible:** During
+        the day, wear bright clothing. At night, wear\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        15,\"candidatesTokenCount\": 845,\"totalTokenCount\": 2246,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" light-colored or reflective clothing and consider carrying
+        a flashlight.\\n*   **Avoid Distractions:** **Put your phone away\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 15,\"candidatesTokenCount\": 870,\"totalTokenCount\": 2271,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \".** Take out your
+        earbuds or headphones. Being distracted for even a few seconds can lead to an accident.\\n*   **Never\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 896,\"totalTokenCount\":
+        2297,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\":
+        \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
+        {\"parts\": [{\"text\": \" Assume:** Never assume a driver sees you or will stop for you, even if you have the right
+        of way.\\n*   \"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\":
+        921,\"totalTokenCount\": 2322,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\":
+        1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \"**Watch for Turning Vehicles:** When at an intersection, always be on the
+        lookout for cars making right or left turns.\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\":
+        15,\"candidatesTokenCount\": 945,\"totalTokenCount\": 2346,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\": \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\\n*   **Teach Children:** Teach children these rules and
+        always hold the hand of a young child when crossing the street. Lead\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 15,\"candidatesTokenCount\": 970,\"totalTokenCount\": 2371,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" by example.\\n*
+        \  **Note for Different Countries:** In countries like the UK, Australia, and Japan, traffic comes\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 995,\"totalTokenCount\": 2396,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" from the right.
+        In that case, you should **look right, then left, then right again.**\\n\\nStaying **\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 1019,\"totalTokenCount\": 2420,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"alert** and **predictable**
+        is the key to crossing any street safely.\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 15,\"candidatesTokenCount\": 1035,\"totalTokenCount\": 2436,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 1386},\"modelVersion\": \"models/gemini-2.5-pro\",\"responseId\":
+        \"D1teaK3_Jbf9nsEP7NzysQY\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=5500
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,68 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '173'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: ''
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: You are a helpful assistant.
+        role: user
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '701'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=444
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.11437161529765409
+        content:
+          parts:
+          - text: |
+              I'm ready to assist you.  Please tell me what you need.
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-1.5-flash
+      responseId: 5lpeaN7wJ___698Pv8HGgAg
+      usageMetadata:
+        candidatesTokenCount: 17
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 17
+        promptTokenCount: 7
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 7
+        totalTokenCount: 24
+    status:
+      code: 200
+      message: OK
+version: 1

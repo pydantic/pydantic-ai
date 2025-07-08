@@ -1,0 +1,265 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '685'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the temperature of the capital of France?
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Get the capital of a country.
+          name: get_capital
+          parameters:
+            properties:
+              country:
+                description: The country name.
+                type: STRING
+            required:
+            - country
+            type: OBJECT
+        - description: Get the temperature in a city.
+          name: get_temperature
+          parameters:
+            properties:
+              city:
+                description: The city name.
+                type: STRING
+            required:
+            - city
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_capital\",\"args\":
+        {\"country\": \"France\"}}}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\":
+        52,\"candidatesTokenCount\": 5,\"totalTokenCount\": 57,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        52}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 5}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\":
+        \"1lpeaMTxIpW1nvgP-O3vwQY\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=477
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1002'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the temperature of the capital of France?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              country: France
+            id: pyd_ai_0e1a07b3c2b64d2ab3ad2efbe18e1b97
+            name: get_capital
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_0e1a07b3c2b64d2ab3ad2efbe18e1b97
+            name: get_capital
+            response:
+              return_value: Paris
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Get the capital of a country.
+          name: get_capital
+          parameters:
+            properties:
+              country:
+                description: The country name.
+                type: STRING
+            required:
+            - country
+            type: OBJECT
+        - description: Get the temperature in a city.
+          name: get_temperature
+          parameters:
+            properties:
+              city:
+                description: The city name.
+                type: STRING
+            required:
+            - city
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_temperature\",\"args\":
+        {\"city\": \"Paris\"}}}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\":
+        64,\"candidatesTokenCount\": 5,\"totalTokenCount\": 69,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        64}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 5}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\":
+        \"11peaOXwBPH_2PgPh_z--AY\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=493
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1327'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the temperature of the capital of France?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              country: France
+            id: pyd_ai_0e1a07b3c2b64d2ab3ad2efbe18e1b97
+            name: get_capital
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_0e1a07b3c2b64d2ab3ad2efbe18e1b97
+            name: get_capital
+            response:
+              return_value: Paris
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              city: Paris
+            id: pyd_ai_98b25d994c5648df82f683188629229d
+            name: get_temperature
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_98b25d994c5648df82f683188629229d
+            name: get_temperature
+            response:
+              return_value: 30°C
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Get the capital of a country.
+          name: get_capital
+          parameters:
+            properties:
+              country:
+                description: The country name.
+                type: STRING
+            required:
+            - country
+            type: OBJECT
+        - description: Get the temperature in a city.
+          name: get_temperature
+          parameters:
+            properties:
+              city:
+                description: The city name.
+                type: STRING
+            required:
+            - city
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The temperature in Paris\"}],\"role\": \"model\"}}],\"usageMetadata\":
+        {\"promptTokenCount\": 169,\"totalTokenCount\": 169,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        169}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\": \"11peaI_ZJLq3nvgP0vasuQk\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \" is 30°C.\\n\"}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\":
+        {\"promptTokenCount\": 79,\"candidatesTokenCount\": 12,\"totalTokenCount\": 91,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 79}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 12}]},\"modelVersion\":
+        \"gemini-2.0-flash\",\"responseId\": \"11peaI_ZJLq3nvgP0vasuQk\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=404
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -12,6 +12,10 @@ from opentelemetry._events import NoOpEventLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
 
 from pydantic_ai.messages import (
+    AudioUrl,
+    BinaryContent,
+    DocumentUrl,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -25,13 +29,14 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import Usage
 
-from ..conftest import try_import
+from ..conftest import IsStr, try_import
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
@@ -65,19 +70,17 @@ class MyModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
-        return (
-            ModelResponse(
-                parts=[
-                    TextPart('text1'),
-                    ToolCallPart('tool1', 'args1', 'tool_call_1'),
-                    ToolCallPart('tool2', {'args2': 3}, 'tool_call_2'),
-                    TextPart('text2'),
-                    {},  # test unexpected parts  # type: ignore
-                ],
-                model_name='my_model_123',
-            ),
-            Usage(request_tokens=100, response_tokens=200),
+    ) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                TextPart('text1'),
+                ToolCallPart('tool1', 'args1', 'tool_call_1'),
+                ToolCallPart('tool2', {'args2': 3}, 'tool_call_2'),
+                TextPart('text2'),
+                {},  # test unexpected parts  # type: ignore
+            ],
+            usage=Usage(request_tokens=100, response_tokens=200),
+            model_name='my_model_123',
         )
 
     @asynccontextmanager
@@ -122,11 +125,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 {},  # test unexpected parts  # type: ignore
             ]
         ),
-        ModelResponse(
-            parts=[
-                TextPart('text3'),
-            ]
-        ),
+        ModelResponse(parts=[TextPart('text3')]),
     ]
     await model.request(
         messages,
@@ -135,6 +134,8 @@ async def test_instrumented_model(capfire: CaptureLogfire):
             function_tools=[],
             allow_text_output=True,
             output_tools=[],
+            output_mode='text',
+            output_object=None,
         ),
     )
 
@@ -152,7 +153,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
                     'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
@@ -239,6 +240,7 @@ Fix the errors and try again.\
             {
                 'body': {
                     'content': """\
+Validation feedback:
 retry_prompt2
 
 Fix the errors and try again.\
@@ -331,6 +333,8 @@ async def test_instrumented_model_not_recording():
             function_tools=[],
             allow_text_output=True,
             output_tools=[],
+            output_mode='text',
+            output_object=None,
         ),
     )
 
@@ -353,6 +357,8 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
             function_tools=[],
             allow_text_output=True,
             output_tools=[],
+            output_mode='text',
+            output_object=None,
         ),
     ) as response_stream:
         assert [event async for event in response_stream] == snapshot(
@@ -376,7 +382,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
                     'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
@@ -441,9 +447,11 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 function_tools=[],
                 allow_text_output=True,
                 output_tools=[],
+                output_mode='text',
+                output_object=None,
             ),
         ) as response_stream:
-            async for event in response_stream:
+            async for event in response_stream:  # pragma: no branch
                 assert event == PartStartEvent(index=0, part=TextPart(content='text1'))
                 raise RuntimeError
 
@@ -461,7 +469,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
                     'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
@@ -535,11 +543,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                 {},  # test unexpected parts  # type: ignore
             ]
         ),
-        ModelResponse(
-            parts=[
-                TextPart('text3'),
-            ]
-        ),
+        ModelResponse(parts=[TextPart('text3')]),
     ]
     await model.request(
         messages,
@@ -548,6 +552,8 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
             function_tools=[],
             allow_text_output=True,
             output_tools=[],
+            output_mode='text',
+            output_object=None,
         ),
     )
 
@@ -565,7 +571,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "allow_text_output": true, "output_tools": []}',
+                    'model_request_parameters': '{"function_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -614,6 +620,7 @@ Fix the errors and try again.\
                                 {
                                     'event.name': 'gen_ai.user.message',
                                     'content': """\
+Validation feedback:
 retry_prompt2
 
 Fix the errors and try again.\
@@ -680,7 +687,8 @@ def test_messages_to_otel_events_serialization_errors():
         ModelRequest(parts=[ToolReturnPart('tool', Bar(), tool_call_id='return_tool_call_id')]),
     ]
 
-    assert [InstrumentedModel.event_to_dict(e) for e in InstrumentedModel.messages_to_otel_events(messages)] == [
+    settings = InstrumentationSettings()
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == [
         {
             'body': "{'role': 'assistant', 'tool_calls': [{'id': 'tool_call_id', 'type': 'function', 'function': {'name': 'tool', 'arguments': {'arg': Foo()}}}]}",
             'gen_ai.message.index': 0,
@@ -692,3 +700,227 @@ def test_messages_to_otel_events_serialization_errors():
             'event.name': 'gen_ai.tool.message',
         },
     ]
+
+
+def test_messages_to_otel_events_instructions():
+    messages = [
+        ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
+        ModelResponse(parts=[TextPart('text1')]),
+    ]
+    settings = InstrumentationSettings()
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+        [
+            {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
+            {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+        ]
+    )
+
+
+def test_messages_to_otel_events_instructions_multiple_messages():
+    messages = [
+        ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
+        ModelResponse(parts=[TextPart('text1')]),
+        ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')]),
+    ]
+    settings = InstrumentationSettings()
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+        [
+            {'content': 'instructions2', 'role': 'system', 'event.name': 'gen_ai.system.message'},
+            {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {'content': 'user_prompt2', 'role': 'user', 'gen_ai.message.index': 2, 'event.name': 'gen_ai.user.message'},
+        ]
+    )
+
+
+def test_messages_to_otel_events_image_url(document_content: BinaryContent):
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt', ImageUrl('https://example.com/image.png')])]),
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt2', AudioUrl('https://example.com/audio.mp3')])]),
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt3', DocumentUrl('https://example.com/document.pdf')])]),
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt4', VideoUrl('https://example.com/video.mp4')])]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'user_prompt5',
+                        ImageUrl('https://example.com/image2.png'),
+                        AudioUrl('https://example.com/audio2.mp3'),
+                        DocumentUrl('https://example.com/document2.pdf'),
+                        VideoUrl('https://example.com/video2.mp4'),
+                    ]
+                )
+            ]
+        ),
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
+        ModelResponse(parts=[TextPart('text1')]),
+    ]
+    settings = InstrumentationSettings()
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+        [
+            {
+                'content': ['user_prompt', {'kind': 'image-url', 'url': 'https://example.com/image.png'}],
+                'role': 'user',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'content': ['user_prompt2', {'kind': 'audio-url', 'url': 'https://example.com/audio.mp3'}],
+                'role': 'user',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'content': ['user_prompt3', {'kind': 'document-url', 'url': 'https://example.com/document.pdf'}],
+                'role': 'user',
+                'gen_ai.message.index': 2,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'content': ['user_prompt4', {'kind': 'video-url', 'url': 'https://example.com/video.mp4'}],
+                'role': 'user',
+                'gen_ai.message.index': 3,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'content': [
+                    'user_prompt5',
+                    {'kind': 'image-url', 'url': 'https://example.com/image2.png'},
+                    {'kind': 'audio-url', 'url': 'https://example.com/audio2.mp3'},
+                    {'kind': 'document-url', 'url': 'https://example.com/document2.pdf'},
+                    {'kind': 'video-url', 'url': 'https://example.com/video2.mp4'},
+                ],
+                'role': 'user',
+                'gen_ai.message.index': 4,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'content': [
+                    'user_prompt6',
+                    {'kind': 'binary', 'binary_content': IsStr(), 'media_type': 'application/pdf'},
+                ],
+                'role': 'user',
+                'gen_ai.message.index': 5,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'gen_ai.message.index': 6,
+                'event.name': 'gen_ai.assistant.message',
+            },
+        ]
+    )
+
+
+def test_messages_to_otel_events_without_binary_content(document_content: BinaryContent):
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
+    ]
+    settings = InstrumentationSettings(include_binary_content=False)
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+        [
+            {
+                'content': ['user_prompt6', {'kind': 'binary', 'media_type': 'application/pdf'}],
+                'role': 'user',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.user.message',
+            }
+        ]
+    )
+
+
+def test_messages_without_content(document_content: BinaryContent):
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('system_prompt')]),
+        ModelResponse(parts=[TextPart('text1')]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'user_prompt1',
+                        VideoUrl('https://example.com/video.mp4'),
+                        ImageUrl('https://example.com/image.png'),
+                        AudioUrl('https://example.com/audio.mp3'),
+                        DocumentUrl('https://example.com/document.pdf'),
+                        document_content,
+                    ]
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart('text2'), ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4})]),
+        ModelRequest(parts=[ToolReturnPart('tool', 'tool_return_content', 'tool_call_1')]),
+        ModelRequest(parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')]),
+        ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])]),
+    ]
+    settings = InstrumentationSettings(include_content=False)
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+        [
+            {
+                'role': 'system',
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.system.message',
+            },
+            {
+                'role': 'assistant',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'content': [
+                    {'kind': 'text'},
+                    {'kind': 'video-url'},
+                    {'kind': 'image-url'},
+                    {'kind': 'audio-url'},
+                    {'kind': 'document-url'},
+                    {'kind': 'binary', 'media_type': 'application/pdf'},
+                ],
+                'role': 'user',
+                'gen_ai.message.index': 2,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'role': 'assistant',
+                'tool_calls': [
+                    {
+                        'id': IsStr(),
+                        'type': 'function',
+                        'function': {'name': 'my_tool', 'arguments': {'a': 13, 'b': 4}},
+                    }
+                ],
+                'gen_ai.message.index': 3,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'tool',
+                'id': 'tool_call_1',
+                'name': 'tool',
+                'gen_ai.message.index': 4,
+                'event.name': 'gen_ai.tool.message',
+            },
+            {
+                'role': 'tool',
+                'id': 'tool_call_2',
+                'name': 'tool',
+                'gen_ai.message.index': 5,
+                'event.name': 'gen_ai.tool.message',
+            },
+            {
+                'content': [{'kind': 'text'}, {'kind': 'binary', 'media_type': 'application/pdf'}],
+                'role': 'user',
+                'gen_ai.message.index': 6,
+                'event.name': 'gen_ai.user.message',
+            },
+        ]
+    )

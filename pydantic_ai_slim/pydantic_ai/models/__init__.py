@@ -6,36 +6,53 @@ specific LLM being used.
 
 from __future__ import annotations as _annotations
 
+import base64
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
-from functools import cache
-from typing import TYPE_CHECKING
+from functools import cache, cached_property
+from typing import Generic, TypeVar, overload
 
 import httpx
-from typing_extensions import Literal, TypeAliasType
+from typing_extensions import Literal, TypeAliasType, TypedDict
 
+from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
+
+from .. import _utils
+from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
-from ..messages import ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent
+from ..messages import FileUrl, ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent, VideoUrl
+from ..output import OutputMode
+from ..profiles._json_schema import JsonSchemaTransformer
 from ..settings import ModelSettings
+from ..tools import ToolDefinition
 from ..usage import Usage
-
-if TYPE_CHECKING:
-    from ..tools import ToolDefinition
-
 
 KnownModelName = TypeAliasType(
     'KnownModelName',
     Literal[
-        'anthropic:claude-3-7-sonnet-latest',
+        'anthropic:claude-2.0',
+        'anthropic:claude-2.1',
+        'anthropic:claude-3-5-haiku-20241022',
         'anthropic:claude-3-5-haiku-latest',
+        'anthropic:claude-3-5-sonnet-20240620',
+        'anthropic:claude-3-5-sonnet-20241022',
         'anthropic:claude-3-5-sonnet-latest',
+        'anthropic:claude-3-7-sonnet-20250219',
+        'anthropic:claude-3-7-sonnet-latest',
+        'anthropic:claude-3-haiku-20240307',
+        'anthropic:claude-3-opus-20240229',
         'anthropic:claude-3-opus-latest',
-        'claude-3-7-sonnet-latest',
-        'claude-3-5-haiku-latest',
+        'anthropic:claude-3-sonnet-20240229',
+        'anthropic:claude-4-opus-20250514',
+        'anthropic:claude-4-sonnet-20250514',
+        'anthropic:claude-opus-4-0',
+        'anthropic:claude-opus-4-20250514',
+        'anthropic:claude-sonnet-4-0',
+        'anthropic:claude-sonnet-4-20250514',
         'bedrock:amazon.titan-tg1-large',
         'bedrock:amazon.titan-text-lite-v1',
         'bedrock:amazon.titan-text-express-v1',
@@ -59,6 +76,10 @@ KnownModelName = TypeAliasType(
         'bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
         'bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
         'bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        'bedrock:anthropic.claude-opus-4-20250514-v1:0',
+        'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
+        'bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
+        'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
         'bedrock:cohere.command-text-v14',
         'bedrock:cohere.command-r-v1:0',
         'bedrock:cohere.command-r-plus-v1:0',
@@ -79,8 +100,25 @@ KnownModelName = TypeAliasType(
         'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
         'bedrock:mistral.mistral-large-2402-v1:0',
         'bedrock:mistral.mistral-large-2407-v1:0',
+        'claude-2.0',
+        'claude-2.1',
+        'claude-3-5-haiku-20241022',
+        'claude-3-5-haiku-latest',
+        'claude-3-5-sonnet-20240620',
+        'claude-3-5-sonnet-20241022',
         'claude-3-5-sonnet-latest',
+        'claude-3-7-sonnet-20250219',
+        'claude-3-7-sonnet-latest',
+        'claude-3-haiku-20240307',
+        'claude-3-opus-20240229',
         'claude-3-opus-latest',
+        'claude-3-sonnet-20240229',
+        'claude-4-opus-20250514',
+        'claude-4-sonnet-20250514',
+        'claude-opus-4-0',
+        'claude-opus-4-20250514',
+        'claude-sonnet-4-0',
+        'claude-sonnet-4-20250514',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
         'cohere:command',
@@ -96,30 +134,32 @@ KnownModelName = TypeAliasType(
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
-        'google-gla:gemini-1.0-pro',
         'google-gla:gemini-1.5-flash',
         'google-gla:gemini-1.5-flash-8b',
         'google-gla:gemini-1.5-pro',
-        'google-gla:gemini-2.0-flash-exp',
-        'google-gla:gemini-2.0-flash-thinking-exp-01-21',
-        'google-gla:gemini-exp-1206',
+        'google-gla:gemini-1.0-pro',
         'google-gla:gemini-2.0-flash',
         'google-gla:gemini-2.0-flash-lite-preview-02-05',
         'google-gla:gemini-2.0-pro-exp-02-05',
+        'google-gla:gemini-2.5-flash-preview-05-20',
+        'google-gla:gemini-2.5-flash',
+        'google-gla:gemini-2.5-flash-lite-preview-06-17',
         'google-gla:gemini-2.5-pro-exp-03-25',
-        'google-gla:gemini-2.5-pro-preview-03-25',
-        'google-vertex:gemini-1.0-pro',
+        'google-gla:gemini-2.5-pro-preview-05-06',
+        'google-gla:gemini-2.5-pro',
         'google-vertex:gemini-1.5-flash',
         'google-vertex:gemini-1.5-flash-8b',
         'google-vertex:gemini-1.5-pro',
-        'google-vertex:gemini-2.0-flash-exp',
-        'google-vertex:gemini-2.0-flash-thinking-exp-01-21',
-        'google-vertex:gemini-exp-1206',
+        'google-vertex:gemini-1.0-pro',
         'google-vertex:gemini-2.0-flash',
         'google-vertex:gemini-2.0-flash-lite-preview-02-05',
         'google-vertex:gemini-2.0-pro-exp-02-05',
+        'google-vertex:gemini-2.5-flash-preview-05-20',
+        'google-vertex:gemini-2.5-flash',
+        'google-vertex:gemini-2.5-flash-lite-preview-06-17',
         'google-vertex:gemini-2.5-pro-exp-03-25',
-        'google-vertex:gemini-2.5-pro-preview-03-25',
+        'google-vertex:gemini-2.5-pro-preview-05-06',
+        'google-vertex:gemini-2.5-pro',
         'gpt-3.5-turbo',
         'gpt-3.5-turbo-0125',
         'gpt-3.5-turbo-0301',
@@ -182,6 +222,11 @@ KnownModelName = TypeAliasType(
         'groq:llama-3.2-3b-preview',
         'groq:llama-3.2-11b-vision-preview',
         'groq:llama-3.2-90b-vision-preview',
+        'heroku:claude-3-5-haiku',
+        'heroku:claude-3-5-sonnet-latest',
+        'heroku:claude-3-7-sonnet',
+        'heroku:claude-4-sonnet',
+        'heroku:claude-3-haiku',
         'mistral:codestral-latest',
         'mistral:mistral-large-latest',
         'mistral:mistral-moderation-latest',
@@ -192,6 +237,8 @@ KnownModelName = TypeAliasType(
         'o1-mini-2024-09-12',
         'o1-preview',
         'o1-preview-2024-09-12',
+        'o3',
+        'o3-2025-04-16',
         'o3-mini',
         'o3-mini-2025-01-31',
         'openai:chatgpt-4o-latest',
@@ -241,8 +288,12 @@ KnownModelName = TypeAliasType(
         'openai:o1-mini-2024-09-12',
         'openai:o1-preview',
         'openai:o1-preview-2024-09-12',
+        'openai:o3',
+        'openai:o3-2025-04-16',
         'openai:o3-mini',
         'openai:o3-mini-2025-01-31',
+        'openai:o4-mini',
+        'openai:o4-mini-2025-04-16',
         'test',
     ],
 )
@@ -252,17 +303,24 @@ KnownModelName = TypeAliasType(
 """
 
 
-@dataclass
+@dataclass(repr=False)
 class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
-    function_tools: list[ToolDefinition]
-    allow_text_output: bool
-    output_tools: list[ToolDefinition]
+    function_tools: list[ToolDefinition] = field(default_factory=list)
+
+    output_mode: OutputMode = 'text'
+    output_object: OutputObjectDefinition | None = None
+    output_tools: list[ToolDefinition] = field(default_factory=list)
+    allow_text_output: bool = True
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 class Model(ABC):
     """Abstract class for a model."""
+
+    _profile: ModelProfileSpec | None = None
 
     @abstractmethod
     async def request(
@@ -270,7 +328,7 @@ class Model(ABC):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
+    ) -> ModelResponse:
         """Make a request to the model."""
         raise NotImplementedError()
 
@@ -295,6 +353,18 @@ class Model(ABC):
         In particular, this method can be used to make modifications to the generated tool JSON schemas if necessary
         for vendor/model-specific reasons.
         """
+        if transformer := self.profile.json_schema_transformer:
+            model_request_parameters = replace(
+                model_request_parameters,
+                function_tools=[_customize_tool_def(transformer, t) for t in model_request_parameters.function_tools],
+                output_tools=[_customize_tool_def(transformer, t) for t in model_request_parameters.output_tools],
+            )
+            if output_object := model_request_parameters.output_object:
+                model_request_parameters = replace(
+                    model_request_parameters,
+                    output_object=_customize_output_object(transformer, output_object),
+                )
+
         return model_request_parameters
 
     @property
@@ -302,6 +372,18 @@ class Model(ABC):
     def model_name(self) -> str:
         """The model name."""
         raise NotImplementedError()
+
+    @cached_property
+    def profile(self) -> ModelProfile:
+        """The model profile."""
+        _profile = self._profile
+        if callable(_profile):
+            _profile = _profile(self.model_name)
+
+        if _profile is None:
+            return DEFAULT_PROFILE
+
+        return _profile
 
     @property
     @abstractmethod
@@ -320,11 +402,48 @@ class Model(ABC):
         """The base URL for the provider API, if available."""
         return None
 
-    def _get_instructions(self, messages: list[ModelMessage]) -> str | None:
-        """Get instructions from the first ModelRequest found when iterating messages in reverse."""
+    @staticmethod
+    def _get_instructions(messages: list[ModelMessage]) -> str | None:
+        """Get instructions from the first ModelRequest found when iterating messages in reverse.
+
+        In the case that a "mock" request was generated to include a tool-return part for a result tool,
+        we want to use the instructions from the second-to-most-recent request (which should correspond to the
+        original request that generated the response that resulted in the tool-return part).
+        """
+        last_two_requests: list[ModelRequest] = []
         for message in reversed(messages):
             if isinstance(message, ModelRequest):
-                return message.instructions
+                last_two_requests.append(message)
+                if len(last_two_requests) == 2:
+                    break
+                if message.instructions is not None:
+                    return message.instructions
+
+        # If we don't have two requests, and we didn't already return instructions, there are definitely not any:
+        if len(last_two_requests) != 2:
+            return None
+
+        most_recent_request = last_two_requests[0]
+        second_most_recent_request = last_two_requests[1]
+
+        # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt parts,
+        # we use the instructions from the second-to-most-recent request. This is necessary because when handling
+        # result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that ModelRequest will not
+        # have the relevant instructions from the agent.
+
+        # While it's possible that you could have a message history where the most recent request has only tool returns,
+        # I believe there is no way to achieve that would _change_ the instructions without manually crafting the most
+        # recent message. That might make sense in principle for some usage pattern, but it's enough of an edge case
+        # that I think it's not worth worrying about, since you can work around this by inserting another ModelRequest
+        # with no parts at all immediately before the request that has the tool calls (that works because we only look
+        # at the two most recent ModelRequests here).
+
+        # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
+
+        if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
+            return second_most_recent_request.instructions
+
+        return None
 
 
 @dataclass
@@ -357,7 +476,10 @@ class StreamedResponse(ABC):
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
         return ModelResponse(
-            parts=self._parts_manager.get_parts(), model_name=self.model_name, timestamp=self.timestamp
+            parts=self._parts_manager.get_parts(),
+            model_name=self.model_name,
+            timestamp=self.timestamp,
+            usage=self.usage(),
         )
 
     def usage(self) -> Usage:
@@ -441,20 +563,30 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
             raise UserError(f'Unknown model: {model}')
 
     if provider == 'vertexai':
-        provider = 'google-vertex'
+        provider = 'google-vertex'  # pragma: no cover
 
     if provider == 'cohere':
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
-    elif provider in ('deepseek', 'openai', 'azure'):
+    elif provider in (
+        'openai',
+        'deepseek',
+        'azure',
+        'openrouter',
+        'grok',
+        'fireworks',
+        'together',
+        'heroku',
+        'github',
+    ):
         from .openai import OpenAIModel
 
         return OpenAIModel(model_name, provider=provider)
     elif provider in ('google-gla', 'google-vertex'):
-        from .gemini import GeminiModel
+        from .google import GoogleModel
 
-        return GeminiModel(model_name, provider=provider)
+        return GoogleModel(model_name, provider=provider)
     elif provider == 'groq':
         from .groq import GroqModel
 
@@ -472,7 +604,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
 
         return BedrockConverseModel(model_name, provider=provider)
     else:
-        raise UserError(f'Unknown model: {model}')
+        raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
 def cached_async_http_client(*, provider: str | None = None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
@@ -510,9 +642,108 @@ def _cached_async_http_transport() -> httpx.AsyncHTTPTransport:
     return httpx.AsyncHTTPTransport()
 
 
+DataT = TypeVar('DataT', str, bytes)
+
+
+class DownloadedItem(TypedDict, Generic[DataT]):
+    """The downloaded data and its type."""
+
+    data: DataT
+    """The downloaded data."""
+
+    data_type: str
+    """The type of data that was downloaded.
+
+    Extracted from header "content-type", but defaults to the media type inferred from the file URL if content-type is "application/octet-stream".
+    """
+
+
+@overload
+async def download_item(
+    item: FileUrl,
+    data_format: Literal['bytes'],
+    type_format: Literal['mime', 'extension'] = 'mime',
+) -> DownloadedItem[bytes]: ...
+
+
+@overload
+async def download_item(
+    item: FileUrl,
+    data_format: Literal['base64', 'base64_uri', 'text'],
+    type_format: Literal['mime', 'extension'] = 'mime',
+) -> DownloadedItem[str]: ...
+
+
+async def download_item(
+    item: FileUrl,
+    data_format: Literal['bytes', 'base64', 'base64_uri', 'text'] = 'bytes',
+    type_format: Literal['mime', 'extension'] = 'mime',
+) -> DownloadedItem[str] | DownloadedItem[bytes]:
+    """Download an item by URL and return the content as a bytes object or a (base64-encoded) string.
+
+    Args:
+        item: The item to download.
+        data_format: The format to return the content in:
+            - `bytes`: The raw bytes of the content.
+            - `base64`: The base64-encoded content.
+            - `base64_uri`: The base64-encoded content as a data URI.
+            - `text`: The content as a string.
+        type_format: The format to return the media type in:
+            - `mime`: The media type as a MIME type.
+            - `extension`: The media type as an extension.
+
+    Raises:
+        UserError: If the URL points to a YouTube video or its protocol is gs://.
+    """
+    if item.url.startswith('gs://'):
+        raise UserError('Downloading from protocol "gs://" is not supported.')
+    elif isinstance(item, VideoUrl) and item.is_youtube:
+        raise UserError('Downloading YouTube videos is not supported.')
+
+    client = cached_async_http_client()
+    response = await client.get(item.url, follow_redirects=True)
+    response.raise_for_status()
+
+    if content_type := response.headers.get('content-type'):
+        content_type = content_type.split(';')[0]
+        if content_type == 'application/octet-stream':
+            content_type = None
+
+    media_type = content_type or item.media_type
+
+    data_type = media_type
+    if type_format == 'extension':
+        data_type = data_type.split('/')[1]
+
+    data = response.content
+    if data_format in ('base64', 'base64_uri'):
+        data = base64.b64encode(data).decode('utf-8')
+        if data_format == 'base64_uri':
+            data = f'data:{media_type};base64,{data}'
+        return DownloadedItem[str](data=data, data_type=data_type)
+    elif data_format == 'text':
+        return DownloadedItem[str](data=data.decode('utf-8'), data_type=data_type)
+    else:
+        return DownloadedItem[bytes](data=data, data_type=data_type)
+
+
 @cache
 def get_user_agent() -> str:
     """Get the user agent string for the HTTP client."""
     from .. import __version__
 
     return f'pydantic-ai/{__version__}'
+
+
+def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinition):
+    schema_transformer = transformer(t.parameters_json_schema, strict=t.strict)
+    parameters_json_schema = schema_transformer.walk()
+    if t.strict is None:
+        t = replace(t, strict=schema_transformer.is_strict_compatible)
+    return replace(t, parameters_json_schema=parameters_json_schema)
+
+
+def _customize_output_object(transformer: type[JsonSchemaTransformer], o: OutputObjectDefinition):
+    schema_transformer = transformer(o.json_schema, strict=True)
+    son_schema = schema_transformer.walk()
+    return replace(o, json_schema=son_schema)

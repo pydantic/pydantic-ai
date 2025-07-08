@@ -80,7 +80,7 @@ Here we have a function that takes a list of `#!python (user_prompt, user_id)` t
 
 Here's how we would write tests using [`TestModel`][pydantic_ai.models.test.TestModel]:
 
-```python {title="test_weather_app.py" call_name="test_forecast"}
+```python {title="test_weather_app.py" call_name="test_forecast" requires="weather_app.py"}
 from datetime import timezone
 import pytest
 
@@ -97,6 +97,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     ModelRequest,
 )
+from pydantic_ai.usage import Usage
 
 from fake_database import DatabaseConn
 from weather_app import run_weather_forecast, weather_agent
@@ -140,6 +141,13 @@ async def test_forecast():
                     tool_call_id=IsStr(),
                 )
             ],
+            usage=Usage(
+                requests=1,
+                request_tokens=71,
+                response_tokens=7,
+                total_tokens=78,
+                details=None,
+            ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
         ),
@@ -159,6 +167,13 @@ async def test_forecast():
                     content='{"weather_forecast":"Sunny with a chance of rain"}',
                 )
             ],
+            usage=Usage(
+                requests=1,
+                request_tokens=77,
+                response_tokens=16,
+                total_tokens=93,
+                details=None,
+            ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
         ),
@@ -182,7 +197,7 @@ To fully exercise `weather_forecast`, we need to use [`FunctionModel`][pydantic_
 
 Here's an example of using `FunctionModel` to test the `weather_forecast` tool with custom inputs
 
-```python {title="test_weather_app2.py" call_name="test_forecast_future"}
+```python {title="test_weather_app2.py" call_name="test_forecast_future" requires="weather_app.py"}
 import re
 
 import pytest
@@ -241,7 +256,7 @@ If you're writing lots of tests that all require model to be overridden, you can
 
 Here's an example of a fixture that overrides the model with `TestModel`:
 
-```python {title="tests.py"}
+```python {title="test_agent.py" requires="weather_app.py"}
 import pytest
 from weather_app import weather_agent
 

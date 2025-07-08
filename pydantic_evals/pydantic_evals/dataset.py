@@ -15,7 +15,7 @@ import sys
 import time
 import warnings
 from collections.abc import Awaitable, Mapping, Sequence
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError,
 from pydantic._internal import _typing_extra
 from pydantic_core import to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
+from rich.progress import Progress
 from typing_extensions import NotRequired, Self, TypedDict, TypeVar
 
 from pydantic_evals._utils import get_event_loop
@@ -42,15 +43,15 @@ from .otel import SpanTree
 from .otel._context_subtree import context_subtree
 from .reporting import EvaluationReport, ReportCase
 
-if sys.version_info < (3, 11):  # pragma: no cover
-    from exceptiongroup import ExceptionGroup
+if sys.version_info < (3, 11):
+    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
 else:
-    ExceptionGroup = ExceptionGroup
+    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 # while waiting for https://github.com/pydantic/logfire/issues/745
 try:
     import logfire._internal.stack_info
-except ImportError:  # pragma: no cover
+except ImportError:
     pass
 else:
     from pathlib import Path
@@ -251,7 +252,11 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         )
 
     async def evaluate(
-        self, task: Callable[[InputsT], Awaitable[OutputT]], name: str | None = None, max_concurrency: int | None = None
+        self,
+        task: Callable[[InputsT], Awaitable[OutputT]],
+        name: str | None = None,
+        max_concurrency: int | None = None,
+        progress: bool = True,
     ) -> EvaluationReport:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -265,18 +270,26 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 If omitted, the name of the task function will be used.
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
+            progress: Whether to show a progress bar for the evaluation. Defaults to `True`.
 
         Returns:
             A report containing the results of the evaluation.
         """
         name = name or get_unwrapped_function_name(task)
+        total_cases = len(self.cases)
+        progress_bar = Progress() if progress else None
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
-        with _logfire.span('evaluate {name}', name=name) as eval_span:
+
+        with _logfire.span('evaluate {name}', name=name) as eval_span, progress_bar or nullcontext():
+            task_id = progress_bar.add_task(f'Evaluating {name}', total=total_cases) if progress_bar else None
 
             async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
                 async with limiter:
-                    return await _run_task_and_evaluators(task, case, report_case_name, self.evaluators)
+                    result = await _run_task_and_evaluators(task, case, report_case_name, self.evaluators)
+                    if progress_bar and task_id is not None:  # pragma: no branch
+                        progress_bar.update(task_id, advance=1)
+                    return result
 
             report = EvaluationReport(
                 name=name,
@@ -291,12 +304,15 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             eval_span.set_attribute('cases', report.cases)
             # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
             eval_span.set_attribute('averages', report.averages())
-
         return report
 
     def evaluate_sync(
-        self, task: Callable[[InputsT], Awaitable[OutputT]], name: str | None = None, max_concurrency: int | None = None
-    ) -> EvaluationReport:  # pragma: no cover
+        self,
+        task: Callable[[InputsT], Awaitable[OutputT]],
+        name: str | None = None,
+        max_concurrency: int | None = None,
+        progress: bool = True,
+    ) -> EvaluationReport:
         """Evaluates the test cases in the dataset using the given task.
 
         This is a synchronous wrapper around [`evaluate`][pydantic_evals.Dataset.evaluate] provided for convenience.
@@ -308,11 +324,14 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 If omitted, the name of the task function will be used.
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
+            progress: Whether to show a progress bar for the evaluation. Defaults to True.
 
         Returns:
             A report containing the results of the evaluation.
         """
-        return get_event_loop().run_until_complete(self.evaluate(task, name=name, max_concurrency=max_concurrency))
+        return get_event_loop().run_until_complete(
+            self.evaluate(task, name=name, max_concurrency=max_concurrency, progress=progress)
+        )
 
     def add_case(
         self,
@@ -384,7 +403,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         for c in cls.__mro__:
             metadata = getattr(c, '__pydantic_generic_metadata__', {})
-            if len(args := (metadata.get('args', ()) or getattr(c, '__args__', ()))) == 3:
+            if len(args := (metadata.get('args', ()) or getattr(c, '__args__', ()))) == 3:  # pragma: no branch
                 return args
         else:  # pragma: no cover
             warnings.warn(
@@ -551,8 +570,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         fmt = self._infer_fmt(path, fmt)
 
         schema_ref: str | None = None
-        if schema_path is not None:
-            if isinstance(schema_path, str):
+        if schema_path is not None:  # pragma: no branch
+            if isinstance(schema_path, str):  # pragma: no branch
                 schema_path = Path(schema_path.format(stem=path.stem))
 
             if not schema_path.is_absolute():
@@ -568,7 +587,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         if fmt == 'yaml':
             dumped_data = self.model_dump(mode='json', by_alias=True, exclude_defaults=True, context=context)
             content = yaml.dump(dumped_data, sort_keys=False)
-            if schema_ref:
+            if schema_ref:  # pragma: no branch
                 yaml_language_server_line = f'{_YAML_SCHEMA_LINE_PREFIX}{schema_ref}'
                 content = f'{yaml_language_server_line}\n{content}'
             path.write_text(content)
@@ -623,7 +642,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             if len(type_hints) == 1:
                 [type_hint_type] = type_hints.values()
                 evaluator_schema_types.append(_make_typed_dict('short_evaluator', {name: type_hint_type}))
-            elif len(required_type_hints) == 1:
+            elif len(required_type_hints) == 1:  # pragma: no branch
                 [type_hint_type] = required_type_hints.values()
                 evaluator_schema_types.append(_make_typed_dict('short_evaluator', {name: type_hint_type}))
 
@@ -640,12 +659,12 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             inputs: in_type  # pyright: ignore[reportInvalidTypeForm]
             metadata: meta_type | None = None  # pyright: ignore[reportInvalidTypeForm,reportUnknownVariableType]
             expected_output: out_type | None = None  # pyright: ignore[reportInvalidTypeForm,reportUnknownVariableType]
-            if evaluator_schema_types:
+            if evaluator_schema_types:  # pragma: no branch
                 evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa UP007
 
         class Dataset(BaseModel, extra='forbid'):
             cases: list[Case]
-            if evaluator_schema_types:
+            if evaluator_schema_types:  # pragma: no branch
                 evaluators: list[Union[tuple(evaluator_schema_types)]] = []  # pyright: ignore  # noqa UP007
 
         json_schema = Dataset.model_json_schema()
@@ -666,7 +685,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         path = Path(path)
         json_schema = cls.model_json_schema_with_evaluators(custom_evaluator_types)
         schema_content = to_json(json_schema, indent=2).decode() + '\n'
-        if not path.exists() or path.read_text() != schema_content:
+        if not path.exists() or path.read_text() != schema_content:  # pragma: no branch
             path.write_text(schema_content)
 
     @classmethod
@@ -822,7 +841,7 @@ async def _run_task(
     finally:
         _CURRENT_TASK_RUN.reset(token)
 
-    if isinstance(span_tree, SpanTree):
+    if isinstance(span_tree, SpanTree):  # pragma: no branch
         # TODO: Question: Should we make this metric-attributes functionality more user-configurable in some way before merging?
         #   Note: the use of otel for collecting these metrics is the main reason why I think we should require at least otel as a dependency, if not logfire;
         #   otherwise, we don't have a great way to get usage data from arbitrary frameworks.
@@ -873,7 +892,7 @@ async def _run_task_and_evaluators(
     with _logfire.span(
         'case: {case_name}',
         task_name=get_unwrapped_function_name(task),
-        case_name=case.name,
+        case_name=report_case_name,
         inputs=case.inputs,
         metadata=case.metadata,
         expected_output=case.expected_output,
@@ -962,7 +981,7 @@ def _group_evaluator_outputs_by_type(
             assertions[name] = assertion
         elif score := er.downcast(int, float):
             scores[name] = score
-        elif label := er.downcast(str):
+        elif label := er.downcast(str):  # pragma: no branch
             labels[name] = label
     return assertions, scores, labels
 
@@ -978,7 +997,7 @@ def set_eval_attribute(name: str, value: Any) -> None:
         value: The value of the attribute.
     """
     current_case = _CURRENT_TASK_RUN.get()
-    if current_case is not None:
+    if current_case is not None:  # pragma: no branch
         current_case.record_attribute(name, value)
 
 
@@ -990,7 +1009,7 @@ def increment_eval_metric(name: str, amount: int | float) -> None:
         amount: The amount to increment by.
     """
     current_case = _CURRENT_TASK_RUN.get()
-    if current_case is not None:
+    if current_case is not None:  # pragma: no branch
         current_case.increment_metric(name, amount)
 
 
@@ -1036,14 +1055,14 @@ def _get_registry(
             raise ValueError(
                 f'All custom evaluator classes must be decorated with `@dataclass`, but {evaluator_class} is not'
             )
-        name = evaluator_class.name()
+        name = evaluator_class.get_serialization_name()
         if name in registry:
             raise ValueError(f'Duplicate evaluator class name: {name!r}')
         registry[name] = evaluator_class
 
     for evaluator_class in DEFAULT_EVALUATORS:
         # Allow overriding the default evaluators with custom evaluators raising an error
-        registry.setdefault(evaluator_class.name(), evaluator_class)
+        registry.setdefault(evaluator_class.get_serialization_name(), evaluator_class)
 
     return registry
 

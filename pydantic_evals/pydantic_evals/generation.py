@@ -37,7 +37,7 @@ async def generate_dataset(
     model: models.Model | models.KnownModelName = 'openai:gpt-4o',
     n_examples: int = 3,
     extra_instructions: str | None = None,
-) -> Dataset[InputsT, OutputT, MetadataT]:  # pragma: no cover
+) -> Dataset[InputsT, OutputT, MetadataT]:
     """Use an LLM to generate a dataset of test cases, each consisting of input, expected output, and metadata.
 
     This function creates a properly structured dataset with the specified input, output, and metadata types.
@@ -74,9 +74,9 @@ async def generate_dataset(
     result = await agent.run(extra_instructions or 'Please generate the object.')
     try:
         result = dataset_type.from_text(result.output, fmt='json', custom_evaluator_types=custom_evaluator_types)
-    except ValidationError as e:
+    except ValidationError as e:  # pragma: no cover
         print(f'Raw response from model:\n{result.output}')
         raise e
     if path is not None:
-        result.to_file(path, custom_evaluator_types=custom_evaluator_types)
+        result.to_file(path, custom_evaluator_types=custom_evaluator_types)  # pragma: no cover
     return result

@@ -410,7 +410,7 @@ async def test_next(mock_snapshot_id: object):
     @dataclass
     class Bar(BaseNode):
         async def run(self, ctx: GraphRunContext) -> Foo:
-            return Foo()
+            return Foo()  # pragma: no cover
 
     g = Graph(nodes=(Foo, Bar))
     assert g.name is None

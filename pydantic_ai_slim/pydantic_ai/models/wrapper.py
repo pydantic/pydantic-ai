@@ -3,11 +3,12 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Any
 
 from ..messages import ModelMessage, ModelResponse
+from ..profiles import ModelProfile
 from ..settings import ModelSettings
-from ..usage import Usage
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 
@@ -24,7 +25,7 @@ class WrapperModel(Model):
     def __init__(self, wrapped: Model | KnownModelName):
         self.wrapped = infer_model(wrapped)
 
-    async def request(self, *args: Any, **kwargs: Any) -> tuple[ModelResponse, Usage]:
+    async def request(self, *args: Any, **kwargs: Any) -> ModelResponse:
         return await self.wrapped.request(*args, **kwargs)
 
     @asynccontextmanager
@@ -48,5 +49,9 @@ class WrapperModel(Model):
     def system(self) -> str:
         return self.wrapped.system
 
+    @cached_property
+    def profile(self) -> ModelProfile:
+        return self.wrapped.profile
+
     def __getattr__(self, item: str):
-        return getattr(self.wrapped, item)
+        return getattr(self.wrapped, item)  # pragma: no cover

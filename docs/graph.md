@@ -167,7 +167,7 @@ _(This example is complete, it can be run "as is" with Python 3.10+)_
 
 A [mermaid diagram](#mermaid-diagrams) for this graph can be generated with the following code:
 
-```py {title="graph_example_diagram.py" py="3.10"}
+```py {title="graph_example_diagram.py" py="3.10" requires="graph_example.py"}
 from graph_example import DivisibleBy5, fives_graph
 
 fives_graph.mermaid_code(start_node=DivisibleBy5)
@@ -197,7 +197,7 @@ display(Image(fives_graph.mermaid_image(start_node=DivisibleBy5)))
 
 The "state" concept in `pydantic-graph` provides an optional way to access and mutate an object (often a `dataclass` or Pydantic model) as nodes run in a graph. If you think of Graphs as a production line, then your state is the engine being passed along the line and built up by each node as the graph is run.
 
-In the future, we intend to extend `pydantic-graph` to provide state persistence with the state recorded after each node is run, see [#695](https://github.com/pydantic/pydantic-ai/issues/695).
+`pydantic-graph` provides state persistence, with the state recorded after each node is run. (See [State Persistence](#state-persistence).)
 
 Here's an example of a graph which represents a vending machine where the user may insert coins and select a product to purchase.
 
@@ -308,7 +308,7 @@ _(This example is complete, it can be run "as is" with Python 3.10+ — you'll n
 
 A [mermaid diagram](#mermaid-diagrams) for this graph can be generated with the following code:
 
-```py {title="vending_machine_diagram.py" py="3.10"}
+```py {title="vending_machine_diagram.py" py="3.10" requires="vending_machine.py"}
 from vending_machine import InsertCoin, vending_machine_graph
 
 vending_machine_graph.mermaid_code(start_node=InsertCoin)
@@ -411,7 +411,7 @@ class WriteEmail(BaseNode[State]):
             prompt,
             message_history=ctx.state.write_agent_messages,
         )
-        ctx.state.write_agent_messages += result.all_messages()
+        ctx.state.write_agent_messages += result.new_messages()
         return Feedback(result.output)
 
 
@@ -524,7 +524,7 @@ Alternatively, you can drive iteration manually with the [`GraphRun.next`][pydan
 
 Below is a contrived example that stops whenever the counter is at 2, ignoring any node runs beyond that:
 
-```python {title="count_down_next.py" noqa="I001" py="3.10"}
+```python {title="count_down_next.py" noqa="I001" py="3.10" requires="count_down.py"}
 from pydantic_graph import End, FullStatePersistence
 from count_down import CountDown, CountDownState, count_down_graph
 
@@ -593,7 +593,7 @@ We can run the `count_down_graph` from [above](#iterating-over-a-graph), using [
 
 As you can see in this code, `run_node` requires no external application state (apart from state persistence) to be run, meaning graphs can easily be executed by distributed execution and queueing systems.
 
-```python {title="count_down_from_persistence.py" noqa="I001" py="3.10"}
+```python {title="count_down_from_persistence.py" noqa="I001" py="3.10" requires="count_down.py"}
 from pathlib import Path
 
 from pydantic_graph import End
@@ -653,7 +653,7 @@ Instead of running the entire graph in a single process invocation, we run the g
 
     from dataclasses import dataclass, field
 
-    from groq import BaseModel
+    from pydantic import BaseModel
     from pydantic_graph import (
         BaseNode,
         End,
@@ -681,7 +681,7 @@ Instead of running the entire graph in a single process invocation, we run the g
                 'Ask a simple question with a single correct answer.',
                 message_history=ctx.state.ask_agent_messages,
             )
-            ctx.state.ask_agent_messages += result.all_messages()
+            ctx.state.ask_agent_messages += result.new_messages()
             ctx.state.question = result.output
             return Answer(result.output)
 
@@ -722,7 +722,7 @@ Instead of running the entire graph in a single process invocation, we run the g
                 format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
                 message_history=ctx.state.evaluate_agent_messages,
             )
-            ctx.state.evaluate_agent_messages += result.all_messages()
+            ctx.state.evaluate_agent_messages += result.new_messages()
             if result.output.correct:
                 return End(result.output.comment)
             else:
@@ -746,7 +746,7 @@ Instead of running the entire graph in a single process invocation, we run the g
 
     _(This example is complete, it can be run "as is" with Python 3.10+)_
 
-```python {title="ai_q_and_a_run.py" noqa="I001" py="3.10"}
+```python {title="ai_q_and_a_run.py" noqa="I001" py="3.10" requires="ai_q_and_a_graph.py"}
 import sys
 from pathlib import Path
 
@@ -812,7 +812,7 @@ import asyncio
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
+from pydantic_graph import BaseNode, End, FullStatePersistence, Graph, GraphRunContext
 
 
 @dataclass
@@ -856,11 +856,11 @@ fives_graph = Graph(nodes=[DivisibleBy5, Increment])
 async def main():
     with ProcessPoolExecutor() as executor:
         deps = GraphDeps(executor)
-        result = await fives_graph.run(DivisibleBy5(3), deps=deps)
+        result = await fives_graph.run(DivisibleBy5(3), deps=deps, persistence=FullStatePersistence())
     print(result.output)
     #> 5
     # the full history is quite verbose (see below), so we'll just print the summary
-    print([item.data_snapshot() for item in result.history])
+    print([item.node for item in result.persistence.history])
     """
     [
         DivisibleBy5(foo=3),
@@ -965,7 +965,7 @@ You can specify the direction of the state diagram using one of the following va
 - `'BT'`: Bottom to top, the diagram flows vertically from bottom to top.
 
 Here is an example of how to do this using 'Left to Right' (LR) instead of the default 'Top to Bottom' (TB):
-```py {title="vending_machine_diagram.py" py="3.10"}
+```py {title="vending_machine_diagram.py" py="3.10" requires="vending_machine.py"}
 from vending_machine import InsertCoin, vending_machine_graph
 
 vending_machine_graph.mermaid_code(start_node=InsertCoin, direction='LR')
