@@ -73,7 +73,7 @@ The [`Storage`][fasta2a.Storage] component serves two purposes:
 1. **Task Storage**: Stores tasks in A2A protocol format, including their status, artifacts, and message history
 2. **Context Storage**: Stores conversation context in a format optimized for the specific agent implementation
 
-This dual-purpose design allows flexibility for agents to store rich internal state (e.g., tool calls, reasoning traces) while maintaining efficient conversation continuity across multiple task executions.
+This design allows for agents to store rich internal state (e.g., tool calls, reasoning traces) as well as store task-specific A2A-formatted messages and artifacts.
 
 For example, a PydanticAI agent might store its complete internal message format (including tool calls and responses) in the context storage, while storing only the A2A-compliant messages in the task history.
 
