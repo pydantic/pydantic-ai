@@ -62,6 +62,7 @@ if TYPE_CHECKING:
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
+        ToolSpecificationTypeDef,
         ToolTypeDef,
         VideoBlockTypeDef,
     )
@@ -228,13 +229,15 @@ class BedrockConverseModel(Model):
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
-        return {
-            'toolSpec': {
-                'name': f.name,
-                'description': f.description,
-                'inputSchema': {'json': f.parameters_json_schema},
-            }
+        tool_spec: ToolSpecificationTypeDef = {
+            'name': f.name,
+            'inputSchema': {'json': f.parameters_json_schema},
         }
+
+        if f.description:  # pragma: no branch
+            tool_spec['description'] = f.description
+
+        return {'toolSpec': tool_spec}
 
     @property
     def base_url(self) -> str:

@@ -534,7 +534,7 @@ def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclaration
     json_schema = tool.parameters_json_schema
     f = FunctionDeclarationDict(
         name=tool.name,
-        description=tool.description,
+        description=tool.description or '',
         parameters=json_schema,  # type: ignore
     )
     return f

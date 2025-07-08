@@ -773,7 +773,7 @@ class _GeminiFunction(TypedDict):
 
 def _function_from_abstract_tool(tool: ToolDefinition) -> _GeminiFunction:
     json_schema = tool.parameters_json_schema
-    f = _GeminiFunction(name=tool.name, description=tool.description, parameters=json_schema)
+    f = _GeminiFunction(name=tool.name, description=tool.description or '', parameters=json_schema)
     return f
 
 

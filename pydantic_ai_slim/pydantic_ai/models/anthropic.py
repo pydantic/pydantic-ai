@@ -416,7 +416,7 @@ class AnthropicModel(Model):
     def _map_tool_definition(f: ToolDefinition) -> BetaToolParam:
         return {
             'name': f.name,
-            'description': f.description,
+            'description': f.description or '',
             'input_schema': f.parameters_json_schema,
         }
 

@@ -66,7 +66,7 @@ async def main():
             function_tools=[
                 ToolDefinition(
                     name=Divide.__name__.lower(),
-                    description=Divide.__doc__ or '',
+                    description=Divide.__doc__,
                     parameters_json_schema=Divide.model_json_schema(),
                 )
             ],

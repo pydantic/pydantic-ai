@@ -1443,9 +1443,9 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
 
 async def test_bedrock_anthropic_no_tool_choice(bedrock_provider: BedrockProvider):
     my_tool = ToolDefinition(
-        'my_tool',
-        'This is my tool',
-        {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+        name='my_tool',
+        description='This is my tool',
+        parameters_json_schema={'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
     )
     mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=False, output_tools=[])
 
