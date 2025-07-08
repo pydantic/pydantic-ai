@@ -152,29 +152,25 @@ def test_openai_responses_model_settings():
 def test_instrumented_model_with_wrapped_settings():
     """Test that Agent properly merges settings from InstrumentedModel's wrapped model."""
     from pydantic_ai.models.instrumented import InstrumentedModel
-    
+
     # Create a base model with settings
     base_model_settings = ModelSettings(max_tokens=100, temperature=0.3)
     base_model = TestModel(settings=base_model_settings)
-    
+
     # Create an InstrumentedModel wrapping the base model
     instrumented_model = InstrumentedModel(base_model)
-    
+
     # Create an agent with additional settings
     agent_settings = ModelSettings(max_tokens=200, top_p=0.9)
     agent = Agent(model=instrumented_model, model_settings=agent_settings)
-    
+
     # Create a simple response function to test the merge
     def test_response(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('test')])
-    
+
     # Replace the instrumented model's wrapped model with a function model for testing
     instrumented_model.wrapped = FunctionModel(test_response, settings=base_model_settings)
-    
+
     # Run the agent - this should trigger the wrapped model settings merge path
     result = agent.run_sync('test message')
     assert result.output == 'test'
-
-
-
-
