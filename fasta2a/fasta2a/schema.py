@@ -236,7 +236,7 @@ class Message(TypedDict):
     """Metadata about the message."""
 
     # Additional fields
-    message_id: NotRequired[str]
+    message_id: str
     """Identifier created by the message creator."""
 
     context_id: NotRequired[str]
