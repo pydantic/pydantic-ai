@@ -387,6 +387,30 @@ print(repr(result.output))
 
 _(This example is complete, it can be run "as is")_
 
+#### Structured Dict
+A dictionary subclass that enforces a JSON schema for structured dict.
+
+This class serves as both a container for structured data and the schema itself, making it suitable for use as an output type in agents that require validated dictionary responses.
+
+```python
+from pydantic_ai import Agent, StructuredDict
+from pydantic_ai.models.test import TestModel
+
+schema = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "age": {"type": "integer"}
+    },
+    "required": ["name", "age"]
+}
+
+agent = Agent(TestModel(), output_type=StructuredDict(schema))
+result = agent.run_sync("Create a person")
+print(result.output)
+#> {'name': 'John Doe', 'age': 30}
+```
+
 ### Output validators {#output-validator-functions}
 
 Some validation is inconvenient or impossible to do in Pydantic validators, in particular when the validation requires IO and is asynchronous. PydanticAI provides a way to add validation functions via the [`agent.output_validator`][pydantic_ai.Agent.output_validator] decorator.

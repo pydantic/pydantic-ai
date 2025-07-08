@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Generic, Literal, Union
+from typing import Any, Callable, Generic, Literal, Union
 
+from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core.core_schema import CoreSchema, any_schema
 from typing_extensions import TypeAliasType, TypeVar
 
+from .exceptions import UserError
 from .tools import RunContext
 
 __all__ = (
@@ -14,6 +19,7 @@ __all__ = (
     'NativeOutput',
     'PromptedOutput',
     'TextOutput',
+    'StructuredDict',
     # types
     'OutputDataT',
     'OutputMode',
@@ -290,3 +296,57 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
+
+
+class StructuredDict(dict):
+    """A dictionary subclass that enforces a JSON schema for structured output.
+
+    This class serves as both a container for structured data and the schema itself,
+    making it suitable for use as an output type in agents that require validated
+    dictionary responses.
+
+    Args:
+        json_schema: A JSON schema (as dict or JSON string) defining the structure
+            and validation rules for the dictionary content.
+
+    Raises:
+        UserError: If json_schema is not a dict/string or contains invalid JSON.
+
+    Example:
+    ```python
+    from pydantic_ai import Agent, StructuredDict
+    from pydantic_ai.models.test import TestModel
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"}
+        },
+        "required": ["name", "age"]
+    }
+
+    agent = Agent(TestModel(), output_type=StructuredDict(schema))
+    result = agent.run_sync("Create a person")
+    print(result.output)
+    #> {'name': 'John Doe', 'age': 30}
+    ```
+    """
+
+    def __init__(self, json_schema: dict[str, Any] | str):
+        if not isinstance(json_schema, (dict, str)):
+            raise UserError(f'Expected json_schema to be a dict or str, got: {type(json_schema)!r}')
+
+        if isinstance(json_schema, str):
+            try:
+                json_schema = json.loads(json_schema)
+            except json.JSONDecodeError as e:
+                raise UserError('Schema string is not a valid JSON.') from e
+
+        super().__init__(json_schema)
+
+    def __get_pydantic_core_schema__(self, source_type: Any, handler: GetCoreSchemaHandler) -> CoreSchema:
+        return any_schema()
+
+    def __get_pydantic_json_schema__(self, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        return self

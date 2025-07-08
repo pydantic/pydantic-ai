@@ -18,6 +18,7 @@ from pydantic_ai._output import (
     NativeOutputSchema,
     OutputSpec,
     PromptedOutput,
+    StructuredDict,
     TextOutput,
     TextOutputSchema,
     ToolOutputSchema,
@@ -1590,6 +1591,39 @@ Don't include any text or Markdown fencing before or after.\
             ),
         ]
     )
+
+
+def test_structured_dict():
+    schema_dict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'age': {'type': 'integer'},
+            },
+            'required': ['name', 'age'],
+        }
+    )
+
+    agent = Agent(TestModel(), output_type=schema_dict)
+
+    assert 'name' in schema_dict['properties']
+    assert 'age' in schema_dict['properties']
+
+    assert schema_dict['type'] == 'object'
+    assert schema_dict['required'] == ['name', 'age']
+    assert schema_dict['properties'] == {
+        'name': {'type': 'string'},
+        'age': {'type': 'integer'},
+    }
+
+    result = agent.run_sync('Generate a person')
+
+    assert isinstance(result.output, dict)
+    assert 'name' in result.output
+    assert 'age' in result.output
+    assert isinstance(result.output['name'], str)
+    assert isinstance(result.output['age'], int)
 
 
 def test_run_with_history_new():
