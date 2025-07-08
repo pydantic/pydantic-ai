@@ -62,6 +62,7 @@ if TYPE_CHECKING:
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
+        ToolSpecificationTypeDef,
         ToolTypeDef,
         VideoBlockTypeDef,
     )
@@ -133,11 +134,11 @@ T = typing.TypeVar('T')
 class BedrockModelSettings(ModelSettings, total=False):
     """Settings for Bedrock models.
 
-    ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-
     See [the Bedrock Converse API docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html#API_runtime_Converse_RequestSyntax) for a full list.
     See [the boto3 implementation](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/bedrock-runtime/client/converse.html) of the Bedrock Converse API.
     """
+
+    # ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     bedrock_guardrail_config: GuardrailConfigurationTypeDef
     """Content moderation and safety settings for Bedrock API requests.
@@ -228,13 +229,15 @@ class BedrockConverseModel(Model):
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
-        return {
-            'toolSpec': {
-                'name': f.name,
-                'description': f.description,
-                'inputSchema': {'json': f.parameters_json_schema},
-            }
+        tool_spec: ToolSpecificationTypeDef = {
+            'name': f.name,
+            'inputSchema': {'json': f.parameters_json_schema},
         }
+
+        if f.description:  # pragma: no branch
+            tool_spec['description'] = f.description
+
+        return {'toolSpec': tool_spec}
 
     @property
     def base_url(self) -> str:

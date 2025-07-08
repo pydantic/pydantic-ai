@@ -64,6 +64,14 @@ TEST_CASES = [
         'bedrock',
         'BedrockConverseModel',
     ),
+    (
+        'GITHUB_API_KEY',
+        'github:xai/grok-3-mini',
+        'xai/grok-3-mini',
+        'github',
+        'github',
+        'OpenAIModel',
+    ),
 ]
 
 

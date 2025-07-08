@@ -74,10 +74,9 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 
 
 class GeminiModelSettings(ModelSettings, total=False):
-    """Settings used for a Gemini model request.
+    """Settings used for a Gemini model request."""
 
-    ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     gemini_safety_settings: list[GeminiSafetySettings]
     """Safety settings options for Gemini model request."""
@@ -774,7 +773,7 @@ class _GeminiFunction(TypedDict):
 
 def _function_from_abstract_tool(tool: ToolDefinition) -> _GeminiFunction:
     json_schema = tool.parameters_json_schema
-    f = _GeminiFunction(name=tool.name, description=tool.description, parameters=json_schema)
+    f = _GeminiFunction(name=tool.name, description=tool.description or '', parameters=json_schema)
     return f
 
 
