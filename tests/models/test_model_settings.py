@@ -20,7 +20,7 @@ try:
     from pydantic_ai.models.openai import OpenAIResponsesModel
 
     openai_available = True
-except ImportError:  # pragma: no cover
+except ImportError:
     OpenAIResponsesModel = None
     openai_available = False
 
