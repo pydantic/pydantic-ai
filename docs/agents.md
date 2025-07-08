@@ -467,6 +467,7 @@ This structure allows you to configure common parameters that influence the mode
 `timeout`, and more.
 
 There are two ways to apply these settings:
+
 1. Passing to `run{_sync,_stream}` functions via the `model_settings` argument. This allows for fine-tuning on a per-request basis.
 2. Setting during [`Agent`][pydantic_ai.agent.Agent] initialization via the `model_settings` argument. These settings will be applied by default to all subsequent run calls using said agent. However, `model_settings` provided during a specific run call will override the agent's default settings.
 
