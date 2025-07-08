@@ -118,8 +118,7 @@ class FastA2A(Starlette):
         a2a_request = a2a_request_ta.validate_json(data)
 
         if a2a_request['method'] == 'message/send':
-            message_request = send_message_request_ta.validate_json(data)
-            jsonrpc_response = await self.task_manager.send_message(message_request)
+            jsonrpc_response = await self.task_manager.send_message(a2a_request)
         elif a2a_request['method'] == 'message/stream':
             # Streaming support not yet implemented
             raise NotImplementedError(
