@@ -110,7 +110,7 @@ def tmp_path_cwd(tmp_path: Path):
 
 @pytest.mark.xdist_group(name='doc_tests')
 @pytest.mark.parametrize('example', find_filter_examples())
-async def test_docs_examples(  # noqa: C901
+def test_docs_examples(  # noqa: C901
     example: CodeExample,
     eval_example: EvalExample,
     mocker: MockerFixture,
