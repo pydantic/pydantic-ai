@@ -271,34 +271,7 @@ class TextOutput(Generic[OutputDataT]):
     output_function: TextOutputFunc[OutputDataT]
     """The function that will be called to process the model's plain text output. The function must take a single string argument."""
 
-
-OutputSpec = TypeAliasType(
-    'OutputSpec',
-    Union[
-        OutputTypeOrFunction[T_co],
-        ToolOutput[T_co],
-        NativeOutput[T_co],
-        PromptedOutput[T_co],
-        TextOutput[T_co],
-        Sequence[Union[OutputTypeOrFunction[T_co], ToolOutput[T_co], TextOutput[T_co]]],
-    ],
-    type_params=(T_co,),
-)
-"""Specification of the agent's output data.
-
-This can be a single type, a function, a sequence of types and/or functions, or an instance of one of the output mode marker classes:
-- [`ToolOutput`][pydantic_ai.output.ToolOutput]
-- [`NativeOutput`][pydantic_ai.output.NativeOutput]
-- [`PromptedOutput`][pydantic_ai.output.PromptedOutput]
-- [`TextOutput`][pydantic_ai.output.TextOutput]
-
-You should not need to import or use this type directly.
-
-See [output docs](../output.md) for more information.
-"""
-
-
-class StructuredDict(dict):
+class StructuredDict(Generic[OutputDataT], dict):
     """A dictionary subclass that enforces a JSON schema for structured output.
 
     This class serves as both a container for structured data and the schema itself,
@@ -350,3 +323,29 @@ class StructuredDict(dict):
 
     def __get_pydantic_json_schema__(self, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
         return self
+
+OutputSpec = TypeAliasType(
+    'OutputSpec',
+    Union[
+        OutputTypeOrFunction[T_co],
+        StructuredDict[T_co],
+        ToolOutput[T_co],
+        NativeOutput[T_co],
+        PromptedOutput[T_co],
+        TextOutput[T_co],
+        Sequence[Union[OutputTypeOrFunction[T_co], ToolOutput[T_co], TextOutput[T_co]]],
+    ],
+    type_params=(T_co,),
+)
+"""Specification of the agent's output data.
+
+This can be a single type, a function, a sequence of types and/or functions, or an instance of one of the output mode marker classes:
+- [`ToolOutput`][pydantic_ai.output.ToolOutput]
+- [`NativeOutput`][pydantic_ai.output.NativeOutput]
+- [`PromptedOutput`][pydantic_ai.output.PromptedOutput]
+- [`TextOutput`][pydantic_ai.output.TextOutput]
+
+You should not need to import or use this type directly.
+
+See [output docs](../output.md) for more information.
+"""
