@@ -309,7 +309,7 @@ class DataPart(_BasePart):
     kind: Literal['data']
     """The kind of the part."""
 
-    data: Any
+    data: dict[str, Any]
     """The data of the part."""
 
     description: NotRequired[str]

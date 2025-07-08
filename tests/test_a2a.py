@@ -83,7 +83,9 @@ async def test_a2a_pydantic_model_output():
 
             # Verify the data
             assert artifact['parts'][0]['kind'] == 'data'
-            assert artifact['parts'][0]['data'] == {'name': 'John Doe', 'age': 30, 'email': 'john@example.com'}
+            assert artifact['parts'][0]['data'] == {
+                'result': {'name': 'John Doe', 'age': 30, 'email': 'john@example.com'}
+            }
 
             # Verify metadata
             assert 'metadata' in artifact
@@ -107,7 +109,9 @@ async def test_a2a_pydantic_model_output():
             agent_message = result['history'][1]
             assert agent_message['role'] == 'agent'
             assert agent_message['parts'][0]['kind'] == 'data'
-            assert agent_message['parts'][0]['data'] == {'name': 'John Doe', 'age': 30, 'email': 'john@example.com'}
+            assert agent_message['parts'][0]['data'] == {
+                'result': {'name': 'John Doe', 'age': 30, 'email': 'john@example.com'}
+            }
 
 
 async def test_a2a_runtime_error_without_lifespan():
@@ -182,7 +186,7 @@ async def test_a2a_simple():
                             },
                             {
                                 'role': 'agent',
-                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
                                 'kind': 'message',
                                 'message_id': IsStr(),
                                 'context_id': IsStr(),
@@ -193,7 +197,7 @@ async def test_a2a_simple():
                             {
                                 'artifact_id': IsStr(),
                                 'name': 'result',
-                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
                                 'metadata': {
                                     'type': 'tuple',
                                     'json_schema': {'items': {}, 'type': 'array'},
@@ -282,7 +286,7 @@ async def test_a2a_file_message_with_file():
                             },
                             {
                                 'role': 'agent',
-                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
                                 'kind': 'message',
                                 'message_id': IsStr(),
                                 'context_id': IsStr(),
@@ -293,7 +297,7 @@ async def test_a2a_file_message_with_file():
                             {
                                 'artifact_id': IsStr(),
                                 'name': 'result',
-                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
                                 'metadata': {
                                     'type': 'tuple',
                                     'json_schema': {'items': {}, 'type': 'array'},
@@ -369,7 +373,7 @@ async def test_a2a_file_message_with_file_content():
                             },
                             {
                                 'role': 'agent',
-                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
                                 'kind': 'message',
                                 'message_id': IsStr(),
                                 'context_id': IsStr(),
@@ -380,7 +384,7 @@ async def test_a2a_file_message_with_file_content():
                             {
                                 'artifact_id': IsStr(),
                                 'name': 'result',
-                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
                                 'metadata': {
                                     'type': 'tuple',
                                     'json_schema': {'items': {}, 'type': 'array'},
@@ -679,7 +683,7 @@ async def test_a2a_multiple_messages():
                             {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}], 'kind': 'message'},
                             {
                                 'role': 'agent',
-                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
                                 'kind': 'message',
                                 'message_id': IsStr(),
                                 'context_id': IsStr(),
@@ -690,7 +694,7 @@ async def test_a2a_multiple_messages():
                             {
                                 'artifact_id': IsStr(),
                                 'name': 'result',
-                                'parts': [{'kind': 'data', 'data': ['foo', 'bar']}],
+                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
                                 'metadata': {
                                     'type': 'tuple',
                                     'json_schema': {'items': {}, 'type': 'array'},

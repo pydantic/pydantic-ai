@@ -250,7 +250,7 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
                     # Last resort - convert to string
                     data = str(result)
 
-            return DataPart(kind='data', data=data)
+            return DataPart(kind='data', data={'result': data})
 
     def _build_result_metadata(self, result: WorkerOutputT) -> dict[str, Any]:
         """Build metadata for the result artifact.
