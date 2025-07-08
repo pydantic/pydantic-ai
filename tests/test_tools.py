@@ -439,7 +439,7 @@ def test_takes_model_and_int():
     assert json_schema == snapshot(
         {
             'name': 'takes_just_model',
-            'description': '',
+            'description': None,
             'parameters_json_schema': {
                 '$defs': {
                     'Foo': {
@@ -857,7 +857,7 @@ def test_json_schema_required_parameters():
     assert json_schema == snapshot(
         [
             {
-                'description': '',
+                'description': None,
                 'name': 'my_tool',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
@@ -869,7 +869,7 @@ def test_json_schema_required_parameters():
                 'strict': None,
             },
             {
-                'description': '',
+                'description': None,
                 'name': 'my_tool_plain',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
@@ -955,7 +955,7 @@ def test_schema_generator():
     assert json_schema == snapshot(
         [
             {
-                'description': '',
+                'description': None,
                 'name': 'my_tool_1',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
@@ -965,7 +965,7 @@ def test_schema_generator():
                 'strict': None,
             },
             {
-                'description': '',
+                'description': None,
                 'name': 'my_tool_2',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
