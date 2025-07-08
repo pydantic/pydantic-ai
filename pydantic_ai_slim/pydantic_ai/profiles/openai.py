@@ -102,7 +102,7 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
             # better, so we keep it around when not strict
             if self.strict is True:
                 schema.pop('default', None)
-            elif self.strict is None:
+            elif self.strict is None:  # pragma: no branch
                 self.is_strict_compatible = False
 
         if schema_ref := schema.get('$ref'):
