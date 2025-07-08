@@ -924,7 +924,8 @@ def _ensure_decodeable(content: bytearray) -> bytearray:
     """
     try:
         content.decode()
-        return content
     except UnicodeDecodeError as e:
         # e.end marks the end of the valid decoded bytes, so cut up to before the first invalid byte
         return content[: e.start]
+    else:
+        return content
