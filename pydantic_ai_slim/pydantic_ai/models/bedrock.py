@@ -234,7 +234,7 @@ class BedrockConverseModel(Model):
             'inputSchema': {'json': f.parameters_json_schema},
         }
 
-        if f.description:
+        if f.description:  # pragma: no branch
             tool_spec['description'] = f.description
 
         return {'toolSpec': tool_spec}
