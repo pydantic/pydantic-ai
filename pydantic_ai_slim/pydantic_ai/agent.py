@@ -435,7 +435,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
         self._override_model: ContextVar[_utils.Option[models.Model]] = ContextVar('_override_model', default=None)
 
-        self._enter_lock = Lock()
+        self._enter_lock = _utils.get_async_lock()
         self._entered_count = 0
         self._exit_stack = None
 

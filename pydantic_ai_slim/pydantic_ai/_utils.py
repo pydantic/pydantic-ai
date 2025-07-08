@@ -4,8 +4,10 @@ import asyncio
 import functools
 import inspect
 import re
+import sys
 import time
 import uuid
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, fields, is_dataclass
@@ -29,7 +31,7 @@ from typing_extensions import (
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
-from pydantic_graph._utils import AbstractSpan
+from pydantic_graph._utils import AbstractSpan, get_event_loop
 
 from . import exceptions
 
@@ -456,3 +458,12 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
         return get_args(tp)
     else:
         return ()
+
+
+def get_async_lock() -> asyncio.Lock:
+    if sys.version_info < (3, 10):
+        with warnings.catch_warnings():  # pragma: lax no cover
+            warnings.simplefilter('ignore', DeprecationWarning)  # `Lock` `loop` argument is deprecated
+            return asyncio.Lock(loop=get_event_loop())
+    else:
+        return asyncio.Lock()  # pragma: lax no cover

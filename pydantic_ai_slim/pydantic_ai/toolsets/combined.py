@@ -9,6 +9,7 @@ from typing import Any, Callable
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
+from .._utils import get_async_lock
 from ..exceptions import UserError
 from ..messages import ToolCallPart
 from ..tools import ToolDefinition
@@ -28,7 +29,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     _exit_stack: AsyncExitStack | None
 
     def __init__(self, toolsets: Sequence[AbstractToolset[AgentDepsT]]):
-        self._enter_lock = asyncio.Lock()
+        self._enter_lock = get_async_lock()
         self._entered_count = 0
         self._exit_stack = None
 
