@@ -42,6 +42,7 @@ def test_model_settings_initialization():
 
     agent_info = AgentInfo(function_tools=[], allow_text_output=True, output_tools=[], model_settings=None)
     response = simple_response([], agent_info)
+    assert isinstance(response.parts[0], TextPart)
     assert response.parts[0].content == 'response'
 
 
@@ -60,6 +61,7 @@ def test_model_settings_none():
 
     agent_info = AgentInfo(function_tools=[], allow_text_output=True, output_tools=[], model_settings=None)
     response = simple_response([], agent_info)
+    assert isinstance(response.parts[0], TextPart)
     assert response.parts[0].content == 'response'
 
 
