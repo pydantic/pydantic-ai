@@ -118,5 +118,6 @@ uvicorn agent_to_a2a:app --host 0.0.0.0 --port 8000
 Since the goal of `to_a2a` is to be a convenience method, it accepts the same arguments as the [`FastA2A`][fasta2a.FastA2A] constructor.
 
 When using `to_a2a()`, PydanticAI automatically:
+
 - Stores the complete conversation history (including tool calls and responses) in the context storage
 - Ensures that subsequent messages with the same `context_id` have access to the full conversation history
