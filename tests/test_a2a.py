@@ -94,26 +94,34 @@ async def test_a2a_pydantic_model_output():
                 'result': {'name': 'John Doe', 'age': 30, 'email': 'john@example.com'}
             }
 
-            # Verify metadata
-            assert 'metadata' in artifact
-            metadata = artifact['metadata']
-            assert metadata['type'] == 'UserProfile'
+            metadata = artifact['parts'][0].get('metadata')
+            assert metadata is not None
 
-            # Verify JSON schema is present and correct
-            assert 'json_schema' in metadata
-            json_schema = metadata['json_schema']
-            assert json_schema['type'] == 'object'
-            assert 'properties' in json_schema
-            assert set(json_schema['properties'].keys()) == {'name', 'age', 'email'}
-            assert json_schema['properties']['name']['type'] == 'string'
-            assert json_schema['properties']['age']['type'] == 'integer'
-            assert json_schema['properties']['email']['type'] == 'string'
-            assert json_schema['required'] == ['name', 'age', 'email']
+            assert metadata['json_schema'] == snapshot(
+                {
+                    'properties': {
+                        'name': {'title': 'Name', 'type': 'string'},
+                        'age': {'title': 'Age', 'type': 'integer'},
+                        'email': {'title': 'Email', 'type': 'string'},
+                    },
+                    'required': ['name', 'age', 'email'],
+                    'title': 'UserProfile',
+                    'type': 'object',
+                }
+            )
 
-            # Check the message history - structured outputs don't appear as messages
-            assert 'history' in result
-            assert len(result['history']) == 1  # Only the user message
-            assert result['history'][0]['role'] == 'user'
+            assert result.get('history') == snapshot(
+                [
+                    {
+                        'role': 'user',
+                        'parts': [{'kind': 'text', 'text': 'Get user profile'}],
+                        'kind': 'message',
+                        'message_id': IsStr(),
+                        'context_id': IsStr(),
+                        'task_id': IsStr(),
+                    }
+                ]
+            )
 
 
 async def test_a2a_runtime_error_without_lifespan():
@@ -203,11 +211,13 @@ async def test_a2a_simple():
                             {
                                 'artifact_id': IsStr(),
                                 'name': 'result',
-                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
-                                'metadata': {
-                                    'type': 'tuple',
-                                    'json_schema': {'items': {}, 'type': 'array'},
-                                },
+                                'parts': [
+                                    {
+                                        'metadata': {'json_schema': {'items': {}, 'type': 'array'}},
+                                        'kind': 'data',
+                                        'data': {'result': ['foo', 'bar']},
+                                    }
+                                ],
                             }
                         ],
                     },
@@ -298,11 +308,13 @@ async def test_a2a_file_message_with_file():
                             {
                                 'artifact_id': IsStr(),
                                 'name': 'result',
-                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
-                                'metadata': {
-                                    'type': 'tuple',
-                                    'json_schema': {'items': {}, 'type': 'array'},
-                                },
+                                'parts': [
+                                    {
+                                        'metadata': {'json_schema': {'items': {}, 'type': 'array'}},
+                                        'kind': 'data',
+                                        'data': {'result': ['foo', 'bar']},
+                                    }
+                                ],
                             }
                         ],
                     },
@@ -380,11 +392,13 @@ async def test_a2a_file_message_with_file_content():
                             {
                                 'artifact_id': IsStr(),
                                 'name': 'result',
-                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
-                                'metadata': {
-                                    'type': 'tuple',
-                                    'json_schema': {'items': {}, 'type': 'array'},
-                                },
+                                'parts': [
+                                    {
+                                        'metadata': {'json_schema': {'items': {}, 'type': 'array'}},
+                                        'kind': 'data',
+                                        'data': {'result': ['foo', 'bar']},
+                                    }
+                                ],
                             }
                         ],
                     },
@@ -722,11 +736,13 @@ async def test_a2a_multiple_messages():
                             {
                                 'artifact_id': IsStr(),
                                 'name': 'result',
-                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
-                                'metadata': {
-                                    'type': 'tuple',
-                                    'json_schema': {'items': {}, 'type': 'array'},
-                                },
+                                'parts': [
+                                    {
+                                        'metadata': {'json_schema': {'items': {}, 'type': 'array'}},
+                                        'kind': 'data',
+                                        'data': {'result': ['foo', 'bar']},
+                                    }
+                                ],
                             }
                         ],
                     },

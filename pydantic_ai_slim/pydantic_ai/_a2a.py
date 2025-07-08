@@ -3,7 +3,7 @@ from __future__ import annotations, annotations as _annotations
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import dataclass
 from functools import partial
 from typing import Any, Generic, TypeVar
 
@@ -114,8 +114,7 @@ def agent_to_a2a(
 
 
 @dataclass
-# Generic parameters are reversed compared to Agent because AgentDepsT has a default
-class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
+class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]):
     """A worker that uses an agent to execute tasks."""
 
     agent: Agent[AgentDepsT, WorkerOutputT]
@@ -130,81 +129,49 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
         if task['status']['state'] != 'submitted':
             raise ValueError(f'Task {params["id"]} has already been processed (state: {task["status"]["state"]})')
 
-        task_id = task['id']
-        context_id = task['context_id']
+        await self.storage.update_task(task['id'], state='working')
+
+        # Load context - contains pydantic-ai message history from previous tasks in this conversation
+        message_history = await self.storage.load_context(task['context_id'])
+        if message_history is None:
+            message_history = []
 
         try:
-            await self.storage.update_task(task_id, state='working')
-
-            # Load context - contains pydantic-ai message history from previous tasks in this conversation
-            context = await self.storage.get_context(context_id)
-            message_history: list[ModelMessage] = context if context else []
-
-            # Add the current task's initial message to the history
             # Tasks start with a user message that triggered this task
+            # Add the current task's initial message to the history
             task_history = task.get('history')
             if task_history:
                 for a2a_msg in task_history:
                     if a2a_msg['role'] == 'user':
-                        # Convert user message from A2A format to pydantic-ai format
                         message_history.append(ModelRequest(parts=self._request_parts_from_a2a(a2a_msg['parts'])))
 
             result = await self.agent.run(message_history=message_history)  # type: ignore
 
-            # Update context with complete message history including new messages
-            # This preserves tool calls, thinking, and all internal state
-            all_messages = result.all_messages()
-            await self.storage.update_context(context_id, all_messages)
+            await self.storage.update_context(task['context_id'], result.all_messages())
 
             # Convert new messages to A2A format for task history
-            new_messages = result.new_messages()
             a2a_messages: list[Message] = []
 
-            for msg in new_messages:
-                if isinstance(msg, ModelRequest):
+            for message in result.new_messages():
+                if isinstance(message, ModelRequest):
                     # Skip user prompts - they're already in task history
                     continue
-                elif isinstance(msg, ModelResponse):
+                elif isinstance(message, ModelResponse):
                     # Convert response parts to A2A format
-                    a2a_parts = self._response_parts_to_a2a(msg.parts)
+                    a2a_parts = self._response_parts_to_a2a(message.parts)
                     if a2a_parts:  # Add if there are visible parts (text/thinking)
                         a2a_messages.append(
-                            Message(
-                                role='agent',
-                                parts=a2a_parts,
-                                kind='message',
-                                message_id=str(uuid.uuid4()),
-                            )
+                            Message(role='agent', parts=a2a_parts, kind='message', message_id=str(uuid.uuid4()))
                         )
 
-            # Also add the final output as a message if it's a string
-            # This ensures string outputs appear in the message history for a task
-            if result.output and isinstance(result.output, str):
-                message_id = str(uuid.uuid4())
-                a2a_messages.append(
-                    Message(
-                        role='agent',
-                        parts=[A2ATextPart(kind='text', text=result.output)],
-                        kind='message',
-                        message_id=message_id,
-                    )
-                )
-
-            # Create artifacts for durable outputs
             artifacts = self.build_artifacts(result.output)
-
-            # Update task with completion status, new A2A messages, and artifacts
-            await self.storage.update_task(
-                task_id,
-                state='completed',
-                new_artifacts=artifacts,
-                new_messages=a2a_messages if a2a_messages else None,
-            )
-
         except Exception:
-            # Ensure task is marked as failed on any error
-            await self.storage.update_task(task_id, state='failed')
-            raise  # Re-raise to maintain error visibility
+            await self.storage.update_task(task['id'], state='failed')
+            raise
+        else:
+            await self.storage.update_task(
+                task['id'], state='completed', new_artifacts=artifacts, new_messages=a2a_messages
+            )
 
     async def cancel_task(self, params: TaskIdParams) -> None:
         pass
@@ -218,8 +185,7 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
         """
         artifact_id = str(uuid.uuid4())
         part = self._convert_result_to_part(result)
-        metadata = self._build_result_metadata(result)
-        return [Artifact(artifact_id=artifact_id, name='result', parts=[part], metadata=metadata)]
+        return [Artifact(artifact_id=artifact_id, name='result', parts=[part])]
 
     def _convert_result_to_part(self, result: WorkerOutputT) -> Part:
         """Convert agent result to a Part (TextPart or DataPart).
@@ -230,42 +196,11 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
         if isinstance(result, str):
             return A2ATextPart(kind='text', text=result)
         else:
-            # For structured data, create a DataPart
-            try:
-                # Try using TypeAdapter for proper serialization
-                output_type = type(result)
-                type_adapter: TypeAdapter[WorkerOutputT] = TypeAdapter(output_type)
-                data = type_adapter.dump_python(result, mode='json')
-            except Exception:
-                # Fallback for types that TypeAdapter can't handle
-                if is_dataclass(result) and not isinstance(result, type):
-                    data = asdict(result)
-                else:
-                    # Last resort - convert to string
-                    data = str(result)
-
-            return DataPart(kind='data', data={'result': data})
-
-    def _build_result_metadata(self, result: WorkerOutputT) -> dict[str, Any]:
-        """Build metadata for the result artifact.
-
-        Captures type information and JSON schema when available.
-        """
-        metadata: dict[str, Any] = {
-            'type': type(result).__name__,
-        }
-
-        # For non-string types, attempt to capture JSON schema
-        if not isinstance(result, str):
             output_type = type(result)
-            type_adapter: TypeAdapter[WorkerOutputT] = TypeAdapter(output_type)
-            try:
-                metadata['json_schema'] = type_adapter.json_schema()
-            except Exception:
-                # Some types don't support JSON schema generation
-                pass
-
-        return metadata
+            type_adapter = TypeAdapter(output_type)
+            data = type_adapter.dump_python(result, mode='json')
+            json_schema = type_adapter.json_schema(mode='serialization')
+            return DataPart(kind='data', data={'result': data}, metadata={'json_schema': json_schema})
 
     def build_message_history(self, history: list[Message]) -> list[ModelMessage]:
         model_messages: list[ModelMessage] = []

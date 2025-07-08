@@ -5,12 +5,16 @@ from __future__ import annotations as _annotations
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any
+from typing import Any, Generic
+
+from typing_extensions import TypeVar
 
 from .schema import Artifact, Message, Task, TaskState, TaskStatus
 
+ContextT = TypeVar('ContextT', default=Any)
 
-class Storage(ABC):
+
+class Storage(ABC, Generic[ContextT]):
     """A storage to retrieve and save tasks, as well as retrieve and save context.
 
     The storage serves two purposes:
@@ -40,23 +44,23 @@ class Storage(ABC):
         """Update the state of a task. Appends artifacts and messages, if specified."""
 
     @abstractmethod
-    async def update_context(self, context_id: str, context: Any) -> None:
-        """Updates the context for a context_id.
+    async def load_context(self, context_id: str) -> ContextT | None:
+        """Retrieve the stored context given the `context_id`."""
+
+    @abstractmethod
+    async def update_context(self, context_id: str, context: ContextT) -> None:
+        """Updates the context for a `context_id`.
 
         Implementing agent can decide what to store in context.
         """
 
-    @abstractmethod
-    async def get_context(self, context_id: str) -> Any:
-        """Retrieve the stored context for a context_id."""
 
-
-class InMemoryStorage(Storage):
+class InMemoryStorage(Storage[ContextT]):
     """A storage to retrieve and save tasks in memory."""
 
     def __init__(self):
         self.tasks: dict[str, Task] = {}
-        self.contexts: dict[str, Any] = {}
+        self.contexts: dict[str, ContextT] = {}
 
     async def load_task(self, task_id: str, history_length: int | None = None) -> Task | None:
         """Load a task from memory.
@@ -118,10 +122,10 @@ class InMemoryStorage(Storage):
 
         return task
 
-    async def update_context(self, context_id: str, context: Any) -> None:
-        """Updates the context for a context_id."""
+    async def update_context(self, context_id: str, context: ContextT) -> None:
+        """Updates the context given the `context_id`."""
         self.contexts[context_id] = context
 
-    async def get_context(self, context_id: str) -> Any:
-        """Retrieve the stored context for a context_id."""
+    async def load_context(self, context_id: str) -> ContextT | None:
+        """Retrieve the stored context given the `context_id`."""
         return self.contexts.get(context_id)

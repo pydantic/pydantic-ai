@@ -90,7 +90,7 @@ class TaskManager:
     """A task manager responsible for managing tasks."""
 
     broker: Broker
-    storage: Storage
+    storage: Storage[Any]
 
     _aexit_stack: AsyncExitStack | None = field(default=None, init=False)
 
@@ -115,19 +115,11 @@ class TaskManager:
         """Send a message using the A2A v0.2.3 protocol."""
         request_id = request['id']
         message = request['params']['message']
+        context_id = message.get('context_id', str(uuid.uuid4()))
 
-        # Use provided context_id or create new one
-        context_id = message.get('context_id') or str(uuid.uuid4())
-
-        # Create a new task
         task = await self.storage.submit_task(context_id, message)
 
-        # Prepare params for broker
-        broker_params: TaskSendParams = {
-            'id': task['id'],
-            'context_id': context_id,
-            'message': message,
-        }
+        broker_params: TaskSendParams = {'id': task['id'], 'context_id': context_id, 'message': message}
         config = request['params'].get('configuration', {})
         history_length = config.get('history_length')
         if history_length is not None:
