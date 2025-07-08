@@ -161,10 +161,13 @@ def test_docs_examples(  # noqa: C901
     dunder_name = prefix_settings.get('dunder_name', '__main__')
     requires = prefix_settings.get('requires')
 
+    ruff_target_version: str = 'py39'
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
         if sys.version_info < python_version_info:
             pytest.skip(f'Python version {python_version} required')  # pragma: lax no cover
+
+        ruff_target_version = f'py{python_version_info[0]}{python_version_info[1]}'
 
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
         pytest.skip('both running code and lint skipped')
@@ -188,7 +191,7 @@ def test_docs_examples(  # noqa: C901
 
     line_length = int(prefix_settings.get('line_length', '88'))
 
-    eval_example.set_config(ruff_ignore=ruff_ignore, target_version='py39', line_length=line_length)
+    eval_example.set_config(ruff_ignore=ruff_ignore, target_version=ruff_target_version, line_length=line_length)  # type: ignore[reportArgumentType]
     eval_example.print_callback = print_callback
     eval_example.include_print = custom_include_print
 

@@ -6,6 +6,7 @@ import json
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
@@ -157,8 +158,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
     _default_retries: int = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
-    _override_deps: _utils.Option[AgentDepsT] = dataclasses.field(default=None, repr=False)
-    _override_model: _utils.Option[models.Model] = dataclasses.field(default=None, repr=False)
 
     @overload
     def __init__(
@@ -294,11 +293,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self.name = name
         self.model_settings = model_settings
 
-        if 'result_type' in _deprecated_kwargs:  # pragma: no cover
-            if output_type is not str:
+        if 'result_type' in _deprecated_kwargs:
+            if output_type is not str:  # pragma: no cover
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning)
-            output_type = _deprecated_kwargs['result_type']
+            warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning, stacklevel=2)
+            output_type = _deprecated_kwargs.pop('result_type')
 
         self.output_type = output_type
 
@@ -306,29 +305,35 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         self._deps_type = deps_type
 
-        self._deprecated_result_tool_name = _deprecated_kwargs.get('result_tool_name')
-        if self._deprecated_result_tool_name is not None:  # pragma: no cover
+        self._deprecated_result_tool_name = _deprecated_kwargs.pop('result_tool_name', None)
+        if self._deprecated_result_tool_name is not None:
             warnings.warn(
                 '`result_tool_name` is deprecated, use `output_type` with `ToolOutput` instead',
                 DeprecationWarning,
+                stacklevel=2,
             )
 
-        self._deprecated_result_tool_description = _deprecated_kwargs.get('result_tool_description')
-        if self._deprecated_result_tool_description is not None:  # pragma: no cover
+        self._deprecated_result_tool_description = _deprecated_kwargs.pop('result_tool_description', None)
+        if self._deprecated_result_tool_description is not None:
             warnings.warn(
                 '`result_tool_description` is deprecated, use `output_type` with `ToolOutput` instead',
                 DeprecationWarning,
+                stacklevel=2,
             )
-        result_retries = _deprecated_kwargs.get('result_retries')
-        if result_retries is not None:  # pragma: no cover
-            if output_retries is not None:
+        result_retries = _deprecated_kwargs.pop('result_retries', None)
+        if result_retries is not None:
+            if output_retries is not None:  # pragma: no cover
                 raise TypeError('`output_retries` and `result_retries` cannot be set at the same time.')
-            warnings.warn('`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning)
+            warnings.warn(
+                '`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning, stacklevel=2
+            )
             output_retries = result_retries
 
         default_output_mode = (
             self.model.profile.default_structured_output_mode if isinstance(self.model, models.Model) else None
         )
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         self._output_schema = _output.OutputSchema[OutputDataT].build(
             output_type,
             default_mode=default_output_mode,
@@ -364,6 +369,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 self._register_tool(tool)
             else:
                 self._register_tool(Tool(tool))
+
+        self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
+        self._override_model: ContextVar[_utils.Option[models.Model]] = ContextVar('_override_model', default=None)
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -468,8 +476,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if 'result_type' in _deprecated_kwargs:  # pragma: no cover
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
-            output_type = _deprecated_kwargs['result_type']
+            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
+            output_type = _deprecated_kwargs.pop('result_type')
+
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         async with self.iter(
             user_prompt=user_prompt,
@@ -634,8 +644,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if 'result_type' in _deprecated_kwargs:  # pragma: no cover
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
-            output_type = _deprecated_kwargs['result_type']
+            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
+            output_type = _deprecated_kwargs.pop('result_type')
+
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
@@ -871,8 +883,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if 'result_type' in _deprecated_kwargs:  # pragma: no cover
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
-            output_type = _deprecated_kwargs['result_type']
+            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
+            output_type = _deprecated_kwargs.pop('result_type')
+
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         return get_event_loop().run_until_complete(
             self.run(
@@ -987,8 +1001,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if 'result_type' in _deprecated_kwargs:  # pragma: no cover
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
-            output_type = _deprecated_kwargs['result_type']
+            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
+            output_type = _deprecated_kwargs.pop('result_type')
+
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         yielded = False
         async with self.iter(
@@ -1103,24 +1119,22 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             model: The model to use instead of the model passed to the agent run.
         """
         if _utils.is_set(deps):
-            override_deps_before = self._override_deps
-            self._override_deps = _utils.Some(deps)
+            deps_token = self._override_deps.set(_utils.Some(deps))
         else:
-            override_deps_before = _utils.UNSET
+            deps_token = None
 
         if _utils.is_set(model):
-            override_model_before = self._override_model
-            self._override_model = _utils.Some(models.infer_model(model))
+            model_token = self._override_model.set(_utils.Some(models.infer_model(model)))
         else:
-            override_model_before = _utils.UNSET
+            model_token = None
 
         try:
             yield
         finally:
-            if _utils.is_set(override_deps_before):
-                self._override_deps = override_deps_before
-            if _utils.is_set(override_model_before):
-                self._override_model = override_model_before
+            if deps_token is not None:
+                self._override_deps.reset(deps_token)
+            if model_token is not None:
+                self._override_model.reset(model_token)
 
     @overload
     def instructions(
@@ -1326,7 +1340,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         return func
 
     @deprecated('`result_validator` is deprecated, use `output_validator` instead.')
-    def result_validator(self, func: Any, /) -> Any: ...
+    def result_validator(self, func: Any, /) -> Any:
+        warnings.warn(
+            '`result_validator` is deprecated, use `output_validator` instead.', DeprecationWarning, stacklevel=2
+        )
+        return self.output_validator(func)  # type: ignore
 
     @overload
     def tool(self, func: ToolFuncContext[AgentDepsT, ToolParams], /) -> ToolFuncContext[AgentDepsT, ToolParams]: ...
@@ -1594,7 +1612,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             The model used
         """
         model_: models.Model
-        if some_model := self._override_model:
+        if some_model := self._override_model.get():
             # we don't want `override()` to cover up errors from the model not being defined, hence this check
             if model is None and self.model is None:
                 raise exceptions.UserError(
@@ -1623,7 +1641,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         We could do runtime type checking of deps against `self._deps_type`, but that's a slippery slope.
         """
-        if some_deps := self._override_deps:
+        if some_deps := self._override_deps.get():
             return some_deps.value
         else:
             return deps

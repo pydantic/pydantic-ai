@@ -36,6 +36,4 @@ python/uv-run -m pydantic_ai_examples.flight_booking
 
 ## Example Code
 
-```python {title="flight_booking.py"}
-#! examples/pydantic_ai_examples/flight_booking.py
-```
+```snippet {path="/examples/pydantic_ai_examples/flight_booking.py"}```

@@ -32,6 +32,7 @@ __all__ = (
     'ToolDefinition',
 )
 
+from .messages import ToolReturnPart
 
 ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
@@ -346,15 +347,31 @@ class Tool(Generic[AgentDepsT]):
                 {
                     'type': 'object',
                     'properties': {
-                        **({'tool_arguments': {'type': 'object'}} if include_content else {}),
+                        **(
+                            {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                            }
+                            if include_content
+                            else {}
+                        ),
                         'gen_ai.tool.name': {},
                         'gen_ai.tool.call.id': {},
                     },
                 }
             ),
         }
-        with tracer.start_as_current_span('running tool', attributes=span_attributes):
-            return await self._run(message, run_context)
+        with tracer.start_as_current_span('running tool', attributes=span_attributes) as span:
+            response = await self._run(message, run_context)
+            if include_content and span.is_recording():
+                span.set_attribute(
+                    'tool_response',
+                    response.model_response_str()
+                    if isinstance(response, ToolReturnPart)
+                    else response.model_response(),
+                )
+
+            return response
 
     async def _run(
         self, message: _messages.ToolCallPart, run_context: RunContext[AgentDepsT]

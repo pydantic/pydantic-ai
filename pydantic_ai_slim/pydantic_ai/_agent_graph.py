@@ -641,7 +641,6 @@ async def process_function_tools(  # noqa C901
     run_context = build_run_context(ctx)
 
     calls_to_run: list[tuple[Tool[DepsT], _messages.ToolCallPart]] = []
-    call_index_to_event_id: dict[int, str] = {}
     for call in tool_calls:
         if (
             call.tool_name == output_tool_name
@@ -668,7 +667,6 @@ async def process_function_tools(  # noqa C901
             else:
                 event = _messages.FunctionToolCallEvent(call)
                 yield event
-                call_index_to_event_id[len(calls_to_run)] = event.call_id
                 calls_to_run.append((tool, call))
         elif mcp_tool := await _tool_from_mcp_server(call.tool_name, ctx):
             if stub_function_tools:
@@ -683,7 +681,6 @@ async def process_function_tools(  # noqa C901
             else:
                 event = _messages.FunctionToolCallEvent(call)
                 yield event
-                call_index_to_event_id[len(calls_to_run)] = event.call_id
                 calls_to_run.append((mcp_tool, call))
         elif call.tool_name in output_schema.tools:
             # if tool_name is in output_schema, it means we found a output tool but an error occurred in
@@ -700,13 +697,13 @@ async def process_function_tools(  # noqa C901
                     content=content,
                     tool_call_id=call.tool_call_id,
                 )
-                yield _messages.FunctionToolResultEvent(part, tool_call_id=call.tool_call_id)
+                yield _messages.FunctionToolResultEvent(part)
                 output_parts.append(part)
         else:
             yield _messages.FunctionToolCallEvent(call)
 
             part = _unknown_tool(call.tool_name, call.tool_call_id, ctx)
-            yield _messages.FunctionToolResultEvent(part, tool_call_id=call.tool_call_id)
+            yield _messages.FunctionToolResultEvent(part)
             output_parts.append(part)
 
     if not calls_to_run:
@@ -738,11 +735,35 @@ async def process_function_tools(  # noqa C901
             for task in done:
                 index = tasks.index(task)
                 result = task.result()
-                yield _messages.FunctionToolResultEvent(result, tool_call_id=call_index_to_event_id[index])
+                yield _messages.FunctionToolResultEvent(result)
 
                 if isinstance(result, _messages.RetryPromptPart):
                     results_by_index[index] = result
                 elif isinstance(result, _messages.ToolReturnPart):
+                    if isinstance(result.content, _messages.ToolReturn):
+                        tool_return = result.content
+                        if (
+                            isinstance(tool_return.return_value, _messages.MultiModalContentTypes)
+                            or isinstance(tool_return.return_value, list)
+                            and any(
+                                isinstance(content, _messages.MultiModalContentTypes)
+                                for content in tool_return.return_value  # type: ignore
+                            )
+                        ):
+                            raise exceptions.UserError(
+                                f"{result.tool_name}'s `return_value` contains invalid nested MultiModalContentTypes objects. "
+                                f'Please use `content` instead.'
+                            )
+                        result.content = tool_return.return_value  # type: ignore
+                        result.metadata = tool_return.metadata
+                        if tool_return.content:
+                            user_parts.append(
+                                _messages.UserPromptPart(
+                                    content=list(tool_return.content),
+                                    timestamp=result.timestamp,
+                                    part_kind='user-prompt',
+                                )
+                            )
                     contents: list[Any]
                     single_content: bool
                     if isinstance(result.content, list):
@@ -754,7 +775,13 @@ async def process_function_tools(  # noqa C901
 
                     processed_contents: list[Any] = []
                     for content in contents:
-                        if isinstance(content, _messages.MultiModalContentTypes):
+                        if isinstance(content, _messages.ToolReturn):
+                            raise exceptions.UserError(
+                                f"{result.tool_name}'s return contains invalid nested ToolReturn objects. "
+                                f'ToolReturn should be used directly.'
+                            )
+                        elif isinstance(content, _messages.MultiModalContentTypes):
+                            # Handle direct multimodal content
                             if isinstance(content, _messages.BinaryContent):
                                 identifier = multi_modal_content_identifier(content.data)
                             else:
@@ -769,6 +796,7 @@ async def process_function_tools(  # noqa C901
                             )
                             processed_contents.append(f'See file {identifier}')
                         else:
+                            # Handle regular content
                             processed_contents.append(content)
 
                     if single_content:

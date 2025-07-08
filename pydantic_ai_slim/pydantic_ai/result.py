@@ -59,7 +59,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """Asynchronously stream the (validated) agent outputs."""
         async for response in self.stream_responses(debounce_by=debounce_by):
             if self._final_result_event is not None:
-                yield await self._validate_response(response, self._final_result_event.tool_name, allow_partial=True)
+                try:
+                    yield await self._validate_response(
+                        response, self._final_result_event.tool_name, allow_partial=True
+                    )
+                except ValidationError:
+                    pass
         if self._final_result_event is not None:  # pragma: no branch
             yield await self._validate_response(
                 self._raw_stream_response.get(), self._final_result_event.tool_name, allow_partial=False
@@ -546,6 +551,7 @@ def coalesce_deprecated_return_content(
             warnings.warn(
                 '`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.',
                 DeprecationWarning,
+                stacklevel=3,
             )
         return result_tool_return_content
     return output_tool_return_content

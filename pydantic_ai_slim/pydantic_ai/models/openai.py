@@ -61,6 +61,7 @@ try:
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
+    from openai.types.chat.chat_completion_prediction_content_param import ChatCompletionPredictionContentParam
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.shared import ReasoningEffort
@@ -95,10 +96,9 @@ OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
 class OpenAIModelSettings(ModelSettings, total=False):
-    """Settings used for an OpenAI model request.
+    """Settings used for an OpenAI model request."""
 
-    ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     openai_reasoning_effort: ReasoningEffort
     """Constrains effort on reasoning for [reasoning models](https://platform.openai.com/docs/guides/reasoning).
@@ -124,6 +124,12 @@ class OpenAIModelSettings(ModelSettings, total=False):
 
     Currently supported values are `auto`, `default`, and `flex`.
     For more information, see [OpenAI's service tiers documentation](https://platform.openai.com/docs/api-reference/chat/object#chat/object-service_tier).
+    """
+
+    openai_prediction: ChatCompletionPredictionContentParam
+    """Enables [predictive outputs](https://platform.openai.com/docs/guides/predicted-outputs).
+
+    This feature is currently only supported for some OpenAI models.
     """
 
 
@@ -183,7 +189,9 @@ class OpenAIModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku']
+        provider: Literal[
+            'openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku', 'github'
+        ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
@@ -320,6 +328,7 @@ class OpenAIModel(Model):
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
+                prediction=model_settings.get('openai_prediction', NOT_GIVEN),
                 temperature=sampling_settings.get('temperature', NOT_GIVEN),
                 top_p=sampling_settings.get('top_p', NOT_GIVEN),
                 presence_penalty=sampling_settings.get('presence_penalty', NOT_GIVEN),
@@ -644,13 +653,16 @@ class OpenAIResponsesModel(Model):
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = number_to_datetime(response.created_at)
         items: list[ModelResponsePart] = []
-        items.append(TextPart(response.output_text))
         for item in response.output:
             if item.type == 'reasoning':
                 for summary in item.summary:
                     # NOTE: We use the same id for all summaries because we can merge them on the round trip.
                     # The providers don't force the signature to be unique.
                     items.append(ThinkingPart(content=summary.text, id=item.id))
+            elif item.type == 'message':
+                for content in item.content:
+                    if content.type == 'output_text':  # pragma: no branch
+                        items.append(TextPart(content.text))
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
         return ModelResponse(

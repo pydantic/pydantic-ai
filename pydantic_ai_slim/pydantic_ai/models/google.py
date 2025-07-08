@@ -55,6 +55,7 @@ try:
         GenerateContentConfigDict,
         GenerateContentResponse,
         HttpOptionsDict,
+        MediaResolution,
         Part,
         PartDict,
         SafetySettingDict,
@@ -98,10 +99,9 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 
 
 class GoogleModelSettings(ModelSettings, total=False):
-    """Settings used for a Gemini model request.
+    """Settings used for a Gemini model request."""
 
-    ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     google_safety_settings: list[SafetySettingDict]
     """The safety settings to use for the model.
@@ -119,6 +119,12 @@ class GoogleModelSettings(ModelSettings, total=False):
     """User-defined metadata to break down billed charges. Only supported by the Vertex AI API.
 
     See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
+    """
+
+    google_video_resolution: MediaResolution
+    """The video resolution to use for the model.
+
+    See <https://ai.google.dev/api/generate-content#MediaResolution> for more information.
     """
 
 
@@ -292,6 +298,7 @@ class GoogleModel(Model):
             safety_settings=model_settings.get('google_safety_settings'),
             thinking_config=model_settings.get('google_thinking_config'),
             labels=model_settings.get('google_labels'),
+            media_resolution=model_settings.get('google_video_resolution'),
             tools=cast(ToolListUnionDict, tools),
             tool_config=tool_config,
             response_mime_type=response_mime_type,
@@ -399,9 +406,15 @@ class GoogleModel(Model):
                 elif isinstance(item, BinaryContent):
                     # NOTE: The type from Google GenAI is incorrect, it should be `str`, not `bytes`.
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
-                    content.append({'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}})  # type: ignore
+                    inline_data_dict = {'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}}
+                    if item.vendor_metadata:
+                        inline_data_dict['video_metadata'] = item.vendor_metadata
+                    content.append(inline_data_dict)  # type: ignore
                 elif isinstance(item, VideoUrl) and item.is_youtube:
-                    content.append({'file_data': {'file_uri': item.url, 'mime_type': item.media_type}})
+                    file_data_dict = {'file_data': {'file_uri': item.url, 'mime_type': item.media_type}}
+                    if item.vendor_metadata:
+                        file_data_dict['video_metadata'] = item.vendor_metadata
+                    content.append(file_data_dict)  # type: ignore
                 elif isinstance(item, FileUrl):
                     if self.system == 'google-gla' or item.force_download:
                         downloaded_item = await download_item(item, data_format='base64')
