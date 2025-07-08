@@ -322,7 +322,7 @@ async def test_a2a_file_message_with_file_content():
             message = Message(
                 role='user',
                 parts=[
-                    FilePart(file={'data': 'foo', 'mime_type': 'text/plain'}, kind='file'),
+                    FilePart(file={'bytes': 'foo', 'mime_type': 'text/plain'}, kind='file'),
                 ],
                 kind='message',
                 message_id=str(uuid.uuid4()),

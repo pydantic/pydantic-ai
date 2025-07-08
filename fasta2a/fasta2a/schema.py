@@ -17,35 +17,45 @@ class AgentCard(TypedDict):
     name: str
     """Human readable name of the agent e.g. "Recipe Agent"."""
 
-    description: NotRequired[str]
+    description: str
     """A human-readable description of the agent.
 
     Used to assist users and other agents in understanding what the agent can do.
     (e.g. "Agent that helps users with recipes and cooking.")
     """
 
-    # TODO(Marcelo): The spec makes url required.
-    url: NotRequired[str]
+    url: str
     """A URL to the address the agent is hosted at."""
 
-    provider: NotRequired[Provider]
-    """The service provider of the agent."""
-
-    # TODO(Marcelo): The spec makes version required.
-    version: NotRequired[str]
+    version: str
     """The version of the agent - format is up to the provider. (e.g. "1.0.0")"""
+
+    protocol_version: str
+    """The version of the A2A protocol this agent supports."""
+
+    provider: NotRequired[AgentProvider]
+    """The service provider of the agent."""
 
     documentation_url: NotRequired[str]
     """A URL to documentation for the agent."""
 
-    capabilities: Capabilities
+    icon_url: NotRequired[str]
+    """A URL to an icon for the agent."""
+
+    preferred_transport: NotRequired[str]
+    """The transport of the preferred endpoint. If empty, defaults to JSONRPC."""
+
+    additional_interfaces: NotRequired[list[AgentInterface]]
+    """Announcement of additional supported transports."""
+
+    capabilities: AgentCapabilities
     """The capabilities of the agent."""
 
-    authentication: Authentication
-    """The authentication schemes supported by the agent.
+    security: NotRequired[list[dict[str, list[str]]]]
+    """Security requirements for contacting the agent."""
 
-    Intended to match OpenAPI authentication structure.
-    """
+    security_schemes: NotRequired[dict[str, SecurityScheme]]
+    """Security scheme definitions."""
 
     default_input_modes: list[str]
     """Supported mime types for input data."""
@@ -59,7 +69,7 @@ class AgentCard(TypedDict):
 agent_card_ta = pydantic.TypeAdapter(AgentCard)
 
 
-class Provider(TypedDict):
+class AgentProvider(TypedDict):
     """The service provider of the agent."""
 
     organization: str
@@ -67,7 +77,7 @@ class Provider(TypedDict):
 
 
 @pydantic.with_config({'alias_generator': to_camel})
-class Capabilities(TypedDict):
+class AgentCapabilities(TypedDict):
     """The capabilities of the agent."""
 
     streaming: NotRequired[bool]
@@ -81,14 +91,89 @@ class Capabilities(TypedDict):
 
 
 @pydantic.with_config({'alias_generator': to_camel})
-class Authentication(TypedDict):
-    """The authentication schemes supported by the agent."""
+class HttpSecurityScheme(TypedDict):
+    """HTTP security scheme."""
 
-    schemes: list[str]
-    """The authentication schemes supported by the agent. (e.g. "Basic", "Bearer")"""
+    type: Literal['http']
+    scheme: str
+    """The name of the HTTP Authorization scheme."""
+    bearer_format: NotRequired[str]
+    """A hint to the client to identify how the bearer token is formatted."""
+    description: NotRequired[str]
+    """Description of this security scheme."""
 
-    credentials: NotRequired[str]
-    """The credentials a client should use for private cards."""
+
+@pydantic.with_config({'alias_generator': to_camel})
+class ApiKeySecurityScheme(TypedDict):
+    """API Key security scheme."""
+
+    type: Literal['apiKey']
+    name: str
+    """The name of the header, query or cookie parameter to be used."""
+    in_: Literal['query', 'header', 'cookie']
+    """The location of the API key."""
+    description: NotRequired[str]
+    """Description of this security scheme."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class OAuth2SecurityScheme(TypedDict):
+    """OAuth2 security scheme."""
+
+    type: Literal['oauth2']
+    flows: dict[str, Any]
+    """An object containing configuration information for the flow types supported."""
+    description: NotRequired[str]
+    """Description of this security scheme."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class OpenIdConnectSecurityScheme(TypedDict):
+    """OpenID Connect security scheme."""
+
+    type: Literal['openIdConnect']
+    open_id_connect_url: str
+    """OpenId Connect URL to discover OAuth2 configuration values."""
+    description: NotRequired[str]
+    """Description of this security scheme."""
+
+
+SecurityScheme = Annotated[
+    Union[HttpSecurityScheme, ApiKeySecurityScheme, OAuth2SecurityScheme, OpenIdConnectSecurityScheme],
+    pydantic.Field(discriminator='type'),
+]
+"""A security scheme for authentication."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class AgentInterface(TypedDict):
+    """An interface that the agent supports."""
+
+    transport: str
+    """The transport protocol (e.g., 'jsonrpc', 'websocket')."""
+
+    url: str
+    """The URL endpoint for this transport."""
+
+    description: NotRequired[str]
+    """Description of this interface."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class AgentExtension(TypedDict):
+    """A declaration of an extension supported by an Agent."""
+
+    uri: str
+    """The URI of the extension."""
+
+    description: NotRequired[str]
+    """A description of how this agent uses this extension."""
+
+    required: NotRequired[bool]
+    """Whether the client must follow specific requirements of the extension."""
+
+    params: NotRequired[dict[str, Any]]
+    """Optional configuration for the extension."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
@@ -195,7 +280,7 @@ class PushNotificationConfig(TypedDict):
     token: NotRequired[str]
     """Token unique to this task/session."""
 
-    authentication: NotRequired[Authentication]
+    authentication: NotRequired[SecurityScheme]
     """Authentication details for push notifications."""
 
 
@@ -273,11 +358,11 @@ class TextPart(_BasePart):
 class FileWithBytes(TypedDict):
     """File with base64 encoded data."""
 
-    data: str
-    """The base64 encoded data."""
+    bytes: str
+    """The base64 encoded content of the file."""
 
-    mime_type: str
-    """The mime type of the file."""
+    mime_type: NotRequired[str]
+    """Optional mime type for the file."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
@@ -489,6 +574,31 @@ class TaskSendParams(TypedDict):
     """Extension metadata."""
 
 
+@pydantic.with_config({'alias_generator': to_camel})
+class ListTaskPushNotificationConfigParams(TypedDict):
+    """Parameters for getting list of pushNotificationConfigurations associated with a Task."""
+
+    id: str
+    """Task id."""
+
+    metadata: NotRequired[dict[str, Any]]
+    """Extension metadata."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class DeleteTaskPushNotificationConfigParams(TypedDict):
+    """Parameters for removing pushNotificationConfiguration associated with a Task."""
+
+    id: str
+    """Task id."""
+
+    push_notification_config_id: str
+    """The push notification config id to delete."""
+
+    metadata: NotRequired[dict[str, Any]]
+    """Extension metadata."""
+
+
 class JSONRPCMessage(TypedDict):
     """A JSON RPC message."""
 
@@ -613,6 +723,16 @@ GetTaskPushNotificationResponse = JSONRPCResponse[TaskPushNotificationConfig, Pu
 ResubscribeTaskRequest = JSONRPCRequest[Literal['tasks/resubscribe'], TaskIdParams]
 """A JSON RPC request to resubscribe to a task."""
 
+ListTaskPushNotificationConfigRequest = JSONRPCRequest[
+    Literal['tasks/pushNotificationConfig/list'], ListTaskPushNotificationConfigParams
+]
+"""A JSON RPC request to list task push notification configs."""
+
+DeleteTaskPushNotificationConfigRequest = JSONRPCRequest[
+    Literal['tasks/pushNotificationConfig/delete'], DeleteTaskPushNotificationConfigParams
+]
+"""A JSON RPC request to delete a task push notification config."""
+
 A2ARequest = Annotated[
     Union[
         SendMessageRequest,
@@ -622,6 +742,8 @@ A2ARequest = Annotated[
         SetTaskPushNotificationRequest,
         GetTaskPushNotificationRequest,
         ResubscribeTaskRequest,
+        ListTaskPushNotificationConfigRequest,
+        DeleteTaskPushNotificationConfigRequest,
     ],
     Discriminator('method'),
 ]

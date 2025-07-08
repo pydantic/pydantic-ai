@@ -40,11 +40,11 @@ try:
     from fasta2a.applications import FastA2A
     from fasta2a.broker import Broker, InMemoryBroker
     from fasta2a.schema import (
+        AgentProvider,
         Artifact,
         DataPart,
         Message,
         Part,
-        Provider,
         Skill,
         TaskIdParams,
         TaskSendParams,
@@ -80,7 +80,7 @@ def agent_to_a2a(
     url: str = 'http://localhost:8000',
     version: str = '1.0.0',
     description: str | None = None,
-    provider: Provider | None = None,
+    provider: AgentProvider | None = None,
     skills: list[Skill] | None = None,
     # Starlette
     debug: bool = False,
@@ -294,8 +294,8 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
                 model_parts.append(UserPromptPart(content=part['text']))
             elif part['kind'] == 'file':
                 file_content = part['file']
-                if 'data' in file_content:
-                    data = file_content['data'].encode('utf-8')
+                if 'bytes' in file_content:
+                    data = file_content['bytes'].encode('utf-8')
                     mime_type = file_content.get('mime_type', 'application/octet-stream')
                     content = BinaryContent(data=data, media_type=mime_type)
                     model_parts.append(UserPromptPart(content=[content]))
