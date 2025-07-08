@@ -240,12 +240,17 @@ class MCPServer(ABC):
             else:
                 assert_never(resource)
         elif isinstance(part, mcp_types.ResourceLink):
-            return {
-                'type': 'resource_link',
-                'uri': part.uri,
-                'name': part.name,
-                'mimeType': part.mimeType,
-            }
+            resource_result: mcp_types.ReadResourceResult = anyio.run(lambda: self._client.read_resource(part.uri))
+            content = resource_result.contents[0]
+            if isinstance(content, mcp_types.TextResourceContents):
+                return content.text
+            elif isinstance(content, mcp_types.BlobResourceContents):
+                return messages.BinaryContent(
+                    data=base64.b64decode(content.blob), media_type=content.mimeType or 'application/octet-stream'
+                )
+            else:
+                assert_never(content)
+
         else:
             assert_never(part)
 
