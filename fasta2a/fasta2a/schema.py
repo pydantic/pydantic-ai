@@ -7,7 +7,7 @@ from typing import Annotated, Any, Generic, Literal, TypeVar, Union
 import pydantic
 from pydantic import Discriminator, TypeAdapter
 from pydantic.alias_generators import to_camel
-from typing_extensions import NotRequired, TypeAlias, TypedDict, TypeGuard
+from typing_extensions import NotRequired, TypeAlias, TypedDict
 
 
 @pydantic.with_config({'alias_generator': to_camel})
@@ -642,13 +642,3 @@ a2a_response_ta: TypeAdapter[A2AResponse] = TypeAdapter(A2AResponse)
 send_message_request_ta: TypeAdapter[SendMessageRequest] = TypeAdapter(SendMessageRequest)
 send_message_response_ta: TypeAdapter[SendMessageResponse] = TypeAdapter(SendMessageResponse)
 stream_message_request_ta: TypeAdapter[StreamMessageRequest] = TypeAdapter(StreamMessageRequest)
-
-
-def is_task(response: Task | Message) -> TypeGuard[Task]:
-    """Type guard to check if a response is a Task."""
-    return 'id' in response and 'status' in response and 'context_id' in response and response.get('kind') == 'task'
-
-
-def is_message(response: Task | Message) -> TypeGuard[Message]:
-    """Type guard to check if a response is a Message."""
-    return 'role' in response and 'parts' in response and response.get('kind') == 'message'

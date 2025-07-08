@@ -13,7 +13,7 @@ from .conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from fasta2a.client import A2AClient
-    from fasta2a.schema import DataPart, FilePart, Message, TextPart, is_task
+    from fasta2a.schema import DataPart, FilePart, Message, TextPart
     from fasta2a.storage import InMemoryStorage
 
 
@@ -64,7 +64,7 @@ async def test_a2a_pydantic_model_output():
             assert 'error' not in response
             assert 'result' in response
             result = response['result']
-            assert is_task(result)
+            assert result['kind'] == 'task'
 
             task_id = result['id']
 
@@ -137,7 +137,7 @@ async def test_a2a_simple():
             assert 'error' not in response
             assert 'result' in response
             result = response['result']
-            assert is_task(result)
+            assert result['kind'] == 'task'
             assert result == snapshot(
                 {
                     'id': IsStr(),
@@ -219,7 +219,7 @@ async def test_a2a_file_message_with_file():
             assert 'error' not in response
             assert 'result' in response
             result = response['result']
-            assert is_task(result)
+            assert result['kind'] == 'task'
             assert result == snapshot(
                 {
                     'id': IsStr(),
@@ -308,7 +308,7 @@ async def test_a2a_file_message_with_file_content():
             assert 'error' not in response
             assert 'result' in response
             result = response['result']
-            assert is_task(result)
+            assert result['kind'] == 'task'
             assert result == snapshot(
                 {
                     'id': IsStr(),
@@ -385,7 +385,7 @@ async def test_a2a_file_message_with_data():
             assert 'error' not in response
             assert 'result' in response
             result = response['result']
-            assert is_task(result)
+            assert result['kind'] == 'task'
             assert result == snapshot(
                 {
                     'id': IsStr(),
@@ -453,7 +453,7 @@ async def test_a2a_error_handling():
             assert 'error' not in response
             assert 'result' in response
             result = response['result']
-            assert is_task(result)
+            assert result['kind'] == 'task'
 
             task_id = result['id']
 
@@ -493,7 +493,7 @@ async def test_a2a_multiple_tasks_same_context():
             assert 'error' not in response1
             assert 'result' in response1
             result1 = response1['result']
-            assert is_task(result1)
+            assert result1['kind'] == 'task'
 
             task1_id = result1['id']
             context_id = result1['context_id']
@@ -522,7 +522,7 @@ async def test_a2a_multiple_tasks_same_context():
             assert 'error' not in response2
             assert 'result' in response2
             result2 = response2['result']
-            assert is_task(result2)
+            assert result2['kind'] == 'task'
 
             task2_id = result2['id']
             # Verify we got a new task ID but same context ID
@@ -600,7 +600,7 @@ async def test_a2a_multiple_messages():
             # NOTE: We include the agent history before we start working on the task.
             assert 'result' in response
             result = response['result']
-            assert is_task(result)
+            assert result['kind'] == 'task'
             task_id = result['id']
             task = storage.tasks[task_id]
             assert 'history' in task
