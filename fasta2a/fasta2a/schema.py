@@ -312,9 +312,6 @@ class DataPart(_BasePart):
     data: dict[str, Any]
     """The data of the part."""
 
-    description: NotRequired[str]
-    """A description of the data."""
-
 
 Part = Annotated[Union[TextPart, FilePart, DataPart], pydantic.Field(discriminator='kind')]
 """A fully formed piece of content exchanged between a client and a remote agent as part of a Message or an Artifact.
@@ -323,7 +320,7 @@ Each Part has its own content type and metadata.
 """
 
 TaskState: TypeAlias = Literal[
-    'submitted', 'working', 'input-required', 'completed', 'canceled', 'failed', 'rejected', 'auth-required'
+    'submitted', 'working', 'input-required', 'completed', 'canceled', 'failed', 'rejected', 'auth-required', 'unknown'
 ]
 """The possible states of a task."""
 
