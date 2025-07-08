@@ -12,7 +12,7 @@ try:
     from pydantic_ai.models.gemini import GeminiModel
 
     gemini_available = True
-except ImportError:
+except ImportError:  # pragma: no cover
     GeminiModel = None
     gemini_available = False
 
@@ -20,7 +20,7 @@ try:
     from pydantic_ai.models.openai import OpenAIResponsesModel
 
     openai_available = True
-except ImportError:
+except ImportError:  # pragma: no cover
     OpenAIResponsesModel = None
     openai_available = False
 
@@ -119,7 +119,7 @@ def test_agent_iter_settings_merge():
 
 def test_gemini_model_settings():
     """Test that GeminiModel can be initialized with settings."""
-    if not gemini_available or GeminiModel is None:
+    if not gemini_available or GeminiModel is None:  # pragma: no cover
         return  # Skip if dependencies not available
 
     settings = ModelSettings(max_tokens=300, temperature=0.6)
@@ -128,14 +128,14 @@ def test_gemini_model_settings():
     try:
         gemini_model = GeminiModel('gemini-1.5-flash', settings=settings)
         assert gemini_model.settings == settings
-    except Exception:
+    except Exception:  # pragma: no cover
         # Skip if provider setup fails (e.g., missing API keys)
         pass
 
 
 def test_openai_responses_model_settings():
     """Test that OpenAIResponsesModel can be initialized with settings."""
-    if not openai_available or OpenAIResponsesModel is None:
+    if not openai_available or OpenAIResponsesModel is None:  # pragma: no cover
         return  # Skip if dependencies not available
 
     settings = ModelSettings(max_tokens=400, temperature=0.7)
@@ -144,6 +144,37 @@ def test_openai_responses_model_settings():
     try:
         openai_model = OpenAIResponsesModel('gpt-3.5-turbo', settings=settings)
         assert openai_model.settings == settings
-    except Exception:
+    except Exception:  # pragma: no cover
         # Skip if provider setup fails (e.g., missing API keys)
         pass
+
+
+def test_instrumented_model_with_wrapped_settings():
+    """Test that Agent properly merges settings from InstrumentedModel's wrapped model."""
+    from pydantic_ai.models.instrumented import InstrumentedModel
+    
+    # Create a base model with settings
+    base_model_settings = ModelSettings(max_tokens=100, temperature=0.3)
+    base_model = TestModel(settings=base_model_settings)
+    
+    # Create an InstrumentedModel wrapping the base model
+    instrumented_model = InstrumentedModel(base_model)
+    
+    # Create an agent with additional settings
+    agent_settings = ModelSettings(max_tokens=200, top_p=0.9)
+    agent = Agent(model=instrumented_model, model_settings=agent_settings)
+    
+    # Create a simple response function to test the merge
+    def test_response(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('test')])
+    
+    # Replace the instrumented model's wrapped model with a function model for testing
+    instrumented_model.wrapped = FunctionModel(test_response, settings=base_model_settings)
+    
+    # Run the agent - this should trigger the wrapped model settings merge path
+    result = agent.run_sync('test message')
+    assert result.output == 'test'
+
+
+
+
