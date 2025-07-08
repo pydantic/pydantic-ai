@@ -591,7 +591,6 @@ print(test_model.last_model_request_parameters.function_tools)
 [
     ToolDefinition(
         name='greet',
-        description='',
         parameters_json_schema={
             'additionalProperties': False,
             'properties': {

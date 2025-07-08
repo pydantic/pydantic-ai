@@ -24,7 +24,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import Usage
 
 from .conftest import IsDatetime, IsNow, IsStr, try_import
@@ -59,8 +59,27 @@ async def test_stdio_server():
     async with server:
         tools = await server.list_tools()
         assert len(tools) == snapshot(13)
-        assert tools[0].name == 'celsius_to_fahrenheit'
-        assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
+        assert tools[0] == snapshot(
+            ToolDefinition(
+                name='celsius_to_fahrenheit',
+                parameters_json_schema={
+                    'properties': {'celsius': {'title': 'Celsius', 'type': 'number'}},
+                    'required': ['celsius'],
+                    'title': 'celsius_to_fahrenheitArguments',
+                    'type': 'object',
+                },
+                description="""\
+Convert Celsius to Fahrenheit.
+
+    Args:
+        celsius: Temperature in Celsius
+
+    Returns:
+        Temperature in Fahrenheit
+    \
+""",
+            )
+        )
 
         # Test calling the temperature conversion tool
         result = await server.call_tool('celsius_to_fahrenheit', {'celsius': 0})

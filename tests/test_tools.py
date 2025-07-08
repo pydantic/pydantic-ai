@@ -107,11 +107,6 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'strict': None,
         }
     )
-    keys = list(json_schema.keys())
-    # name should be the first key
-    assert keys[0] == 'name'
-    # description should be the second key
-    assert keys[1] == 'description'
 
 
 def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
