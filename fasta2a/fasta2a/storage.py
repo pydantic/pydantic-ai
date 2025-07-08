@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
@@ -25,7 +26,7 @@ class Storage(ABC):
         """
 
     @abstractmethod
-    async def submit_task(self, task_id: str, context_id: str, message: Message) -> Task:
+    async def submit_task(self, context_id: str, message: Message) -> Task:
         """Submit a task to storage."""
 
     @abstractmethod
@@ -75,10 +76,10 @@ class InMemoryStorage(Storage):
             task['history'] = task['history'][-history_length:]
         return task
 
-    async def submit_task(self, task_id: str, context_id: str, message: Message) -> Task:
+    async def submit_task(self, context_id: str, message: Message) -> Task:
         """Submit a task to storage."""
-        if task_id in self.tasks:
-            raise ValueError(f'Task {task_id} already exists')
+        # Generate a unique task ID
+        task_id = str(uuid.uuid4())
 
         # Add IDs to the message for A2A protocol
         message['task_id'] = task_id

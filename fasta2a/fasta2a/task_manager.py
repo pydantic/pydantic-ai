@@ -114,18 +114,17 @@ class TaskManager:
     async def send_message(self, request: SendMessageRequest) -> SendMessageResponse:
         """Send a message using the A2A v0.2.3 protocol."""
         request_id = request['id']
-        task_id = str(uuid.uuid4())
         message = request['params']['message']
 
         # Use provided context_id or create new one
         context_id = message.get('context_id') or str(uuid.uuid4())
 
         # Create a new task
-        task = await self.storage.submit_task(task_id, context_id, message)
+        task = await self.storage.submit_task(context_id, message)
 
         # Prepare params for broker
         broker_params: TaskSendParams = {
-            'id': task_id,
+            'id': task['id'],
             'context_id': context_id,
             'message': message,
         }
@@ -165,7 +164,7 @@ class TaskManager:
         return CancelTaskResponse(jsonrpc='2.0', id=request['id'], result=task)
 
     async def stream_message(self, request: StreamMessageRequest) -> None:
-        """Stream messages using Server-Sent Events. Not implemented."""
+        """Stream messages using Server-Sent Events."""
         raise NotImplementedError('message/stream method is not implemented yet.')
 
     async def set_task_push_notification(
