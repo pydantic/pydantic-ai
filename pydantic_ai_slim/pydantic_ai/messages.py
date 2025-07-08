@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
 
-AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
+AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 DocumentMediaType: TypeAlias = Literal[
     'application/pdf',
@@ -48,7 +48,7 @@ VideoMediaType: TypeAlias = Literal[
     'video/3gpp',
 ]
 
-AudioFormat: TypeAlias = Literal['wav', 'mp3']
+AudioFormat: TypeAlias = Literal['wav', 'mp3', 'oga', 'flac', 'aiff', 'aac']
 ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
 DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
 VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
@@ -97,6 +97,13 @@ class FileUrl(ABC):
 
     * If True, the file is downloaded and the data is sent to the model as bytes.
     * If False, the URL is sent directly to the model and no download is performed.
+    """
+
+    vendor_metadata: dict[str, Any] | None = None
+    """Vendor-specific metadata for the file.
+
+    Supported by:
+    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     """
 
     @property
@@ -175,13 +182,25 @@ class AudioUrl(FileUrl):
 
     @property
     def media_type(self) -> AudioMediaType:
-        """Return the media type of the audio file, based on the url."""
+        """Return the media type of the audio file, based on the url.
+
+        References:
+        - Gemini: https://ai.google.dev/gemini-api/docs/audio#supported-formats
+        """
         if self.url.endswith('.mp3'):
             return 'audio/mpeg'
-        elif self.url.endswith('.wav'):
+        if self.url.endswith('.wav'):
             return 'audio/wav'
-        else:
-            raise ValueError(f'Unknown audio file extension: {self.url}')
+        if self.url.endswith('.flac'):
+            return 'audio/flac'
+        if self.url.endswith('.oga'):
+            return 'audio/ogg'
+        if self.url.endswith('.aiff'):
+            return 'audio/aiff'
+        if self.url.endswith('.aac'):
+            return 'audio/aac'
+
+        raise ValueError(f'Unknown audio file extension: {self.url}')
 
     @property
     def format(self) -> AudioFormat:
@@ -262,6 +281,13 @@ class BinaryContent:
 
     media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str
     """The media type of the binary data."""
+
+    vendor_metadata: dict[str, Any] | None = None
+    """Vendor-specific metadata for the file.
+
+    Supported by:
+    - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+    """
 
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
@@ -344,6 +370,10 @@ _document_format_lookup: dict[str, DocumentFormat] = {
 _audio_format_lookup: dict[str, AudioFormat] = {
     'audio/mpeg': 'mp3',
     'audio/wav': 'wav',
+    'audio/flac': 'flac',
+    'audio/ogg': 'oga',
+    'audio/aiff': 'aiff',
+    'audio/aac': 'aac',
 }
 _image_format_lookup: dict[str, ImageFormat] = {
     'image/jpeg': 'jpeg',

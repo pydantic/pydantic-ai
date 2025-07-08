@@ -83,14 +83,18 @@ async def test_model_tools(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     tools = [
         ToolDefinition(
-            'foo',
-            'This is foo',
-            {'type': 'object', 'title': 'Foo', 'properties': {'bar': {'type': 'number', 'title': 'Bar'}}},
+            name='foo',
+            description='This is foo',
+            parameters_json_schema={
+                'type': 'object',
+                'title': 'Foo',
+                'properties': {'bar': {'type': 'number', 'title': 'Bar'}},
+            },
         ),
         ToolDefinition(
-            'apple',
-            'This is apple',
-            {
+            name='apple',
+            description='This is apple',
+            parameters_json_schema={
                 'type': 'object',
                 'properties': {
                     'banana': {'type': 'array', 'title': 'Banana', 'items': {'type': 'number', 'title': 'Bar'}}
@@ -99,9 +103,14 @@ async def test_model_tools(allow_model_requests: None):
         ),
     ]
     output_tool = ToolDefinition(
-        'result',
-        'This is the tool for the final Result',
-        {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}, 'required': ['spam']},
+        name='result',
+        description='This is the tool for the final Result',
+        parameters_json_schema={
+            'type': 'object',
+            'title': 'Result',
+            'properties': {'spam': {'type': 'number'}},
+            'required': ['spam'],
+        },
     )
 
     mrp = ModelRequestParameters(
@@ -148,9 +157,9 @@ async def test_model_tools(allow_model_requests: None):
 async def test_require_response_tool(allow_model_requests: None):
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     output_tool = ToolDefinition(
-        'result',
-        'This is the tool for the final Result',
-        {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+        name='result',
+        description='This is the tool for the final Result',
+        parameters_json_schema={'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
     )
     mrp = ModelRequestParameters(
         function_tools=[],
@@ -235,9 +244,9 @@ async def test_json_def_replaced(allow_model_requests: None):
 
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     output_tool = ToolDefinition(
-        'result',
-        'This is the tool for the final Result',
-        json_schema,
+        name='result',
+        description='This is the tool for the final Result',
+        parameters_json_schema=json_schema,
     )
     mrp = ModelRequestParameters(
         function_tools=[],
@@ -320,9 +329,9 @@ async def test_json_def_enum(allow_model_requests: None):
     )
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     output_tool = ToolDefinition(
-        'result',
-        'This is the tool for the final Result',
-        json_schema,
+        name='result',
+        description='This is the tool for the final Result',
+        parameters_json_schema=json_schema,
     )
     mrp = ModelRequestParameters(
         function_tools=[],
@@ -368,9 +377,9 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
 
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     output_tool = ToolDefinition(
-        'result',
-        'This is the tool for the final Result',
-        json_schema,
+        name='result',
+        description='This is the tool for the final Result',
+        parameters_json_schema=json_schema,
     )
     mrp = ModelRequestParameters(
         function_tools=[],
@@ -437,9 +446,9 @@ async def test_json_def_recursive(allow_model_requests: None):
 
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     output_tool = ToolDefinition(
-        'result',
-        'This is the tool for the final Result',
-        json_schema,
+        name='result',
+        description='This is the tool for the final Result',
+        parameters_json_schema=json_schema,
     )
     with pytest.raises(UserError, match=r'Recursive `\$ref`s in JSON Schema are not supported by Gemini'):
         mrp = ModelRequestParameters(
@@ -476,9 +485,9 @@ async def test_json_def_date(allow_model_requests: None):
 
     m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
     output_tool = ToolDefinition(
-        'result',
-        'This is the tool for the final Result',
-        json_schema,
+        name='result',
+        description='This is the tool for the final Result',
+        parameters_json_schema=json_schema,
     )
     mrp = ModelRequestParameters(
         function_tools=[],
