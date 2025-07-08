@@ -341,7 +341,7 @@ async def test_a2a_file_message_with_file_content():
                     'history': [
                         {
                             'role': 'user',
-                            'parts': [{'kind': 'file', 'file': {'mime_type': 'text/plain', 'data': 'foo'}}],
+                            'parts': [{'kind': 'file', 'file': {'bytes': 'foo', 'mime_type': 'text/plain'}}],
                             'kind': 'message',
                             'message_id': IsStr(),
                             'context_id': IsStr(),
@@ -369,7 +369,7 @@ async def test_a2a_file_message_with_file_content():
                         'history': [
                             {
                                 'role': 'user',
-                                'parts': [{'kind': 'file', 'file': {'mime_type': 'text/plain', 'data': 'foo'}}],
+                                'parts': [{'kind': 'file', 'file': {'bytes': 'foo', 'mime_type': 'text/plain'}}],
                                 'kind': 'message',
                                 'message_id': IsStr(),
                                 'context_id': IsStr(),
