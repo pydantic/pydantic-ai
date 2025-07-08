@@ -307,11 +307,7 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
     if not content:
         return 0
 
-    # Fast path for str:
     if isinstance(content, str):
-        # Use the fast path if possible, fallback to regex only if necessary
-        # Only use regex if unlikely chars present, but since we have re.split for punctuation
-        # let's keep the same logic, but precompiled regex
         return len(_TOKEN_SPLIT_RE.split(content.strip()))
 
     tokens = 0
