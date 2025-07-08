@@ -120,7 +120,6 @@ class FastA2A(Starlette):
         if a2a_request['method'] == 'message/send':
             jsonrpc_response = await self.task_manager.send_message(a2a_request)
         elif a2a_request['method'] == 'message/stream':
-            # Streaming support not yet implemented
             raise NotImplementedError(
                 'message/stream method is not implemented yet. Streaming support will be added in a future update.'
             )
