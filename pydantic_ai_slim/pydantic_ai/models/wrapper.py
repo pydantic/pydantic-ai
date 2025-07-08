@@ -23,6 +23,7 @@ class WrapperModel(Model):
     """The underlying model being wrapped."""
 
     def __init__(self, wrapped: Model | KnownModelName):
+        super().__init__()
         self.wrapped = infer_model(wrapped)
 
     async def request(self, *args: Any, **kwargs: Any) -> ModelResponse:

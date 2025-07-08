@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 import pydantic_core
 from typing_extensions import assert_never
@@ -29,9 +29,6 @@ from ..tools import ToolDefinition
 from ..usage import Usage
 from . import Model, ModelRequestParameters, StreamedResponse
 from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
-
-if TYPE_CHECKING:
-    from .instrumented import InstrumentationSettings
 
 
 @dataclass
@@ -72,7 +69,7 @@ class TestModel(Model):
     """If set, these args will be passed to the output tool."""
     seed: int = 0
     """Seed for generating random data."""
-    settings: ModelSettings | InstrumentationSettings | None = None
+    settings: ModelSettings | None = None
     """Model-specific settings that will be used as defaults for this model."""
     last_model_request_parameters: ModelRequestParameters | None = field(default=None, init=False)
     """The last ModelRequestParameters passed to the model in a request.
@@ -83,6 +80,10 @@ class TestModel(Model):
     """
     _model_name: str = field(default='test', repr=False)
     _system: str = field(default='test', repr=False)
+
+    def __post_init__(self):
+        """Initialize the base Model class with the settings."""
+        super().__init__(settings=self.settings)
 
     async def request(
         self,

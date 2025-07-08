@@ -670,26 +670,24 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
         output_validators = cast(list[_output.OutputValidator[AgentDepsT, RunOutputDataT]], self._output_validators)
 
-        # Only merge model settings if the model has ModelSettings (not InstrumentationSettings)
+        # Merge model settings from any Model
         if isinstance(model_used, InstrumentedModel):
-            # For InstrumentedModel, get settings from the wrapped model instead
+            # For InstrumentedModel, get settings from the wrapped model
             wrapped_model_settings = getattr(model_used.wrapped, 'settings', None)
-            if wrapped_model_settings is not None and hasattr(wrapped_model_settings, 'get'):
-                # It's a dict-like object (ModelSettings), not InstrumentationSettings
+            if wrapped_model_settings is not None:
                 model_settings = merge_model_settings(wrapped_model_settings, model_settings)
         else:
             # For regular models, use their settings directly
             current_settings = getattr(model_used, 'settings', None)
-            if current_settings is not None and hasattr(current_settings, 'get'):
-                # It's a dict-like object (ModelSettings), not InstrumentationSettings
+            if current_settings is not None:
                 model_settings = merge_model_settings(current_settings, model_settings)
 
         model_settings = merge_model_settings(self.model_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
 
         if isinstance(model_used, InstrumentedModel):
-            instrumentation_settings = model_used.settings
-            tracer = model_used.settings.tracer
+            instrumentation_settings = model_used.instrumentation_settings
+            tracer = model_used.instrumentation_settings.tracer
         else:
             instrumentation_settings = None
             tracer = NoOpTracer()
