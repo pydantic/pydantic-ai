@@ -332,7 +332,7 @@ async def test_a2a_multiple_messages():
 
             task = None
             tries = 0
-            while tries < 10:
+            while tries < 10:  # pragma: no branch
                 await anyio.sleep(0.1)
                 task = await a2a_client.get_task(task_id)
                 tries += 1
