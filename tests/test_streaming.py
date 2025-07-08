@@ -1144,7 +1144,6 @@ async def test_deferred_tool():
                 tool_defs={
                     'my_tool': ToolDefinition(
                         name='my_tool',
-                        description='',
                         parameters_json_schema={
                             'additionalProperties': False,
                             'properties': {'x': {'type': 'integer'}},
@@ -1192,7 +1191,6 @@ async def test_deferred_tool_iter():
                 tool_defs={
                     'my_tool': ToolDefinition(
                         name='my_tool',
-                        description='',
                         parameters_json_schema={
                             'additionalProperties': False,
                             'properties': {'x': {'type': 'integer'}},
