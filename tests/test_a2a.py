@@ -1,3 +1,5 @@
+import uuid
+
 import anyio
 import httpx
 import pytest
@@ -59,7 +61,12 @@ async def test_a2a_pydantic_model_output():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
-            message = Message(role='user', parts=[TextPart(text='Get user profile', kind='text')], kind='message')
+            message = Message(
+                role='user',
+                parts=[TextPart(text='Get user profile', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+            )
             response = await a2a_client.send_message(message=message)
             assert 'error' not in response
             assert 'result' in response
@@ -117,7 +124,12 @@ async def test_a2a_runtime_error_without_lifespan():
     async with httpx.AsyncClient(transport=transport) as http_client:
         a2a_client = A2AClient(http_client=http_client)
 
-        message = Message(role='user', parts=[TextPart(text='Hello, world!', kind='text')], kind='message')
+        message = Message(
+            role='user',
+            parts=[TextPart(text='Hello, world!', kind='text')],
+            kind='message',
+            message_id=str(uuid.uuid4()),
+        )
 
         with pytest.raises(RuntimeError, match='TaskManager was not properly initialized.'):
             await a2a_client.send_message(message=message)
@@ -132,7 +144,12 @@ async def test_a2a_simple():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
-            message = Message(role='user', parts=[TextPart(text='Hello, world!', kind='text')], kind='message')
+            message = Message(
+                role='user',
+                parts=[TextPart(text='Hello, world!', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+            )
             response = await a2a_client.send_message(message=message)
             assert 'error' not in response
             assert 'result' in response
@@ -149,6 +166,7 @@ async def test_a2a_simple():
                             'role': 'user',
                             'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
                             'kind': 'message',
+                            'message_id': IsStr(),
                             'context_id': IsStr(),
                             'task_id': IsStr(),
                         }
@@ -176,6 +194,7 @@ async def test_a2a_simple():
                                 'role': 'user',
                                 'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
                                 'kind': 'message',
+                                'message_id': IsStr(),
                                 'context_id': IsStr(),
                                 'task_id': IsStr(),
                             }
@@ -214,6 +233,7 @@ async def test_a2a_file_message_with_file():
                     )
                 ],
                 kind='message',
+                message_id=str(uuid.uuid4()),
             )
             response = await a2a_client.send_message(message=message)
             assert 'error' not in response
@@ -236,6 +256,7 @@ async def test_a2a_file_message_with_file():
                                 }
                             ],
                             'kind': 'message',
+                            'message_id': IsStr(),
                             'context_id': IsStr(),
                             'task_id': IsStr(),
                         }
@@ -268,6 +289,7 @@ async def test_a2a_file_message_with_file():
                                     }
                                 ],
                                 'kind': 'message',
+                                'message_id': IsStr(),
                                 'context_id': IsStr(),
                                 'task_id': IsStr(),
                             }
@@ -303,6 +325,7 @@ async def test_a2a_file_message_with_file_content():
                     FilePart(file={'data': 'foo', 'mime_type': 'text/plain'}, kind='file'),
                 ],
                 kind='message',
+                message_id=str(uuid.uuid4()),
             )
             response = await a2a_client.send_message(message=message)
             assert 'error' not in response
@@ -320,6 +343,7 @@ async def test_a2a_file_message_with_file_content():
                             'role': 'user',
                             'parts': [{'kind': 'file', 'file': {'mime_type': 'text/plain', 'data': 'foo'}}],
                             'kind': 'message',
+                            'message_id': IsStr(),
                             'context_id': IsStr(),
                             'task_id': IsStr(),
                         }
@@ -347,6 +371,7 @@ async def test_a2a_file_message_with_file_content():
                                 'role': 'user',
                                 'parts': [{'kind': 'file', 'file': {'mime_type': 'text/plain', 'data': 'foo'}}],
                                 'kind': 'message',
+                                'message_id': IsStr(),
                                 'context_id': IsStr(),
                                 'task_id': IsStr(),
                             }
@@ -380,6 +405,7 @@ async def test_a2a_file_message_with_data():
                 role='user',
                 parts=[DataPart(kind='data', data={'foo': 'bar'})],
                 kind='message',
+                message_id=str(uuid.uuid4()),
             )
             response = await a2a_client.send_message(message=message)
             assert 'error' not in response
@@ -397,6 +423,7 @@ async def test_a2a_file_message_with_data():
                             'role': 'user',
                             'parts': [{'kind': 'data', 'data': {'foo': 'bar'}}],
                             'kind': 'message',
+                            'message_id': IsStr(),
                             'context_id': IsStr(),
                             'task_id': IsStr(),
                         }
@@ -424,6 +451,7 @@ async def test_a2a_file_message_with_data():
                                 'role': 'user',
                                 'parts': [{'kind': 'data', 'data': {'foo': 'bar'}}],
                                 'kind': 'message',
+                                'message_id': IsStr(),
                                 'context_id': IsStr(),
                                 'task_id': IsStr(),
                             }
@@ -448,7 +476,12 @@ async def test_a2a_error_handling():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
-            message = Message(role='user', parts=[TextPart(text='Hello, world!', kind='text')], kind='message')
+            message = Message(
+                role='user',
+                parts=[TextPart(text='Hello, world!', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+            )
             response = await a2a_client.send_message(message=message)
             assert 'error' not in response
             assert 'result' in response
@@ -488,7 +521,12 @@ async def test_a2a_multiple_tasks_same_context():
             a2a_client = A2AClient(http_client=http_client)
 
             # First message - should create a new context
-            message1 = Message(role='user', parts=[TextPart(text='First message', kind='text')], kind='message')
+            message1 = Message(
+                role='user',
+                parts=[TextPart(text='First message', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+            )
             response1 = await a2a_client.send_message(message=message1)
             assert 'error' not in response1
             assert 'result' in response1
@@ -516,7 +554,11 @@ async def test_a2a_multiple_tasks_same_context():
 
             # Second message - reuse the same context_id
             message2 = Message(
-                role='user', parts=[TextPart(text='Second message', kind='text')], kind='message', context_id=context_id
+                role='user',
+                parts=[TextPart(text='Second message', kind='text')],
+                kind='message',
+                context_id=context_id,
+                message_id=str(uuid.uuid4()),
             )
             response2 = await a2a_client.send_message(message=message2)
             assert 'error' not in response2
@@ -573,7 +615,12 @@ async def test_a2a_multiple_messages():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
-            message = Message(role='user', parts=[TextPart(text='Hello, world!', kind='text')], kind='message')
+            message = Message(
+                role='user',
+                parts=[TextPart(text='Hello, world!', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+            )
             response = await a2a_client.send_message(message=message)
             assert response == snapshot(
                 {
@@ -589,6 +636,7 @@ async def test_a2a_multiple_messages():
                                 'role': 'user',
                                 'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
                                 'kind': 'message',
+                                'message_id': IsStr(),
                                 'context_id': IsStr(),
                                 'task_id': IsStr(),
                             }
@@ -605,7 +653,12 @@ async def test_a2a_multiple_messages():
             task = storage.tasks[task_id]
             assert 'history' in task
             task['history'].append(
-                Message(role='agent', parts=[TextPart(text='Whats up?', kind='text')], kind='message')
+                Message(
+                    role='agent',
+                    parts=[TextPart(text='Whats up?', kind='text')],
+                    kind='message',
+                    message_id=str(uuid.uuid4()),
+                )
             )
 
             response = await a2a_client.get_task(task_id)
@@ -623,10 +676,16 @@ async def test_a2a_multiple_messages():
                                 'role': 'user',
                                 'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
                                 'kind': 'message',
+                                'message_id': IsStr(),
                                 'context_id': IsStr(),
                                 'task_id': IsStr(),
                             },
-                            {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}], 'kind': 'message'},
+                            {
+                                'role': 'agent',
+                                'parts': [{'kind': 'text', 'text': 'Whats up?'}],
+                                'kind': 'message',
+                                'message_id': IsStr(),
+                            },
                         ],
                     },
                 }
@@ -648,10 +707,16 @@ async def test_a2a_multiple_messages():
                                 'role': 'user',
                                 'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
                                 'kind': 'message',
+                                'message_id': IsStr(),
                                 'context_id': IsStr(),
                                 'task_id': IsStr(),
                             },
-                            {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}], 'kind': 'message'},
+                            {
+                                'role': 'agent',
+                                'parts': [{'kind': 'text', 'text': 'Whats up?'}],
+                                'kind': 'message',
+                                'message_id': IsStr(),
+                            },
                         ],
                         'artifacts': [
                             {
