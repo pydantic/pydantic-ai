@@ -152,7 +152,7 @@ class Artifact(TypedDict):
     metadata: NotRequired[dict[str, Any]]
     """Metadata about the artifact."""
 
-    extensions: NotRequired[list[Any]]
+    extensions: NotRequired[list[str]]
     """Array of extensions."""
 
     append: NotRequired[bool]
