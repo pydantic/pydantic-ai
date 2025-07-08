@@ -123,9 +123,6 @@ class FastA2A(Starlette):
             raise NotImplementedError(
                 'message/stream method is not implemented yet. Streaming support will be added in a future update.'
             )
-        elif a2a_request['method'] == 'tasks/send':  # type: ignore[comparison-overlap]
-            # Legacy method - no longer supported
-            raise NotImplementedError('tasks/send is deprecated. Use message/send instead.')
         elif a2a_request['method'] == 'tasks/get':
             jsonrpc_response = await self.task_manager.get_task(a2a_request)
         elif a2a_request['method'] == 'tasks/cancel':
