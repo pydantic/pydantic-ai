@@ -133,11 +133,11 @@ T = typing.TypeVar('T')
 class BedrockModelSettings(ModelSettings, total=False):
     """Settings for Bedrock models.
 
-    ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-
     See [the Bedrock Converse API docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html#API_runtime_Converse_RequestSyntax) for a full list.
     See [the boto3 implementation](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/bedrock-runtime/client/converse.html) of the Bedrock Converse API.
     """
+
+    # ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     bedrock_guardrail_config: GuardrailConfigurationTypeDef
     """Content moderation and safety settings for Bedrock API requests.

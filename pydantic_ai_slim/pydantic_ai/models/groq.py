@@ -93,10 +93,9 @@ See <https://console.groq.com/docs/models> for an up to date date list of models
 
 
 class GroqModelSettings(ModelSettings, total=False):
-    """Settings used for a Groq model request.
+    """Settings used for a Groq model request."""
 
-    ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     groq_reasoning_format: Literal['hidden', 'raw', 'parsed']
 

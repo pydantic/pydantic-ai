@@ -65,9 +65,10 @@ async def test_context_subtree_concurrent():
     task1_root = tree1.roots[0]
     assert len(task1_root.children) == 2, 'task1 should have exactly two children'
     task1_child_names = {child.name for child in task1_root.children}
-    assert task1_child_names == {'task1_child1', 'task1_child2'}, (
-        "task1's children should be task1_child1 and task1_child2"
-    )
+    assert task1_child_names == {
+        'task1_child1',
+        'task1_child2',
+    }, "task1's children should be task1_child1 and task1_child2"
 
     # Verify that tree2 only contains spans from task2
     assert len(tree2.roots) == 1, 'tree2 should have exactly one root span'
