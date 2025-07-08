@@ -147,15 +147,10 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
             if task_history:
                 for a2a_msg in task_history:
                     if a2a_msg['role'] == 'user':
-                        # Convert user message to pydantic-ai format
+                        # Convert user message from A2A format to pydantic-ai format
                         message_history.append(ModelRequest(parts=self._request_parts_from_a2a(a2a_msg['parts'])))
 
             result = await self.agent.run(message_history=message_history)  # type: ignore
-
-            # Create both a message and artifact for the result
-            # This ensures the complete conversation is preserved in history while
-            # also marking the output as a durable artifact
-            message_id = str(uuid.uuid4())
 
             # Update context with complete message history including new messages
             # This preserves tool calls, thinking, and all internal state
@@ -183,14 +178,14 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
                             )
                         )
 
-            # Also add the final output as a message if it's not just text
-            # This ensures structured outputs appear in the message history
-            if result.output and not isinstance(result.output, str):
-                output_part = self._convert_result_to_part(result.output)
+            # Also add the final output as a message if it's a string
+            # This ensures string outputs appear in the message history for a task
+            if result.output and isinstance(result.output, str):
+                message_id = str(uuid.uuid4())
                 a2a_messages.append(
                     Message(
                         role='agent',
-                        parts=[output_part],
+                        parts=[A2ATextPart(kind='text', text=result.output)],
                         kind='message',
                         message_id=message_id,
                     )

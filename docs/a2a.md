@@ -121,3 +121,7 @@ When using `to_a2a()`, PydanticAI automatically:
 
 - Stores the complete conversation history (including tool calls and responses) in the context storage
 - Ensures that subsequent messages with the same `context_id` have access to the full conversation history
+- Persists agent results as A2A artifacts:
+  - String results become `TextPart` artifacts and also appear in the message history
+  - Structured data (Pydantic models, dataclasses, tuples, etc.) become `DataPart` artifacts with the data wrapped as `{"result": <your_data>}`
+  - Artifacts include metadata with type information and JSON schema when available

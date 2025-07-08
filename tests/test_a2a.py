@@ -103,15 +103,10 @@ async def test_a2a_pydantic_model_output():
             assert json_schema['properties']['email']['type'] == 'string'
             assert json_schema['required'] == ['name', 'age', 'email']
 
-            # Check the message history also has the data
+            # Check the message history - structured outputs don't appear as messages
             assert 'history' in result
-            assert len(result['history']) == 2
-            agent_message = result['history'][1]
-            assert agent_message['role'] == 'agent'
-            assert agent_message['parts'][0]['kind'] == 'data'
-            assert agent_message['parts'][0]['data'] == {
-                'result': {'name': 'John Doe', 'age': 30, 'email': 'john@example.com'}
-            }
+            assert len(result['history']) == 1  # Only the user message
+            assert result['history'][0]['role'] == 'user'
 
 
 async def test_a2a_runtime_error_without_lifespan():
@@ -183,15 +178,7 @@ async def test_a2a_simple():
                                 'kind': 'message',
                                 'context_id': IsStr(),
                                 'task_id': IsStr(),
-                            },
-                            {
-                                'role': 'agent',
-                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
-                                'kind': 'message',
-                                'message_id': IsStr(),
-                                'context_id': IsStr(),
-                                'task_id': IsStr(),
-                            },
+                            }
                         ],
                         'artifacts': [
                             {
@@ -283,15 +270,7 @@ async def test_a2a_file_message_with_file():
                                 'kind': 'message',
                                 'context_id': IsStr(),
                                 'task_id': IsStr(),
-                            },
-                            {
-                                'role': 'agent',
-                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
-                                'kind': 'message',
-                                'message_id': IsStr(),
-                                'context_id': IsStr(),
-                                'task_id': IsStr(),
-                            },
+                            }
                         ],
                         'artifacts': [
                             {
@@ -370,15 +349,7 @@ async def test_a2a_file_message_with_file_content():
                                 'kind': 'message',
                                 'context_id': IsStr(),
                                 'task_id': IsStr(),
-                            },
-                            {
-                                'role': 'agent',
-                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
-                                'kind': 'message',
-                                'message_id': IsStr(),
-                                'context_id': IsStr(),
-                                'task_id': IsStr(),
-                            },
+                            }
                         ],
                         'artifacts': [
                             {
@@ -681,14 +652,6 @@ async def test_a2a_multiple_messages():
                                 'task_id': IsStr(),
                             },
                             {'role': 'agent', 'parts': [{'kind': 'text', 'text': 'Whats up?'}], 'kind': 'message'},
-                            {
-                                'role': 'agent',
-                                'parts': [{'kind': 'data', 'data': {'result': ['foo', 'bar']}}],
-                                'kind': 'message',
-                                'message_id': IsStr(),
-                                'context_id': IsStr(),
-                                'task_id': IsStr(),
-                            },
                         ],
                         'artifacts': [
                             {
