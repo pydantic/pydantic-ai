@@ -124,9 +124,8 @@ class AgentWorker(Worker, Generic[WorkerOutputT, AgentDepsT]):
         task = await self.storage.load_task(params['id'])
         if task is None:
             raise ValueError(f'Task {params["id"]} not found')
-        if 'context_id' not in task:
-            raise ValueError('Task must have a context_id')
 
+        # TODO(Marcelo): Should we lock `run_task` on the `context_id`?
         # Ensure this task hasn't been run before
         if task['status']['state'] != 'submitted':
             raise ValueError(f'Task {params["id"]} has already been processed (state: {task["status"]["state"]})')

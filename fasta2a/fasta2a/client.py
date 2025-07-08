@@ -47,7 +47,7 @@ class A2AClient:
     ) -> SendMessageResponse:
         """Send a message using the A2A protocol.
 
-        Returns a JSON-RPC response containing either a result (Task | Message) or an error.
+        Returns a JSON-RPC response containing either a result (Task) or an error.
         """
         params = MessageSendParams(message=message)
         if metadata is not None:
