@@ -137,7 +137,7 @@ _(This example is complete, it can be run "as is" with Python 3.10+ — you'll n
 The other transport offered by MCP is the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. In this case, you'd use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class.
 
 !!! note
-    When using [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] servers as `toolsets` on an [`Agent`][pydantic_ai.Agent], you can use the [`async with agent`][pydantic_ai.Agent.__aenter__] context manager to start and stop the server around the context where it'll be used. You can also use [`async with server`][pydantic_ai.mcp.MCPServerStdio.__aenter__] to manage the starting and stopping of a specific server, for example if you'd like to use it with multiple agents.
+    When using [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] servers as `toolsets` on an [`Agent`][pydantic_ai.Agent], you can use the [`async with agent`][pydantic_ai.Agent.__aenter__] context manager to start and stop the server around the context where it'll be used. You can also use [`async with server`][pydantic_ai.mcp.MCPServer.__aenter__] to manage the starting and stopping of a specific server, for example if you'd like to use it with multiple agents.
 
     If you don't explicitly start the server using one of these context managers, it will automatically be started when it's needed (e.g. to list the available tools or call a specific tool), but it's more efficient to do so around the entire context where you expect it to be used.
 

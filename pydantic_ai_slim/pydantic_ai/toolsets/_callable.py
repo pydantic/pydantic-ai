@@ -2,16 +2,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic_core import SchemaValidator
 
 from .._run_context import AgentDepsT, RunContext
 from ..messages import ToolCallPart
 from . import AbstractToolset
-
-if TYPE_CHECKING:
-    pass
 
 
 class CallableToolset(AbstractToolset[AgentDepsT], ABC):

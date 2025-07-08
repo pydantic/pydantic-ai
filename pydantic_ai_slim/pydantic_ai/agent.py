@@ -1798,6 +1798,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         return isinstance(node, End)
 
     async def __aenter__(self) -> Self:
+        """Enter the agent context.
+
+        This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used.
+
+        This is a no-op if the agent has already been entered.
+        """
         async with self._enter_lock:
             if self._entered_count == 0:
                 self._exit_stack = AsyncExitStack()
