@@ -272,7 +272,7 @@ class TextOutput(Generic[OutputDataT]):
     """The function that will be called to process the model's plain text output. The function must take a single string argument."""
 
 
-class StructuredDict(Generic[OutputDataT], dict):
+class StructuredDict(Generic[OutputDataT], dict[str, Any]):
     """A dictionary subclass that enforces a JSON schema for structured output.
 
     This class serves as both a container for structured data and the schema itself,

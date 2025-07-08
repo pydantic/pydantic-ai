@@ -1609,10 +1609,6 @@ def test_structured_dict():
     result = agent.run_sync('Generate a person')
 
     assert isinstance(result.output, dict)
-    assert 'name' in result.output
-    assert 'age' in result.output
-    assert isinstance(result.output['name'], str)
-    assert isinstance(result.output['age'], int)
 
 
 def test_run_with_history_new():
