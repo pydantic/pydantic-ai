@@ -1,24 +1,21 @@
 from __future__ import annotations as _annotations
 
 import base64
-import warnings
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal, Union, cast, overload
+from typing import Any, Literal, Union, cast, overload
 from uuid import uuid4
 
 from typing_extensions import assert_never
 
-from pydantic_ai.providers import Provider
-
-from .. import UnexpectedModelBehavior, UserError, _utils, usage
+from .. import UnexpectedModelBehavior, _utils, usage
+from .._output import OutputObjectDefinition
+from ..exceptions import UserError
 from ..messages import (
-    AudioUrl,
     BinaryContent,
-    DocumentUrl,
-    ImageUrl,
+    FileUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -27,22 +24,24 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
+from ..profiles import ModelProfileSpec
+from ..providers import Provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    cached_async_http_client,
     check_allow_model_requests,
+    download_item,
     get_user_agent,
 )
-from ._json_schema import JsonSchema, WalkJsonSchema
 
 try:
     from google import genai
@@ -55,6 +54,8 @@ try:
         FunctionDeclarationDict,
         GenerateContentConfigDict,
         GenerateContentResponse,
+        HttpOptionsDict,
+        MediaResolution,
         Part,
         PartDict,
         SafetySettingDict,
@@ -76,15 +77,15 @@ LatestGoogleModelNames = Literal[
     'gemini-1.5-flash-8b',
     'gemini-1.5-pro',
     'gemini-1.0-pro',
-    'gemini-2.0-flash-exp',
-    'gemini-2.0-flash-thinking-exp-01-21',
-    'gemini-exp-1206',
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite-preview-02-05',
     'gemini-2.0-pro-exp-02-05',
-    'gemini-2.5-flash-preview-04-17',
+    'gemini-2.5-flash-preview-05-20',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite-preview-06-17',
     'gemini-2.5-pro-exp-03-25',
-    'gemini-2.5-pro-preview-03-25',
+    'gemini-2.5-pro-preview-05-06',
+    'gemini-2.5-pro',
 ]
 """Latest Gemini models."""
 
@@ -98,10 +99,9 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 
 
 class GoogleModelSettings(ModelSettings, total=False):
-    """Settings used for a Gemini model request.
+    """Settings used for a Gemini model request."""
 
-    ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     google_safety_settings: list[SafetySettingDict]
     """The safety settings to use for the model.
@@ -113,6 +113,18 @@ class GoogleModelSettings(ModelSettings, total=False):
     """The thinking configuration to use for the model.
 
     See <https://ai.google.dev/gemini-api/docs/thinking> for more information.
+    """
+
+    google_labels: dict[str, str]
+    """User-defined metadata to break down billed charges. Only supported by the Vertex AI API.
+
+    See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
+    """
+
+    google_video_resolution: MediaResolution
+    """The video resolution to use for the model.
+
+    See <https://ai.google.dev/api/generate-content#MediaResolution> for more information.
     """
 
 
@@ -138,6 +150,7 @@ class GoogleModel(Model):
         model_name: GoogleModelName,
         *,
         provider: Literal['google-gla', 'google-vertex'] | Provider[genai.Client] = 'google-gla',
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize a Gemini model.
 
@@ -146,6 +159,7 @@ class GoogleModel(Model):
             provider: The provider to use for authentication and API access. Can be either the string
                 'google-gla' or 'google-vertex' or an instance of `Provider[httpx.AsyncClient]`.
                 If not provided, a new provider will be created using the other parameters.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
         """
         self._model_name = model_name
 
@@ -155,6 +169,7 @@ class GoogleModel(Model):
         self._provider = provider
         self._system = provider.name
         self.client = provider.client
+        self._profile = profile or provider.model_profile
 
     @property
     def base_url(self) -> str:
@@ -183,16 +198,6 @@ class GoogleModel(Model):
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         yield await self._process_streamed_response(response)  # type: ignore
 
-    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
-        def _customize_tool_def(t: ToolDefinition):
-            return replace(t, parameters_json_schema=_GeminiJsonSchema(t.parameters_json_schema).walk())
-
-        return ModelRequestParameters(
-            function_tools=[_customize_tool_def(tool) for tool in model_request_parameters.function_tools],
-            allow_text_output=model_request_parameters.allow_text_output,
-            output_tools=[_customize_tool_def(tool) for tool in model_request_parameters.output_tools],
-        )
-
     @property
     def model_name(self) -> GoogleModelName:
         """The model name."""
@@ -218,9 +223,7 @@ class GoogleModel(Model):
     def _get_tool_config(
         self, model_request_parameters: ModelRequestParameters, tools: list[ToolDict] | None
     ) -> ToolConfigDict | None:
-        if model_request_parameters.allow_text_output:
-            return None
-        elif tools:
+        if not model_request_parameters.allow_text_output and tools:
             names: list[str] = []
             for tool in tools:
                 for function_declaration in tool.get('function_declarations') or []:
@@ -228,7 +231,7 @@ class GoogleModel(Model):
                         names.append(name)
             return _tool_config(names)
         else:
-            return _tool_config([])  # pragma: no cover
+            return None
 
     @overload
     async def _generate_content(
@@ -256,21 +259,50 @@ class GoogleModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> GenerateContentResponse | Awaitable[AsyncIterator[GenerateContentResponse]]:
         tools = self._get_tools(model_request_parameters)
+
+        response_mime_type = None
+        response_schema = None
+        if model_request_parameters.output_mode == 'native':
+            if tools:
+                raise UserError('Gemini does not support structured output and tools at the same time.')
+
+            response_mime_type = 'application/json'
+
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            response_schema = self._map_response_schema(output_object)
+        elif model_request_parameters.output_mode == 'prompted' and not tools:
+            response_mime_type = 'application/json'
+
         tool_config = self._get_tool_config(model_request_parameters, tools)
         system_instruction, contents = await self._map_messages(messages)
 
+        http_options: HttpOptionsDict = {
+            'headers': {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
+        }
+        if timeout := model_settings.get('timeout'):
+            if isinstance(timeout, (int, float)):
+                http_options['timeout'] = int(1000 * timeout)
+            else:
+                raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
+
         config = GenerateContentConfigDict(
-            http_options={'headers': {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}},
+            http_options=http_options,
             system_instruction=system_instruction,
             temperature=model_settings.get('temperature'),
             top_p=model_settings.get('top_p'),
             max_output_tokens=model_settings.get('max_tokens'),
+            stop_sequences=model_settings.get('stop_sequences'),
             presence_penalty=model_settings.get('presence_penalty'),
             frequency_penalty=model_settings.get('frequency_penalty'),
             safety_settings=model_settings.get('google_safety_settings'),
             thinking_config=model_settings.get('google_thinking_config'),
+            labels=model_settings.get('google_labels'),
+            media_resolution=model_settings.get('google_video_resolution'),
             tools=cast(ToolListUnionDict, tools),
             tool_config=tool_config,
+            response_mime_type=response_mime_type,
+            response_schema=response_schema,
         )
 
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
@@ -287,9 +319,16 @@ class GoogleModel(Model):
                     'Content field missing from Gemini response', str(response)
                 )  # pragma: no cover
         parts = response.candidates[0].content.parts or []
+        vendor_id = response.response_id or None
+        vendor_details: dict[str, Any] | None = None
+        finish_reason = response.candidates[0].finish_reason
+        if finish_reason:  # pragma: no branch
+            vendor_details = {'finish_reason': finish_reason.value}
         usage = _metadata_as_usage(response)
         usage.requests = 1
-        return _process_response_from_parts(parts, response.model_version or self._model_name, usage)
+        return _process_response_from_parts(
+            parts, response.model_version or self._model_name, usage, vendor_id=vendor_id, vendor_details=vendor_details
+        )
 
     async def _process_streamed_response(self, response: AsyncIterator[GenerateContentResponse]) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
@@ -343,8 +382,10 @@ class GoogleModel(Model):
                     else:
                         assert_never(part)
 
-                if message_parts:  # pragma: no branch
-                    contents.append({'role': 'user', 'parts': message_parts})
+                # Google GenAI requires at least one part in the message.
+                if not message_parts:
+                    message_parts = [{'text': ''}]
+                contents.append({'role': 'user', 'parts': message_parts})
             elif isinstance(m, ModelResponse):
                 contents.append(_content_model_response(m))
             else:
@@ -365,17 +406,34 @@ class GoogleModel(Model):
                 elif isinstance(item, BinaryContent):
                     # NOTE: The type from Google GenAI is incorrect, it should be `str`, not `bytes`.
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
-                    content.append({'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}})  # type: ignore
-                elif isinstance(item, (AudioUrl, ImageUrl, DocumentUrl, VideoUrl)):
-                    client = cached_async_http_client()
-                    response = await client.get(item.url, follow_redirects=True)
-                    response.raise_for_status()
-                    # NOTE: The type from Google GenAI is incorrect, it should be `str`, not `bytes`.
-                    base64_encoded = base64.b64encode(response.content).decode('utf-8')
-                    content.append({'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}})  # type: ignore
+                    inline_data_dict = {'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}}
+                    if item.vendor_metadata:
+                        inline_data_dict['video_metadata'] = item.vendor_metadata
+                    content.append(inline_data_dict)  # type: ignore
+                elif isinstance(item, VideoUrl) and item.is_youtube:
+                    file_data_dict = {'file_data': {'file_uri': item.url, 'mime_type': item.media_type}}
+                    if item.vendor_metadata:
+                        file_data_dict['video_metadata'] = item.vendor_metadata
+                    content.append(file_data_dict)  # type: ignore
+                elif isinstance(item, FileUrl):
+                    if self.system == 'google-gla' or item.force_download:
+                        downloaded_item = await download_item(item, data_format='base64')
+                        inline_data = {'data': downloaded_item['data'], 'mime_type': downloaded_item['data_type']}
+                        content.append({'inline_data': inline_data})  # type: ignore
+                    else:
+                        content.append({'file_data': {'file_uri': item.url, 'mime_type': item.media_type}})
                 else:
                     assert_never(item)
         return content
+
+    def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
+        response_schema = o.json_schema.copy()
+        if o.name:
+            response_schema['title'] = o.name
+        if o.description:
+            response_schema['description'] = o.description
+
+        return response_schema
 
 
 @dataclass
@@ -388,7 +446,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
-            self._usage += _metadata_as_usage(chunk)
+            self._usage = _metadata_as_usage(chunk)
 
             assert chunk.candidates is not None
             candidate = chunk.candidates[0]
@@ -396,8 +454,11 @@ class GeminiStreamedResponse(StreamedResponse):
                 raise UnexpectedModelBehavior('Streamed response has no content field')  # pragma: no cover
             assert candidate.content.parts is not None
             for part in candidate.content.parts:
-                if part.text:
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
+                if part.text is not None:
+                    if part.thought:
+                        yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
+                    else:
+                        yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=uuid4(),
@@ -430,19 +491,33 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
         elif isinstance(item, TextPart):
             if item.content:  # pragma: no branch
                 parts.append({'text': item.content})
+        elif isinstance(item, ThinkingPart):  # pragma: no cover
+            # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
+            # please open an issue. The below code is the code to send thinking to the provider.
+            # parts.append({'text': item.content, 'thought': True})
+            pass
         else:
             assert_never(item)
     return ContentDict(role='model', parts=parts)
 
 
-def _process_response_from_parts(parts: list[Part], model_name: GoogleModelName, usage: usage.Usage) -> ModelResponse:
+def _process_response_from_parts(
+    parts: list[Part],
+    model_name: GoogleModelName,
+    usage: usage.Usage,
+    vendor_id: str | None,
+    vendor_details: dict[str, Any] | None = None,
+) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
-        if part.text:
-            items.append(TextPart(content=part.text))
+        if part.text is not None:
+            if part.thought:
+                items.append(ThinkingPart(content=part.text))
+            else:
+                items.append(TextPart(content=part.text))
         elif part.function_call:
             assert part.function_call.name is not None
-            tool_call_part = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args or {})
+            tool_call_part = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
             if part.function_call.id is not None:
                 tool_call_part.tool_call_id = part.function_call.id  # pragma: no cover
             items.append(tool_call_part)
@@ -450,14 +525,18 @@ def _process_response_from_parts(parts: list[Part], model_name: GoogleModelName,
             raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
-    return ModelResponse(parts=items, model_name=model_name, usage=usage)
+    return ModelResponse(
+        parts=items, model_name=model_name, usage=usage, vendor_id=vendor_id, vendor_details=vendor_details
+    )
 
 
 def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclarationDict:
     json_schema = tool.parameters_json_schema
-    f = FunctionDeclarationDict(name=tool.name, description=tool.description)
-    if json_schema.get('properties'):  # pragma: no branch
-        f['parameters'] = json_schema  # type: ignore
+    f = FunctionDeclarationDict(
+        name=tool.name,
+        description=tool.description,
+        parameters=json_schema,  # type: ignore
+    )
     return f
 
 
@@ -471,99 +550,27 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.Usage:
     metadata = response.usage_metadata
     if metadata is None:
         return usage.Usage()  # pragma: no cover
-    # TODO(Marcelo): We exclude the `prompt_tokens_details` and `candidate_token_details` fields because on
-    # `usage.Usage.incr``, it will try to sum non-integer values with integers, which will fail. We should probably
-    # handle this in the `Usage` class.
-    details = metadata.model_dump(
-        exclude={'prompt_tokens_details', 'candidates_tokens_details', 'traffic_type'},
-        exclude_defaults=True,
-    )
+    metadata = metadata.model_dump(exclude_defaults=True)
+
+    details: dict[str, int] = {}
+    if cached_content_token_count := metadata.get('cached_content_token_count'):
+        details['cached_content_tokens'] = cached_content_token_count  # pragma: no cover
+
+    if thoughts_token_count := metadata.get('thoughts_token_count'):
+        details['thoughts_tokens'] = thoughts_token_count
+
+    if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count'):
+        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count  # pragma: no cover
+
+    for key, metadata_details in metadata.items():
+        if key.endswith('_details') and metadata_details:
+            suffix = key.removesuffix('_details')
+            for detail in metadata_details:
+                details[f'{detail["modality"].lower()}_{suffix}'] = detail['token_count']
+
     return usage.Usage(
-        request_tokens=details.pop('prompt_token_count', 0),
-        response_tokens=details.pop('candidates_token_count', 0),
-        total_tokens=details.pop('total_token_count', 0),
+        request_tokens=metadata.get('prompt_token_count', 0),
+        response_tokens=metadata.get('candidates_token_count', 0),
+        total_tokens=metadata.get('total_token_count', 0),
         details=details,
     )
-
-
-class _GeminiJsonSchema(WalkJsonSchema):
-    """Transforms the JSON Schema from Pydantic to be suitable for Gemini.
-
-    Gemini which [supports](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations)
-    a subset of OpenAPI v3.0.3.
-
-    Specifically:
-    * gemini doesn't allow the `title` keyword to be set
-    * gemini doesn't allow `$defs` — we need to inline the definitions where possible
-    """
-
-    def __init__(self, schema: JsonSchema):
-        super().__init__(schema, prefer_inlined_defs=True, simplify_nullable_unions=True)
-
-    def transform(self, schema: JsonSchema) -> JsonSchema:
-        # Note: we need to remove `additionalProperties: False` since it is currently mishandled by Gemini
-        additional_properties = schema.pop(
-            'additionalProperties', None
-        )  # don't pop yet so it's included in the warning
-        if additional_properties:  # pragma: no cover
-            original_schema = {**schema, 'additionalProperties': additional_properties}
-            warnings.warn(
-                '`additionalProperties` is not supported by Gemini; it will be removed from the tool JSON schema.'
-                f' Full schema: {self.schema}\n\n'
-                f'Source of additionalProperties within the full schema: {original_schema}\n\n'
-                'If this came from a field with a type like `dict[str, MyType]`, that field will always be empty.\n\n'
-                "If Google's APIs are updated to support this properly, please create an issue on the PydanticAI GitHub"
-                ' and we will fix this behavior.',
-                UserWarning,
-            )
-
-        schema.pop('title', None)
-        schema.pop('default', None)
-        schema.pop('$schema', None)
-        if (const := schema.pop('const', None)) is not None:  # pragma: no cover
-            # Gemini doesn't support const, but it does support enum with a single value
-            schema['enum'] = [const]
-        schema.pop('discriminator', None)
-        schema.pop('examples', None)
-
-        # TODO: Should we use the trick from pydantic_ai.models.openai._OpenAIJsonSchema
-        #   where we add notes about these properties to the field description?
-        schema.pop('exclusiveMaximum', None)
-        schema.pop('exclusiveMinimum', None)
-
-        type_ = schema.get('type')
-        if 'oneOf' in schema and 'type' not in schema:  # pragma: no cover
-            # This gets hit when we have a discriminated union
-            # Gemini returns an API error in this case even though it says in its error message it shouldn't...
-            # Changing the oneOf to an anyOf prevents the API error and I think is functionally equivalent
-            schema['anyOf'] = schema.pop('oneOf')
-
-        if type_ == 'string' and (fmt := schema.pop('format', None)):
-            description = schema.get('description')
-            if description:
-                schema['description'] = f'{description} (format: {fmt})'
-            else:
-                schema['description'] = f'Format: {fmt}'
-
-        if '$ref' in schema:
-            raise UserError(  # pragma: no cover
-                f'Recursive `$ref`s in JSON Schema are not supported by Gemini: {schema["$ref"]}'
-            )
-
-        if 'prefixItems' in schema:  # pragma: lax no cover
-            # prefixItems is not currently supported in Gemini, so we convert it to items for best compatibility
-            prefix_items = schema.pop('prefixItems')
-            items = schema.get('items')
-            unique_items = [items] if items is not None else []
-            for item in prefix_items:
-                if item not in unique_items:
-                    unique_items.append(item)
-            if len(unique_items) > 1:  # pragma: no cover
-                schema['items'] = {'anyOf': unique_items}
-            elif len(unique_items) == 1:
-                schema['items'] = unique_items[0]
-            schema.setdefault('minItems', len(prefix_items))
-            if items is None:
-                schema.setdefault('maxItems', len(prefix_items))
-
-        return schema

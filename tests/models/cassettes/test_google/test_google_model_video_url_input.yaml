@@ -58,7 +58,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubdomains; preload
       vary:
-      - X-PJAX, X-PJAX-Container, Turbo-Visit, Turbo-Frame,Accept-Encoding, Accept, X-Requested-With
+      - X-PJAX, X-PJAX-Container, Turbo-Visit, Turbo-Frame, X-Requested-With,Accept-Encoding, Accept, X-Requested-With
     status:
       code: 302
       message: Found
@@ -11091,13 +11091,13 @@ interactions:
       etag:
       - W/"0e8fc2491b5d905053d769cebf41efa65670fdce574bc3d0a132431e025608d7"
       expires:
-      - Sun, 18 May 2025 14:09:31 GMT
+      - Fri, 27 Jun 2025 08:53:30 GMT
       source-age:
       - '0'
       strict-transport-security:
       - max-age=31536000
       vary:
-      - Authorization,Accept-Encoding,Origin
+      - Authorization,Accept-Encoding
     status:
       code: 200
       message: OK
@@ -11135,11 +11135,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1121'
+      - '1068'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1398
+      - gfet4t7; dur=1439
       transfer-encoding:
       - chunked
       vary:
@@ -11148,30 +11148,33 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.6823429308439556
+      - avgLogprobs: -0.7620539724090953
         content:
           parts:
-          - text: |
-              Certainly! Based on the image, here's what I can tell you:
+          - text: |-
+              Okay, based on the image, here's what I can infer:
 
-              **Visual Description:**
+              *   **A camera monitor is mounted on top of a camera.**
+              *   **The monitor's screen is on, displaying a view of the rocky mountains.**
+              *   **This setting suggests a professional video shoot.**
 
-              The image shows a small video monitor (likely a field monitor used in filmmaking or photography) mounted on top of a camera tripod. The monitor screen displays a scenic shot of a mountainous landscape, possibly a canyon or ravine. The background is a blurred, out-of-focus view of a similar landscape, suggesting that the monitor is set up in the field.
+              If you'd like a more detailed explanation, please provide additional information about the video.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
+      responseId: 31peaJ-RIOrIx_APoM6e2A4
       usageMetadata:
-        candidatesTokenCount: 95
+        candidatesTokenCount: 81
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 95
+          tokenCount: 81
         promptTokenCount: 270
         promptTokensDetails:
-        - modality: VIDEO
-          tokenCount: 260
         - modality: TEXT
           tokenCount: 10
-        totalTokenCount: 365
+        - modality: VIDEO
+          tokenCount: 260
+        totalTokenCount: 351
     status:
       code: 200
       message: OK

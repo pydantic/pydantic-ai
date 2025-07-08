@@ -49,7 +49,7 @@ interactions:
       etag:
       - W/"61efea10-a0e"
       expires:
-      - Thu, 20 Mar 2025 09:44:15 GMT
+      - Sat, 31 May 2025 15:03:55 GMT
       last-modified:
       - Tue, 25 Jan 2022 12:16:16 GMT
       transfer-encoding:
@@ -109,35 +109,41 @@ interactions:
         role: user
       model: claude-3-5-sonnet-latest
       stream: false
-    uri: https://api.anthropic.com/v1/messages
+    uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '1344'
+      - '1343'
       content-type:
       - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       content:
       - text: |-
-          This document is a TXT test file that primarily contains information about the use of placeholder names, specifically focusing on "John Doe" and its variants. The main content explains how these placeholder names are used in legal contexts and popular culture, particularly in English-speaking countries. The text describes:
+          This document is primarily about the use of placeholder names, specifically focusing on "John Doe" and its variants. The content explains how these placeholder names are used in legal contexts and other situations when a person's identity is unknown or needs to be withheld. The text describes:
 
-          1. The various placeholder names used:
-          - "John Doe" for males
-          - "Jane Doe" or "Jane Roe" for females
-          - "Jonnie Doe" and "Janie Doe" for children
-          - "Baby Doe" for unknown children
+          1. Various placeholder names like:
+          - "John Doe" (for males)
+          - "Jane Doe" or "Jane Roe" (for females)
+          - "Jonnie Doe" and "Janie Doe" (for children)
+          - "Baby Doe" (for unidentified children)
 
-          2. The usage of these names in different English-speaking countries, noting that while common in the US and Canada, they're less used in the UK, where "Joe Bloggs" or "John Smith" are preferred.
+          2. The usage of these names in:
+          - Legal actions and cases
+          - Hospital settings for unidentified patients
+          - Forms and examples
+          - Popular culture
 
-          3. How these names are used in legal contexts, forms, and popular culture.
+          3. Regional variations, noting that while this practice is common in the United States and Canada, other English-speaking countries like the UK use alternatives such as "Joe Bloggs" or "John Smith."
 
-          The document is formatted as a test file with metadata including its purpose, file type, and version. It also includes attribution information indicating the content is from Wikipedia and is licensed under Attribution-ShareAlike 4.0.
+          The document appears to be a test file with example content sourced from Wikipedia, including licensing information and attribution details at the end.
         type: text
-      id: msg_012UFVTMv6Hr3JsbGxfnFn47
+      id: msg_01KowpGguk6MzqFet3BGtvkc
       model: claude-3-5-sonnet-20241022
       role: assistant
       stop_reason: end_turn
@@ -147,7 +153,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 713
-        output_tokens: 237
+        output_tokens: 236
+        service_tier: standard
     status:
       code: 200
       message: OK

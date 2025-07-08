@@ -1,0 +1,51 @@
+interactions:
+  - request:
+      body: ""
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - raw.githubusercontent.com
+      method: GET
+      uri: https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/tests/assets/small_video.mp4
+    response:
+      body:
+        string: !!binary |
+          AAAAHGZ0eXBtcDQyAAAAAWlzb21tcDQxbXA0MgAAAAFtZGF0AAAAAAAJiusAAAKsBgX//6jcRem9
+          YAAAHwwAACZMAACPRQAAM90AAB9FAAAhvwAAjNgAAEHMAAAgtQAAIdoAAAAYc3RjbwAAAAAAAAAC
+          AAAALAAHT2I=
+      headers:
+        accept-ranges:
+          - bytes
+        access-control-allow-origin:
+          - "*"
+        cache-control:
+          - max-age=300
+        connection:
+          - keep-alive
+        content-length:
+          - "122"
+        content-security-policy:
+          - default-src 'none'; style-src 'unsafe-inline'; sandbox
+        content-type:
+          - application/octet-stream
+        cross-origin-resource-policy:
+          - cross-origin
+        etag:
+          - W/"0e8fc2491b5d905053d769cebf41efa65670fdce574bc3d0a132431e025608d7"
+        expires:
+          - Sun, 01 Jun 2025 00:07:45 GMT
+        source-age:
+          - "105"
+        strict-transport-security:
+          - max-age=31536000
+        vary:
+          - Authorization,Accept-Encoding
+      status:
+        code: 200
+        message: OK
+version: 1

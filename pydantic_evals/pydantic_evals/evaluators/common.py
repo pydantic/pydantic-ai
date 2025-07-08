@@ -26,22 +26,22 @@ __all__ = (
 )
 
 
-@dataclass
+@dataclass(repr=False)
 class Equals(Evaluator[object, object, object]):
     """Check if the output exactly equals the provided value."""
 
     value: Any
-    evaluation_name: str | None = field(default=None, repr=False)
+    evaluation_name: str | None = field(default=None)
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> bool:
         return ctx.output == self.value
 
 
-@dataclass
+@dataclass(repr=False)
 class EqualsExpected(Evaluator[object, object, object]):
     """Check if the output exactly equals the expected output."""
 
-    evaluation_name: str | None = field(default=None, repr=False)
+    evaluation_name: str | None = field(default=None)
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> bool | dict[str, bool]:
         if ctx.expected_output is None:
@@ -60,7 +60,7 @@ def _truncated_repr(value: Any, max_length: int = 100) -> str:
     return repr_value
 
 
-@dataclass
+@dataclass(repr=False)
 class Contains(Evaluator[object, object, object]):
     """Check if the output contains the expected output.
 
@@ -74,7 +74,7 @@ class Contains(Evaluator[object, object, object]):
     value: Any
     case_sensitive: bool = True
     as_strings: bool = False
-    evaluation_name: str | None = field(default=None, repr=False)
+    evaluation_name: str | None = field(default=None)
 
     def evaluate(
         self,
@@ -129,12 +129,12 @@ class Contains(Evaluator[object, object, object]):
         return EvaluationReason(value=failure_reason is None, reason=failure_reason)
 
 
-@dataclass
+@dataclass(repr=False)
 class IsInstance(Evaluator[object, object, object]):
     """Check if the output is an instance of a type with the given name."""
 
     type_name: str
-    evaluation_name: str | None = field(default=None, repr=False)
+    evaluation_name: str | None = field(default=None)
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluationReason:
         output = ctx.output
@@ -148,7 +148,7 @@ class IsInstance(Evaluator[object, object, object]):
         return EvaluationReason(value=False, reason=reason)
 
 
-@dataclass
+@dataclass(repr=False)
 class MaxDuration(Evaluator[object, object, object]):
     """Check if the execution time is under the specified maximum."""
 
@@ -183,7 +183,7 @@ def _update_combined_output(
         combined_output[name] = value
 
 
-@dataclass
+@dataclass(repr=False)
 class LLMJudge(Evaluator[object, object, object]):
     """Judge whether the output of a language model meets the criteria of a provided rubric.
 
@@ -194,6 +194,7 @@ class LLMJudge(Evaluator[object, object, object]):
     rubric: str
     model: models.Model | models.KnownModelName | None = None
     include_input: bool = False
+    include_expected_output: bool = False
     model_settings: ModelSettings | None = None
     score: OutputConfig | Literal[False] = False
     assertion: OutputConfig | Literal[False] = field(default_factory=lambda: OutputConfig(include_reason=True))
@@ -203,15 +204,29 @@ class LLMJudge(Evaluator[object, object, object]):
         ctx: EvaluatorContext[object, object, object],
     ) -> EvaluatorOutput:
         if self.include_input:
-            from .llm_as_a_judge import judge_input_output
+            if self.include_expected_output:
+                from .llm_as_a_judge import judge_input_output_expected
 
-            grading_output = await judge_input_output(
-                ctx.inputs, ctx.output, self.rubric, self.model, self.model_settings
-            )
+                grading_output = await judge_input_output_expected(
+                    ctx.inputs, ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
+                )
+            else:
+                from .llm_as_a_judge import judge_input_output
+
+                grading_output = await judge_input_output(
+                    ctx.inputs, ctx.output, self.rubric, self.model, self.model_settings
+                )
         else:
-            from .llm_as_a_judge import judge_output
+            if self.include_expected_output:
+                from .llm_as_a_judge import judge_output_expected
 
-            grading_output = await judge_output(ctx.output, self.rubric, self.model, self.model_settings)
+                grading_output = await judge_output_expected(
+                    ctx.output, ctx.expected_output, self.rubric, self.model, self.model_settings
+                )
+            else:
+                from .llm_as_a_judge import judge_output
+
+                grading_output = await judge_output(ctx.output, self.rubric, self.model, self.model_settings)
 
         output: dict[str, EvaluationScalar | EvaluationReason] = {}
         include_both = self.score is not False and self.assertion is not False
@@ -239,12 +254,12 @@ class LLMJudge(Evaluator[object, object, object]):
         return result
 
 
-@dataclass
+@dataclass(repr=False)
 class HasMatchingSpan(Evaluator[object, object, object]):
     """Check if the span tree contains a span that matches the specified query."""
 
     query: SpanQuery
-    evaluation_name: str | None = field(default=None, repr=False)
+    evaluation_name: str | None = field(default=None)
 
     def evaluate(
         self,
@@ -254,7 +269,7 @@ class HasMatchingSpan(Evaluator[object, object, object]):
 
 
 # TODO: Consider moving this to docs rather than providing it with the library, given the security implications
-@dataclass
+@dataclass(repr=False)
 class Python(Evaluator[object, object, object]):
     """The output of this evaluator is the result of evaluating the provided Python expression.
 
@@ -262,7 +277,7 @@ class Python(Evaluator[object, object, object]):
     """
 
     expression: str
-    evaluation_name: str | None = field(default=None, repr=False)
+    evaluation_name: str | None = field(default=None)
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
         # Evaluate the condition, exposing access to the evaluator context as `ctx`.

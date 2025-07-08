@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -24,7 +25,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import Usage
 
-from ..conftest import IsDatetime, IsNow, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, raise_if_exception, try_import
 
 with try_import() as imports_successful:
     import cohere
@@ -406,6 +407,101 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                     response_tokens=63,
                     total_tokens=605,
                     details={'input_tokens': 13, 'output_tokens': 61},
+                ),
+                model_name='command-r7b-12-2024',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key: str, openai_api_key: str):
+    with try_import() as imports_successful:
+        from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+    if not imports_successful():  # pragma: no cover
+        pytest.skip('OpenAI is not installed')
+
+    openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    co_model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+    agent = Agent(openai_model)
+
+    # We call OpenAI to get the thinking parts, because Google disabled the thoughts in the API.
+    # See https://github.com/pydantic/pydantic-ai/issues/793 for more details.
+    result = await agent.run(
+        'How do I cross the street?',
+        model_settings=OpenAIResponsesModelSettings(
+            openai_reasoning_effort='high', openai_reasoning_summary='detailed'
+        ),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(TextPart),
+                ],
+                usage=Usage(
+                    request_tokens=13,
+                    response_tokens=1909,
+                    total_tokens=1922,
+                    details={'reasoning_tokens': 1472, 'cached_tokens': 0},
+                ),
+                model_name='o3-mini-2025-01-31',
+                timestamp=IsDatetime(),
+                vendor_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        model=co_model,
+        message_history=result.all_messages(),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(TextPart),
+                ],
+                usage=Usage(
+                    request_tokens=13,
+                    response_tokens=1909,
+                    total_tokens=1922,
+                    details={'reasoning_tokens': 1472, 'cached_tokens': 0},
+                ),
+                model_name='o3-mini-2025-01-31',
+                timestamp=IsDatetime(),
+                vendor_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[IsInstance(TextPart)],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=1457,
+                    response_tokens=807,
+                    total_tokens=2264,
+                    details={'input_tokens': 954, 'output_tokens': 805},
                 ),
                 model_name='command-r7b-12-2024',
                 timestamp=IsDatetime(),

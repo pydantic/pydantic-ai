@@ -87,10 +87,11 @@ class FallbackModel(Model):
         exceptions: list[Exception] = []
 
         for model in self.models:
+            customized_model_request_parameters = model.customize_request_parameters(model_request_parameters)
             async with AsyncExitStack() as stack:
                 try:
                     response = await stack.enter_async_context(
-                        model.request_stream(messages, model_settings, model_request_parameters)
+                        model.request_stream(messages, model_settings, customized_model_request_parameters)
                     )
                 except Exception as exc:
                     if self._fallback_on(exc):

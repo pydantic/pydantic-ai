@@ -13,6 +13,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolCallPartDelta,
 )
@@ -81,22 +82,22 @@ def test_handle_dovetailed_text_deltas():
 def test_handle_tool_call_deltas():
     manager = ModelResponsePartsManager()
 
-    event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name='tool', args=None, tool_call_id=None)
+    event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name=None, args='{"arg1":', tool_call_id=None)
     # Not enough information to produce a part, so no event and no part
     assert event == snapshot(None)
     assert manager.get_parts() == snapshot([])
 
-    # Now that we have args, we can produce a part:
-    event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name=None, args='{"arg1":', tool_call_id=None)
+    # Now that we have a tool name, we can produce a part:
+    event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name='tool', args=None, tool_call_id='call')
     assert event == snapshot(
         PartStartEvent(
             index=0,
-            part=ToolCallPart(tool_name='tool', args='{"arg1":', tool_call_id=IsStr(), part_kind='tool-call'),
+            part=ToolCallPart(tool_name='tool', args='{"arg1":', tool_call_id='call', part_kind='tool-call'),
             event_kind='part_start',
         )
     )
     assert manager.get_parts() == snapshot(
-        [ToolCallPart(tool_name='tool', args='{"arg1":', tool_call_id=IsStr(), part_kind='tool-call')]
+        [ToolCallPart(tool_name='tool', args='{"arg1":', tool_call_id='call', part_kind='tool-call')]
     )
 
     event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name='1', args=None, tool_call_id=None)
@@ -104,13 +105,13 @@ def test_handle_tool_call_deltas():
         PartDeltaEvent(
             index=0,
             delta=ToolCallPartDelta(
-                tool_name_delta='1', args_delta=None, tool_call_id=IsStr(), part_delta_kind='tool_call'
+                tool_name_delta='1', args_delta=None, tool_call_id='call', part_delta_kind='tool_call'
             ),
             event_kind='part_delta',
         )
     )
     assert manager.get_parts() == snapshot(
-        [ToolCallPart(tool_name='tool1', args='{"arg1":', tool_call_id=IsStr(), part_kind='tool-call')]
+        [ToolCallPart(tool_name='tool1', args='{"arg1":', tool_call_id='call', part_kind='tool-call')]
     )
 
     event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name=None, args='"value1"}', tool_call_id=None)
@@ -118,7 +119,7 @@ def test_handle_tool_call_deltas():
         PartDeltaEvent(
             index=0,
             delta=ToolCallPartDelta(
-                tool_name_delta=None, args_delta='"value1"}', tool_call_id=IsStr(), part_delta_kind='tool_call'
+                tool_name_delta=None, args_delta='"value1"}', tool_call_id='call', part_delta_kind='tool_call'
             ),
             event_kind='part_delta',
         )
@@ -128,9 +129,57 @@ def test_handle_tool_call_deltas():
             ToolCallPart(
                 tool_name='tool1',
                 args='{"arg1":"value1"}',
-                tool_call_id=IsStr(),
+                tool_call_id='call',
                 part_kind='tool-call',
             )
+        ]
+    )
+
+
+def test_handle_tool_call_deltas_without_args():
+    manager = ModelResponsePartsManager()
+
+    # Test None args followed by a string
+    event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name='tool', args=None, tool_call_id=None)
+    assert event == snapshot(
+        PartStartEvent(index=0, part=ToolCallPart(tool_name='tool', args=None, tool_call_id=IsStr()))
+    )
+    assert manager.get_parts() == snapshot([ToolCallPart(tool_name='tool', tool_call_id=IsStr())])
+
+    event = manager.handle_tool_call_delta(vendor_part_id='first', tool_name=None, args='{"arg1":', tool_call_id=None)
+    assert event == snapshot(
+        PartDeltaEvent(
+            index=0,
+            delta=ToolCallPartDelta(args_delta='{"arg1":', tool_call_id=IsStr()),
+        )
+    )
+    assert manager.get_parts() == snapshot([ToolCallPart(tool_name='tool', args='{"arg1":', tool_call_id=IsStr())])
+
+    # Test None args followed by a dict
+    event = manager.handle_tool_call_delta(vendor_part_id='second', tool_name='tool', args=None, tool_call_id=None)
+    assert event == snapshot(
+        PartStartEvent(index=1, part=ToolCallPart(tool_name='tool', args=None, tool_call_id=IsStr()))
+    )
+    assert manager.get_parts() == snapshot(
+        [
+            ToolCallPart(tool_name='tool', args='{"arg1":', tool_call_id=IsStr()),
+            ToolCallPart(tool_name='tool', args=None, tool_call_id=IsStr()),
+        ]
+    )
+
+    event = manager.handle_tool_call_delta(
+        vendor_part_id='second', tool_name=None, args={'arg1': 'value1'}, tool_call_id=None
+    )
+    assert event == snapshot(
+        PartDeltaEvent(
+            index=1,
+            delta=ToolCallPartDelta(args_delta={'arg1': 'value1'}, tool_call_id=IsStr()),
+        )
+    )
+    assert manager.get_parts() == snapshot(
+        [
+            ToolCallPart(tool_name='tool', args='{"arg1":', tool_call_id=IsStr()),
+            ToolCallPart(tool_name='tool', args={'arg1': 'value1'}, tool_call_id=IsStr()),
         ]
     )
 
@@ -179,7 +228,10 @@ def test_handle_tool_call_part():
     # Add a delta
     manager.handle_tool_call_delta(vendor_part_id='second', tool_name='tool1', args=None, tool_call_id=None)
     assert manager.get_parts() == snapshot(
-        [ToolCallPart(tool_name='tool1', args='{"arg1":', tool_call_id=IsStr(), part_kind='tool-call')]
+        [
+            ToolCallPart(tool_name='tool1', args='{"arg1":', tool_call_id=IsStr(), part_kind='tool-call'),
+            ToolCallPart(tool_name='tool1', tool_call_id=IsStr()),
+        ]
     )
 
     # Override it with handle_tool_call_part
@@ -388,3 +440,60 @@ def test_apply_tool_delta_variants(
         tool_call_part = manager.get_parts()[0]
         assert isinstance(tool_call_part, ToolCallPart)
         assert tool_call_part.args == result
+
+
+def test_handle_thinking_delta_no_vendor_id_with_existing_thinking_part():
+    manager = ModelResponsePartsManager()
+
+    # Add a thinking part first
+    event = manager.handle_thinking_delta(vendor_part_id='first', content='initial thought', signature=None)
+    assert isinstance(event, PartStartEvent)
+    assert event.index == 0
+
+    # Now add another thinking delta with no vendor_part_id - should update the latest thinking part
+    event = manager.handle_thinking_delta(vendor_part_id=None, content=' more', signature=None)
+    assert isinstance(event, PartDeltaEvent)
+    assert event.index == 0
+
+    parts = manager.get_parts()
+    assert parts == snapshot([ThinkingPart(content='initial thought more')])
+
+
+def test_handle_thinking_delta_wrong_part_type():
+    manager = ModelResponsePartsManager()
+
+    # Add a text part first
+    manager.handle_text_delta(vendor_part_id='text', content='hello')
+
+    # Try to apply thinking delta to the text part - should raise error
+    with pytest.raises(UnexpectedModelBehavior, match=r'Cannot apply a thinking delta to existing_part='):
+        manager.handle_thinking_delta(vendor_part_id='text', content='thinking', signature=None)
+
+
+def test_handle_thinking_delta_new_part_with_vendor_id():
+    manager = ModelResponsePartsManager()
+
+    event = manager.handle_thinking_delta(vendor_part_id='thinking', content='new thought', signature=None)
+    assert isinstance(event, PartStartEvent)
+    assert event.index == 0
+
+    parts = manager.get_parts()
+    assert parts == snapshot([ThinkingPart(content='new thought')])
+
+
+def test_handle_thinking_delta_no_content():
+    manager = ModelResponsePartsManager()
+
+    with pytest.raises(UnexpectedModelBehavior, match='Cannot create a ThinkingPart with no content'):
+        manager.handle_thinking_delta(vendor_part_id=None, content=None, signature=None)
+
+
+def test_handle_thinking_delta_no_content_or_signature():
+    manager = ModelResponsePartsManager()
+
+    # Add a thinking part first
+    manager.handle_thinking_delta(vendor_part_id='thinking', content='initial', signature=None)
+
+    # Try to update with no content or signature - should raise error
+    with pytest.raises(UnexpectedModelBehavior, match='Cannot update a ThinkingPart with no content or signature'):
+        manager.handle_thinking_delta(vendor_part_id='thinking', content=None, signature=None)

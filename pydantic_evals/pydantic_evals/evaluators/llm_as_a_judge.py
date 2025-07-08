@@ -9,7 +9,14 @@ from pydantic_core import to_json
 from pydantic_ai import Agent, models
 from pydantic_ai.settings import ModelSettings
 
-__all__ = ('GradingOutput', 'judge_input_output', 'judge_output', 'set_default_judge_model')
+__all__ = (
+    'GradingOutput',
+    'judge_input_output',
+    'judge_input_output_expected',
+    'judge_output',
+    'judge_output_expected',
+    'set_default_judge_model',
+)
 
 
 _default_model: models.Model | models.KnownModelName = 'openai:gpt-4o'
@@ -55,7 +62,16 @@ async def judge_output(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = f'<Output>\n{_stringify(output)}\n</Output>\n<Rubric>\n{rubric}\n</Rubric>'
+    user_prompt = dedent(
+        f"""
+        <Output>
+        {_stringify(output)}
+        </Output>
+        <Rubric>
+        {rubric}
+        </Rubric>
+        """
+    )
     return (
         await _judge_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
     ).output
@@ -96,9 +112,138 @@ async def judge_input_output(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = f'<Input>\n{_stringify(inputs)}\n</Input>\n<Output>\n{_stringify(output)}\n</Output>\n<Rubric>\n{rubric}\n</Rubric>'
+    user_prompt = dedent(
+        f"""
+        <Input>
+        {_stringify(inputs)}
+        </Input>
+        <Output>
+        {_stringify(output)}
+        </Output>
+        <Rubric>
+        {rubric}
+        </Rubric>
+        """
+    )
     return (
         await _judge_input_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
+    ).output
+
+
+_judge_input_output_expected_agent = Agent(
+    name='judge_input_output_expected',
+    system_prompt=dedent(
+        """
+        You are grading output according to a user-specified rubric. If the statement in the rubric is true for the provided input, expected output, and output, then the output passes the test. You respond with a JSON object with this structure: {reason: string, pass: boolean, score: number}
+
+        Examples:
+
+        <Input>What color is the sky?</Input>
+        <ExpectedOutput>Blue</ExpectedOutput>
+        <Output>Cerulean</Output>
+        <Rubric>The output is consistent with the expected output but doesn't have to match exactly</Rubric>
+        {"reason": "'Cerulean' is a shade of blue", "pass": true, "score": 1.0}
+
+        <Input>How many legs does a spider have?</Input>
+        <ExpectedOutput>8</ExpectedOutput>
+        <Output>Six</Output>
+        <Rubric>The output is factually consistent with the expected output</Rubric>
+        {"reason": "Spiders have 8 legs", "pass": false, "score": 0.0}
+        """
+    ),
+    output_type=GradingOutput,
+)
+
+
+async def judge_input_output_expected(
+    inputs: Any,
+    output: Any,
+    expected_output: Any,
+    rubric: str,
+    model: models.Model | models.KnownModelName | None = None,
+    model_settings: ModelSettings | None = None,
+) -> GradingOutput:
+    """Judge the output of a model based on the inputs and a rubric.
+
+    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
+    but this can be changed using the `set_default_judge_model` function.
+    """
+    user_prompt = dedent(
+        f"""
+        <Input>
+        {_stringify(inputs)}
+        </Input>
+        <ExpectedOutput>
+        {_stringify(expected_output)}
+        </ExpectedOutput>
+        <Output>
+        {_stringify(output)}
+        </Output>
+        <Rubric>
+        {rubric}
+        </Rubric>
+        """
+    )
+
+    return (
+        await _judge_input_output_expected_agent.run(
+            user_prompt, model=model or _default_model, model_settings=model_settings
+        )
+    ).output
+
+
+_judge_output_expected_agent = Agent(
+    name='judge_output_expected',
+    system_prompt=dedent(
+        """
+        You are grading output according to a user-specified rubric. If the statement in the rubric is true for the provided expected output and output, then the output passes the test. You respond with a JSON object with this structure: {reason: string, pass: boolean, score: number}
+
+        Examples:
+
+        <ExpectedOutput>Blue</ExpectedOutput>
+        <Output>Cerulean</Output>
+        <Rubric>The output should be a shade of the expected output color</Rubric>
+        {"reason": "'Cerulean' is a shade of blue", "pass": true, "score": 1.0}
+
+        <ExpectedOutput>8</ExpectedOutput>
+        <Output>Six</Output>
+        <Rubric>The output should be a number written in words which matches the number written in digits in the expected output</Rubric>
+        {"reason": "The output is 'Six' which is a different number than 8", "pass": false, "score": 0.0}
+        """
+    ),
+    output_type=GradingOutput,
+)
+
+
+async def judge_output_expected(
+    output: Any,
+    expected_output: Any,
+    rubric: str,
+    model: models.Model | models.KnownModelName | None = None,
+    model_settings: ModelSettings | None = None,
+) -> GradingOutput:
+    """Judge the output of a model based on the expected output, output, and a rubric.
+
+    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
+    but this can be changed using the `set_default_judge_model` function.
+    """
+    user_prompt = dedent(
+        f"""
+        <ExpectedOutput>
+        {_stringify(expected_output)}
+        </ExpectedOutput>
+        <Output>
+        {_stringify(output)}
+        </Output>
+        <Rubric>
+        {rubric}
+        </Rubric>
+        """
+    )
+    return (
+        await _judge_output_expected_agent.run(
+            user_prompt, model=model or _default_model, model_settings=model_settings
+        )
     ).output
 
 

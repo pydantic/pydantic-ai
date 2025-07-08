@@ -2,7 +2,9 @@
 
 Function tools provide a mechanism for models to retrieve extra information to help them generate a response.
 
-They're useful when it is impractical or impossible to put all the context an agent might need into the system prompt, or when you want to make agents' behavior more deterministic or reliable by deferring some of the logic required to generate a response to another (not necessarily AI-powered) tool.
+They're useful when you want to enable the model to take some action and use the result, when it is impractical or impossible to put all the context an agent might need into the system prompt, or when you want to make agents' behavior more deterministic or reliable by deferring some of the logic required to generate a response to another (not necessarily AI-powered) tool.
+
+If you want a model to be able to call a function as its final action, without the result being sent back to the model, you can use an [output function](output.md#output-functions) instead.
 
 !!! info "Function tools vs. RAG"
     Function tools are basically the "R" of RAG (Retrieval-Augmented Generation) — they augment what the model can do by letting it request extra information.
@@ -38,7 +40,7 @@ agent = Agent(
 
 
 @agent.tool_plain  # (3)!
-def roll_die() -> str:
+def roll_dice() -> str:
     """Roll a six-sided die and return the result."""
     return str(random.randint(1, 6))
 
@@ -64,7 +66,7 @@ _(This example is complete, it can be run "as is")_
 
 Let's print the messages from that game to see what happened:
 
-```python {title="dice_game_messages.py"}
+```python {title="dice_game_messages.py" requires="dice_game.py"}
 from dice_game import dice_result
 
 print(dice_result.all_messages())
@@ -75,72 +77,42 @@ print(dice_result.all_messages())
             SystemPromptPart(
                 content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
                 timestamp=datetime.datetime(...),
-                dynamic_ref=None,
-                part_kind='system-prompt',
             ),
             UserPromptPart(
                 content='My guess is 4',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
             ),
-        ],
-        instructions=None,
-        kind='request',
+        ]
     ),
     ModelResponse(
         parts=[
             ToolCallPart(
-                tool_name='roll_die',
-                args={},
-                tool_call_id='pyd_ai_tool_call_id',
-                part_kind='tool-call',
+                tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=Usage(
-            requests=1,
-            request_tokens=90,
-            response_tokens=2,
-            total_tokens=92,
-            details=None,
-        ),
+        usage=Usage(requests=1, request_tokens=90, response_tokens=2, total_tokens=92),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
-        kind='response',
-        vendor_id=None,
     ),
     ModelRequest(
         parts=[
             ToolReturnPart(
-                tool_name='roll_die',
+                tool_name='roll_dice',
                 content='4',
                 tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
-                part_kind='tool-return',
             )
-        ],
-        instructions=None,
-        kind='request',
+        ]
     ),
     ModelResponse(
         parts=[
             ToolCallPart(
-                tool_name='get_player_name',
-                args={},
-                tool_call_id='pyd_ai_tool_call_id',
-                part_kind='tool-call',
+                tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=Usage(
-            requests=1,
-            request_tokens=91,
-            response_tokens=4,
-            total_tokens=95,
-            details=None,
-        ),
+        usage=Usage(requests=1, request_tokens=91, response_tokens=4, total_tokens=95),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
-        kind='response',
-        vendor_id=None,
     ),
     ModelRequest(
         parts=[
@@ -149,30 +121,20 @@ print(dice_result.all_messages())
                 content='Anne',
                 tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
-                part_kind='tool-return',
             )
-        ],
-        instructions=None,
-        kind='request',
+        ]
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content="Congratulations Anne, you guessed correctly! You're a winner!",
-                part_kind='text',
+                content="Congratulations Anne, you guessed correctly! You're a winner!"
             )
         ],
         usage=Usage(
-            requests=1,
-            request_tokens=92,
-            response_tokens=12,
-            total_tokens=104,
-            details=None,
+            requests=1, request_tokens=92, response_tokens=12, total_tokens=104
         ),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
-        kind='response',
-        vendor_id=None,
     ),
 ]
 """
@@ -190,7 +152,7 @@ sequenceDiagram
     activate LLM
     Note over LLM: LLM decides to use<br>a tool
 
-    LLM ->> Agent: Call tool<br>roll_die()
+    LLM ->> Agent: Call tool<br>roll_dice()
     deactivate LLM
     activate Agent
     Note over Agent: Rolls a six-sided die
@@ -230,7 +192,7 @@ Use the player's name in the response.
 """
 
 
-def roll_die() -> str:
+def roll_dice() -> str:
     """Roll a six-sided die and return the result."""
     return str(random.randint(1, 6))
 
@@ -243,14 +205,14 @@ def get_player_name(ctx: RunContext[str]) -> str:
 agent_a = Agent(
     'google-gla:gemini-1.5-flash',
     deps_type=str,
-    tools=[roll_die, get_player_name],  # (1)!
+    tools=[roll_dice, get_player_name],  # (1)!
     system_prompt=system_prompt,
 )
 agent_b = Agent(
     'google-gla:gemini-1.5-flash',
     deps_type=str,
     tools=[  # (2)!
-        Tool(roll_die, takes_ctx=False),
+        Tool(roll_dice, takes_ctx=False),
         Tool(get_player_name, takes_ctx=True),
     ],
     system_prompt=system_prompt,
@@ -330,6 +292,66 @@ print(result.output)
 _(This example is complete, it can be run "as is")_
 
 Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
+
+### Advanced Tool Returns
+
+For scenarios where you need more control over both the tool's return value and the content sent to the model, you can use [`ToolReturn`][pydantic_ai.messages.ToolReturn]. This is particularly useful when you want to:
+
+- Provide rich multi-modal content (images, documents, etc.) to the model as context
+- Separate the programmatic return value from the model's context
+- Include additional metadata that shouldn't be sent to the LLM
+
+Here's an example of a computer automation tool that captures screenshots and provides visual feedback:
+
+```python {title="advanced_tool_return.py" test="skip" lint="skip"}
+import time
+from pydantic_ai import Agent
+from pydantic_ai.messages import ToolReturn, BinaryContent
+
+agent = Agent('openai:gpt-4o')
+
+@agent.tool_plain
+def click_and_capture(x: int, y: int) -> ToolReturn:
+    """Click at coordinates and show before/after screenshots."""
+    # Take screenshot before action
+    before_screenshot = capture_screen()
+
+    # Perform click operation
+    perform_click(x, y)
+    time.sleep(0.5)  # Wait for UI to update
+
+    # Take screenshot after action
+    after_screenshot = capture_screen()
+
+    return ToolReturn(
+        return_value=f"Successfully clicked at ({x}, {y})",
+        content=[
+            f"Clicked at coordinates ({x}, {y}). Here's the comparison:",
+            "Before:",
+            BinaryContent(data=before_screenshot, media_type="image/png"),
+            "After:",
+            BinaryContent(data=after_screenshot, media_type="image/png"),
+            "Please analyze the changes and suggest next steps."
+        ],
+        metadata={
+            "coordinates": {"x": x, "y": y},
+            "action_type": "click_and_capture",
+            "timestamp": time.time()
+        }
+    )
+
+# The model receives the rich visual content for analysis
+# while your application can access the structured return_value and metadata
+result = agent.run_sync("Click on the submit button and tell me what happened")
+print(result.output)
+# The model can analyze the screenshots and provide detailed feedback
+```
+
+- **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result.
+- **`content`**: A sequence of content (text, images, documents, etc.) that provides additional context to the model. This appears as a separate user message.
+- **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature "artifacts".
+
+This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic.
 
 ## Function Tools vs. Structured Outputs
 
@@ -440,14 +462,48 @@ print(test_model.last_model_request_parameters.function_tools)
             'title': 'Foobar',
             'type': 'object',
         },
-        outer_typed_dict_key=None,
-        strict=None,
     )
 ]
 """
 ```
 
 _(This example is complete, it can be run "as is")_
+
+If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of *args or **kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the `Tool.from_schema` function. With this you provide the name, description and JSON schema for the function directly:
+
+```python
+from pydantic_ai import Agent, Tool
+from pydantic_ai.models.test import TestModel
+
+
+def foobar(**kwargs) -> str:
+    return kwargs['a'] + kwargs['b']
+
+tool = Tool.from_schema(
+    function=foobar,
+    name='sum',
+    description='Sum two numbers.',
+    json_schema={
+        'additionalProperties': False,
+        'properties': {
+            'a': {'description': 'the first number', 'type': 'integer'},
+            'b': {'description': 'the second number', 'type': 'integer'},
+        },
+        'required': ['a', 'b'],
+        'type': 'object',
+    }
+)
+
+test_model = TestModel()
+agent = Agent(test_model, tools=[tool])
+
+result = agent.run_sync('testing...')
+print(result.output)
+#> {"sum":0}
+```
+
+
+Please note that validation of the tool arguments will not be performed, and this will pass all arguments as keyword arguments.
 
 ## Dynamic Function tools {#tool-prepare}
 
@@ -544,8 +600,6 @@ print(test_model.last_model_request_parameters.function_tools)
             'required': ['name'],
             'type': 'object',
         },
-        outer_typed_dict_key=None,
-        strict=None,
     )
 ]
 """
@@ -666,3 +720,69 @@ def my_flaky_tool(query: str) -> str:
     return 'Success!'
 ```
 Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the `retries` setting configured on the `Tool` or `Agent`.
+
+## Third-Party Tools
+
+### MCP Tools {#mcp-tools}
+
+See the [MCP Client](./mcp/client.md) documentation for how to use MCP servers with Pydantic AI.
+
+### LangChain Tools {#langchain-tools}
+
+If you'd like to use a tool from LangChain's [community tool library](https://python.langchain.com/docs/integrations/tools/) with Pydantic AI, you can use the `pydancic_ai.ext.langchain.tool_from_langchain` convenience method. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the LangChain tool, and up to the LangChain tool to raise an error if the arguments are invalid.
+
+You will need to install the `langchain-community` package and any others required by the tool in question.
+
+Here is how you can use the LangChain `DuckDuckGoSearchRun` tool, which requires the `duckduckgo-search` package:
+
+```python {test="skip"}
+from langchain_community.tools import DuckDuckGoSearchRun
+
+from pydantic_ai import Agent
+from pydantic_ai.ext.langchain import tool_from_langchain
+
+search = DuckDuckGoSearchRun()
+search_tool = tool_from_langchain(search)
+
+agent = Agent(
+    'google-gla:gemini-2.0-flash',
+    tools=[search_tool],
+)
+
+result = agent.run_sync('What is the release date of Elden Ring Nightreign?')  # (1)!
+print(result.output)
+#> Elden Ring Nightreign is planned to be released on May 30, 2025.
+```
+
+1. The release date of this game is the 30th of May 2025, which is after the knowledge cutoff for Gemini 2.0 (August 2024).
+
+### ACI.dev Tools {#aci-tools}
+
+If you'd like to use a tool from the [ACI.dev tool library](https://www.aci.dev/tools) with Pydantic AI, you can use the `pydancic_ai.ext.aci.tool_from_aci` convenience method. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the ACI tool, and up to the ACI tool to raise an error if the arguments are invalid.
+
+You will need to install the `aci-sdk` package, set your ACI API key in the `ACI_API_KEY` environment variable, and pass your ACI "linked account owner ID" to the function.
+
+Here is how you can use the ACI.dev `TAVILY__SEARCH` tool:
+
+```python {test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.ext.aci import tool_from_aci
+
+tavily_search = tool_from_aci(
+    'TAVILY__SEARCH',
+    linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID')
+)
+
+agent = Agent(
+    'google-gla:gemini-2.0-flash',
+    tools=[tavily_search]
+)
+
+result = agent.run_sync('What is the release date of Elden Ring Nightreign?')  # (1)!
+print(result.output)
+#> Elden Ring Nightreign is planned to be released on May 30, 2025.
+```
+
+1. The release date of this game is the 30th of May 2025, which is after the knowledge cutoff for Gemini 2.0 (August 2024).

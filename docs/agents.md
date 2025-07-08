@@ -135,30 +135,21 @@ async def main():
                     UserPromptPart(
                         content='What is the capital of France?',
                         timestamp=datetime.datetime(...),
-                        part_kind='user-prompt',
                     )
-                ],
-                instructions=None,
-                kind='request',
+                ]
             )
         ),
         CallToolsNode(
             model_response=ModelResponse(
-                parts=[TextPart(content='Paris', part_kind='text')],
+                parts=[TextPart(content='Paris')],
                 usage=Usage(
-                    requests=1,
-                    request_tokens=56,
-                    response_tokens=1,
-                    total_tokens=57,
-                    details=None,
+                    requests=1, request_tokens=56, response_tokens=1, total_tokens=57
                 ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
-                kind='response',
-                vendor_id=None,
             )
         ),
-        End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
+        End(data=FinalResult(output='Paris')),
     ]
     """
     print(agent_run.result.output)
@@ -207,30 +198,24 @@ async def main():
                         UserPromptPart(
                             content='What is the capital of France?',
                             timestamp=datetime.datetime(...),
-                            part_kind='user-prompt',
                         )
-                    ],
-                    instructions=None,
-                    kind='request',
+                    ]
                 )
             ),
             CallToolsNode(
                 model_response=ModelResponse(
-                    parts=[TextPart(content='Paris', part_kind='text')],
+                    parts=[TextPart(content='Paris')],
                     usage=Usage(
                         requests=1,
                         request_tokens=56,
                         response_tokens=1,
                         total_tokens=57,
-                        details=None,
                     ),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
-                    kind='response',
-                    vendor_id=None,
                 )
             ),
-            End(data=FinalResult(output='Paris', tool_name=None, tool_call_id=None)),
+            End(data=FinalResult(output='Paris')),
         ]
         """
 ```
@@ -370,7 +355,8 @@ if __name__ == '__main__':
     [
         '=== UserPromptNode: What will the weather be like in Paris on Tuesday? ===',
         '=== ModelRequestNode: streaming partial request tokens ===',
-        '[Request] Starting part 0: ToolCallPart(tool_name=\'weather_forecast\', args=\'{"location":"Pa\', tool_call_id=\'0001\', part_kind=\'tool-call\')',
+        "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', tool_call_id='0001')",
+        '[Request] Part 0 args_delta={"location":"Pa',
         '[Request] Part 0 args_delta=ris","forecast_',
         '[Request] Part 0 args_delta=date":"2030-01-',
         '[Request] Part 0 args_delta=01"}',
@@ -378,7 +364,7 @@ if __name__ == '__main__':
         '[Tools] The LLM calls tool=\'weather_forecast\' with args={"location":"Paris","forecast_date":"2030-01-01"} (tool_call_id=\'0001\')',
         "[Tools] Tool call '0001' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
         '=== ModelRequestNode: streaming partial request tokens ===',
-        "[Request] Starting part 0: TextPart(content='It will be ', part_kind='text')",
+        "[Request] Starting part 0: TextPart(content='It will be ')",
         '[Result] The model produced a final output (tool_name=None)',
         "[Request] Part 0 text delta: 'warm and sunny '",
         "[Request] Part 0 text delta: 'in Paris on '",
@@ -416,9 +402,7 @@ result_sync = agent.run_sync(
 print(result_sync.output)
 #> Rome
 print(result_sync.usage())
-"""
-Usage(requests=1, request_tokens=62, response_tokens=1, total_tokens=63, details=None)
-"""
+#> Usage(requests=1, request_tokens=62, response_tokens=1, total_tokens=63)
 
 try:
     result_sync = agent.run_sync(
@@ -483,6 +467,7 @@ This structure allows you to configure common parameters that influence the mode
 `timeout`, and more.
 
 There are two ways to apply these settings:
+
 1. Passing to `run{_sync,_stream}` functions via the `model_settings` argument. This allows for fine-tuning on a per-request basis.
 2. Setting during [`Agent`][pydantic_ai.agent.Agent] initialization via the `model_settings` argument. These settings will be applied by default to all subsequent run calls using said agent. However, `model_settings` provided during a specific run call will override the agent's default settings.
 
@@ -698,46 +683,52 @@ You should use:
 
 In general, we recommend using `instructions` instead of `system_prompt` unless you have a specific reason to use `system_prompt`.
 
+Instructions, like system prompts, fall into two categories:
+
+1. **Static instructions**: These are known when writing the code and can be defined via the `instructions` parameter of the [`Agent` constructor][pydantic_ai.Agent.__init__].
+2. **Dynamic instructions**: These rely on context that is only available at runtime and should be defined using functions decorated with [`@agent.instructions`][pydantic_ai.Agent.instructions]. Unlike dynamic system prompts, which may be reused when `message_history` is present, dynamic instructions are always reevaluated.
+
+Both static and dynamic instructions can be added to a single agent, and they are appended in the order they are defined at runtime.
+
+Here's an example using both types of instructions:
+
 ```python {title="instructions.py"}
-from pydantic_ai import Agent
-
-agent = Agent(
-    'openai:gpt-4o',
-    instructions='You are a helpful assistant that can answer questions and help with tasks.',  # (1)!
-)
-
-result = agent.run_sync('What is the capital of France?')
-print(result.output)
-#> Paris
-```
-
-1. This will be the only instructions for this agent.
-
-_(This example is complete, it can be run "as is")_
-
-You can also dynamically change the instructions for an agent by using the `@agent.instructions` decorator.
-
-```python {title="dynamic_instructions.py"}
 from datetime import date
 
 from pydantic_ai import Agent, RunContext
 
-agent = Agent('openai:gpt-4o', deps_type=str)
+agent = Agent(
+    'openai:gpt-4o',
+    deps_type=str,  # (1)!
+    instructions="Use the customer's name while replying to them.",  # (2)!
+)
 
 
-@agent.instructions
+@agent.instructions  # (3)!
 def add_the_users_name(ctx: RunContext[str]) -> str:
     return f"The user's name is {ctx.deps}."
 
 
 @agent.instructions
-def add_the_date() -> str:
+def add_the_date() -> str:  # (4)!
     return f'The date is {date.today()}.'
+
 
 result = agent.run_sync('What is the date?', deps='Frank')
 print(result.output)
 #> Hello Frank, the date today is 2032-01-02.
 ```
+
+1. The agent expects a string dependency.
+2. Static instructions defined at agent creation time.
+3. Dynamic instructions defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext],
+   this is called just after `run_sync`, not when the agent is created, so can benefit from runtime
+   information like the dependencies used on that run.
+4. Another dynamic instruction, instructions don't have to have the `RunContext` parameter.
+
+_(This example is complete, it can be run "as is")_
+
+Note that returning an empty string will result in no instruction message added.
 
 ## Reflection and self-correction
 
@@ -830,11 +821,8 @@ with capture_run_messages() as messages:  # (2)!
                     UserPromptPart(
                         content='Please get me the volume of a box with size 6.',
                         timestamp=datetime.datetime(...),
-                        part_kind='user-prompt',
                     )
-                ],
-                instructions=None,
-                kind='request',
+                ]
             ),
             ModelResponse(
                 parts=[
@@ -842,20 +830,13 @@ with capture_run_messages() as messages:  # (2)!
                         tool_name='calc_volume',
                         args={'size': 6},
                         tool_call_id='pyd_ai_tool_call_id',
-                        part_kind='tool-call',
                     )
                 ],
                 usage=Usage(
-                    requests=1,
-                    request_tokens=62,
-                    response_tokens=4,
-                    total_tokens=66,
-                    details=None,
+                    requests=1, request_tokens=62, response_tokens=4, total_tokens=66
                 ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
-                kind='response',
-                vendor_id=None,
             ),
             ModelRequest(
                 parts=[
@@ -864,11 +845,8 @@ with capture_run_messages() as messages:  # (2)!
                         tool_name='calc_volume',
                         tool_call_id='pyd_ai_tool_call_id',
                         timestamp=datetime.datetime(...),
-                        part_kind='retry-prompt',
                     )
-                ],
-                instructions=None,
-                kind='request',
+                ]
             ),
             ModelResponse(
                 parts=[
@@ -876,20 +854,13 @@ with capture_run_messages() as messages:  # (2)!
                         tool_name='calc_volume',
                         args={'size': 6},
                         tool_call_id='pyd_ai_tool_call_id',
-                        part_kind='tool-call',
                     )
                 ],
                 usage=Usage(
-                    requests=1,
-                    request_tokens=72,
-                    response_tokens=8,
-                    total_tokens=80,
-                    details=None,
+                    requests=1, request_tokens=72, response_tokens=8, total_tokens=80
                 ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
-                kind='response',
-                vendor_id=None,
             ),
         ]
         """

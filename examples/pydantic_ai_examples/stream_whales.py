@@ -11,7 +11,7 @@ Run with:
 from typing import Annotated
 
 import logfire
-from pydantic import Field, ValidationError
+from pydantic import Field
 from rich.console import Console
 from rich.live import Live
 from rich.table import Table
@@ -51,20 +51,7 @@ async def main():
         ) as result:
             console.print('Response:', style='green')
 
-            async for message, last in result.stream_structured(debounce_by=0.01):
-                try:
-                    whales = await result.validate_structured_output(
-                        message, allow_partial=not last
-                    )
-                except ValidationError as exc:
-                    if all(
-                        e['type'] == 'missing' and e['loc'] == ('response',)
-                        for e in exc.errors()
-                    ):
-                        continue
-                    else:
-                        raise
-
+            async for whales in result.stream(debounce_by=0.01):
                 table = Table(
                     title='Species of Whale',
                     caption='Streaming Structured responses from GPT-4',

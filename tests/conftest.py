@@ -8,7 +8,9 @@ import secrets
 import sys
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
+from functools import cached_property
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Callable
@@ -18,27 +20,32 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
 from typing_extensions import TypeAlias
-from vcr import VCR
+from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
 
-__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'TestEnv', 'ClientWithHandler', 'try_import'
+__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'IsInstance', 'TestEnv', 'ClientWithHandler', 'try_import'
 
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 if TYPE_CHECKING:
+    from typing import TypeVar
+
     from pydantic_ai.providers.bedrock import BedrockProvider
 
+    T = TypeVar('T')
+
+    def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
     def IsInt(*args: Any, **kwargs: Any) -> int: ...
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
 else:
-    from dirty_equals import IsDatetime, IsFloat, IsInt, IsNow as _IsNow, IsStr
+    from dirty_equals import IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
@@ -170,8 +177,8 @@ def try_import() -> Iterator[Callable[[], bool]]:
         import_success = True
 
 
-@pytest.fixture(autouse=True)
-def set_event_loop() -> Iterator[None]:
+@pytest.fixture(scope='session', autouse=True)
+def event_loop() -> Iterator[None]:
     new_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(new_loop)
     yield
@@ -188,6 +195,29 @@ def pytest_recording_configure(config: Any, vcr: VCR):
 
     vcr.register_serializer('yaml', json_body_serializer)
 
+    def method_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
+        if r1.method.upper() != r2.method.upper():
+            raise AssertionError(f'{r1.method} != {r2.method}')
+
+    vcr.register_matcher('method', method_matcher)
+
+
+@pytest.fixture(autouse=True)
+def mock_vcr_aiohttp_content(mocker: MockerFixture):
+    try:
+        from vcr.stubs import aiohttp_stubs
+    except ImportError:
+        return
+
+    # google-genai calls `self.response_stream.content.readline()` where `self.response_stream` is a `MockClientResponse`,
+    # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
+    # So we turn `content` into a cached property to return the same one each time.
+    # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
+    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # type: ignore
+    cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
+    mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
+    mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
+
 
 @pytest.fixture(scope='module')
 def vcr_config():
@@ -200,7 +230,7 @@ def vcr_config():
 
 
 @pytest.fixture(autouse=True)
-async def close_cached_httpx_client() -> AsyncIterator[None]:
+async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
     yield
     for provider in [
         'openai',
@@ -247,6 +277,11 @@ def document_content(assets_path: Path) -> BinaryContent:
 
 
 @pytest.fixture(scope='session')
+def deepseek_api_key() -> str:
+    return os.getenv('DEEPSEEK_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def openai_api_key() -> str:
     return os.getenv('OPENAI_API_KEY', 'mock-api-key')
 
@@ -282,6 +317,11 @@ def openrouter_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def heroku_inference_key() -> str:
+    return os.getenv('HEROKU_INFERENCE_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def bedrock_provider():
     try:
         import boto3
@@ -298,6 +338,55 @@ def bedrock_provider():
         bedrock_client.close()
     except ImportError:  # pragma: lax no cover
         pytest.skip('boto3 is not installed')
+
+
+@pytest.fixture(autouse=True)
+def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
+    # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
+    if not os.getenv('CI', False):
+        return  # pragma: lax no cover
+
+    try:
+        from google.genai import _api_client
+    except ImportError:
+        pytest.skip('google is not installed')
+
+    @dataclass
+    class NoOpCredentials:
+        token = 'my-token'
+        quota_project_id = 'pydantic-ai'
+
+        def refresh(self, request: httpx.Request): ...
+
+        def expired(self) -> bool:
+            return False
+
+    return_value = (NoOpCredentials(), 'pydantic-ai')
+    mocker.patch.object(_api_client, '_load_auth', return_value=return_value)
+
+
+@pytest.fixture()
+async def vertex_provider():
+    # NOTE: You need to comment out this line to rewrite the cassettes locally.
+    if not os.getenv('CI', False):  # pragma: lax no cover
+        pytest.skip('Requires properly configured local google vertex config to pass')
+
+    try:
+        from google import genai
+
+        from pydantic_ai.providers.google import GoogleProvider
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('google is not installed')
+
+    project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
+    location = os.getenv('GOOGLE_LOCATION', 'us-central1')
+    client = genai.Client(vertexai=True, project=project, location=location)
+
+    try:
+        yield GoogleProvider(client=client)
+    finally:
+        client.aio._api_client._httpx_client.close()  # type: ignore
+        await client.aio._api_client._async_httpx_client.aclose()  # type: ignore
 
 
 @pytest.fixture()
@@ -342,6 +431,11 @@ def model(
             from pydantic_ai.providers.google_gla import GoogleGLAProvider
 
             return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+        elif request.param == 'google':
+            from pydantic_ai.models.google import GoogleModel
+            from pydantic_ai.providers.google import GoogleProvider
+
+            return GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
         elif request.param == 'bedrock':
             from pydantic_ai.models.bedrock import BedrockConverseModel
 

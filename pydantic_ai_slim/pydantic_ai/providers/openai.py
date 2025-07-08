@@ -5,6 +5,8 @@ import os
 import httpx
 
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -30,6 +32,9 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
     @property
     def client(self) -> AsyncOpenAI:
         return self._client
+
+    def model_profile(self, model_name: str) -> ModelProfile | None:
+        return openai_model_profile(model_name)
 
     def __init__(
         self,

@@ -25,6 +25,8 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
 )
@@ -86,8 +88,7 @@ class ModelResponsePartsManager:
             A `PartStartEvent` if a new part was created, or a `PartDeltaEvent` if an existing part was updated.
 
         Raises:
-            UnexpectedModelBehavior: If attempting to apply text content to a part that is
-                not a TextPart.
+            UnexpectedModelBehavior: If attempting to apply text content to a part that is not a TextPart.
         """
         existing_text_part_and_index: tuple[TextPart, int] | None = None
 
@@ -122,6 +123,77 @@ class ModelResponsePartsManager:
             self._parts[part_index] = part_delta.apply(existing_text_part)
             return PartDeltaEvent(index=part_index, delta=part_delta)
 
+    def handle_thinking_delta(
+        self,
+        *,
+        vendor_part_id: Hashable | None,
+        content: str | None = None,
+        signature: str | None = None,
+    ) -> ModelResponseStreamEvent:
+        """Handle incoming thinking content, creating or updating a ThinkingPart in the manager as appropriate.
+
+        When `vendor_part_id` is None, the latest part is updated if it exists and is a ThinkingPart;
+        otherwise, a new ThinkingPart is created. When a non-None ID is specified, the ThinkingPart corresponding
+        to that vendor ID is either created or updated.
+
+        Args:
+            vendor_part_id: The ID the vendor uses to identify this piece
+                of thinking. If None, a new part will be created unless the latest part is already
+                a ThinkingPart.
+            content: The thinking content to append to the appropriate ThinkingPart.
+            signature: An optional signature for the thinking content.
+
+        Returns:
+            A `PartStartEvent` if a new part was created, or a `PartDeltaEvent` if an existing part was updated.
+
+        Raises:
+            UnexpectedModelBehavior: If attempting to apply a thinking delta to a part that is not a ThinkingPart.
+        """
+        existing_thinking_part_and_index: tuple[ThinkingPart, int] | None = None
+
+        if vendor_part_id is None:
+            # If the vendor_part_id is None, check if the latest part is a ThinkingPart to update
+            if self._parts:
+                part_index = len(self._parts) - 1
+                latest_part = self._parts[part_index]
+                if isinstance(latest_part, ThinkingPart):  # pragma: no branch
+                    existing_thinking_part_and_index = latest_part, part_index
+        else:
+            # Otherwise, attempt to look up an existing ThinkingPart by vendor_part_id
+            part_index = self._vendor_id_to_part_index.get(vendor_part_id)
+            if part_index is not None:
+                existing_part = self._parts[part_index]
+                if not isinstance(existing_part, ThinkingPart):
+                    raise UnexpectedModelBehavior(f'Cannot apply a thinking delta to {existing_part=}')
+                existing_thinking_part_and_index = existing_part, part_index
+
+        if existing_thinking_part_and_index is None:
+            if content is not None:
+                # There is no existing thinking part that should be updated, so create a new one
+                new_part_index = len(self._parts)
+                part = ThinkingPart(content=content, signature=signature)
+                if vendor_part_id is not None:  # pragma: no branch
+                    self._vendor_id_to_part_index[vendor_part_id] = new_part_index
+                self._parts.append(part)
+                return PartStartEvent(index=new_part_index, part=part)
+            else:
+                raise UnexpectedModelBehavior('Cannot create a ThinkingPart with no content')
+        else:
+            if content is not None:
+                # Update the existing ThinkingPart with the new content delta
+                existing_thinking_part, part_index = existing_thinking_part_and_index
+                part_delta = ThinkingPartDelta(content_delta=content)
+                self._parts[part_index] = part_delta.apply(existing_thinking_part)
+                return PartDeltaEvent(index=part_index, delta=part_delta)
+            elif signature is not None:
+                # Update the existing ThinkingPart with the new signature delta
+                existing_thinking_part, part_index = existing_thinking_part_and_index
+                part_delta = ThinkingPartDelta(signature_delta=signature)
+                self._parts[part_index] = part_delta.apply(existing_thinking_part)
+                return PartDeltaEvent(index=part_index, delta=part_delta)
+            else:
+                raise UnexpectedModelBehavior('Cannot update a ThinkingPart with no content or signature')
+
     def handle_tool_call_delta(
         self,
         *,
@@ -132,7 +204,7 @@ class ModelResponsePartsManager:
     ) -> ModelResponseStreamEvent | None:
         """Handle or update a tool call, creating or updating a `ToolCallPart` or `ToolCallPartDelta`.
 
-        Managed items remain as `ToolCallPartDelta`s until they have both a tool_name and arguments, at which
+        Managed items remain as `ToolCallPartDelta`s until they have at least a tool_name, at which
         point they are upgraded to `ToolCallPart`s.
 
         If `vendor_part_id` is None, updates the latest matching ToolCallPart (or ToolCallPartDelta)
@@ -143,11 +215,11 @@ class ModelResponsePartsManager:
                 If None, the latest matching tool call may be updated.
             tool_name: The name of the tool. If None, the manager does not enforce
                 a name match when `vendor_part_id` is None.
-            args: Arguments for the tool call, either as a string or a dictionary of key-value pairs.
+            args: Arguments for the tool call, either as a string, a dictionary of key-value pairs, or None.
             tool_call_id: An optional string representing an identifier for this tool call.
 
         Returns:
-            - A `PartStartEvent` if a new (fully realized) ToolCallPart is created.
+            - A `PartStartEvent` if a new ToolCallPart is created.
             - A `PartDeltaEvent` if an existing part is updated.
             - `None` if no new event is emitted (e.g., the part is still incomplete).
 
@@ -207,7 +279,7 @@ class ModelResponsePartsManager:
         *,
         vendor_part_id: Hashable | None,
         tool_name: str,
-        args: str | dict[str, Any],
+        args: str | dict[str, Any] | None,
         tool_call_id: str | None = None,
     ) -> ModelResponseStreamEvent:
         """Immediately create or fully-overwrite a ToolCallPart with the given information.
@@ -218,7 +290,7 @@ class ModelResponsePartsManager:
             vendor_part_id: The vendor's ID for this tool call part. If not
                 None and an existing part is found, that part is overwritten.
             tool_name: The name of the tool being invoked.
-            args: The arguments for the tool call, either as a string or a dictionary.
+            args: The arguments for the tool call, either as a string, a dictionary, or None.
             tool_call_id: An optional string identifier for this tool call.
 
         Returns:

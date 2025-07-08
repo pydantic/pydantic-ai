@@ -11,10 +11,11 @@ from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, RunContext, Tool, ToolOutput, UserError
+from pydantic_ai import Agent, RunContext, Tool, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import ToolDefinition
 
 
@@ -514,9 +515,55 @@ def test_init_tool_ctx():
     assert agent_infer._function_tools['ctx_tool'].takes_ctx is True
 
 
-def test_repeat_tool():
+def test_repeat_tool_by_rename():
+    """
+    1. add tool `bar`
+    2. add tool `foo` then rename it to `bar`, causing a conflict with `bar`
+    """
+
     with pytest.raises(UserError, match="Tool name conflicts with existing tool: 'ctx_tool'"):
         Agent('test', tools=[Tool(ctx_tool), ctx_tool], deps_type=int)
+
+    agent = Agent('test')
+
+    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+        tool_def.name = 'bar'
+        return tool_def
+
+    @agent.tool_plain
+    def bar(x: int, y: str) -> str:  # pragma: no cover
+        return f'{x} {y}'
+
+    @agent.tool_plain(prepare=change_tool_name)
+    def foo(x: int, y: str) -> str:  # pragma: no cover
+        return f'{x} {y}'
+
+    with pytest.raises(UserError, match=r"Renaming tool 'foo' to 'bar' conflicts with existing tool."):
+        agent.run_sync('')
+
+
+def test_repeat_tool():
+    """
+    1. add tool `foo`, then rename it to `bar`
+    2. add tool `bar`, causing a conflict with `bar`
+    """
+
+    agent = Agent('test')
+
+    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+        tool_def.name = 'bar'
+        return tool_def
+
+    @agent.tool_plain(prepare=change_tool_name)
+    def foo(x: int, y: str) -> str:  # pragma: no cover
+        return f'{x} {y}'
+
+    @agent.tool_plain
+    def bar(x: int, y: str) -> str:  # pragma: no cover
+        return f'{x} {y}'
+
+    with pytest.raises(UserError, match=r"Tool name conflicts with existing tool: 'bar'."):
+        agent.run_sync('')
 
 
 def test_tool_return_conflict():
@@ -525,8 +572,8 @@ def test_tool_return_conflict():
     # this is also okay
     Agent('test', tools=[ctx_tool], deps_type=int, output_type=int)
     # this raises an error
-    with pytest.raises(UserError, match="Tool name conflicts with result schema name: 'ctx_tool'"):
-        Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(type_=int, name='ctx_tool'))
+    with pytest.raises(UserError, match="Tool name conflicts with output tool name: 'ctx_tool'"):
+        Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(int, name='ctx_tool'))
 
 
 def test_init_ctx_tool_invalid():
@@ -785,7 +832,21 @@ def test_enforce_parameter_descriptions() -> None:
     assert all(err_part in error_reason for err_part in error_parts)
 
 
-def test_json_schema_required_parameters(set_event_loop: None):
+def test_enforce_parameter_descriptions_noraise() -> None:
+    async def complete_parameter_descriptions_docstring(ctx: RunContext, foo: int) -> str:  # pragma: no cover
+        """Describes function ops, but missing ctx description and contains non-existent parameter description.
+
+        :param foo: The foo thing.
+        :param bar: The bar thing.
+        """
+        return f'{foo}'
+
+    agent = Agent(FunctionModel(get_json_schema))
+
+    agent.tool(require_parameter_descriptions=True)(complete_parameter_descriptions_docstring)
+
+
+def test_json_schema_required_parameters():
     agent = Agent(FunctionModel(get_json_schema))
 
     @agent.tool
@@ -828,7 +889,7 @@ def test_json_schema_required_parameters(set_event_loop: None):
     )
 
 
-def test_call_tool_without_unrequired_parameters(set_event_loop: None):
+def test_call_tool_without_unrequired_parameters():
     async def call_tools_first(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
@@ -988,3 +1049,74 @@ def test_dynamic_tools_agent_wide():
 
     result = agent.run_sync('', deps=1)
     assert result.output == snapshot('{"foobar":"1 0 a"}')
+
+
+def test_function_tool_consistent_with_schema():
+    def function(*args: Any, **kwargs: Any) -> str:
+        assert len(args) == 0
+        assert set(kwargs) == {'one', 'two'}
+        return 'I like being called like this'
+
+    json_schema = {
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'one': {'description': 'first argument', 'type': 'string'},
+            'two': {'description': 'second argument', 'type': 'object'},
+        },
+        'required': ['one', 'two'],
+    }
+    pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
+
+    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot('{"foobar":"I like being called like this"}')
+    assert agent._function_tools['foobar'].takes_ctx is False
+    assert agent._function_tools['foobar'].max_retries == 0
+
+
+def test_function_tool_inconsistent_with_schema():
+    def function(three: str, four: int) -> str:
+        return 'Coverage made me call this'
+
+    json_schema = {
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'one': {'description': 'first argument', 'type': 'string'},
+            'two': {'description': 'second argument', 'type': 'object'},
+        },
+        'required': ['one', 'two'],
+    }
+    pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
+
+    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    with pytest.raises(TypeError, match=".* got an unexpected keyword argument 'one'"):
+        agent.run_sync('foobar')
+
+    result = function('three', 4)
+    assert result == 'Coverage made me call this'
+
+
+def test_async_function_tool_consistent_with_schema():
+    async def function(*args: Any, **kwargs: Any) -> str:
+        assert len(args) == 0
+        assert set(kwargs) == {'one', 'two'}
+        return 'I like being called like this'
+
+    json_schema = {
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'one': {'description': 'first argument', 'type': 'string'},
+            'two': {'description': 'second argument', 'type': 'object'},
+        },
+        'required': ['one', 'two'],
+    }
+    pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
+
+    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot('{"foobar":"I like being called like this"}')
+    assert agent._function_tools['foobar'].takes_ctx is False
+    assert agent._function_tools['foobar'].max_retries == 0

@@ -14,14 +14,13 @@ from typing import Any, cast
 
 from typing_inspection.introspection import get_literal_values
 
-from pydantic_ai.result import OutputDataT
-from pydantic_ai.tools import AgentDepsT
-
 from . import __version__
+from ._run_context import AgentDepsT
 from .agent import Agent
 from .exceptions import UserError
 from .messages import ModelMessage
 from .models import KnownModelName, infer_model
+from .output import OutputDataT
 
 try:
     import argcomplete
@@ -254,6 +253,11 @@ async def run_chat(
                 messages = await ask_agent(agent, text, stream, console, code_theme, deps, messages)
             except CancelledError:  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
+            except Exception as e:  # pragma: no cover
+                cause = getattr(e, '__cause__', None)
+                console.print(f'\n[red]{type(e).__name__}:[/red] {e}')
+                if cause:
+                    console.print(f'[dim]Caused by: {cause}[/dim]')
 
 
 async def ask_agent(
@@ -284,7 +288,7 @@ async def ask_agent(
                         stack.enter_context(live)  # entering multiple times is idempotent
 
                         async for content in handle_stream.stream_output(debounce_by=None):
-                            live.update(Markdown(content, code_theme=code_theme))
+                            live.update(Markdown(str(content), code_theme=code_theme))
 
         assert agent_run.result is not None
         return agent_run.result.all_messages()

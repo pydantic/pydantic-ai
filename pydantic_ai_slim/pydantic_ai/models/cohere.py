@@ -6,6 +6,8 @@ from typing import Literal, Union, cast
 
 from typing_extensions import assert_never
 
+from pydantic_ai._thinking_part import split_content_into_text_and_thinking
+
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
@@ -16,10 +18,12 @@ from ..messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -79,10 +83,9 @@ See [Cohere's docs](https://docs.cohere.com/v2/docs/models) for a list of all av
 
 
 class CohereModelSettings(ModelSettings, total=False):
-    """Settings used for a Cohere model request.
+    """Settings used for a Cohere model request."""
 
-    ALL FIELDS MUST BE `cohere_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `cohere_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     # This class is a placeholder for any future cohere-specific settings
 
@@ -107,6 +110,7 @@ class CohereModel(Model):
         model_name: CohereModelName,
         *,
         provider: Literal['cohere'] | Provider[AsyncClientV2] = 'cohere',
+        profile: ModelProfileSpec | None = None,
     ):
         """Initialize an Cohere model.
 
@@ -116,12 +120,14 @@ class CohereModel(Model):
             provider: The provider to use for authentication and API access. Can be either the string
                 'cohere' or an instance of `Provider[AsyncClientV2]`. If not provided, a new provider will be
                 created using the other parameters.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
+        self._profile = profile or provider.model_profile
 
     @property
     def base_url(self) -> str:
@@ -183,7 +189,7 @@ class CohereModel(Model):
             # While Cohere's API returns a list, it only does that for future proofing
             # and currently only one item is being returned.
             choice = response.message.content[0]
-            parts.append(TextPart(choice.text))
+            parts.extend(split_content_into_text_and_thinking(choice.text))
         for c in response.message.tool_calls or []:
             if c.function and c.function.name and c.function.arguments:  # pragma: no branch
                 parts.append(
@@ -207,6 +213,11 @@ class CohereModel(Model):
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         texts.append(item.content)
+                    elif isinstance(item, ThinkingPart):
+                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
+                        # please open an issue. The below code is the code to send thinking to the provider.
+                        # texts.append(f'<think>\n{item.content}\n</think>')
+                        pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     else:

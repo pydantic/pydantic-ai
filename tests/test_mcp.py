@@ -1,31 +1,44 @@
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
+import base64
+import re
+from datetime import timezone
 from pathlib import Path
+from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import Usage
 
-from .conftest import IsDatetime, try_import
+from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.mcp import MCPServerHTTP, MCPServerStdio
-    from pydantic_ai.models.openai import OpenAIModel
-    from pydantic_ai.providers.openai import OpenAIProvider
+    from mcp import ErrorData, McpError, SamplingMessage
+    from mcp.types import CreateMessageRequestParams, ImageContent, TextContent
 
+    from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response
+    from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mcp and openai not installed'),
@@ -45,7 +58,7 @@ async def test_stdio_server():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == 10
+        assert len(tools) == snapshot(13)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
@@ -54,22 +67,58 @@ async def test_stdio_server():
         assert result == snapshot('32.0')
 
 
+async def test_reentrant_context_manager():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        async with server:
+            pass
+
+
+async def test_stdio_server_with_tool_prefix():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
+    async with server:
+        tools = await server.list_tools()
+        assert all(tool.name.startswith('foo_') for tool in tools)
+
+
 async def test_stdio_server_with_cwd():
     test_dir = Path(__file__).parent
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == 10
+        assert len(tools) == snapshot(13)
+
+
+async def test_process_tool_call() -> None:
+    called: bool = False
+
+    async def process_tool_call(
+        ctx: RunContext[int],
+        call_tool: CallToolFunc,
+        tool_name: str,
+        args: dict[str, Any],
+    ) -> ToolResult:
+        """A process_tool_call that sets a flag and sends deps as metadata."""
+        nonlocal called
+        called = True
+        return await call_tool(tool_name, args, {'deps': ctx.deps})
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
+    async with server:
+        agent = Agent(deps_type=int, model=TestModel(call_tools=['echo_deps']), mcp_servers=[server])
+        result = await agent.run('Echo with deps set to 42', deps=42)
+        assert result.output == snapshot('{"echo_deps":{"echo":"This is an echo message","deps":42}}')
+        assert called, 'process_tool_call should have been called'
 
 
 def test_sse_server():
-    sse_server = MCPServerHTTP(url='http://localhost:8000/sse')
+    sse_server = MCPServerSSE(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
-    assert sse_server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
+    assert sse_server.log_level is None
 
 
 def test_sse_server_with_header_and_timeout():
-    sse_server = MCPServerHTTP(
+    sse_server = MCPServerSSE(
         url='http://localhost:8000/sse',
         headers={'my-custom-header': 'my-header-value'},
         timeout=10,
@@ -80,7 +129,7 @@ def test_sse_server_with_header_and_timeout():
     assert sse_server.headers is not None and sse_server.headers['my-custom-header'] == 'my-header-value'
     assert sse_server.timeout == 10
     assert sse_server.sse_read_timeout == 100
-    assert sse_server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
+    assert sse_server.log_level == 'info'
 
 
 @pytest.mark.vcr()
@@ -156,6 +205,41 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
         )
 
 
+async def test_agent_with_conflict_tool_name(agent: Agent):
+    @agent.tool_plain
+    def get_none() -> None:  # pragma: no cover
+        """Return nothing"""
+        return None
+
+    async with agent.run_mcp_servers():
+        with pytest.raises(
+            UserError,
+            match=re.escape(
+                "MCP Server 'MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'], tool_prefix=None)' defines a tool whose name conflicts with existing tool: 'get_none'. Consider using `tool_prefix` to avoid name conflicts."
+            ),
+        ):
+            await agent.run('Get me a conflict')
+
+
+async def test_agent_with_prefix_tool_name(openai_api_key: str):
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
+    model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model,
+        mcp_servers=[server],
+    )
+
+    @agent.tool_plain
+    def get_none() -> None:  # pragma: no cover
+        """Return nothing"""
+        return None
+
+    async with agent.run_mcp_servers():
+        # This means that we passed the _prepare_request_parameters check and there is no conflict in the tool name
+        with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
+            await agent.run('No conflict')
+
+
 async def test_agent_with_server_not_running(openai_api_key: str):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
@@ -166,11 +250,11 @@ async def test_agent_with_server_not_running(openai_api_key: str):
 
 async def test_log_level_unset():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    assert server._get_log_level() is None  # pyright: ignore[reportPrivateUsage]
+    assert server.log_level is None
     async with server:
         tools = await server.list_tools()
-        assert len(tools) == 10
-        assert tools[9].name == 'get_log_level'
+        assert len(tools) == snapshot(13)
+        assert tools[10].name == 'get_log_level'
 
         result = await server.call_tool('get_log_level', {})
         assert result == snapshot('unset')
@@ -178,7 +262,7 @@ async def test_log_level_unset():
 
 async def test_log_level_set():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
-    assert server._get_log_level() == 'info'  # pyright: ignore[reportPrivateUsage]
+    assert server.log_level == 'info'
     async with server:
         result = await server.call_tool('get_log_level', {})
         assert result == snapshot('info')
@@ -281,7 +365,9 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_product_name', args='{}', tool_call_id='call_LaiWltzI39sdquflqeuF0EyE'
+                            tool_name='get_product_name',
+                            args='{}',
+                            tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
                         )
                     ],
                     usage=Usage(
@@ -354,7 +440,9 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_image_resource', args='{}', tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt'
+                            tool_name='get_image_resource',
+                            args='{}',
+                            tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                         )
                     ],
                     usage=Usage(
@@ -382,13 +470,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                             tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                             timestamp=IsDatetime(),
                         ),
-                        UserPromptPart(
-                            content=[
-                                'This is file 1c8566:',
-                                image_content,
-                            ],
-                            timestamp=IsDatetime(),
-                        ),
+                        UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
                     ]
                 ),
                 ModelResponse(
@@ -419,6 +501,60 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
 
 
 @pytest.mark.vcr()
+async def test_tool_returning_audio_resource(
+    allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
+):
+    model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
+    async with agent.run_mcp_servers():
+        result = await agent.run("What's the content of the audio resource?", model=model)
+        assert result.output == snapshot('The audio resource contains a voice saying "Hello, my name is Marcelo."')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content="What's the content of the audio resource?", timestamp=IsDatetime())]
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='get_audio_resource', args={}, tool_call_id=IsStr())],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=383,
+                        response_tokens=12,
+                        total_tokens=520,
+                        details={'thoughts_tokens': 125, 'text_prompt_tokens': 383},
+                    ),
+                    model_name='models/gemini-2.5-pro-preview-05-06',
+                    timestamp=IsDatetime(),
+                    vendor_details={'finish_reason': 'STOP'},
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_audio_resource',
+                            content='See file 2d36ae',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                        UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
+                    ]
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The audio resource contains a voice saying "Hello, my name is Marcelo."')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=575,
+                        response_tokens=15,
+                        total_tokens=590,
+                        details={'text_prompt_tokens': 431, 'audio_prompt_tokens': 144},
+                    ),
+                    model_name='models/gemini-2.5-pro-preview-05-06',
+                    timestamp=IsDatetime(),
+                    vendor_details={'finish_reason': 'STOP'},
+                ),
+            ]
+        )
+
+
+@pytest.mark.vcr()
 async def test_tool_returning_image(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
     async with agent.run_mcp_servers():
         result = await agent.run('Get me an image')
@@ -435,7 +571,11 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_Q7xG8CCG0dyevVfUS0ubsDdN')
+                        ToolCallPart(
+                            tool_name='get_image',
+                            args='{}',
+                            tool_call_id='call_Q7xG8CCG0dyevVfUS0ubsDdN',
+                        )
                     ],
                     usage=Usage(
                         requests=1,
@@ -581,7 +721,9 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_error', args='{"value":false}', tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc'
+                            tool_name='get_error',
+                            args='{"value":false}',
+                            tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc',
                         )
                     ],
                     usage=Usage(
@@ -614,7 +756,9 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_error', args='{"value":true}', tool_call_id='call_4xGyvdghYKHN8x19KWkRtA5N'
+                            tool_name='get_error',
+                            args='{"value":true}',
+                            tool_call_id='call_4xGyvdghYKHN8x19KWkRtA5N',
                         )
                     ],
                     usage=Usage(
@@ -758,7 +902,9 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_multiple_items', args='{}', tool_call_id='call_kL0TvjEVQBDGZrn1Zv7iNYOW'
+                            tool_name='get_multiple_items',
+                            args='{}',
+                            tool_call_id='call_kL0TvjEVQBDGZrn1Zv7iNYOW',
                         )
                     ],
                     usage=Usage(
@@ -825,3 +971,91 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                 ),
             ]
         )
+
+
+async def test_client_sampling():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server.sampling_model = TestModel(custom_output_text='sampling model response')
+    async with server:
+        result = await server.call_tool('use_sampling', {'foo': 'bar'})
+        assert result == snapshot(
+            {
+                'meta': None,
+                'role': 'assistant',
+                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None},
+                'model': 'test',
+                'stopReason': None,
+            }
+        )
+
+
+async def test_client_sampling_disabled():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], allow_sampling=False)
+    server.sampling_model = TestModel(custom_output_text='sampling model response')
+    async with server:
+        with pytest.raises(ModelRetry, match='Error executing tool use_sampling: Sampling not supported'):
+            await server.call_tool('use_sampling', {'foo': 'bar'})
+
+
+async def test_mcp_server_raises_mcp_error(allow_model_requests: None, agent: Agent) -> None:
+    server = agent._mcp_servers[0]  # pyright: ignore[reportPrivateUsage]
+
+    mcp_error = McpError(error=ErrorData(code=400, message='Test MCP error conversion'))
+
+    async with agent.run_mcp_servers():
+        with patch.object(
+            server._client,  # pyright: ignore[reportPrivateUsage]
+            'send_request',
+            new=AsyncMock(side_effect=mcp_error),
+        ):
+            with pytest.raises(ModelRetry, match='Test MCP error conversion'):
+                await server.call_tool('test_tool', {})
+
+
+def test_map_from_mcp_params_model_request():
+    params = CreateMessageRequestParams(
+        messages=[
+            SamplingMessage(role='user', content=TextContent(type='text', text='xx')),
+            SamplingMessage(
+                role='user',
+                content=ImageContent(type='image', data=base64.b64encode(b'img').decode(), mimeType='image/png'),
+            ),
+        ],
+        maxTokens=8,
+    )
+    pai_messages = map_from_mcp_params(params)
+    assert pai_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='xx', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(
+                        content=[BinaryContent(data=b'img', media_type='image/png')], timestamp=IsNow(tz=timezone.utc)
+                    ),
+                ]
+            )
+        ]
+    )
+
+
+def test_map_from_mcp_params_model_response():
+    params = CreateMessageRequestParams(
+        messages=[
+            SamplingMessage(role='assistant', content=TextContent(type='text', text='xx')),
+        ],
+        maxTokens=8,
+    )
+    pai_messages = map_from_mcp_params(params)
+    assert pai_messages == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='xx')],
+                timestamp=IsNow(tz=timezone.utc),
+            )
+        ]
+    )
+
+
+def test_map_from_model_response():
+    with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ThinkingPart, expected TextPart'):
+        map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking...')]))
