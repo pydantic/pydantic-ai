@@ -271,6 +271,7 @@ class TextOutput(Generic[OutputDataT]):
     output_function: TextOutputFunc[OutputDataT]
     """The function that will be called to process the model's plain text output. The function must take a single string argument."""
 
+
 class StructuredDict(Generic[OutputDataT], dict):
     """A dictionary subclass that enforces a JSON schema for structured output.
 
@@ -323,6 +324,7 @@ class StructuredDict(Generic[OutputDataT], dict):
 
     def __get_pydantic_json_schema__(self, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
         return self
+
 
 OutputSpec = TypeAliasType(
     'OutputSpec',
