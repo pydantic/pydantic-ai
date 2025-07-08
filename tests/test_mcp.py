@@ -76,6 +76,7 @@ async def test_stdio_server(run_context: RunContext[int]):
         tools = (await server.prepare_for_run(run_context)).tool_defs
         assert len(tools) == snapshot(13)
         assert tools[0].name == 'celsius_to_fahrenheit'
+        assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
         # Test calling the temperature conversion tool

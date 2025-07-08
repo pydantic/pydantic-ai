@@ -1095,7 +1095,10 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     '$defs': {
                         'MyDefaultRecursiveDc': {
                             'properties': {
-                                'field': {'anyOf': [{'$ref': '#/$defs/MyDefaultRecursiveDc'}, {'type': 'null'}]}
+                                'field': {
+                                    'anyOf': [{'$ref': '#/$defs/MyDefaultRecursiveDc'}, {'type': 'null'}],
+                                    'default': None,
+                                }
                             },
                             'type': 'object',
                         },
@@ -1213,7 +1216,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     '$defs': {
                         'MyDefaultDc': {
-                            'properties': {'x': {'type': 'integer'}},
+                            'properties': {'x': {'default': 1, 'type': 'integer'}},
                             'type': 'object',
                         }
                     },
@@ -1253,7 +1256,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     '$defs': {
                         'MyDefaultDc': {
-                            'properties': {'x': {'type': 'integer'}},
+                            'properties': {'x': {'default': 1, 'type': 'integer'}},
                             'type': 'object',
                         }
                     },
@@ -1293,7 +1296,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     '$defs': {
                         'MyDefaultDc': {
-                            'properties': {'x': {'type': 'integer'}},
+                            'properties': {'x': {'default': 1, 'type': 'integer'}},
                             'type': 'object',
                         }
                     },
@@ -1913,9 +1916,9 @@ def test_openai_model_profile_from_provider():
 
 def test_model_profile_strict_not_supported():
     my_tool = ToolDefinition(
-        'my_tool',
-        'This is my tool',
-        {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+        name='my_tool',
+        description='This is my tool',
+        parameters_json_schema={'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
         strict=True,
     )
 

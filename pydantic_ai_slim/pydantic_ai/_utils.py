@@ -315,8 +315,11 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
 
+_datetime_ta = TypeAdapter(datetime)
+
+
 def number_to_datetime(x: int | float) -> datetime:
-    return TypeAdapter(datetime).validate_python(x)
+    return _datetime_ta.validate_python(x)
 
 
 AwaitableCallable = Callable[..., Awaitable[T]]

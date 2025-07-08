@@ -19,7 +19,7 @@ def doc_descriptions(
     sig: Signature,
     *,
     docstring_format: DocstringFormat,
-) -> tuple[str, dict[str, str]]:
+) -> tuple[str | None, dict[str, str]]:
     """Extract the function description and parameter descriptions from a function's docstring.
 
     The function parses the docstring using the specified format (or infers it if 'auto')
@@ -35,7 +35,7 @@ def doc_descriptions(
     """
     doc = func.__doc__
     if doc is None:
-        return '', {}
+        return None, {}
 
     # see https://github.com/mkdocstrings/griffe/issues/293
     parent = cast(GriffeObject, sig)

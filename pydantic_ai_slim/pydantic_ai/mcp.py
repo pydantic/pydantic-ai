@@ -178,7 +178,7 @@ class MCPServer(CallableToolset[Any], ABC):
         return [
             ToolDefinition(
                 name=mcp_tool.name,
-                description=mcp_tool.description or '',
+                description=mcp_tool.description,
                 parameters_json_schema=mcp_tool.inputSchema,
             )
             for mcp_tool in mcp_tools
