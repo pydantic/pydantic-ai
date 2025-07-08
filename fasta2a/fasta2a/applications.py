@@ -21,7 +21,6 @@ from .schema import (
     a2a_request_ta,
     a2a_response_ta,
     agent_card_ta,
-    send_message_request_ta,
 )
 from .storage import Storage
 from .task_manager import TaskManager
