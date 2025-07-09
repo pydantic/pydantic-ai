@@ -3480,12 +3480,6 @@ def test_override_toolsets():
     def foo() -> str:
         return 'Hello from foo'
 
-    bar_toolset = FunctionToolset()
-
-    @bar_toolset.tool
-    def bar() -> str:
-        return 'Hello from bar'
-
     available_tools: list[list[str]] = []
 
     async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -3503,13 +3497,25 @@ def test_override_toolsets():
     assert available_tools[-1] == snapshot(['baz', 'foo'])
     assert result.output == snapshot('{"baz":"Hello from baz","foo":"Hello from foo"}')
 
-    result = agent.run_sync('Hello', toolsets=[bar_toolset])
+    bar_toolset = FunctionToolset()
+
+    @bar_toolset.tool
+    def bar() -> str:
+        return 'Hello from bar'
+
+    with agent.override(toolsets=[bar_toolset]):
+        result = agent.run_sync('Hello')
     assert available_tools[-1] == snapshot(['baz', 'bar'])
     assert result.output == snapshot('{"baz":"Hello from baz","bar":"Hello from bar"}')
 
-    result = agent.run_sync('Hello', toolsets=[])
+    with agent.override(toolsets=[]):
+        result = agent.run_sync('Hello')
     assert available_tools[-1] == snapshot(['baz'])
     assert result.output == snapshot('{"baz":"Hello from baz"}')
+
+    result = agent.run_sync('Hello', toolsets=[bar_toolset])
+    assert available_tools[-1] == snapshot(['baz', 'foo', 'bar'])
+    assert result.output == snapshot('{"baz":"Hello from baz","foo":"Hello from foo","bar":"Hello from bar"}')
 
 
 def test_prepare_output_tools():

@@ -434,6 +434,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
         self._override_model: ContextVar[_utils.Option[models.Model]] = ContextVar('_override_model', default=None)
+        self._override_toolsets: ContextVar[_utils.Option[Sequence[AbstractToolset[AgentDepsT]]]] = ContextVar(
+            '_override_toolsets', default=None
+        )
 
         self._enter_lock = _utils.get_async_lock()
         self._entered_count = 0
@@ -536,7 +539,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional toolsets to use for this run instead
+            toolsets: Optional additional toolsets for this run.
 
         Returns:
             The result of the run.
@@ -708,7 +711,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional toolsets to use for this run instead
+            toolsets: Optional additional toolsets for this run.
 
         Returns:
             The result of the run.
@@ -769,7 +772,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             run_step=state.run_step,
         )
 
-        user_toolsets = self._user_toolsets if toolsets is None else toolsets
+        user_toolsets = self._get_toolsets([*self._user_toolsets, *(toolsets or ())])
         toolset = CombinedToolset([self._function_toolset, *user_toolsets])
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
@@ -973,7 +976,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional toolsets to use for this run instead
+            toolsets: Optional additional toolsets for this run.
 
         Returns:
             The result of the run.
@@ -1093,7 +1096,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional toolsets to use for this run instead
+            toolsets: Optional additional toolsets for this run.
 
         Returns:
             The result of the run.
@@ -1215,8 +1218,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent dependencies and model.
+        """Context manager to temporarily override agent dependencies, model, or toolsets.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
@@ -1224,6 +1228,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         Args:
             deps: The dependencies to use instead of the dependencies passed to the agent run.
             model: The model to use instead of the model passed to the agent run.
+            toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
         """
         if _utils.is_set(deps):
             deps_token = self._override_deps.set(_utils.Some(deps))
@@ -1235,6 +1240,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         else:
             model_token = None
 
+        if _utils.is_set(toolsets):
+            toolsets_token = self._override_toolsets.set(_utils.Some(toolsets))
+        else:
+            toolsets_token = None
+
         try:
             yield
         finally:
@@ -1242,6 +1252,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 self._override_deps.reset(deps_token)
             if model_token is not None:
                 self._override_model.reset(model_token)
+            if toolsets_token is not None:
+                self._override_toolsets.reset(toolsets_token)
 
     @overload
     def instructions(
@@ -1711,6 +1723,18 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             return some_deps.value
         else:
             return deps
+
+    def _get_toolsets(
+        self: Agent[T, OutputDataT], toolsets: Sequence[AbstractToolset[AgentDepsT]]
+    ) -> Sequence[AbstractToolset[AgentDepsT]]:
+        """Get toolsets for a run.
+
+        If we've overridden toolsets via `_override_toolsets`, use that, otherwise use the toolsets passed to the call.
+        """
+        if some_toolsets := self._override_toolsets.get():
+            return some_toolsets.value
+        else:
+            return toolsets
 
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.
