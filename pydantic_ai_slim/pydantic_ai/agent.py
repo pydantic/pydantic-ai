@@ -1525,30 +1525,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
-        if func is None:
 
-            def tool_decorator(
-                func_: ToolFuncContext[AgentDepsT, ToolParams],
-            ) -> ToolFuncContext[AgentDepsT, ToolParams]:
-                # noinspection PyTypeChecker
-                self._function_toolset.register_function(
-                    func_,
-                    True,
-                    name,
-                    retries,
-                    prepare,
-                    docstring_format,
-                    require_parameter_descriptions,
-                    schema_generator,
-                    strict,
-                )
-                return func_
-
-            return tool_decorator
-        else:
+        def tool_decorator(
+            func_: ToolFuncContext[AgentDepsT, ToolParams],
+        ) -> ToolFuncContext[AgentDepsT, ToolParams]:
             # noinspection PyTypeChecker
             self._function_toolset.register_function(
-                func,
+                func_,
                 True,
                 name,
                 retries,
@@ -1558,7 +1541,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 schema_generator,
                 strict,
             )
-            return func
+            # This will raise errors for any name conflicts
+            self._get_toolset()
+            return func_
+
+        return tool_decorator if func is None else tool_decorator(func)
 
     @overload
     def tool_plain(self, func: ToolFuncPlain[ToolParams], /) -> ToolFuncPlain[ToolParams]: ...
@@ -1634,27 +1621,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
-        if func is None:
 
-            def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
-                # noinspection PyTypeChecker
-                self._function_toolset.register_function(
-                    func_,
-                    False,
-                    name,
-                    retries,
-                    prepare,
-                    docstring_format,
-                    require_parameter_descriptions,
-                    schema_generator,
-                    strict,
-                )
-                return func_
-
-            return tool_decorator
-        else:
+        def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
+            # noinspection PyTypeChecker
             self._function_toolset.register_function(
-                func,
+                func_,
                 False,
                 name,
                 retries,
@@ -1664,7 +1635,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 schema_generator,
                 strict,
             )
-            return func
+            # This will raise errors for any name conflicts
+            self._get_toolset()
+            return func_
+
+        return tool_decorator if func is None else tool_decorator(func)
 
     def _get_model(self, model: models.Model | models.KnownModelName | str | None) -> models.Model:
         """Create a model configured for this agent.
@@ -1727,29 +1702,30 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         additional_user_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractToolset[AgentDepsT]:
-        """Get the complete toolset for a run.
+        """Get the complete toolset for a run. This will raise errors for any name conflicts.
 
         Args:
             output_toolset: The toolset to use for the output instead of the agent's default.
             additional_user_toolsets: Additional toolsets to add to the user toolsets.
         """
-        user_toolsets = self._get_user_toolsets([*self._user_toolsets, *(additional_user_toolsets or ())])
+        user_toolsets = self._user_toolsets
+        if additional_user_toolsets:
+            user_toolsets = [*user_toolsets, *additional_user_toolsets]
+        user_toolsets = self._get_user_toolsets(user_toolsets)
 
-        # This will raise errors for any name conflicts
-        toolset = CombinedToolset([self._function_toolset, *user_toolsets])
+        all_toolsets = [self._function_toolset, *user_toolsets]
 
         if self._prepare_tools:
-            toolset = PreparedToolset(toolset, self._prepare_tools)
+            all_toolsets = [PreparedToolset(CombinedToolset(all_toolsets), self._prepare_tools)]
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
             if self._prepare_output_tools:
                 output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
+            all_toolsets = [output_toolset, *all_toolsets]
 
-            # This will raise errors for any name conflicts
-            toolset = CombinedToolset([output_toolset, toolset])
-
-        return toolset
+        # This will raise errors for any name conflicts
+        return CombinedToolset(all_toolsets)
 
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.

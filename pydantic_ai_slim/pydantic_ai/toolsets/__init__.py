@@ -28,7 +28,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
     @property
     def _tool_name_conflict_hint(self) -> str:
-        return 'Consider renaming the tool or wrapping the toolset in a `PrefixedToolset` to avoid name conflicts.'
+        return 'Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts.'
 
     async def __aenter__(self) -> Self:
         return self

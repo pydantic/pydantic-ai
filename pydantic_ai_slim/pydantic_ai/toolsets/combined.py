@@ -47,6 +47,10 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                     pass
                 self._toolset_per_tool_name[name] = toolset
 
+    @property
+    def name(self) -> str:
+        return 'Toolset'  # pragma: no cover
+
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
             if self._entered_count == 0:
