@@ -1017,6 +1017,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _timestamp: datetime
 
+    # Track reasoning summary parts to handle separate parts correctly
+    _reasoning_summary_part_counter: int = field(default=0, init=False)
+    _current_reasoning_summary_vendor_id: str | None = field(default=None, init=False)
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
             if isinstance(chunk, responses.ResponseCompletedEvent):
@@ -1081,17 +1085,22 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
-                pass  # there's nothing we need to do here
+                # Start a new reasoning summary part
+                self._reasoning_summary_part_counter += 1
+                self._current_reasoning_summary_vendor_id = f"{chunk.item_id}_part_{self._reasoning_summary_part_counter}"
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
-                pass  # there's nothing we need to do here
+                # Mark the end of the current reasoning summary part
+                self._current_reasoning_summary_vendor_id = None
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryTextDoneEvent):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
+                # Use the current reasoning summary part's unique vendor_part_id
+                vendor_part_id = self._current_reasoning_summary_vendor_id or chunk.item_id
                 yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=chunk.item_id,
+                    vendor_part_id=vendor_part_id,
                     content=chunk.delta,
                     signature=chunk.item_id,
                 )
