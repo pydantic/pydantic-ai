@@ -1,0 +1,60 @@
+interactions:
+- request:
+    headers:
+      content-type:
+      - application/json
+    method: post
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the Todays date?
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      tools:
+      - googleSearch: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '669'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=379
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |
+              Today is Wednesday, July 9, 2025.
+          role: model
+        finishReason: STOP
+        groundingMetadata: {}
+      modelVersion: gemini-2.0-flash
+      responseId: -3duaMqKFYmSmNAPjf_f4Qs
+      usageMetadata:
+        candidatesTokenCount: 15
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 15
+        promptTokenCount: 13
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 13
+        totalTokenCount: 28
+    status:
+      code: 200
+      message: OK
+version: 1

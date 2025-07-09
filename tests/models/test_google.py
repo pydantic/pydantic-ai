@@ -1378,3 +1378,40 @@ Don't include any text or Markdown fencing before or after.\
             ),
         ]
     )
+
+
+async def test_google_search(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider, enable_google_search=True)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+
+    result = await agent.run('What is the Todays date?')
+    assert result.output == snapshot('Today is Wednesday, July 9, 2025.\n')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful chatbot.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='What is the Todays date?',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Today is Wednesday, July 9, 2025.\n')],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=13,
+                    response_tokens=15,
+                    total_tokens=28,
+                    details={'text_candidates_tokens': 15, 'text_prompt_tokens': 13},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+        ]
+    )
