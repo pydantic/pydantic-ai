@@ -309,7 +309,9 @@ class MistralModel(Model):
         )
         tools = [
             MistralTool(
-                function=MistralFunction(name=r.name, parameters=r.parameters_json_schema, description=r.description)
+                function=MistralFunction(
+                    name=r.name, parameters=r.parameters_json_schema, description=r.description or ''
+                )
             )
             for r in all_tools
         ]

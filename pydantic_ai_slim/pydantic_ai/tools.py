@@ -161,7 +161,7 @@ class Tool(Generic[AgentDepsT]):
     takes_ctx: bool
     max_retries: int | None
     name: str
-    description: str
+    description: str | None
     prepare: ToolPrepareFunc[AgentDepsT] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
@@ -269,7 +269,7 @@ class Tool(Generic[AgentDepsT]):
         cls,
         function: Callable[..., Any],
         name: str,
-        description: str,
+        description: str | None,
         json_schema: JsonSchemaValue,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
@@ -440,11 +440,11 @@ class ToolDefinition:
     name: str
     """The name of the tool."""
 
-    description: str
-    """The description of the tool."""
-
     parameters_json_schema: ObjectJsonSchema
     """The JSON schema for the tool's parameters."""
+
+    description: str | None = None
+    """The description of the tool."""
 
     outer_typed_dict_key: str | None = None
     """The key in the outer [TypedDict] that wraps an output tool.
