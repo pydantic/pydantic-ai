@@ -162,7 +162,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _function_toolset: FunctionToolset[AgentDepsT] = dataclasses.field(repr=False)
     _output_toolset: OutputToolset[AgentDepsT] | None = dataclasses.field(repr=False)
     _user_toolsets: Sequence[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
-    _toolset: AbstractToolset[AgentDepsT] = dataclasses.field(repr=False)
     _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
@@ -421,15 +420,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._function_toolset = FunctionToolset(tools, max_retries=retries)
         self._user_toolsets = toolsets or ()
 
-        all_toolsets: list[AbstractToolset[AgentDepsT]] = []
-        if self._output_toolset:
-            all_toolsets.append(self._output_toolset)
-        all_toolsets.append(self._function_toolset)
-        all_toolsets.extend(self._user_toolsets)
-
-        # This will raise errors for any name conflicts
-        self._toolset = CombinedToolset(all_toolsets)
-
         self.history_processors = history_processors or []
 
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
@@ -441,6 +431,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._enter_lock = _utils.get_async_lock()
         self._entered_count = 0
         self._exit_stack = None
+
+        # This will raise errors for any name conflicts
+        self._get_toolset()
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -746,8 +739,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             if output_toolset:
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
-        if output_toolset and self._prepare_output_tools:
-            output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
 
         # Build the graph
         graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (
@@ -772,12 +763,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             run_step=state.run_step,
         )
 
-        user_toolsets = self._get_toolsets([*self._user_toolsets, *(toolsets or ())])
-        toolset = CombinedToolset([self._function_toolset, *user_toolsets])
-        if self._prepare_tools:
-            toolset = PreparedToolset(toolset, self._prepare_tools)
-        if output_toolset:
-            toolset = CombinedToolset([output_toolset, toolset])
+        toolset = self._get_toolset(output_toolset=output_toolset, additional_user_toolsets=toolsets)
         run_toolset = await toolset.prepare_for_run(run_context)
 
         model_settings = merge_model_settings(self.model_settings, model_settings)
@@ -1724,10 +1710,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         else:
             return deps
 
-    def _get_toolsets(
-        self: Agent[T, OutputDataT], toolsets: Sequence[AbstractToolset[AgentDepsT]]
+    def _get_user_toolsets(
+        self, toolsets: Sequence[AbstractToolset[AgentDepsT]]
     ) -> Sequence[AbstractToolset[AgentDepsT]]:
-        """Get toolsets for a run.
+        """Get user toolsets for a run.
 
         If we've overridden toolsets via `_override_toolsets`, use that, otherwise use the toolsets passed to the call.
         """
@@ -1735,6 +1721,35 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             return some_toolsets.value
         else:
             return toolsets
+
+    def _get_toolset(
+        self,
+        output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
+        additional_user_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    ) -> AbstractToolset[AgentDepsT]:
+        """Get the complete toolset for a run.
+
+        Args:
+            output_toolset: The toolset to use for the output instead of the agent's default.
+            additional_user_toolsets: Additional toolsets to add to the user toolsets.
+        """
+        user_toolsets = self._get_user_toolsets([*self._user_toolsets, *(additional_user_toolsets or ())])
+
+        # This will raise errors for any name conflicts
+        toolset = CombinedToolset([self._function_toolset, *user_toolsets])
+
+        if self._prepare_tools:
+            toolset = PreparedToolset(toolset, self._prepare_tools)
+
+        output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
+        if output_toolset is not None:
+            if self._prepare_output_tools:
+                output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
+
+            # This will raise errors for any name conflicts
+            toolset = CombinedToolset([output_toolset, toolset])
+
+        return toolset
 
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.
@@ -1831,7 +1846,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         async with self._enter_lock:
             if self._entered_count == 0:
                 self._exit_stack = AsyncExitStack()
-                await self._exit_stack.enter_async_context(self._toolset)
+                toolset = self._get_toolset()
+                await self._exit_stack.enter_async_context(toolset)
             self._entered_count += 1
         return self
 
@@ -1858,7 +1874,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             if isinstance(toolset, MCPServer):
                 toolset.sampling_model = sampling_model
 
-        self._toolset.accept(_set_sampling_model)
+        self._get_toolset().accept(_set_sampling_model)
 
     @asynccontextmanager
     @deprecated(
