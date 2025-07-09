@@ -352,7 +352,7 @@ stateDiagram-v2
   Feedback --> [*]
 ```
 
-```python {title="genai_email_feedback.py" py="3.10" test="skip"}
+```python {title="genai_email_feedback.py" py="3.10"}
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field

@@ -5,7 +5,13 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP, Image
 from mcp.server.session import ServerSessionT
 from mcp.shared.context import LifespanContextT, RequestT
-from mcp.types import BlobResourceContents, EmbeddedResource, SamplingMessage, TextContent, TextResourceContents
+from mcp.types import (
+    BlobResourceContents,
+    EmbeddedResource,
+    SamplingMessage,
+    TextContent,
+    TextResourceContents,
+)
 from pydantic import AnyUrl
 
 mcp = FastMCP('PydanticAI MCP Server')
