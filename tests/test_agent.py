@@ -3517,6 +3517,85 @@ def test_override_toolsets():
     assert available_tools[-1] == snapshot(['baz', 'foo', 'bar'])
     assert result.output == snapshot('{"baz":"Hello from baz","foo":"Hello from foo","bar":"Hello from bar"}')
 
+    with agent.override(toolsets=[]):
+        result = agent.run_sync('Hello', toolsets=[bar_toolset])
+    assert available_tools[-1] == snapshot(['baz'])
+    assert result.output == snapshot('{"baz":"Hello from baz"}')
+
+
+def test_adding_tools_during_run():
+    toolset = FunctionToolset()
+
+    def foo() -> str:
+        return 'Hello from foo'
+
+    @toolset.tool
+    def add_foo_tool() -> str:
+        toolset.add_function(foo)
+        return 'foo tool added'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('add_foo_tool')])
+        elif len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('foo')])
+        else:
+            return ModelResponse(parts=[TextPart('Done')])
+
+    agent = Agent(FunctionModel(respond), toolsets=[toolset])
+    result = agent.run_sync('Add the foo tool and run it')
+    assert result.output == snapshot('Done')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Add the foo tool and run it',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='add_foo_tool', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=57, response_tokens=2, total_tokens=59),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_foo_tool',
+                        content='foo tool added',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foo', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=60, response_tokens=4, total_tokens=64),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='foo',
+                        content='Hello from foo',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done')],
+                usage=Usage(requests=1, request_tokens=63, response_tokens=5, total_tokens=68),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
 
 def test_prepare_output_tools():
     @dataclass
