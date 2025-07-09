@@ -98,7 +98,7 @@ class MCPServer(ABC):
         return [
             tools.ToolDefinition(
                 name=self.get_prefixed_tool_name(tool.name),
-                description=tool.description or '',
+                description=tool.description,
                 parameters_json_schema=tool.inputSchema,
             )
             for tool in mcp_tools.tools

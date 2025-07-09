@@ -96,10 +96,9 @@ Since [the Mistral docs](https://docs.mistral.ai/getting-started/models/models_o
 
 
 class MistralModelSettings(ModelSettings, total=False):
-    """Settings used for a Mistral model request.
+    """Settings used for a Mistral model request."""
 
-    ALL FIELDS MUST BE `mistral_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `mistral_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     # This class is a placeholder for any future mistral-specific settings
 
@@ -307,7 +306,9 @@ class MistralModel(Model):
         )
         tools = [
             MistralTool(
-                function=MistralFunction(name=r.name, parameters=r.parameters_json_schema, description=r.description)
+                function=MistralFunction(
+                    name=r.name, parameters=r.parameters_json_schema, description=r.description or ''
+                )
             )
             for r in all_tools
         ]

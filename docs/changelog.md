@@ -12,6 +12,12 @@ PydanticAI is still pre-version 1, so breaking changes will occur, however:
 !!! note
     Here's a filtered list of the breaking changes for each version to help you upgrade PydanticAI.
 
+### v0.4.0 (2025-07-08)
+
+See [#1799](https://github.com/pydantic/pydantic-ai/pull/1799) - Pydantic Evals `EvaluationReport` and `ReportCase` are now generic dataclasses instead of Pydantic models. If you were serializing them using `model_dump()`, you will now need to use the `EvaluationReportAdapter` and `ReportCaseAdapter` type adapters instead.
+
+See [#1507](https://github.com/pydantic/pydantic-ai/pull/1507) - The `ToolDefinition` `description` argument is now optional and the order of positional arguments has changed from `name, description, parameters_json_schema, ...` to `name, parameters_json_schema, description, ...` to account for this.
+
 ### v0.3.0 (2025-06-18)
 
 See [#1142](https://github.com/pydantic/pydantic-ai/pull/1142) — Adds support for thinking parts.

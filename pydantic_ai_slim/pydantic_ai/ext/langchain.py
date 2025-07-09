@@ -27,13 +27,13 @@ __all__ = ('tool_from_langchain',)
 
 
 def tool_from_langchain(langchain_tool: LangChainTool) -> Tool:
-    """Creates a Pydantic tool proxy from a LangChain tool.
+    """Creates a Pydantic AI tool proxy from a LangChain tool.
 
     Args:
         langchain_tool: The LangChain tool to wrap.
 
     Returns:
-        A Pydantic tool that corresponds to the LangChain tool.
+        A Pydantic AI tool that corresponds to the LangChain tool.
     """
     function_name = langchain_tool.name
     function_description = langchain_tool.description
