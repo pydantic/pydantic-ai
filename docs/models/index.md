@@ -126,7 +126,7 @@ The `ModelResponse` message above indicates in the `model_name` field that the o
 
 ### Per-Model Settings
 
-You can configure different `ModelSettings` for each model in a fallback chain by passing the `settings` parameter when creating each model. This is particularly useful when different providers have different optimal configurations:
+You can configure different [`ModelSettings`][pydantic_ai.settings.ModelSettings] for each model in a fallback chain by passing the `settings` parameter when creating each model. This is particularly useful when different providers have different optimal configurations:
 
 ```python {title="fallback_model_per_settings.py"}
 from pydantic_ai import Agent
