@@ -469,10 +469,8 @@ This structure allows you to configure common parameters that influence the mode
 There are three ways to apply these settings, with a clear precedence order:
 
 1. **Model-level defaults** - Set when creating a model instance via the `settings` parameter. These serve as the base defaults for that model.
-2. **Agent-level defaults** - Set during [`Agent`][pydantic_ai.agent.Agent] initialization via the `model_settings` argument. These override model defaults.
-3. **Run-time overrides** - Passed to `run{_sync,_stream}` functions via the `model_settings` argument. These have the highest priority and override both agent and model defaults.
-
-**Settings Precedence**: Run-time > Agent > Model
+2. **Agent-level defaults** - Set during [`Agent`][pydantic_ai.agent.Agent] initialization via the `model_settings` argument. These are merged with model defaults, with agent settings taking precedence.
+3. **Run-time overrides** - Passed to `run{_sync,_stream}` functions via the `model_settings` argument. These have the highest priority and are merged with the combined agent and model defaults.
 
 For example, if you'd like to set the `temperature` setting to `0.0` to ensure less random behavior,
 you can do the following:
@@ -488,7 +486,7 @@ model = OpenAIModel(
     settings=ModelSettings(temperature=0.8, max_tokens=500)  # Base defaults
 )
 
-# 2. Agent-level defaults (override model defaults)
+# 2. Agent-level defaults (overrides model defaults by merging)
 agent = Agent(model, model_settings=ModelSettings(temperature=0.5))
 
 # 3. Run-time overrides (highest priority)

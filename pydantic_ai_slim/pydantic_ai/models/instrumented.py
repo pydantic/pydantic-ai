@@ -198,10 +198,7 @@ class InstrumentedModel(WrapperModel):
         options: InstrumentationSettings | None = None,
     ) -> None:
         super().__init__(wrapped)
-        # Store instrumentation settings separately from model settings
         self.instrumentation_settings = options or InstrumentationSettings()
-        # Initialize base Model with no settings to avoid storing InstrumentationSettings there
-        Model.__init__(self, settings=None)
 
     async def request(
         self,

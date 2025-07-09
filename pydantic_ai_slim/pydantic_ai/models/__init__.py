@@ -321,6 +321,7 @@ class Model(ABC):
     """Abstract class for a model."""
 
     _profile: ModelProfileSpec | None = None
+    _settings: ModelSettings | None = None
 
     def __init__(self, *, settings: ModelSettings | None = None) -> None:
         """Initialize the model with optional settings.
@@ -328,7 +329,12 @@ class Model(ABC):
         Args:
             settings: Model-specific settings that will be used as defaults for this model.
         """
-        self.settings: ModelSettings | None = settings
+        self._settings = settings
+
+    @property
+    def settings(self) -> ModelSettings | None:
+        """Get the model settings."""
+        return self._settings
 
     @abstractmethod
     async def request(

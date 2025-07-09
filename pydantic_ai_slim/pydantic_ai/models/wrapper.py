@@ -54,5 +54,10 @@ class WrapperModel(Model):
     def profile(self) -> ModelProfile:
         return self.wrapped.profile
 
+    @property
+    def settings(self) -> ModelSettings | None:
+        """Get the settings from the wrapped model."""
+        return self.wrapped.settings
+
     def __getattr__(self, item: str):
         return getattr(self.wrapped, item)  # pragma: no cover

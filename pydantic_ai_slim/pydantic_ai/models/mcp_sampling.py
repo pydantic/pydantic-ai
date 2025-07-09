@@ -42,10 +42,6 @@ class MCPSamplingModel(Model):
     [`ModelSettings`][pydantic_ai.settings.ModelSettings], so this value is used as fallback.
     """
 
-    def __post_init__(self):
-        """Initialize the base Model class."""
-        super().__init__()
-
     async def request(
         self,
         messages: list[ModelMessage],

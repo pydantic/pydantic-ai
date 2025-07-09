@@ -69,8 +69,6 @@ class TestModel(Model):
     """If set, these args will be passed to the output tool."""
     seed: int = 0
     """Seed for generating random data."""
-    settings: ModelSettings | None = None
-    """Model-specific settings that will be used as defaults for this model."""
     last_model_request_parameters: ModelRequestParameters | None = field(default=None, init=False)
     """The last ModelRequestParameters passed to the model in a request.
 
@@ -81,9 +79,24 @@ class TestModel(Model):
     _model_name: str = field(default='test', repr=False)
     _system: str = field(default='test', repr=False)
 
-    def __post_init__(self):
-        """Initialize the base Model class with the settings."""
-        super().__init__(settings=self.settings)
+    def __init__(
+        self,
+        *,
+        call_tools: list[str] | Literal['all'] = 'all',
+        custom_output_text: str | None = None,
+        custom_output_args: Any | None = None,
+        seed: int = 0,
+        settings: ModelSettings | None = None,
+    ):
+        """Initialize TestModel with optional settings."""
+        self.call_tools = call_tools
+        self.custom_output_text = custom_output_text
+        self.custom_output_args = custom_output_args
+        self.seed = seed
+        self.last_model_request_parameters = None
+        self._model_name = 'test'
+        self._system = 'test'
+        super().__init__(settings=settings)
 
     async def request(
         self,
