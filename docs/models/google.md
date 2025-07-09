@@ -14,7 +14,7 @@ pip/uv-add "pydantic-ai-slim[google]"
 ---
 
 !!! warning "Explicit instantiation required"
-    You **cannot** currently use `Agent('google-gla:gemini-1.5-flash')` or `Agent('google-vertex:gemini-1.5-flash')` directly with `GoogleModel`. The model name inference will select [`GeminiModel`](../models/gemini.md) instead of `GoogleModel`.
+You **cannot** currently use `Agent('google-gla:gemini-1.5-flash')` or `Agent('google-vertex:gemini-1.5-flash')` directly with `GoogleModel`. The model name inference will select [`GeminiModel`](../models/gemini.md) instead of `GoogleModel`.
 
     To use `GoogleModel`, you **must** explicitly instantiate a [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] and pass it to
     [`GoogleModel`][pydantic_ai.models.google.GoogleModel], then pass the model to [`Agent`][pydantic_ai.Agent].
@@ -205,3 +205,18 @@ agent = Agent(model, model_settings=model_settings)
 ```
 
 See the [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings) for more on safety settings.
+
+### Grounding with Google Search
+
+You can enable the Google Search tool by setting the `enable_google_search` argument to `True`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel
+
+model = GoogleModel('gemini-2.0-flash', enable_google_search=True)
+agent = Agent(model)
+...
+```
+
+See the [Gemini API docs](https://ai.google.dev/gemini-api/docs/google-search) for more on Grounding with Google Search.
