@@ -28,7 +28,7 @@ def test_function_model_settings():
     settings = ModelSettings(max_tokens=200, temperature=0.7)
 
     def simple_response(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart('response')])
+        return ModelResponse(parts=[TextPart('response')])  # pragma: no cover
 
     # Test with settings
     function_model = FunctionModel(simple_response, settings=settings)
