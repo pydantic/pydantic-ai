@@ -138,24 +138,6 @@ class GoogleModel(Model):
     available [here](https://ai.google.dev/api).
 
     Apart from `__init__`, all methods are private or match those of the base class.
-
-    This model supports special Google tools like Google Search:
-
-    - `enable_google_search`: Enables the model to search the web for information
-
-    Example:
-    ```python
-    from pydantic_ai import Agent
-    from pydantic_ai.models.google import GoogleModel
-
-    # Create a Google model with search capabilities
-    model = GoogleModel('gemini-2.5-flash', enable_google_search=True)
-
-    # Use the model in an agent
-    agent = Agent(model)
-    response = agent.run("What were the key announcements at Google I/O 2025?")
-    print(response)
-    ```
     """
 
     client: genai.Client = field(repr=False)
