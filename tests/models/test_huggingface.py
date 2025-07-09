@@ -38,6 +38,7 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception,
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
+    import aiohttp
     from huggingface_hub import (
         AsyncInferenceClient,
         ChatCompletionInputMessage,
@@ -240,6 +241,22 @@ async def test_stream_completion(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+
+
+async def test_multiple_stream_calls(allow_model_requests: None):
+    stream = [
+        [text_chunk('first '), text_chunk('call', finish_reason='stop')],
+        [text_chunk('second '), text_chunk('call', finish_reason='stop')],
+    ]
+    mock_client = MockHuggingFace.create_stream_mock(stream)
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(model)
+
+    async with agent.run_stream('first') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['first ', 'first call'])
+
+    async with agent.run_stream('second') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['second ', 'second call'])
 
 
 async def test_request_tool_call(allow_model_requests: None):
@@ -720,11 +737,6 @@ def test_system_property():
 
 
 async def test_model_client_response_error(allow_model_requests: None) -> None:
-    try:
-        import aiohttp
-    except ImportError:
-        pytest.skip('aiohttp is not installed')
-
     request_info = Mock(spec=aiohttp.RequestInfo)
     request_info.url = 'http://test.com'
     request_info.method = 'POST'
@@ -859,8 +871,31 @@ async def test_thinking_part_in_history(allow_model_requests: None):
 
 @pytest.mark.parametrize('strict', [True, False, None])
 async def test_tool_strict_mode(allow_model_requests: None, strict: bool | None):
-    c = completion_message(ChatCompletionOutputMessage(content='response', role='assistant'))  # type: ignore
-    mock_client = MockHuggingFace.create_mock(c)
+    tool_call = ChatCompletionOutputToolCall.parse_obj_as_instance(  # type:ignore
+        {
+            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # type:ignore
+                {
+                    'name': 'my_tool',
+                    'arguments': '{"x": 42}',
+                }
+            ),
+            'id': '1',
+            'type': 'function',
+        }
+    )
+    responses = [
+        completion_message(
+            ChatCompletionOutputMessage.parse_obj_as_instance(  # type:ignore
+                {
+                    'content': None,
+                    'role': 'assistant',
+                    'tool_calls': [tool_call],
+                }
+            )
+        ),
+        completion_message(ChatCompletionOutputMessage(content='final response', role='assistant')),  # type: ignore
+    ]
+    mock_client = MockHuggingFace.create_mock(responses)
     model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(model)
 
@@ -868,7 +903,8 @@ async def test_tool_strict_mode(allow_model_requests: None, strict: bool | None)
     def my_tool(x: int) -> int:
         return x
 
-    await agent.run('hello')
+    result = await agent.run('hello')
+    assert result.output == 'final response'
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     tools = kwargs['tools']
