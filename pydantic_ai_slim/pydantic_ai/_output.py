@@ -29,8 +29,8 @@ from .output import (
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
-from .toolsets._callable import CallableToolset
 from .toolsets._run import RunToolset
+from .toolsets.callable import CallableToolset
 
 if TYPE_CHECKING:
     from .profiles import ModelProfile

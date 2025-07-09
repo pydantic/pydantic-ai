@@ -18,9 +18,9 @@ from ..tools import (
     ToolParams,
     ToolPrepareFunc,
 )
-from ._callable import CallableToolset
 from ._individually_prepared import IndividuallyPreparedToolset
 from ._run import RunToolset
+from .callable import CallableToolset
 
 
 @dataclass(init=False)

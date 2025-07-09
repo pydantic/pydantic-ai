@@ -19,8 +19,8 @@ from typing_extensions import Self, assert_never, deprecated
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import ToolDefinition
 
-from .toolsets._callable import CallableToolset
 from .toolsets._run import RunToolset
+from .toolsets.callable import CallableToolset
 from .toolsets.prefixed import PrefixedToolset
 
 try:
