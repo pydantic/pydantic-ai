@@ -8,7 +8,7 @@ an open protocol. Think of it as a universal translator for AI-driven systems
 no matter what language an agent speaks: AG-UI ensures fluent communication.
 
 The team at [Rocket Science](https://www.rocketscience.gg/), contributed the
-[AG-UI integration](#ag-ui-adapter) to make it easy to implement the AG-UI
+initial version of AG-UI integration to make it easy to implement the AG-UI
 protocol with PydanticAI agents.
 
 This also includes an [`Agent.to_ag_ui`][pydantic_ai.Agent.to_ag_ui] convenience
@@ -16,18 +16,7 @@ method which simplifies the creation of [`AGUIApp`][pydantic_ai.ag_ui.AGUIApp]
 for PydanticAI agents, which is built on top of [Starlette](https://www.starlette.io/),
 meaning it's fully compatible with any ASGI server.
 
-## AG-UI Adapter
-
-The [Adapter][pydantic_ai.ag_ui.Adapter] class is an adapter between
-PydanticAI agents and the AG-UI protocol written in Python. It provides support
-for all aspects of spec including:
-
-- [Events](https://docs.ag-ui.com/concepts/events)
-- [Messages](https://docs.ag-ui.com/concepts/messages)
-- [State Management](https://docs.ag-ui.com/concepts/state)
-- [Tools](https://docs.ag-ui.com/concepts/tools)
-
-### Installation
+## Installation
 
 The only dependencies are:
 
@@ -51,7 +40,7 @@ required AG-UI dependencies:
 pip/uv-add 'pydantic-ai-slim[ag-ui]'
 ```
 
-### Quick start
+## Quick start
 
 ```py {title="agent_to_ag_ui.py" py="3.10" hl_lines="17-28"}
 """Basic example for AG-UI with FastAPI and Pydantic AI."""
@@ -73,7 +62,16 @@ uvicorn agent_to_ag_ui:app --host 0.0.0.0 --port 8000
 This will expose the agent as an AG-UI server, and you can start sending
 requests to it.
 
-### Design
+## Design
+
+The solution provides and adapter layer between the AG-UI protocol and
+PydanticAI agents written in Python, including support for all aspects of spec
+including:
+
+- [Events](https://docs.ag-ui.com/concepts/events)
+- [Messages](https://docs.ag-ui.com/concepts/messages)
+- [State Management](https://docs.ag-ui.com/concepts/state)
+- [Tools](https://docs.ag-ui.com/concepts/tools)
 
 The adapter receives messages in the form of a
 [`RunAgentInput`](https://docs.ag-ui.com/sdk/js/core/types#runagentinput)
@@ -87,14 +85,13 @@ streamed back to the caller as Server-Sent Events (SSE).
 A user request may require multiple round trips between client UI and PydanticAI
 server, depending on the tools and events needed.
 
-In addition to the [Adapter][pydantic_ai.ag_ui.Adapter] there is also
-[AGUIApp][pydantic_ai.ag_ui.AGUIApp] which is slim wrapper around
-[Starlette](https://www.starlette.io/) providing easy access to run a PydanticAI
-server with AG-UI support with any ASGI server.
+This is exposed via the [AGUIApp][pydantic_ai.ag_ui.AGUIApp] which is slim
+wrapper around [Starlette](https://www.starlette.io/) providing easy access to
+run a PydanticAI server with AG-UI support with any ASGI server.
 
-### Features
+## Features
 
-To expose a PydanticAI agent as an AG-UI server including state support, you can
+To expose a PydanticAI agent as an AG-UI server including state support, you
 use the [`to_ag_ui`][pydantic_ai.agent.Agent.to_ag_ui] method create an ASGI
 compatible server.
 
@@ -104,7 +101,7 @@ server using the [`StateDeps`][pydantic_ai.ag_ui.StateDeps] which implements the
 decode state contained in [`RunAgentInput.state`](https://docs.ag-ui.com/sdk/js/core/types#runagentinput)
 when processing requests.
 
-#### State management
+### State management
 
 The adapter provides full support for
 [AG-UI state management](https://docs.ag-ui.com/concepts/state), which enables
@@ -145,21 +142,15 @@ Since the goal of [`to_ag_ui`][pydantic_ai.agent.Agent.to_ag_ui] is to be a
 convenience method, it accepts the same a combination of the arguments require
 for:
 
-- [`Adapter`][pydantic_ai.ag_ui.Adapter] constructor
+- [`AGUIApp`][pydantic_ai.ag_ui.AGUIApp] constructor
 - [`Agent.iter`][pydantic_ai.agent.Agent.iter] method
 
-If you want more control you can either use
-[`agent_to_ag_ui`][pydantic_ai.ag_ui.agent_to_ag_ui] helper method or create
-and [`Agent`][pydantic_ai.ag_ui.Agent] directly which also provide
-the ability to customise [`Starlette`](https://www.starlette.io/applications/#starlette.applications.Starlette)
-options.
-
-#### Tools
+### Tools
 
 AG-UI tools are seamlessly provided to the PydanticAI agent, enabling rich
 use experiences with frontend user interfaces.
 
-#### Events
+### Events
 
 The adapter provides the ability for PydanticAI tools to send
 [AG-UI events](https://docs.ag-ui.com/concepts/events) simply by defining a tool
@@ -172,16 +163,11 @@ for custom events and state updates.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from ag_ui.core import CustomEvent, EventType, StateSnapshotEvent
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.ag_ui import StateDeps
-
-if TYPE_CHECKING:
-    pass
 
 
 class DocumentState(BaseModel):
@@ -222,9 +208,9 @@ def custom_events() -> list[CustomEvent]:
     ]
 ```
 
-### Examples
+## Examples
 
-For more examples of how to use [`Adapter`][pydantic_ai.ag_ui.Adapter] see
+For more examples of how to use [`to_ag_ui`][pydantic_ai.Agent.to_ag_ui] see
 [`pydantic_ai_ag_ui_examples`](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_ag_ui_examples),
 which includes working server for the with the
 [AG-UI Dojo](https://docs.ag-ui.com/tutorials/debugging#the-ag-ui-dojo) which
@@ -252,7 +238,7 @@ options:
                         Agent log level (default: info)
 ```
 
-Run with adapter debug logging:
+Run with dojo server with debug logging:
 
 ```shell
 python -m pydantic_ai_ag_ui_examples.dojo_server --log-level debug
@@ -262,4 +248,10 @@ Using uvicorn:
 
 ```shell
 uvicorn pydantic_ai_ag_ui_examples.dojo_server:app --port 9000
+```
+
+There is also a simplified basic example:
+
+```shell
+python -m pydantic_ai_ag_ui_examples.basic
 ```

@@ -7,16 +7,11 @@ from textwrap import dedent
 from typing import Any, Literal
 
 from ag_ui.core import EventType, StateDeltaEvent, StateSnapshotEvent
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
-from pydantic_ai.ag_ui import AGUIApp
 
-# Ensure environment variables are loaded.
-load_dotenv()
-
-agent: Agent = Agent(
+agent = Agent(
     'openai:gpt-4o-mini',
     output_type=str,
     instructions=dedent(
@@ -35,7 +30,7 @@ agent: Agent = Agent(
     ),
 )
 
-app: AGUIApp = agent.to_ag_ui()
+app = agent.to_ag_ui()
 
 
 class StepStatus(StrEnum):

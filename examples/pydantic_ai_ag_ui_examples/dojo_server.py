@@ -44,9 +44,9 @@ app.mount(
 if __name__ == '__main__':
     import uvicorn
 
-    from .cli import Args, parse_args
+    from .cli.args import parse_args
 
-    args: Args = parse_args()
+    args = parse_args()
 
     uvicorn.run(
         'pydantic_ai_ag_ui_examples.dojo_server:app',

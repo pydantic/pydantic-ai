@@ -40,9 +40,9 @@ with contextlib.suppress(ImportError):
 
     from pydantic_ai.ag_ui import (
         SSE_CONTENT_TYPE,
-        Adapter,
         Role,
         StateDeps,
+        _Adapter,  # type: ignore[reportPrivateUsage]
     )
 
     has_ag_ui = True
@@ -97,7 +97,7 @@ def get_weather(name: str = 'get_weather') -> Tool:
 
 
 @pytest.fixture
-async def adapter() -> Adapter[StateDeps[StateInt], str]:
+async def adapter() -> _Adapter[StateDeps[StateInt], str]:
     """Fixture to create an Adapter instance for testing.
 
     Returns:
@@ -108,7 +108,7 @@ async def adapter() -> Adapter[StateDeps[StateInt], str]:
 
 async def create_adapter(
     call_tools: list[str] | Literal['all'],
-) -> Adapter[StateDeps[StateInt], str]:
+) -> _Adapter[StateDeps[StateInt], str]:
     """Create an Adapter instance for testing.
 
     Args:
@@ -117,7 +117,7 @@ async def create_adapter(
     Returns:
         An Adapter instance configured with the specified tools.
     """
-    return Adapter(
+    return _Adapter(
         agent=Agent(
             model=TestModel(
                 call_tools=call_tools,
@@ -170,8 +170,6 @@ def mock_uuid(monkeypatch: pytest.MonkeyPatch) -> _MockUUID:
 
 
 def assert_events(events: list[str], expected_events: list[str], *, loose: bool = False) -> None:
-    expected: str
-    event: str
     for event, expected in zip(events, expected_events):
         if loose:
             expected = normalize_uuids(expected)
@@ -827,7 +825,7 @@ async def test_run_method(mock_uuid: _MockUUID, tc: AdapterRunTest) -> None:
     run: Run
     events: list[str] = []
     thread_id: str = f'{THREAD_ID_PREFIX}{mock_uuid()}'
-    adapter: Adapter[StateDeps[StateInt], str] = await create_adapter(tc.call_tools)
+    adapter: _Adapter[StateDeps[StateInt], str] = await create_adapter(tc.call_tools)
     deps: StateDeps[StateInt] = StateDeps(StateInt())
     for run in tc.runs:
         if run.nodes is not None:
@@ -849,7 +847,7 @@ async def test_run_method(mock_uuid: _MockUUID, tc: AdapterRunTest) -> None:
         assert deps.state.value == tc.expected_state
 
 
-async def test_concurrent_runs(mock_uuid: _MockUUID, adapter: Adapter[None, str]) -> None:
+async def test_concurrent_runs(mock_uuid: _MockUUID, adapter: _Adapter[None, str]) -> None:
     """Test concurrent execution of multiple runs."""
 
     async def collect_events(run_input: RunAgentInput) -> list[str]:
