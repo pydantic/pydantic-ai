@@ -358,13 +358,7 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                     for tool in run_input.tools
                 ]
             )
-            # Maintain the current user toolsets if they exist, otherwise use the provided toolset.
-            user_toolsets: list[AbstractToolset[AgentDepsT]] = (
-                list(self.agent._user_toolsets) if toolsets is None else list(toolsets)  # type: ignore[reportPrivateUsage]
-            )
-            # Add the AG-UI toolset to the user toolsets.
-            user_toolsets.append(toolset)
-            toolsets = user_toolsets
+            toolsets = list(toolsets or []) + [toolset]
 
         try:
             yield encoder.encode(
