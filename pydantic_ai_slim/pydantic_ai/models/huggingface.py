@@ -9,6 +9,7 @@ from typing import Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
+from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -242,12 +243,15 @@ class HuggingFaceModel(Model):
             timestamp = _now_utc()
 
         choice = response.choices[0]
+        content = choice.message.content
+        tool_calls = choice.message.tool_calls
+
         items: list[ModelResponsePart] = []
 
-        if choice.message.content is not None:
-            items.append(TextPart(choice.message.content))
-        if choice.message.tool_calls is not None:
-            for c in choice.message.tool_calls:
+        if content is not None:
+            items.extend(split_content_into_text_and_thinking(content))
+        if tool_calls is not None:
+            for c in tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
         return ModelResponse(
             items,
