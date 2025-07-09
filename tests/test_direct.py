@@ -54,9 +54,7 @@ async def test_model_request_tool_call():
         'test',
         [ModelRequest.user_text_prompt('x')],
         model_request_parameters=ModelRequestParameters(
-            function_tools=[
-                ToolDefinition(name='tool_name', description='', parameters_json_schema={'type': 'object'})
-            ],
+            function_tools=[ToolDefinition(name='tool_name', parameters_json_schema={'type': 'object'})],
             allow_text_output=False,
         ),
     )

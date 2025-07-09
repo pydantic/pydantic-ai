@@ -96,10 +96,9 @@ OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
 class OpenAIModelSettings(ModelSettings, total=False):
-    """Settings used for an OpenAI model request.
+    """Settings used for an OpenAI model request."""
 
-    ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     openai_reasoning_effort: ReasoningEffort
     """Constrains effort on reasoning for [reasoning models](https://platform.openai.com/docs/guides/reasoning).
@@ -470,7 +469,7 @@ class OpenAIModel(Model):
             'type': 'function',
             'function': {
                 'name': f.name,
-                'description': f.description,
+                'description': f.description or '',
                 'parameters': f.parameters_json_schema,
             },
         }

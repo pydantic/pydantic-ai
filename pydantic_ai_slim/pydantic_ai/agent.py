@@ -296,7 +296,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if 'result_type' in _deprecated_kwargs:
             if output_type is not str:  # pragma: no cover
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning)
+            warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning, stacklevel=2)
             output_type = _deprecated_kwargs.pop('result_type')
 
         self.output_type = output_type
@@ -310,6 +310,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn(
                 '`result_tool_name` is deprecated, use `output_type` with `ToolOutput` instead',
                 DeprecationWarning,
+                stacklevel=2,
             )
 
         self._deprecated_result_tool_description = _deprecated_kwargs.pop('result_tool_description', None)
@@ -317,12 +318,15 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn(
                 '`result_tool_description` is deprecated, use `output_type` with `ToolOutput` instead',
                 DeprecationWarning,
+                stacklevel=2,
             )
         result_retries = _deprecated_kwargs.pop('result_retries', None)
         if result_retries is not None:
             if output_retries is not None:  # pragma: no cover
                 raise TypeError('`output_retries` and `result_retries` cannot be set at the same time.')
-            warnings.warn('`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning)
+            warnings.warn(
+                '`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning, stacklevel=2
+            )
             output_retries = result_retries
 
         default_output_mode = (
@@ -472,7 +476,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if 'result_type' in _deprecated_kwargs:  # pragma: no cover
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
+            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
             output_type = _deprecated_kwargs.pop('result_type')
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
@@ -640,7 +644,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if 'result_type' in _deprecated_kwargs:  # pragma: no cover
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
+            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
             output_type = _deprecated_kwargs.pop('result_type')
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
@@ -879,7 +883,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if 'result_type' in _deprecated_kwargs:  # pragma: no cover
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
+            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
             output_type = _deprecated_kwargs.pop('result_type')
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
@@ -997,7 +1001,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if 'result_type' in _deprecated_kwargs:  # pragma: no cover
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
+            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
             output_type = _deprecated_kwargs.pop('result_type')
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
@@ -1336,7 +1340,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         return func
 
     @deprecated('`result_validator` is deprecated, use `output_validator` instead.')
-    def result_validator(self, func: Any, /) -> Any: ...
+    def result_validator(self, func: Any, /) -> Any:
+        warnings.warn(
+            '`result_validator` is deprecated, use `output_validator` instead.', DeprecationWarning, stacklevel=2
+        )
+        return self.output_validator(func)  # type: ignore
 
     @overload
     def tool(self, func: ToolFuncContext[AgentDepsT, ToolParams], /) -> ToolFuncContext[AgentDepsT, ToolParams]: ...

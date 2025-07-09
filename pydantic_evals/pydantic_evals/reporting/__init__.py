@@ -2,14 +2,14 @@ from __future__ import annotations as _annotations
 
 from collections import defaultdict
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from io import StringIO
-from typing import Any, Callable, Literal, Protocol, TypeVar
+from typing import Any, Callable, Generic, Literal, Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from rich.console import Console
 from rich.table import Table
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, TypeVar
 
 from pydantic_evals._utils import UNSET, Unset
 
@@ -24,7 +24,9 @@ from .render_numbers import (
 
 __all__ = (
     'EvaluationReport',
+    'EvaluationReportAdapter',
     'ReportCase',
+    'ReportCaseAdapter',
     'EvaluationRenderer',
     'RenderValueConfig',
     'RenderNumberConfig',
@@ -35,27 +37,32 @@ MISSING_VALUE_STR = '[i]<missing>[/i]'
 EMPTY_CELL_STR = '-'
 EMPTY_AGGREGATE_CELL_STR = ''
 
+InputsT = TypeVar('InputsT', default=Any)
+OutputT = TypeVar('OutputT', default=Any)
+MetadataT = TypeVar('MetadataT', default=Any)
 
-class ReportCase(BaseModel):
+
+@dataclass
+class ReportCase(Generic[InputsT, OutputT, MetadataT]):
     """A single case in an evaluation report."""
 
     name: str
     """The name of the [case][pydantic_evals.Case]."""
-    inputs: Any
+    inputs: InputsT
     """The inputs to the task, from [`Case.inputs`][pydantic_evals.Case.inputs]."""
-    metadata: Any
+    metadata: MetadataT | None
     """Any metadata associated with the case, from [`Case.metadata`][pydantic_evals.Case.metadata]."""
-    expected_output: Any
+    expected_output: OutputT | None
     """The expected output of the task, from [`Case.expected_output`][pydantic_evals.Case.expected_output]."""
-    output: Any
+    output: OutputT
     """The output of the task execution."""
 
     metrics: dict[str, float | int]
     attributes: dict[str, Any]
 
-    scores: dict[str, EvaluationResult[int | float]] = field(init=False)
-    labels: dict[str, EvaluationResult[str]] = field(init=False)
-    assertions: dict[str, EvaluationResult[bool]] = field(init=False)
+    scores: dict[str, EvaluationResult[int | float]]
+    labels: dict[str, EvaluationResult[str]]
+    assertions: dict[str, EvaluationResult[bool]]
 
     task_duration: float
     total_duration: float  # includes evaluator execution time
@@ -63,6 +70,9 @@ class ReportCase(BaseModel):
     # TODO(DavidM): Drop these once we can reference child spans in details panel:
     trace_id: str
     span_id: str
+
+
+ReportCaseAdapter = TypeAdapter(ReportCase[Any, Any, Any])
 
 
 class ReportCaseAggregate(BaseModel):
@@ -142,12 +152,13 @@ class ReportCaseAggregate(BaseModel):
         )
 
 
-class EvaluationReport(BaseModel):
+@dataclass
+class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     """A report of the results of evaluating a model on a set of cases."""
 
     name: str
     """The name of the report."""
-    cases: list[ReportCase]
+    cases: list[ReportCase[InputsT, OutputT, MetadataT]]
     """The cases in the report."""
 
     def averages(self) -> ReportCaseAggregate:
@@ -156,7 +167,7 @@ class EvaluationReport(BaseModel):
     def print(
         self,
         width: int | None = None,
-        baseline: EvaluationReport | None = None,
+        baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None,
         include_input: bool = False,
         include_metadata: bool = False,
         include_expected_output: bool = False,
@@ -199,7 +210,7 @@ class EvaluationReport(BaseModel):
 
     def console_table(
         self,
-        baseline: EvaluationReport | None = None,
+        baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None,
         include_input: bool = False,
         include_metadata: bool = False,
         include_expected_output: bool = False,
@@ -248,6 +259,9 @@ class EvaluationReport(BaseModel):
         io_file = StringIO()
         Console(file=io_file).print(table)
         return io_file.getvalue()
+
+
+EvaluationReportAdapter = TypeAdapter(EvaluationReport[Any, Any, Any])
 
 
 class RenderValueConfig(TypedDict, total=False):
