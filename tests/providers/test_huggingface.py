@@ -67,7 +67,6 @@ def test_huggingface_provider_properties():
     mock_client.model = 'test-model'
     provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
     assert provider.name == 'huggingface'
-    assert provider.base_url == 'test-model'
     assert provider.client is mock_client
 
 
@@ -128,3 +127,16 @@ def test_huggingface_provider_init_with_provider_name(MockAsyncInferenceClient: 
 def test_huggingface_provider_init_with_base_url(MockAsyncInferenceClient: MagicMock):
     HuggingFaceProvider(api_key='key', base_url='test-url')
     MockAsyncInferenceClient.assert_called_once_with(api_key='key', provider=None, base_url='test-url')
+
+
+def test_huggingface_provider_init_api_key_is_none(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv('HF_TOKEN', raising=False)
+    with pytest.raises(UserError):
+        HuggingFaceProvider(api_key=None)
+
+
+def test_huggingface_provider_base_url():
+    mock_client = Mock(spec=AsyncInferenceClient)
+    mock_client.model = 'test-model'
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    assert provider.base_url == 'test-model'

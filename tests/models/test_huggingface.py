@@ -27,9 +27,10 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.result import Usage
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
-from ..conftest import IsDatetime, IsNow, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -60,6 +61,7 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='huggingface_hub not installed'),
     pytest.mark.anyio,
+    pytest.mark.filterwarnings('ignore::ResourceWarning'),
 ]
 
 
@@ -121,45 +123,55 @@ def completion_message(
     )
 
 
-async def test_simple_completion(allow_model_requests: None):
-    c = completion_message(ChatCompletionInputMessage(content='world', role='assistant'))  # type:ignore
-    mock_client = MockHuggingFace.create_mock(c)
+@pytest.mark.vcr()
+async def test_simple_completion(allow_model_requests: None, huggingface_api_key: str):
     model = HuggingFaceModel(
         'Qwen/Qwen2.5-72B-Instruct',
-        provider=HuggingFaceProvider(provider_name='nebius', hf_client=mock_client, api_key='x'),
+        provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
     )
     agent = Agent(model)
 
     result = await agent.run('hello')
-    assert result.output == 'world'
+    assert (
+        result.output
+        == 'Hello! How can I assist you today? Feel free to ask me any questions or let me know if you need help with anything specific.'
+    )
     messages = result.all_messages()
     request = messages[0]
     response = messages[1]
     assert request.parts[0].content == 'hello'  # type: ignore
     assert response == ModelResponse(
-        parts=[TextPart(content='world')],
-        usage=Usage(requests=1),
-        model_name='hf-model',
-        timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-        vendor_id='123',
+        parts=[
+            TextPart(
+                content='Hello! How can I assist you today? Feel free to ask me any questions or let me know if you need help with anything specific.'
+            )
+        ],
+        usage=Usage(requests=1, request_tokens=30, response_tokens=29, total_tokens=59),
+        model_name='Qwen/Qwen2.5-72B-Instruct-fast',
+        timestamp=datetime(2025, 7, 8, 13, 42, 33, tzinfo=timezone.utc),
+        vendor_id='chatcmpl-d445c0d473a84791af2acf356cc00df7',
     )
 
 
-async def test_request_simple_usage(allow_model_requests: None):
-    c = completion_message(ChatCompletionInputMessage(content='world', role='assistant'))  # type:ignore
-    mock_client = MockHuggingFace.create_mock(c)
+@pytest.mark.vcr()
+async def test_request_simple_usage(allow_model_requests: None, huggingface_api_key: str):
     model = HuggingFaceModel(
         'Qwen/Qwen2.5-72B-Instruct',
-        provider=HuggingFaceProvider(provider_name='nebius', hf_client=mock_client, api_key='x'),
+        provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
     )
     agent = Agent(model)
 
     result = await agent.run('Hello')
-    assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1))
+    assert (
+        result.output
+        == "Hello! It's great to meet you. How can I assist you today? Whether you have any questions, need some advice, or just want to chat, feel free to let me know!"
+    )
+    assert result.usage() == snapshot(Usage(requests=1, request_tokens=30, response_tokens=40, total_tokens=70))
 
 
-async def test_request_structured_response(allow_model_requests: None):
+async def test_request_structured_response(
+    allow_model_requests: None,
+):
     tool_call = ChatCompletionOutputToolCall.parse_obj_as_instance(  # type:ignore
         {
             'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # type:ignore
@@ -571,10 +583,12 @@ async def test_no_delta(allow_model_requests: None):
         assert result.usage() == snapshot(Usage(requests=1, request_tokens=6, response_tokens=3, total_tokens=9))
 
 
-async def test_image_url_input(allow_model_requests: None):
-    c = completion_message(ChatCompletionInputMessage(content='world', role='assistant'))  # type:ignore
-    mock_client = MockHuggingFace.create_mock(c)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+@pytest.mark.vcr()
+async def test_image_url_input(allow_model_requests: None, huggingface_api_key: str):
+    m = HuggingFaceModel(
+        'Qwen/Qwen2.5-VL-72B-Instruct',
+        provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
+    )
     agent = Agent(m)
 
     result = await agent.run(
@@ -599,46 +613,28 @@ async def test_image_url_input(allow_model_requests: None):
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='world')],
-                usage=Usage(requests=1),
-                model_name='hf-model',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                parts=[TextPart(content='Hello! How can I assist you with this image of a potato?')],
+                usage=Usage(requests=1, request_tokens=269, response_tokens=15, total_tokens=284),
+                model_name='Qwen/Qwen2.5-VL-72B-Instruct',
+                timestamp=datetime(2025, 7, 8, 14, 4, 39, tzinfo=timezone.utc),
+                vendor_id='chatcmpl-49aa100effab4ca28514d5ccc00d7944',
             ),
         ]
     )
 
 
-async def test_image_as_binary_content_input(allow_model_requests: None):
-    c = completion_message(ChatCompletionInputMessage(content='world', role='assistant'))  # type: ignore
-    mock_client = MockHuggingFace.create_mock(c)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+@pytest.mark.vcr()
+async def test_image_as_binary_content_input(
+    allow_model_requests: None, image_content: BinaryContent, huggingface_api_key: str
+):
+    m = HuggingFaceModel(
+        'Qwen/Qwen2.5-VL-72B-Instruct',
+        provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
+    )
     agent = Agent(m)
-
-    base64_content = (
-        b'/9j/4AAQSkZJRgABAQEAYABgAAD/4QBYRXhpZgAATU0AKgAAAAgAA1IBAAEAAAABAAAAPgIBAAEAAAABAAAARgMBAAEAAAABAAAA'
-        b'WgAAAAAAAAAE'
-    )
-
-    result = await agent.run(['hello', BinaryContent(data=base64_content, media_type='image/jpeg')])
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content=['hello', BinaryContent(data=base64_content, media_type='image/jpeg')],
-                        timestamp=IsNow(tz=timezone.utc),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[TextPart(content='world')],
-                usage=Usage(requests=1),
-                model_name='hf-model',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
-            ),
-        ]
+    result = await agent.run(['What fruit is in the image?', image_content])
+    assert result.output == snapshot(
+        'The fruit in the image is a kiwi. It has been sliced in half, revealing its bright green flesh with small black seeds arranged in a circular pattern around a white center. The outer skin of the kiwi is fuzzy and brown.'
     )
 
 
@@ -691,3 +687,61 @@ async def test_hf_model_instructions(allow_model_requests: None, huggingface_api
             ),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'model_name', ['Qwen/Qwen2.5-72B-Instruct', 'deepseek-ai/DeepSeek-R1-0528', 'meta-llama/Llama-3.3-70B-Instruct']
+)
+@pytest.mark.vcr()
+async def test_max_completion_tokens(allow_model_requests: None, model_name: str, huggingface_api_key: str):
+    m = HuggingFaceModel(model_name, provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key))
+    agent = Agent(m, model_settings=ModelSettings(max_tokens=100))
+
+    result = await agent.run('hello')
+    assert result.output == IsStr()
+
+
+def test_system_property():
+    model = HuggingFaceModel('some-model')
+    assert model.system == 'huggingface'
+
+
+async def test_model_client_response_error(allow_model_requests: None) -> None:
+    try:
+        import aiohttp
+    except ImportError:
+        pytest.skip('aiohttp is not installed')
+
+    request_info = Mock(spec=aiohttp.RequestInfo)
+    request_info.url = 'http://test.com'
+    request_info.method = 'POST'
+    request_info.headers = {}
+    request_info.real_url = 'http://test.com'
+    error = aiohttp.ClientResponseError(request_info, history=(), status=400, message='Bad Request')
+    error.response_error_payload = {'error': 'test error'}  # type: ignore
+
+    mock_client = MockHuggingFace.create_mock(error)
+    m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(m)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello')
+    assert str(exc_info.value) == snapshot("status_code: 400, model_name: not_a_model, body: {'error': 'test error'}")
+
+
+async def test_process_response_no_created_timestamp(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'response', 'role': 'assistant'}),  # type: ignore
+    )
+    c.created = None  # type: ignore
+
+    mock_client = MockHuggingFace.create_mock(c)
+    model = HuggingFaceModel(
+        'test-model',
+        provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'),
+    )
+    agent = Agent(model)
+    result = await agent.run('Hello')
+    messages = result.all_messages()
+    response_message = messages[1]
+    assert isinstance(response_message, ModelResponse)
+    assert response_message.timestamp == IsNow(tz=timezone.utc)
