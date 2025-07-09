@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
 from typing import Any, Callable, Generic, Literal, Union
@@ -307,16 +306,9 @@ class StructuredDict(Generic[OutputDataT], dict[str, Any]):
     ```
     """
 
-    def __init__(self, json_schema: dict[str, Any] | str):
-        if not isinstance(json_schema, (dict, str)):
-            raise UserError(f'Expected json_schema to be a dict or str, got: {type(json_schema)!r}')
-
-        if isinstance(json_schema, str):
-            try:
-                json_schema = json.loads(json_schema)
-            except json.JSONDecodeError as e:
-                raise UserError('Schema string is not a valid JSON.') from e
-
+    def __init__(self, json_schema: dict[str, Any]):
+        if not isinstance(json_schema, dict):
+            raise UserError(f'Expected json_schema to be a dict, got: {type(json_schema)!r}')
         super().__init__(json_schema)
 
     def __get_pydantic_core_schema__(self, source_type: Any, handler: GetCoreSchemaHandler) -> CoreSchema:

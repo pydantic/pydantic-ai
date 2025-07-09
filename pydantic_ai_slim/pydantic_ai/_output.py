@@ -21,6 +21,7 @@ from .output import (
     OutputSpec,
     OutputTypeOrFunction,
     PromptedOutput,
+    StructuredDict,
     StructuredOutputMode,
     TextOutput,
     TextOutputFunc,
@@ -197,7 +198,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
 
         text_outputs: Sequence[type[str] | TextOutput[OutputDataT]] = []
         tool_outputs: Sequence[ToolOutput[OutputDataT]] = []
-        other_outputs: Sequence[OutputTypeOrFunction[OutputDataT]] = []
+        other_outputs: Sequence[StructuredDict[OutputDataT] | OutputTypeOrFunction[OutputDataT]] = []
         for output in _flatten_output_spec(output_spec):
             if output is str:
                 text_outputs.append(cast(type[str], output))
