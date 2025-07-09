@@ -405,7 +405,7 @@ class HuggingFaceModel(Model):
                     raise NotImplementedError('AudioUrl is not supported for Hugging Face')
                 elif isinstance(item, DocumentUrl):
                     raise NotImplementedError('DocumentUrl is not supported for Hugging Face')
-                elif isinstance(item, VideoUrl):  # pragma: no cover
+                elif isinstance(item, VideoUrl):
                     raise NotImplementedError('VideoUrl is not supported for Hugging Face')
                 else:
                     assert_never(item)
