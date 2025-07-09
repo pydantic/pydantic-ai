@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from dirty_equals import HasRepr
+from dirty_equals import HasRepr, IsNumber
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
@@ -177,35 +177,21 @@ async def test_add_evaluator(
     }
 
 
-@pytest.mark.parametrize('async_task', [True, False])
-async def test_evaluate(
+async def test_evaluate_async(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
-    async_task: bool,
 ):
     """Test evaluating a dataset."""
     example_dataset.add_evaluator(simple_evaluator())
 
-    if async_task:
+    async def mock_async_task(inputs: TaskInput) -> TaskOutput:
+        if inputs.query == 'What is 2+2?':
+            return TaskOutput(answer='4')
+        elif inputs.query == 'What is the capital of France?':
+            return TaskOutput(answer='Paris')
+        return TaskOutput(answer='Unknown')  # pragma: no cover
 
-        async def mock_async_task(inputs: TaskInput) -> TaskOutput:
-            if inputs.query == 'What is 2+2?':
-                return TaskOutput(answer='4')
-            elif inputs.query == 'What is the capital of France?':
-                return TaskOutput(answer='Paris')
-            return TaskOutput(answer='Unknown')  # pragma: no cover
-
-        report = await example_dataset.evaluate(mock_async_task)
-    else:
-
-        def mock_sync_task(inputs: TaskInput) -> TaskOutput:
-            if inputs.query == 'What is 2+2?':
-                return TaskOutput(answer='4')
-            elif inputs.query == 'What is the capital of France?':
-                return TaskOutput(answer='Paris')
-            return TaskOutput(answer='Unknown')  # pragma: no cover
-
-        report = await example_dataset.evaluate(mock_sync_task)
+    report = await example_dataset.evaluate(mock_async_task)
 
     assert report is not None
     assert len(report.cases) == 2
@@ -238,6 +224,58 @@ async def test_evaluate(
             'span_id': '0000000000000003',
             'task_duration': 1.0,
             'total_duration': 6.0,
+            'trace_id': '00000000000000000000000000000001',
+        }
+    )
+
+
+async def test_evaluate_sync(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+):
+    """Test evaluating a dataset."""
+    example_dataset.add_evaluator(simple_evaluator())
+
+    def mock_sync_task(inputs: TaskInput) -> TaskOutput:
+        if inputs.query == 'What is 2+2?':
+            return TaskOutput(answer='4')
+        elif inputs.query == 'What is the capital of France?':
+            return TaskOutput(answer='Paris')
+        return TaskOutput(answer='Unknown')  # pragma: no cover
+
+    report = await example_dataset.evaluate(mock_sync_task)
+
+    assert report is not None
+    assert len(report.cases) == 2
+    assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
+        {
+            'assertions': {
+                'correct': {
+                    'name': 'correct',
+                    'reason': None,
+                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                    'value': True,
+                }
+            },
+            'attributes': {},
+            'expected_output': {'answer': '4', 'confidence': 1.0},
+            'inputs': {'query': 'What is 2+2?'},
+            'labels': {},
+            'metadata': {'category': 'general', 'difficulty': 'easy'},
+            'metrics': {},
+            'name': 'case1',
+            'output': {'answer': '4', 'confidence': 1.0},
+            'scores': {
+                'confidence': {
+                    'name': 'confidence',
+                    'reason': None,
+                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                    'value': 1.0,
+                }
+            },
+            'span_id': '0000000000000003',
+            'task_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
+            'total_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
             'trace_id': '00000000000000000000000000000001',
         }
     )
