@@ -2,22 +2,18 @@
 
 from __future__ import annotations
 
-import json
-import logging
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from ag_ui.core import EventType, StateSnapshotEvent
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-from pydantic_ai.ag_ui import FastAGUI, StateDeps
-
-from .agent import agent
+from pydantic_ai import Agent
+from pydantic_ai.ag_ui import AGUIApp, StateDeps
 
 if TYPE_CHECKING:  # pragma: no cover
     from pydantic_ai import RunContext
-
-_LOGGER: logging.Logger = logging.getLogger(__name__)
 
 
 class SkillLevel(StrEnum):
@@ -92,10 +88,19 @@ class RecipeSnapshot(BaseModel):
     )
 
 
-app: FastAGUI = agent(deps=StateDeps(RecipeSnapshot()))
+# Ensure environment variables are loaded.
+load_dotenv()
+
+agent: Agent = Agent(
+    'openai:gpt-4o-mini',
+    output_type=str,
+    deps_type=StateDeps[RecipeSnapshot],
+)
+
+app: AGUIApp = agent.to_ag_ui(deps=StateDeps(RecipeSnapshot()))
 
 
-@app.adapter.agent.tool_plain
+@agent.tool_plain
 def display_recipe(recipe: Recipe) -> StateSnapshotEvent:
     """Display the recipe to the user.
 
@@ -111,7 +116,7 @@ def display_recipe(recipe: Recipe) -> StateSnapshotEvent:
     )
 
 
-@app.adapter.agent.instructions
+@agent.instructions
 def recipe_instructions(ctx: RunContext[StateDeps[RecipeSnapshot]]) -> str:
     """Instructions for the recipe generation agent.
 
@@ -121,8 +126,6 @@ def recipe_instructions(ctx: RunContext[StateDeps[RecipeSnapshot]]) -> str:
     Returns:
         Instructions string for the recipe generation agent.
     """
-    _LOGGER.info('recipe instructions recipe=%s', ctx.deps.state.recipe)
-
     return f"""You are a helpful assistant for creating recipes.
 
 IMPORTANT:
@@ -134,10 +137,6 @@ IMPORTANT:
 Once you have created the updated recipe and displayed it to the user,
 summarise the changes in one sentence, don't describe the recipe in
 detail or send it as a message to the user.
-
-The structure of a recipe is as follows:
-
-{json.dumps(Recipe.model_json_schema(), indent=2)}
 
 The current state of the recipe is:
 

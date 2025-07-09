@@ -12,7 +12,7 @@ The team at [Rocket Science](https://www.rocketscience.gg/), contributed the
 protocol with PydanticAI agents.
 
 This also includes an [`Agent.to_ag_ui`][pydantic_ai.Agent.to_ag_ui] convenience
-method which simplifies the creation of [`FastAGUI`][pydantic_ai.ag_ui.FastAGUI]
+method which simplifies the creation of [`AGUIApp`][pydantic_ai.ag_ui.AGUIApp]
 for PydanticAI agents, which is built on top of [Starlette](https://www.starlette.io/),
 meaning it's fully compatible with any ASGI server.
 
@@ -88,7 +88,7 @@ A user request may require multiple round trips between client UI and PydanticAI
 server, depending on the tools and events needed.
 
 In addition to the [Adapter][pydantic_ai.ag_ui.Adapter] there is also
-[FastAGUI][pydantic_ai.ag_ui.FastAGUI] which is slim wrapper around
+[AGUIApp][pydantic_ai.ag_ui.AGUIApp] which is slim wrapper around
 [Starlette](https://www.starlette.io/) providing easy access to run a PydanticAI
 server with AG-UI support with any ASGI server.
 

@@ -54,7 +54,6 @@ class TestToolCallPart:
     __test__ = False
 
     call_tools: list[str] | Literal['all'] = 'all'
-    deltas: bool = False
 
 
 @dataclass
@@ -409,7 +408,21 @@ class TestStreamedResponse(StreamedResponse):
                         vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
                     )
             elif isinstance(part, ThinkingPart):
-                yield self._parts_manager.handle_thinking_delta(vendor_part_id=i, content=part.content)
+                content_json = pydantic_core.to_json(part.content).decode()
+                *chunks, last_chunk = content_json.split(' ') if ' ' in content_json else [content_json]
+                if len(chunks) == 0:
+                    # Single word thinking delta.
+                    yield self._parts_manager.handle_thinking_delta(vendor_part_id=i, content=content_json)
+                else:
+                    # Start with empty thinking delta.
+                    yield self._parts_manager.handle_thinking_delta(vendor_part_id=i, content='')
+
+                    # Stream the content as JSON string in chunks.
+                    chunks = [f'{chunk} ' for chunk in chunks] if chunks else []
+                    chunks.append(last_chunk)
+
+                    for chunk in chunks:
+                        yield self._parts_manager.handle_thinking_delta(vendor_part_id=i, content=chunk)
             else:
                 assert_never(part)
 

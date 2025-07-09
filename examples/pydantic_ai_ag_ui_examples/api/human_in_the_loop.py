@@ -5,16 +5,29 @@ No special handling is required for this feature.
 
 from __future__ import annotations
 
-from pydantic_ai.ag_ui import FastAGUI
+from textwrap import dedent
 
-from .agent import agent
+from dotenv import load_dotenv
 
-app: FastAGUI = agent(
-    instructions="""When planning tasks use tools only, without any other messages.
-IMPORTANT:
-- Use the `generate_task_steps` tool to display the suggested steps to the user
-- Never repeat the plan, or send a message detailing steps
-- If accepted, confirm the creation of the plan and the number of selected (enabled) steps only
-- If not accepted, ask the user for more information, DO NOT use the `generate_task_steps` tool again
-"""
+from pydantic_ai import Agent
+from pydantic_ai.ag_ui import AGUIApp
+
+# Ensure environment variables are loaded.
+load_dotenv()
+
+agent: Agent = Agent(
+    'openai:gpt-4o-mini',
+    output_type=str,
+    instructions=dedent(
+        """
+        When planning tasks use tools only, without any other messages.
+        IMPORTANT:
+        - Use the `generate_task_steps` tool to display the suggested steps to the user
+        - Never repeat the plan, or send a message detailing steps
+        - If accepted, confirm the creation of the plan and the number of selected (enabled) steps only
+        - If not accepted, ask the user for more information, DO NOT use the `generate_task_steps` tool again
+        """
+    ),
 )
+
+app: AGUIApp = agent.to_ag_ui()

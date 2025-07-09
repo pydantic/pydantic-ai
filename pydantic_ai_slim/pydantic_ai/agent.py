@@ -75,7 +75,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.mcp import MCPServer
 
-    from .ag_ui import FastAGUI
+    from .ag_ui import AGUIApp
 
 __all__ = (
     'Agent',
@@ -1896,8 +1896,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
         on_startup: Sequence[Callable[[], Any]] | None = None,
         on_shutdown: Sequence[Callable[[], Any]] | None = None,
-        lifespan: Lifespan[FastAGUI[AgentDepsT, OutputDataT]] | None = None,
-    ) -> FastAGUI[AgentDepsT, OutputDataT]:
+        lifespan: Lifespan[AGUIApp[AgentDepsT, OutputDataT]] | None = None,
+    ) -> AGUIApp[AgentDepsT, OutputDataT]:
         """Convert the agent to an Adapter instance.
 
         This allows you to use the agent with a compatible AG-UI frontend.
@@ -1953,15 +1953,17 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             An adapter that converts between AG-UI protocol and PydanticAI.
         """
         try:
-            from .ag_ui import agent_to_ag_ui
+            from .ag_ui import Adapter, AGUIApp
         except ImportError as e:  # pragma: no cover
             raise ImportError(
                 'Please install the `ag-ui-protocol` and `starlette` packages to use `Agent.to_ag_ui()` method, '
                 'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
             ) from e
 
-        return agent_to_ag_ui(
-            agent=self,
+        adapter: Adapter[AgentDepsT, OutputDataT] = Adapter(agent=self)
+
+        return AGUIApp(
+            adapter=adapter,
             # Agent.iter parameters
             output_type=output_type,
             model=model,

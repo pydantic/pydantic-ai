@@ -77,10 +77,12 @@ from .messages import (
     AgentStreamEvent,
     FinalResultEvent,
     FunctionToolResultEvent,
+    HandleResponseEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponsePartDelta,
     PartDeltaEvent,
     PartStartEvent,
     SystemPromptPart,
@@ -121,7 +123,7 @@ SSE_CONTENT_TYPE: Final[str] = 'text/event-stream'
 """Content type header value for Server-Sent Events (SSE)."""
 
 
-class FastAGUI(Generic[AgentDepsT, OutputDataT], Starlette):
+class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
     """ASGI application for running PydanticAI agents with AG-UI protocol support."""
 
     def __init__(
@@ -145,9 +147,9 @@ class FastAGUI(Generic[AgentDepsT, OutputDataT], Starlette):
         exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
         on_startup: Sequence[Callable[[], Any]] | None = None,
         on_shutdown: Sequence[Callable[[], Any]] | None = None,
-        lifespan: Lifespan[FastAGUI[AgentDepsT, OutputDataT]] | None = None,
+        lifespan: Lifespan[AGUIApp[AgentDepsT, OutputDataT]] | None = None,
     ) -> None:
-        """Initialize the FastAGUI application.
+        """Initialise the AG-UI application.
 
         Args:
             adapter: The adapter to use for running the agent.
@@ -224,86 +226,6 @@ class FastAGUI(Generic[AgentDepsT, OutputDataT], Starlette):
         self.router.add_route('/', endpoint, methods=['POST'], name='run_agent')
 
 
-def agent_to_ag_ui(
-    *,
-    # Adapter parameters.
-    agent: Agent[AgentDepsT, OutputDataT],
-    # Agent.iter parameters.
-    output_type: OutputSpec[OutputDataT] | None = None,
-    model: Model | KnownModelName | str | None = None,
-    deps: AgentDepsT = None,
-    model_settings: ModelSettings | None = None,
-    usage_limits: UsageLimits | None = None,
-    usage: Usage | None = None,
-    infer_name: bool = True,
-    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-    # Starlette parameters.
-    debug: bool = False,
-    routes: Sequence[BaseRoute] | None = None,
-    middleware: Sequence[Middleware] | None = None,
-    exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
-    on_startup: Sequence[Callable[[], Any]] | None = None,
-    on_shutdown: Sequence[Callable[[], Any]] | None = None,
-    lifespan: Lifespan[FastAGUI[AgentDepsT, OutputDataT]] | None = None,
-) -> FastAGUI[AgentDepsT, OutputDataT]:
-    """Create a FastAGUI server from an agent.
-
-    Args:
-        agent: The PydanticAI agent to adapt for AG-UI protocol.
-
-        output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
-            no output validators since output validators would expect an argument that matches the agent's
-            output type.
-        model: Optional model to use for this run, required if `model` was not set when creating the agent.
-        deps: Optional dependencies to use for this run.
-        model_settings: Optional settings to use for this model's request.
-        usage_limits: Optional limits on model request count or token usage.
-        usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
-        infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-        toolsets: Optional list of toolsets to use for this agent, defaults to the agent's toolset.
-
-        debug: Boolean indicating if debug tracebacks should be returned on errors.
-        routes: A list of routes to serve incoming HTTP and WebSocket requests.
-        middleware: A list of middleware to run for every request. A starlette application will always
-            automatically include two middleware classes. `ServerErrorMiddleware` is added as the very
-            outermost middleware, to handle any uncaught errors occurring anywhere in the entire stack.
-            `ExceptionMiddleware` is added as the very innermost middleware, to deal with handled
-            exception cases occurring in the routing or endpoints.
-        exception_handlers: A mapping of either integer status codes, or exception class types onto
-            callables which handle the exceptions. Exception handler callables should be of the form
-            `handler(request, exc) -> response` and may be either standard functions, or async functions.
-        on_startup: A list of callables to run on application startup. Startup handler callables do not
-            take any arguments, and may be either standard functions, or async functions.
-        on_shutdown: A list of callables to run on application shutdown. Shutdown handler callables do
-            not take any arguments, and may be either standard functions, or async functions.
-        lifespan: A lifespan context function, which can be used to perform startup and shutdown tasks.
-            This is a newer style that replaces the `on_startup` and `on_shutdown` handlers. Use one or
-            the other, not both.
-    """
-    adapter: Adapter[AgentDepsT, OutputDataT] = Adapter(agent=agent)
-
-    return FastAGUI(
-        adapter=adapter,
-        # Agent.iter parameters
-        output_type=output_type,
-        model=model,
-        deps=deps,
-        model_settings=model_settings,
-        usage_limits=usage_limits,
-        usage=usage,
-        infer_name=infer_name,
-        toolsets=toolsets,
-        # Starlette
-        debug=debug,
-        routes=routes,
-        middleware=middleware,
-        exception_handlers=exception_handlers,
-        on_startup=on_startup,
-        on_shutdown=on_shutdown,
-        lifespan=lifespan,
-    )
-
-
 @dataclass(repr=False)
 class Adapter(Generic[AgentDepsT, OutputDataT]):
     """An agent adapter providing AG-UI protocol support for PydanticAI agents.
@@ -313,12 +235,23 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
     responses using the AG-UI protocol.
 
     Examples:
-    This is an example of basic usage with FastAGUI.
+    This is an example using the `Agent.to_ag_ui` helper.
     ```python
     from pydantic_ai import Agent
 
     agent = Agent('openai:gpt-4.1', instructions='Be fun!')
     app = agent.to_ag_ui()
+    ```
+
+    This is an example of using the `Adapter` directly to run an agent with
+    AG-UI protocol support.
+    ```python
+    from pydantic_ai import Agent
+    from pydantic_ai.ag_ui import Adapter, AGUIApp
+
+    agent = Agent('openai:gpt-4.1', instructions='Be fun!')
+    adapter = Adapter(agent=agent)
+    app = AGUIApp(adapter=adapter)
     ```
 
     PydanticAI tools which return AG-UI events will be sent to the client
@@ -363,6 +296,8 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                 value=2,
             ),
         ]
+
+    app = agent.to_ag_ui()
     ```
     Args:
         agent: The PydanticAI `Agent` to adapt.
@@ -423,7 +358,13 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                     for tool in run_input.tools
                 ]
             )
-            toolsets = [toolset] if toolsets is None else [toolset] + list(toolsets)
+            # Maintain the current user toolsets if they exist, otherwise use the provided toolset.
+            user_toolsets: list[AbstractToolset[AgentDepsT]] = (
+                list(self.agent._user_toolsets) if toolsets is None else list(toolsets)  # type: ignore[reportPrivateUsage]
+            )
+            # Add the AG-UI toolset to the user toolsets.
+            user_toolsets.append(toolset)
+            toolsets = user_toolsets
 
         try:
             yield encoder.encode(
@@ -533,14 +474,7 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
         msg: BaseEvent
         async for node in run:
             self._logger.debug('processing node=%r', node)
-            if isinstance(node, CallToolsNode):
-                # Handle tool results.
-                async with node.stream(run.ctx) as handle_stream:
-                    async for event in handle_stream:
-                        if isinstance(event, FunctionToolResultEvent) and isinstance(event.result, ToolReturnPart):
-                            async for msg in self._tool_result_event(event.result, history.prompt_message_id):
-                                yield msg
-            elif isinstance(node, ModelRequestNode):
+            if isinstance(node, ModelRequestNode):
                 # Handle model requests.
                 stream_ctx: _RequestStreamContext = _RequestStreamContext()
                 request_stream: AgentStream[AgentDepsT]
@@ -553,6 +487,14 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                     if stream_ctx.part_end:  # pragma: no branch
                         yield stream_ctx.part_end
                         stream_ctx.part_end = None
+            elif isinstance(node, CallToolsNode):
+                # Handle tool results.
+                async with node.stream(run.ctx) as handle_stream:
+                    event: HandleResponseEvent
+                    async for event in handle_stream:
+                        if isinstance(event, FunctionToolResultEvent) and isinstance(event.result, ToolReturnPart):
+                            async for msg in self._tool_result_event(event.result, history.prompt_message_id):
+                                yield msg
 
     async def _agent_event(
         self,
@@ -594,7 +536,6 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                         delta=part.content,
                     )
             elif isinstance(part, ToolCallPart):  # pragma: no branch
-                stream_ctx.last_tool_call_id = part.tool_call_id
                 yield ToolCallStartEvent(
                     type=EventType.TOOL_CALL_START,
                     tool_call_id=part.tool_call_id,
@@ -619,26 +560,26 @@ class Adapter(Generic[AgentDepsT, OutputDataT]):
                 )
 
         elif isinstance(agent_event, PartDeltaEvent):
-            if isinstance(agent_event.delta, TextPartDelta):
+            delta: ModelResponsePartDelta = agent_event.delta
+            if isinstance(delta, TextPartDelta):
                 yield TextMessageContentEvent(
                     type=EventType.TEXT_MESSAGE_CONTENT,
                     message_id=stream_ctx.message_id,
-                    delta=agent_event.delta.content_delta,
+                    delta=delta.content_delta,
                 )
-            elif isinstance(agent_event.delta, ToolCallPartDelta):  # pragma: no branch
+            elif isinstance(delta, ToolCallPartDelta):  # pragma: no branch
+                assert delta.tool_call_id, (
+                    'Tool call ID must be set in ToolCallPartDelta from ModelResponsePartsManager.'
+                )
                 yield ToolCallArgsEvent(
                     type=EventType.TOOL_CALL_ARGS,
-                    tool_call_id=agent_event.delta.tool_call_id
-                    or stream_ctx.last_tool_call_id
-                    or 'unknown',  # Should never be unknown, but just in case.
-                    delta=agent_event.delta.args_delta
-                    if isinstance(agent_event.delta.args_delta, str)
-                    else json.dumps(agent_event.delta.args_delta),
+                    tool_call_id=delta.tool_call_id,
+                    delta=delta.args_delta if isinstance(delta.args_delta, str) else json.dumps(delta.args_delta),
                 )
-            elif isinstance(agent_event.delta, ThinkingPartDelta):  # pragma: no cover
+            elif isinstance(delta, ThinkingPartDelta):  # pragma: no branch
                 yield ThinkingTextMessageContentEvent(
                     type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
-                    delta=agent_event.delta.content_delta or '',
+                    delta=delta.content_delta or '',
                 )
         elif isinstance(agent_event, FinalResultEvent):
             # No equivalent AG-UI event yet.
@@ -693,11 +634,15 @@ def _convert_history(messages: list[Message]) -> _History:
         elif isinstance(msg, SystemMessage):
             result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
         elif isinstance(msg, ToolMessage):
+            tool_name: str | None = tool_calls.get(msg.tool_call_id)
+            if tool_name is None:
+                raise ToolCallNotFoundError(tool_call_id=msg.tool_call_id)
+
             result.append(
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name=tool_calls.get(msg.tool_call_id, 'unknown'),
+                            tool_name=tool_name,
                             content=msg.content,
                             tool_call_id=msg.tool_call_id,
                         )
@@ -718,8 +663,7 @@ __all__ = [
     'SSE_CONTENT_TYPE',
     'StateDeps',
     'StateHandler',
-    'FastAGUI',
-    'agent_to_ag_ui',
+    'AGUIApp',
 ]
 
 
@@ -769,6 +713,17 @@ class InvalidStateError(_RunError, ValidationError):
 
     message: str = 'invalid state provided'
     code: str = 'invalid_state'
+
+
+class ToolCallNotFoundError(_RunError, ValueError):
+    """Exception raised when an tool result is present without a matching call."""
+
+    def __init__(self, tool_call_id: str) -> None:
+        """Initialize the exception with the tool call ID."""
+        super().__init__(
+            message=f'Tool call with ID {tool_call_id} not found in the history.',
+            code='tool_call_not_found',
+        )
 
 
 # Protocols.
@@ -856,7 +811,6 @@ class _RequestStreamContext:
     """Data class to hold request stream context."""
 
     message_id: str = ''
-    last_tool_call_id: str | None = None
     part_end: BaseEvent | None = None
 
     def new_message_id(self) -> str:
