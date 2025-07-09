@@ -180,6 +180,7 @@ executionEnvironments = [
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
     "mcp-run-python/node_modules",
+    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk requires Python 3.10+ so cannot be added as an (optional) dependency
 ]
 extraPaths = ["mcp-run-python/stubs"]
 
@@ -219,7 +220,11 @@ include = [
     # "fasta2a/**/*.py",
     "tests/**/*.py",
 ]
-omit = ["tests/test_live.py", "tests/example_modules/*.py"]
+omit = [
+    "tests/test_live.py",
+    "tests/example_modules/*.py",
+    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk requires Python 3.10+ so cannot be added as an (optional) dependency
+]
 branch = true
 
 # https://coverage.readthedocs.io/en/latest/config.html#report
@@ -265,4 +270,4 @@ skip = '.git*,*.svg,*.lock,*.css,*.yaml'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
-ignore-words-list = 'asend'
+ignore-words-list = 'asend,aci'

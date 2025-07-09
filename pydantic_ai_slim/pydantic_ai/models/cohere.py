@@ -83,10 +83,9 @@ See [Cohere's docs](https://docs.cohere.com/v2/docs/models) for a list of all av
 
 
 class CohereModelSettings(ModelSettings, total=False):
-    """Settings used for a Cohere model request.
+    """Settings used for a Cohere model request."""
 
-    ALL FIELDS MUST BE `cohere_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `cohere_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     # This class is a placeholder for any future cohere-specific settings
 
