@@ -702,7 +702,7 @@ async def test_max_completion_tokens(allow_model_requests: None, model_name: str
 
 
 def test_system_property():
-    model = HuggingFaceModel('some-model')
+    model = HuggingFaceModel('some-model', provider=HuggingFaceProvider(hf_client=Mock(), api_key='x'))
     assert model.system == 'huggingface'
 
 
