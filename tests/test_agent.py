@@ -466,7 +466,6 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
                         'b': {'type': 'string'},
                     },
                     'required': ['a', 'b'],
-                    'title': 'Foo',
                     'type': 'object',
                 },
             )
@@ -545,7 +544,6 @@ class Bar(BaseModel):
                         'b': {'type': 'string'},
                     },
                     'required': ['a', 'b'],
-                    'title': 'Foo',
                     'type': 'object',
                 },
             ),
@@ -555,7 +553,6 @@ class Bar(BaseModel):
                 parameters_json_schema={
                     'properties': {'b': {'type': 'string'}},
                     'required': ['b'],
-                    'title': 'Bar',
                     'type': 'object',
                 },
             ),
@@ -586,7 +583,6 @@ def test_output_type_with_two_descriptions():
                 parameters_json_schema={
                     'properties': {'valid': {'type': 'boolean'}},
                     'required': ['valid'],
-                    'title': 'MyOutput',
                     'type': 'object',
                 },
             )
@@ -1072,7 +1068,6 @@ def test_output_type_function_or_model():
                 parameters_json_schema={
                     'properties': {'temperature': {'type': 'number'}, 'description': {'type': 'string'}},
                     'required': ['temperature', 'description'],
-                    'title': 'Weather',
                     'type': 'object',
                 },
             ),
@@ -1258,7 +1253,6 @@ def test_output_type_multiple_custom_tools():
                 parameters_json_schema={
                     'properties': {'temperature': {'type': 'number'}, 'description': {'type': 'string'}},
                     'required': ['temperature', 'description'],
-                    'title': 'Weather',
                     'type': 'object',
                 },
             ),
@@ -1435,7 +1429,7 @@ def test_prompted_output_with_template():
                 instructions="""\
 Gimme some JSON:
 
-{"properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Foo", "type": "object"}\
+{"properties": {"bar": {"type": "string"}}, "required": ["bar"], "type": "object", "title": "Foo"}\
 """,
             ),
             ModelResponse(

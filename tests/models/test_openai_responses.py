@@ -837,7 +837,7 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                 instructions="""\
 Always respond with a JSON object that's compatible with this schema:
 
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "title": "CityLocation"}
 
 Don't include any text or Markdown fencing before or after.\
 """,
@@ -866,7 +866,7 @@ Don't include any text or Markdown fencing before or after.\
                 instructions="""\
 Always respond with a JSON object that's compatible with this schema:
 
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "title": "CityLocation"}
 
 Don't include any text or Markdown fencing before or after.\
 """,
