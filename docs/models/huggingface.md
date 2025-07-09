@@ -1,5 +1,7 @@
 # Hugging Face
 
+[Hugging Face](https://huggingface.co/) is an AI platform with all major open source models, datasets, MCPs, and demos. You can use [Inference Providers](https://huggingface.co/docs/inference-providers) to run open source models like DeepSeek R1 on scalable serverless infrastructure.
+
 ## Install
 
 To use `HuggingFaceModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `huggingface` optional group:
@@ -10,17 +12,19 @@ pip/uv-add "pydantic-ai-slim[huggingface]"
 
 ## Configuration
 
-To use [HuggingFace](https://huggingface.co/) through their main API, go to
-[Inference Providers documentation](https://huggingface.co/docs/inference-providers/pricing) for all the details,
-and you can generate a Hugging Face access token here: https://huggingface.co/settings/tokens.
+To use [Hugging Face](https://huggingface.co/) inference, you'll need to set up an account which will give you [free tier](https://huggingface.co/docs/inference-providers/pricing) allowance on [Inference Providers](https://huggingface.co/docs/inference-providers). To setup inference, follow these steps:
 
-## Hugging Face access token
+1. Go to [Hugging Face](https://huggingface.co/join) and sign up for an account.
+2. Create a new access token in [Hugging Face](https://huggingface.co/settings/tokens).
+3. Set the `HF_TOKEN` environment variable to the token you just created.
 
 Once you have a Hugging Face access token, you can set it as an environment variable:
 
 ```bash
 export HF_TOKEN='hf_token'
 ```
+
+## Usage
 
 You can then use [`HuggingFaceModel`][pydantic_ai.models.huggingface.HuggingFaceModel] by name:
 
