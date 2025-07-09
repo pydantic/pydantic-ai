@@ -2,21 +2,17 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from ag_ui.core import CustomEvent, EventType
+from dotenv import load_dotenv
 from pydantic import BaseModel
 
-from pydantic_ai.ag_ui import FastAGUI, StateDeps
-
-from .agent import agent
+from pydantic_ai import Agent
+from pydantic_ai.ag_ui import AGUIApp, StateDeps
 
 if TYPE_CHECKING:  # pragma: no cover
     from pydantic_ai import RunContext
-
-
-_LOGGER: logging.Logger = logging.getLogger(__name__)
 
 
 class DocumentState(BaseModel):
@@ -25,19 +21,27 @@ class DocumentState(BaseModel):
     document: str = ''
 
 
-app: FastAGUI = agent(deps=StateDeps(DocumentState()))
+# Ensure environment variables are loaded.
+load_dotenv()
+
+agent: Agent = Agent(
+    'openai:gpt-4o-mini',
+    output_type=str,
+    deps_type=StateDeps[DocumentState],
+)
+
+app: AGUIApp = agent.to_ag_ui(deps=StateDeps(DocumentState()))
 
 
 # Tools which return AG-UI events will be sent to the client as part of the
 # event stream, single events and iterables of events are supported.
-@app.adapter.agent.tool_plain
+@agent.tool_plain
 def document_predict_state() -> list[CustomEvent]:
     """Enable document state prediction.
 
     Returns:
         CustomEvent containing the event to enable state prediction.
     """
-    _LOGGER.info('enabling document state state prediction')
     return [
         CustomEvent(
             type=EventType.CUSTOM,
@@ -53,7 +57,7 @@ def document_predict_state() -> list[CustomEvent]:
     ]
 
 
-@app.adapter.agent.instructions()
+@agent.instructions()
 def story_instructions(ctx: RunContext[StateDeps[DocumentState]]) -> str:
     """Provide instructions for writing document if present.
 
@@ -63,8 +67,6 @@ def story_instructions(ctx: RunContext[StateDeps[DocumentState]]) -> str:
     Returns:
         Instructions string for the document writing agent.
     """
-    _LOGGER.info('story instructions document=%s', ctx.deps.state.document)
-
     return f"""You are a helpful assistant for writing documents.
 
 Before you start writing, you MUST call the `document_predict_state`

@@ -18,7 +18,7 @@ from asgi_lifespan import LifespanManager
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.models.test import TestModel, TestNode, TestThinkingPart, TestToolCallPart
+from pydantic_ai.models.test import TestModel, TestNode, TestTextPart, TestThinkingPart, TestToolCallPart
 
 has_ag_ui: bool = False
 with contextlib.suppress(ImportError):
@@ -655,6 +655,48 @@ def tc_parameters() -> list[AdapterRunTest]:
             ],
         ),
         AdapterRunTest(
+            id='thinking',
+            runs=[
+                Run(
+                    nodes=[
+                        TestNode(
+                            parts=[
+                                TestThinkingPart(content='Thinking'),
+                                TestThinkingPart(content='Thinking about the weather'),
+                                TestTextPart('Thought about the weather'),
+                            ],
+                        ),
+                    ],
+                    messages=[  # pyright: ignore[reportArgumentType]
+                        UserMessage(
+                            id='msg_1',
+                            role=Role.USER.value,
+                            content='Hello',
+                        ),
+                    ],
+                ),
+            ],
+            expected_events=[
+                '{"type":"RUN_STARTED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+                '{"type":"THINKING_TEXT_MESSAGE_START"}',
+                '{"type":"THINKING_TEXT_MESSAGE_CONTENT","delta":"\\"Thinking\\""}',
+                '{"type":"THINKING_TEXT_MESSAGE_END"}',
+                '{"type":"THINKING_TEXT_MESSAGE_START"}',
+                '{"type":"THINKING_TEXT_MESSAGE_CONTENT","delta":"\\"Thinking "}',
+                '{"type":"THINKING_TEXT_MESSAGE_CONTENT","delta":"about "}',
+                '{"type":"THINKING_TEXT_MESSAGE_CONTENT","delta":"the "}',
+                '{"type":"THINKING_TEXT_MESSAGE_CONTENT","delta":"weather\\""}',
+                '{"type":"THINKING_TEXT_MESSAGE_END"}',
+                '{"type":"TEXT_MESSAGE_START","messageId":"00000000-0000-0000-0000-000000000003","role":"assistant"}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000003","delta":"Thought "}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000003","delta":"about "}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000003","delta":"the "}',
+                '{"type":"TEXT_MESSAGE_CONTENT","messageId":"00000000-0000-0000-0000-000000000003","delta":"weather"}',
+                '{"type":"TEXT_MESSAGE_END","messageId":"00000000-0000-0000-0000-000000000003"}',
+                '{"type":"RUN_FINISHED","threadId":"thread_00000000-0000-0000-0000-000000000001","runId":"run_00000000-0000-0000-0000-000000000002"}',
+            ],
+        ),
+        AdapterRunTest(
             id='tool_local_then_ag_ui',
             call_tools=['current_time', 'get_weather'],
             runs=[
@@ -736,7 +778,10 @@ def tc_parameters() -> list[AdapterRunTest]:
                 '{"type":"TOOL_CALL_ARGS","toolCallId":"pyd_ai_00000000000000000000000000000003","delta":"{}"}',
                 '{"type":"TOOL_CALL_END","toolCallId":"pyd_ai_00000000000000000000000000000003"}',
                 '{"type":"THINKING_TEXT_MESSAGE_START"}',
-                '{"type":"THINKING_TEXT_MESSAGE_CONTENT","delta":"Thinking about the weather"}',
+                '{"type":"THINKING_TEXT_MESSAGE_CONTENT","delta":"\\"Thinking "}',
+                '{"type":"THINKING_TEXT_MESSAGE_CONTENT","delta":"about "}',
+                '{"type":"THINKING_TEXT_MESSAGE_CONTENT","delta":"the "}',
+                '{"type":"THINKING_TEXT_MESSAGE_CONTENT","delta":"weather\\""}',
                 '{"type":"THINKING_TEXT_MESSAGE_END"}',
                 '{"type":"TOOL_CALL_RESULT","messageId":"msg_1","toolCallId":"pyd_ai_00000000000000000000000000000003","content":"21T12:08:45.485981+00:00","role":"tool"}',
                 '{"type":"TOOL_CALL_START","toolCallId":"pyd_ai_00000000000000000000000000000004","toolCallName":"get_weather"}',

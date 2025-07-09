@@ -5,14 +5,23 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from pydantic_ai.ag_ui import FastAGUI
+from dotenv import load_dotenv
 
-from .agent import agent
+from pydantic_ai import Agent
+from pydantic_ai.ag_ui import AGUIApp
 
-app: FastAGUI = agent()
+# Ensure environment variables are loaded.
+load_dotenv()
+
+agent: Agent = Agent(
+    'openai:gpt-4o-mini',
+    output_type=str,
+)
+
+app: AGUIApp = agent.to_ag_ui()
 
 
-@app.adapter.agent.tool_plain
+@agent.tool_plain
 async def current_time(timezone: str = 'UTC') -> str:
     """Get the current time in ISO format.
 

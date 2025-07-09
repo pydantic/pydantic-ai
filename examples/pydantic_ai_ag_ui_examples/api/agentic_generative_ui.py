@@ -3,28 +3,39 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from textwrap import dedent
 from typing import Any, Literal
 
 from ag_ui.core import EventType, StateDeltaEvent, StateSnapshotEvent
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-from pydantic_ai.ag_ui import FastAGUI
+from pydantic_ai import Agent
+from pydantic_ai.ag_ui import AGUIApp
 
-from .agent import agent
+# Ensure environment variables are loaded.
+load_dotenv()
 
-app: FastAGUI = agent(
-    instructions="""When planning use tools only, without any other messages.
-IMPORTANT:
-- Use the `create_plan` tool to set the initial state of the steps
-- Use the `update_plan_step` tool to update the status of each step
-- Do NOT repeat the plan or summarise it in a message
-- Do NOT confirm the creation or updates in a message
-- Do NOT ask the user for additional information or next steps
+agent: Agent = Agent(
+    'openai:gpt-4o-mini',
+    output_type=str,
+    instructions=dedent(
+        """
+        When planning use tools only, without any other messages.
+        IMPORTANT:
+        - Use the `create_plan` tool to set the initial state of the steps
+        - Use the `update_plan_step` tool to update the status of each step
+        - Do NOT repeat the plan or summarise it in a message
+        - Do NOT confirm the creation or updates in a message
+        - Do NOT ask the user for additional information or next steps
 
-Only one plan can be active at a time, so do not call the `create_plan` tool
-again until all the steps in current plan are completed.
-"""
+        Only one plan can be active at a time, so do not call the `create_plan` tool
+        again until all the steps in current plan are completed.
+        """
+    ),
 )
+
+app: AGUIApp = agent.to_ag_ui()
 
 
 class StepStatus(StrEnum):
@@ -71,7 +82,7 @@ class JSONPatchOp(BaseModel):
     )
 
 
-@app.adapter.agent.tool_plain
+@agent.tool_plain
 def create_plan(steps: list[str]) -> StateSnapshotEvent:
     """Create a plan with multiple steps.
 
@@ -90,7 +101,7 @@ def create_plan(steps: list[str]) -> StateSnapshotEvent:
     )
 
 
-@app.adapter.agent.tool_plain
+@agent.tool_plain
 def update_plan_step(
     index: int, description: str | None = None, status: StepStatus | None = None
 ) -> StateDeltaEvent:

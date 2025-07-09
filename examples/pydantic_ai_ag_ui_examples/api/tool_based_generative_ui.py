@@ -5,8 +5,17 @@ No special handling is required for this feature.
 
 from __future__ import annotations
 
-from pydantic_ai.ag_ui import FastAGUI
+from dotenv import load_dotenv
 
-from .agent import agent
+from pydantic_ai import Agent
+from pydantic_ai.ag_ui import AGUIApp
 
-app: FastAGUI = agent()
+# Ensure environment variables are loaded.
+load_dotenv()
+
+agent: Agent = Agent(
+    'openai:gpt-4o-mini',
+    output_type=str,
+)
+
+app: AGUIApp = agent.to_ag_ui()
