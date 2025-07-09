@@ -345,7 +345,7 @@ class HuggingFaceModel(Model):
                 },
             }
         )
-        if f.strict:
+        if f.strict is not None:
             tool_param['function']['strict'] = f.strict
         return tool_param
 

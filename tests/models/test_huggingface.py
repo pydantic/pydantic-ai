@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, Literal, Union, cast
@@ -15,22 +15,26 @@ from typing_extensions import TypedDict
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
-from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -70,6 +74,7 @@ class MockHuggingFace:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
     stream: Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]] | None = None
     index: int = 0
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
     @cached_property
     def chat(self) -> Any:
@@ -87,8 +92,9 @@ class MockHuggingFace:
         return cast(AsyncInferenceClient, cls(stream=stream))
 
     async def chat_completions_create(
-        self, *_args: Any, stream: bool = False, **_kwargs: Any
+        self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> ChatCompletionOutput | MockAsyncStream[MockStreamEvent]:
+        self.chat_completion_kwargs.append(kwargs)
         if stream or self.stream:
             assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
@@ -105,6 +111,13 @@ class MockHuggingFace:
                 response = cast(ChatCompletionOutput, self.completions)
         self.index += 1
         return response
+
+
+def get_mock_chat_completion_kwargs(hf_client: AsyncInferenceClient) -> list[dict[str, Any]]:
+    if isinstance(hf_client, MockHuggingFace):
+        return hf_client.chat_completion_kwargs
+    else:  # pragma: no cover
+        raise RuntimeError('Not a MockHuggingFace instance')
 
 
 def completion_message(
@@ -745,3 +758,206 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     response_message = messages[1]
     assert isinstance(response_message, ModelResponse)
     assert response_message.timestamp == IsNow(tz=timezone.utc)
+
+
+async def test_retry_prompt_without_tool_name(allow_model_requests: None):
+    responses = [
+        completion_message(
+            ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'invalid-response', 'role': 'assistant'})  # type: ignore
+        ),
+        completion_message(
+            ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'final-response', 'role': 'assistant'})  # type: ignore
+        ),
+    ]
+
+    mock_client = MockHuggingFace.create_mock(responses)
+    model = HuggingFaceModel(
+        'test-model',
+        provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'),
+    )
+    agent = Agent(model)
+
+    @agent.output_validator
+    def response_validator(value: str) -> str:
+        if value == 'invalid-response':
+            raise ModelRetry('Response is invalid')
+        return value
+
+    result = await agent.run('Hello')
+    assert result.output == 'final-response'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelResponse(
+                parts=[TextPart(content='invalid-response')],
+                usage=Usage(requests=1),
+                model_name='hf-model',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Response is invalid',
+                        tool_name=None,
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final-response')],
+                usage=Usage(requests=1),
+                model_name='hf-model',
+                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                vendor_id='123',
+            ),
+        ]
+    )
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[1]
+    messages = kwargs['messages']
+    assert {k: v for k, v in asdict(messages[-2]).items() if v is not None} == {
+        'role': 'assistant',
+        'content': 'invalid-response',
+    }
+    assert {k: v for k, v in asdict(messages[-1]).items() if v is not None} == {
+        'role': 'user',
+        'content': 'Validation feedback:\nResponse is invalid\n\nFix the errors and try again.',
+    }
+
+
+async def test_thinking_part_in_history(allow_model_requests: None):
+    c = completion_message(ChatCompletionOutputMessage(content='response', role='assistant'))  # type: ignore
+    mock_client = MockHuggingFace.create_mock(c)
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(model)
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='request')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='thought 1'),
+                ThinkingPart(content='this should be ignored'),
+                TextPart(content='thought 2'),
+            ],
+            model_name='hf-model',
+            timestamp=datetime.now(timezone.utc),
+        ),
+    ]
+
+    await agent.run('another request', message_history=messages)
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    sent_messages = kwargs['messages']
+    assert [{k: v for k, v in asdict(m).items() if v is not None} for m in sent_messages] == snapshot(
+        [
+            {'content': 'request', 'role': 'user'},
+            {'content': 'thought 1\n\nthought 2', 'role': 'assistant'},
+            {'content': 'another request', 'role': 'user'},
+        ]
+    )
+
+
+@pytest.mark.parametrize('strict', [True, False, None])
+async def test_tool_strict_mode(allow_model_requests: None, strict: bool | None):
+    c = completion_message(ChatCompletionOutputMessage(content='response', role='assistant'))  # type: ignore
+    mock_client = MockHuggingFace.create_mock(c)
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=strict)
+    def my_tool(x: int) -> int:
+        return x
+
+    await agent.run('hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    tools = kwargs['tools']
+    if strict is not None:
+        assert tools[0]['function']['strict'] is strict
+    else:
+        assert 'strict' not in tools[0]['function']
+
+
+@pytest.mark.parametrize(
+    'content_item, error_message',
+    [
+        (AudioUrl(url='url'), 'AudioUrl is not supported for Hugging Face'),
+        (DocumentUrl(url='url'), 'DocumentUrl is not supported for Hugging Face'),
+        (VideoUrl(url='url'), 'VideoUrl is not supported for Hugging Face'),
+    ],
+)
+async def test_unsupported_media_types(allow_model_requests: None, content_item: Any, error_message: str):
+    model = HuggingFaceModel(
+        'Qwen/Qwen2.5-VL-72B-Instruct',
+        provider=HuggingFaceProvider(api_key='x'),
+    )
+    agent = Agent(model)
+
+    with pytest.raises(NotImplementedError, match=error_message):
+        await agent.run(['hello', content_item])
+
+
+@pytest.mark.vcr()
+async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_api_key: str):
+    m = HuggingFaceModel(
+        'Qwen/Qwen3-235B-A22B', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
+    )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    IsInstance(ThinkingPart),
+                    IsInstance(TextPart),
+                ],
+                usage=Usage(requests=1, request_tokens=15, response_tokens=1090, total_tokens=1105),
+                model_name='Qwen/Qwen3-235B-A22B',
+                timestamp=IsDatetime(),
+                vendor_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        model=HuggingFaceModel(
+            'Qwen/Qwen3-235B-A22B', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
+        ),
+        message_history=result.all_messages(),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    IsInstance(ThinkingPart),
+                    IsInstance(TextPart),
+                ],
+                usage=Usage(requests=1, request_tokens=15, response_tokens=1090, total_tokens=1105),
+                model_name='Qwen/Qwen3-235B-A22B',
+                timestamp=IsDatetime(),
+                vendor_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    IsInstance(ThinkingPart),
+                    TextPart(content=IsStr()),
+                ],
+                usage=Usage(requests=1, request_tokens=691, response_tokens=1860, total_tokens=2551),
+                model_name='Qwen/Qwen3-235B-A22B',
+                timestamp=IsDatetime(),
+                vendor_id='chatcmpl-35fdec1307634f94a39f7e26f52e12a7',
+            ),
+        ]
+    )
