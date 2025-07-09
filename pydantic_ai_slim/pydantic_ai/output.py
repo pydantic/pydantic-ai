@@ -6,10 +6,9 @@ from typing import Any, Callable, Generic, Literal, Union
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
-from pydantic_core.core_schema import CoreSchema, any_schema
+from pydantic_core import core_schema
 from typing_extensions import TypeAliasType, TypeVar
 
-from .exceptions import UserError
 from .tools import RunContext
 
 __all__ = (
@@ -271,24 +270,26 @@ class TextOutput(Generic[OutputDataT]):
     """The function that will be called to process the model's plain text output. The function must take a single string argument."""
 
 
-class StructuredDict(Generic[OutputDataT], dict[str, Any]):
-    """A dictionary subclass that enforces a JSON schema for structured output.
+def StructuredDict(
+    json_schema: JsonSchemaValue, name: str | None = None, description: str | None = None
+) -> type[JsonSchemaValue]:
+    """Returns a dictionary subclass that enforces a JSON schema for structured output.
 
     This class serves as both a container for structured data and the schema itself,
     making it suitable for use as an output type in agents that require validated
     dictionary responses.
 
     Args:
-        json_schema: A JSON schema (as dict or JSON string) defining the structure
-            and validation rules for the dictionary content.
+        json_schema: A JSON schema (as dict) defining the structure of the dictionary content.
+        name: The name of the structured output. If not provided, the `title` field of the JSON schema will be used.
+        description: The description of the structured output. If not provided, the `description` field of the JSON schema will be used.
 
     Raises:
-        UserError: If json_schema is not a dict/string or contains invalid JSON.
+        UserError: If json_schema is not an 'object' JSON schema.
 
     Example:
-    ```python
+    ```python {title="structured_dict.py"}
     from pydantic_ai import Agent, StructuredDict
-    from pydantic_ai.models.test import TestModel
 
     schema = {
         "type": "object",
@@ -299,30 +300,46 @@ class StructuredDict(Generic[OutputDataT], dict[str, Any]):
         "required": ["name", "age"]
     }
 
-    agent = Agent(TestModel(), output_type=StructuredDict(schema))
+    agent = Agent('openai:gpt-4o', output_type=StructuredDict(schema))
     result = agent.run_sync("Create a person")
     print(result.output)
     #> {'name': 'John Doe', 'age': 30}
     ```
     """
+    if json_schema.get('type') != 'object':
+        raise ValueError('json_schema must be an object')
 
-    def __init__(self, json_schema: dict[str, Any]):
-        if not isinstance(json_schema, dict):
-            raise UserError(f'Expected json_schema to be a dict, got: {type(json_schema)!r}')
-        super().__init__(json_schema)
+    if name:
+        json_schema['title'] = name
 
-    def __get_pydantic_core_schema__(self, source_type: Any, handler: GetCoreSchemaHandler) -> CoreSchema:
-        return any_schema()
+    if description:
+        json_schema['description'] = description
 
-    def __get_pydantic_json_schema__(self, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
-        return self
+    class _StructuredDict(JsonSchemaValue):
+        __is_model_like__ = True
+
+        @classmethod
+        def __get_pydantic_core_schema__(
+            cls, source_type: Any, handler: GetCoreSchemaHandler
+        ) -> core_schema.CoreSchema:
+            return core_schema.dict_schema(
+                keys_schema=core_schema.str_schema(),
+                values_schema=core_schema.any_schema(),
+            )
+
+        @classmethod
+        def __get_pydantic_json_schema__(
+            cls, core_schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
+        ) -> JsonSchemaValue:
+            return json_schema
+
+    return _StructuredDict
 
 
 OutputSpec = TypeAliasType(
     'OutputSpec',
     Union[
         OutputTypeOrFunction[T_co],
-        StructuredDict[T_co],
         ToolOutput[T_co],
         NativeOutput[T_co],
         PromptedOutput[T_co],

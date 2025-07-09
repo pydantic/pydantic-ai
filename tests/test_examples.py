@@ -443,6 +443,10 @@ text_responses: dict[str, str | ToolCallPart] = {
     'What is a banana?': ToolCallPart(tool_name='return_fruit', args={'name': 'banana', 'color': 'yellow'}),
     'What is a Ford Explorer?': '{"result": {"kind": "Vehicle", "data": {"name": "Ford Explorer", "wheels": 4}}}',
     'What is a MacBook?': '{"result": {"kind": "Device", "data": {"name": "MacBook", "kind": "laptop"}}}',
+    'Create a person': ToolCallPart(
+        tool_name='final_result',
+        args={'name': 'John Doe', 'age': 30},
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
