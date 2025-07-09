@@ -1919,6 +1919,52 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         ```bash
         uvicorn app:app --host 0.0.0.0 --port 8000
         ```
+
+        PydanticAI tools which return AG-UI events will be sent to the client
+        as part of the event stream, single events and event iterables are
+        supported.
+        ```python
+        from ag_ui.core import CustomEvent, EventType, StateSnapshotEvent
+        from pydantic import BaseModel
+
+        from pydantic_ai import Agent, RunContext
+        from pydantic_ai.ag_ui import StateDeps
+
+
+        class DocumentState(BaseModel):
+            document: str
+
+
+        agent = Agent(
+            'openai:gpt-4.1', instructions='Be fun!', deps_type=StateDeps[DocumentState]
+        )
+
+
+        @agent.tool
+        def update_state(ctx: RunContext[StateDeps[DocumentState]]) -> StateSnapshotEvent:
+            return StateSnapshotEvent(
+                type=EventType.STATE_SNAPSHOT,
+                snapshot=ctx.deps.state,
+            )
+
+
+        @agent.tool_plain
+        def custom_events() -> list[CustomEvent]:
+            return [
+                CustomEvent(
+                    type=EventType.CUSTOM,
+                    name='count',
+                    value=1,
+                ),
+                CustomEvent(
+                    type=EventType.CUSTOM,
+                    name='count',
+                    value=2,
+                ),
+            ]
+
+        app = agent.to_ag_ui()
+        ```
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
                 no output validators since output validators would expect an argument that matches the agent's
@@ -1953,17 +1999,15 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             An adapter that converts between AG-UI protocol and PydanticAI.
         """
         try:
-            from .ag_ui import Adapter, AGUIApp
+            from .ag_ui import AGUIApp
         except ImportError as e:  # pragma: no cover
             raise ImportError(
                 'Please install the `ag-ui-protocol` and `starlette` packages to use `Agent.to_ag_ui()` method, '
                 'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
             ) from e
 
-        adapter: Adapter[AgentDepsT, OutputDataT] = Adapter(agent=self)
-
         return AGUIApp(
-            adapter=adapter,
+            agent=self,
             # Agent.iter parameters
             output_type=output_type,
             model=model,

@@ -37,9 +37,7 @@ def parse_args() -> Args:
     Returns:
         Args: A dataclass containing the parsed command line arguments.
     """
-    parser: argparse.ArgumentParser = argparse.ArgumentParser(
-        description='PydanticAI AG-UI Dojo server'
-    )
+    parser = argparse.ArgumentParser(description='PydanticAI AG-UI Dojo server')
     parser.add_argument(
         '--port',
         '-p',
@@ -60,7 +58,7 @@ def parse_args() -> Args:
         '--log-level',
         choices=['critical', 'error', 'warning', 'info', 'debug', 'trace'],
         default='info',
-        help='Adapter log level (default: info)',
+        help='Log level (default: info)',
     )
     parser.add_argument(
         '--loggers',
@@ -71,5 +69,4 @@ def parse_args() -> Args:
         help='Logger names to configure (default: adapter and model loggers)',
     )
 
-    args: argparse.Namespace = parser.parse_args()
-    return Args(**vars(args))
+    return Args(**vars(parser.parse_args()))

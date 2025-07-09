@@ -5,11 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ag_ui.core import CustomEvent, EventType
-from dotenv import load_dotenv
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.ag_ui import AGUIApp, StateDeps
+from pydantic_ai.ag_ui import StateDeps
 
 if TYPE_CHECKING:  # pragma: no cover
     from pydantic_ai import RunContext
@@ -21,16 +20,13 @@ class DocumentState(BaseModel):
     document: str = ''
 
 
-# Ensure environment variables are loaded.
-load_dotenv()
-
-agent: Agent = Agent(
+agent = Agent(
     'openai:gpt-4o-mini',
     output_type=str,
     deps_type=StateDeps[DocumentState],
 )
 
-app: AGUIApp = agent.to_ag_ui(deps=StateDeps(DocumentState()))
+app = agent.to_ag_ui(deps=StateDeps(DocumentState()))
 
 
 # Tools which return AG-UI events will be sent to the client as part of the

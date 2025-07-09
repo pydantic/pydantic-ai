@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from textwrap import dedent
 from typing import TYPE_CHECKING
 
 from ag_ui.core import EventType, StateSnapshotEvent
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
-from pydantic_ai.ag_ui import AGUIApp, StateDeps
+from pydantic_ai.ag_ui import StateDeps
 
 if TYPE_CHECKING:  # pragma: no cover
     from pydantic_ai import RunContext
@@ -88,16 +88,13 @@ class RecipeSnapshot(BaseModel):
     )
 
 
-# Ensure environment variables are loaded.
-load_dotenv()
-
-agent: Agent = Agent(
+agent = Agent(
     'openai:gpt-4o-mini',
     output_type=str,
     deps_type=StateDeps[RecipeSnapshot],
 )
 
-app: AGUIApp = agent.to_ag_ui(deps=StateDeps(RecipeSnapshot()))
+app = agent.to_ag_ui(deps=StateDeps(RecipeSnapshot()))
 
 
 @agent.tool_plain
@@ -126,19 +123,22 @@ def recipe_instructions(ctx: RunContext[StateDeps[RecipeSnapshot]]) -> str:
     Returns:
         Instructions string for the recipe generation agent.
     """
-    return f"""You are a helpful assistant for creating recipes.
+    return dedent(
+        f"""
+        You are a helpful assistant for creating recipes.
 
-IMPORTANT:
-- Create a complete recipe using the existing ingredients
-- Append new ingredients to the existing ones
-- Use the `display_recipe` tool to present the recipe to the user
-- Do NOT repeat the recipe in the message, use the tool instead
+        IMPORTANT:
+        - Create a complete recipe using the existing ingredients
+        - Append new ingredients to the existing ones
+        - Use the `display_recipe` tool to present the recipe to the user
+        - Do NOT repeat the recipe in the message, use the tool instead
 
-Once you have created the updated recipe and displayed it to the user,
-summarise the changes in one sentence, don't describe the recipe in
-detail or send it as a message to the user.
+        Once you have created the updated recipe and displayed it to the user,
+        summarise the changes in one sentence, don't describe the recipe in
+        detail or send it as a message to the user.
 
-The current state of the recipe is:
+        The current state of the recipe is:
 
-{ctx.deps.state.recipe.model_dump_json(indent=2)}
-"""
+        {ctx.deps.state.recipe.model_dump_json(indent=2)}
+        """,
+    )
