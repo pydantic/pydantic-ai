@@ -1530,7 +1530,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             func_: ToolFuncContext[AgentDepsT, ToolParams],
         ) -> ToolFuncContext[AgentDepsT, ToolParams]:
             # noinspection PyTypeChecker
-            self._function_toolset.register_function(
+            self._function_toolset.add_function(
                 func_,
                 True,
                 name,
@@ -1624,7 +1624,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
             # noinspection PyTypeChecker
-            self._function_toolset.register_function(
+            self._function_toolset.add_function(
                 func_,
                 False,
                 name,

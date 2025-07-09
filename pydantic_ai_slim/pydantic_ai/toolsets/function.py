@@ -35,9 +35,9 @@ class FunctionToolset(CallableToolset[AgentDepsT]):
         self.tools = {}
         for tool in tools:
             if isinstance(tool, Tool):
-                self.register_tool(tool)
+                self.add_tool(tool)
             else:
-                self.register_function(tool)
+                self.add_function(tool)
 
     @overload
     def tool(self, func: ToolFuncEither[AgentDepsT, ToolParams], /) -> ToolFuncEither[AgentDepsT, ToolParams]: ...
@@ -77,22 +77,24 @@ class FunctionToolset(CallableToolset[AgentDepsT]):
         [learn more](../tools.md#function-tools-and-schema).
 
         We can't add overloads for every possible signature of tool, since the return type is a recursive union
-        so the signature of functions decorated with `@agent.tool` is obscured.
+        so the signature of functions decorated with `@toolset.tool` is obscured.
 
         Example:
         ```python
         from pydantic_ai import Agent, RunContext
+        from pydantic_ai.toolsets.function import FunctionToolset
 
-        agent = Agent('test', deps_type=int)
+        toolset = FunctionToolset()
 
-        @agent.tool
+        @toolset.tool
         def foobar(ctx: RunContext[int], x: int) -> int:
             return ctx.deps + x
 
-        @agent.tool(retries=2)
+        @toolset.tool(retries=2)
         async def spam(ctx: RunContext[str], y: float) -> float:
             return ctx.deps + y
 
+        agent = Agent('test', toolsets=[toolset], deps_type=int)
         result = agent.run_sync('foobar', deps=1)
         print(result.output)
         #> {"foobar":1,"spam":1.0}
@@ -113,30 +115,13 @@ class FunctionToolset(CallableToolset[AgentDepsT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
-        if func is None:
 
-            def tool_decorator(
-                func_: ToolFuncEither[AgentDepsT, ToolParams],
-            ) -> ToolFuncEither[AgentDepsT, ToolParams]:
-                # noinspection PyTypeChecker
-                self.register_function(
-                    func_,
-                    None,
-                    name,
-                    retries,
-                    prepare,
-                    docstring_format,
-                    require_parameter_descriptions,
-                    schema_generator,
-                    strict,
-                )
-                return func_
-
-            return tool_decorator
-        else:
+        def tool_decorator(
+            func_: ToolFuncEither[AgentDepsT, ToolParams],
+        ) -> ToolFuncEither[AgentDepsT, ToolParams]:
             # noinspection PyTypeChecker
-            self.register_function(
-                func,
+            self.add_function(
+                func_,
                 None,
                 name,
                 retries,
@@ -146,9 +131,11 @@ class FunctionToolset(CallableToolset[AgentDepsT]):
                 schema_generator,
                 strict,
             )
-            return func
+            return func_
 
-    def register_function(
+        return tool_decorator if func is None else tool_decorator(func)
+
+    def add_function(
         self,
         func: ToolFuncEither[AgentDepsT, ToolParams],
         takes_ctx: bool | None = None,
@@ -172,9 +159,9 @@ class FunctionToolset(CallableToolset[AgentDepsT]):
             schema_generator=schema_generator,
             strict=strict,
         )
-        self.register_tool(tool)
+        self.add_tool(tool)
 
-    def register_tool(self, tool: Tool[AgentDepsT]) -> None:
+    def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
         if tool.max_retries is None:
