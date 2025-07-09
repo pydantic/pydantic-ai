@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import json
 import sys
 from dataclasses import dataclass
@@ -842,8 +841,8 @@ async def test_dataset_evaluate_with_sync_task(example_dataset: Dataset[TaskInpu
     def sync_task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer=inputs.query.upper())
 
-    report = await example_dataset.evaluate(lambda x: asyncio.sleep(0, sync_task(x)))
-    assert report.name == '<lambda>'
+    report = await example_dataset.evaluate(sync_task)
+    assert report.name == 'sync_task'
     assert len(report.cases) == 2
 
 
