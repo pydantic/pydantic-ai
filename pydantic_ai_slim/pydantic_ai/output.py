@@ -307,7 +307,7 @@ def StructuredDict(
     ```
     """
     if json_schema.get('type') != 'object':
-        raise ValueError('json_schema must be an object') # pragma: no cover
+        raise ValueError('json_schema must be an object')  # pragma: no cover
 
     if name:
         json_schema['title'] = name
