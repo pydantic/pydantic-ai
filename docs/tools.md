@@ -451,7 +451,6 @@ print(test_model.last_model_request_parameters.function_tools)
 [
     ToolDefinition(
         name='foobar',
-        description='This is a Foobar',
         parameters_json_schema={
             'properties': {
                 'x': {'type': 'integer'},
@@ -462,6 +461,7 @@ print(test_model.last_model_request_parameters.function_tools)
             'title': 'Foobar',
             'type': 'object',
         },
+        description='This is a Foobar',
     )
 ]
 """
@@ -591,7 +591,6 @@ print(test_model.last_model_request_parameters.function_tools)
 [
     ToolDefinition(
         name='greet',
-        description='',
         parameters_json_schema={
             'additionalProperties': False,
             'properties': {

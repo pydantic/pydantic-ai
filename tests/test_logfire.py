@@ -280,7 +280,7 @@ def test_logfire(
                         'function_tools': [
                             {
                                 'name': 'my_ret',
-                                'description': '',
+                                'description': None,
                                 'parameters_json_schema': {
                                     'additionalProperties': False,
                                     'properties': {'x': {'type': 'integer'}},
