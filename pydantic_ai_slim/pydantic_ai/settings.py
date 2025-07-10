@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from httpx import Timeout
+from pydantic import ConfigDict, with_config
 from typing_extensions import TypedDict
 
 
+@with_config(ConfigDict(arbitrary_types_allowed=True))
 class ModelSettings(TypedDict, total=False):
     """Settings to configure an LLM.
 
