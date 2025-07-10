@@ -94,8 +94,8 @@ The only dependencies are:
 
 You can install PydanticAI with the `a2a` extra to include **FastA2A**:
 
-```sh
-pip install 'pydantic-ai[a2a]'
+```bash
+pip/uv-add install 'pydantic-ai-slim[a2a]'
 ```
 
 ### PydanticAI Agent to A2A Server
