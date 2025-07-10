@@ -76,6 +76,7 @@ nav:
       - api/format_as_xml.md
       - api/format_prompt.md
       - api/direct.md
+      - api/ext.md
       - api/models/base.md
       - api/models/openai.md
       - api/models/anthropic.md

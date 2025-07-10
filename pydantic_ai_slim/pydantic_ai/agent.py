@@ -763,7 +763,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             run_step=state.run_step,
         )
 
-        toolset = self._get_toolset(output_toolset=output_toolset, additional_user_toolsets=toolsets)
+        toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
         run_toolset = await toolset.prepare_for_run(run_context)
 
         # Merge model settings in order of precedence: run > agent > model
@@ -1688,7 +1688,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             return deps
 
     def _get_user_toolsets(
-        self, toolsets: Sequence[AbstractToolset[AgentDepsT]]
+        self, toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None
     ) -> Sequence[AbstractToolset[AgentDepsT]]:
         """Get user toolsets for a run.
 
@@ -1696,23 +1696,30 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         """
         if some_toolsets := self._override_toolsets.get():
             return some_toolsets.value
-        else:
+        elif toolsets is not None:
             return toolsets
+        else:
+            return self._user_toolsets
+
+    @property
+    def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        """The toolsets registered with this agent."""
+        return self._get_user_toolsets()
 
     def _get_toolset(
         self,
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
-        additional_user_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractToolset[AgentDepsT]:
         """Get the complete toolset for a run. This will raise errors for any name conflicts.
 
         Args:
-            output_toolset: The toolset to use for the output instead of the agent's default.
-            additional_user_toolsets: Additional toolsets to add to the user toolsets.
+            output_toolset: The output toolset to use instead of the one built at agent construction time.
+            additional_toolsets: Additional toolsets to add.
         """
         user_toolsets = self._user_toolsets
-        if additional_user_toolsets:
-            user_toolsets = [*user_toolsets, *additional_user_toolsets]
+        if additional_toolsets:
+            user_toolsets = [*user_toolsets, *additional_toolsets]
         user_toolsets = self._get_user_toolsets(user_toolsets)
 
         all_toolsets = [self._function_toolset, *user_toolsets]
@@ -1856,7 +1863,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     @asynccontextmanager
     @deprecated(
-        '`run_mcp_servers` is deprecated, use `async with agent:` instead. If you need to set a sampling model on all MCP servers, use `agent.set_mcp_sampling_model(...)`.'
+        '`run_mcp_servers` is deprecated, use `async with agent:` instead. If you need to set a sampling model on all MCP servers, use `agent.set_mcp_sampling_model()`.'
     )
     async def run_mcp_servers(
         self, model: models.Model | models.KnownModelName | str | None = None
@@ -1864,7 +1871,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] so they can be used by the agent.
 
         Deprecated: use [`async with agent`][pydantic_ai.agent.Agent.__aenter__] instead.
-        If you need to set a sampling model on all MCP servers, use [`agent.set_mcp_sampling_model(...)`][pydantic_ai.agent.Agent.set_mcp_sampling_model].
+        If you need to set a sampling model on all MCP servers, use [`agent.set_mcp_sampling_model()`][pydantic_ai.agent.Agent.set_mcp_sampling_model].
 
         Returns: a context manager to start and shutdown the servers.
         """

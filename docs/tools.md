@@ -615,7 +615,8 @@ In addition to per-tool `prepare` methods, you can also define an agent-wide `pr
 The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns a new list of tool definitions (or `None` to disable all tools for that step).
 
 !!! note
-    The list of tool definitions passed to `prepare_tools` includes both regular tools and tools from any MCP servers attached to the agent.
+    The list of tool definitions passed to `prepare_tools` includes both regular function tools and tools from any [toolsets](#toolsets) registered to the agent, but not [output tools](output.md#tool-output).
+    To modify output tools, you can set a `prepare_output_tools` function instead.
 
 Here's an example that makes all tools strict if the model is an OpenAI model:
 
@@ -732,7 +733,7 @@ The toolsets that will be available during an agent run can be specified in thre
 * at agent run time, via the `toolsets` keyword argument to [`agent.run()`][pydantic_ai.Agent.run], [`agent.run_sync()`][pydantic_ai.Agent.run_sync], [`agent.run_stream()`][pydantic_ai.Agent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. These toolsets will be additional to those provided to the `Agent` constructor
 * as a contextual override, via the `toolsets` keyword argument to the [`agent.override()`][pydantic_ai.Agent.iter] context manager. These toolsets will replace those provided at agent construction or run time during the life of the context manager
 
-### Function toolset
+### Function Toolset
 
 As the name suggests, a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] makes locally defined functions available as tools.
 
@@ -778,11 +779,11 @@ print(datetime_toolset.tool_names)
 #> now
 ```
 
-### Toolset composition
+### Toolset Composition
 
 Toolsets can be composed to dynamically filter which tools are available, modify tool definitions, or change tool execution behavior. Multiple toolsets can also be combined into one.
 
-#### Combining toolsets
+#### Combining Toolsets
 
 [`CombinedToolset`][pydantic_ai.toolsets.CombinedToolset] takes a list of toolsets and lets them be used as one.
 
@@ -797,7 +798,7 @@ print(combined_toolset.tool_names)
 #> temperature_celsius, temperature_fahrenheit, conditions, now
 ```
 
-#### Filtering tools
+#### Filtering Tools
 
 [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset] filters available tools ahead of each step of the run based on a user-defined function that is passed each tool's [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] and the agent [run context][pydantic_ai.tools.RunContext].
 
@@ -810,7 +811,7 @@ filtered_toolset = FilteredToolset(combined_toolset, lambda ctx, tool_def: 'fahr
 print(filtered_toolset.tool_names)
 #> temperature_celsius, conditions, now
 ```
-#### Prefixing tools
+#### Prefixing Tools
 
 [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset] adds a prefix to each tool name to prevent tool name conflicts between different toolsets.
 
@@ -828,7 +829,7 @@ print(combined_toolset.tool_names)
 #> weather_temperature_celsius, weather_temperature_fahrenheit, weather_conditions, datetime_now
 ```
 
-#### Preparing tool definitions
+#### Preparing Tool Definitions
 
 [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a function that takes all of the [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and the agent [run context][pydantic_ai.tools.RunContext] and lets you return a list of modified `ToolDefinition`s.
 
@@ -836,19 +837,48 @@ This is similar to the [`prepare_tools`](#prepare-tools) argument to `Agent`.
 
 <!-- TODO: Example -->
 
-#### Wrapping a toolset
+#### Wrapping a Toolset
 
 [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] wraps another toolset and delegates all responsibility to it.
 
 This is a no-op by default, but enables some useful abilities:
 
-##### Changing tool execution
+##### Changing Tool Execution
 
 You can subclass `WrapperToolset` to change the wrapped toolset's tool execution behavior by overriding the [`_call_tool()`][pydantic_ai.toolsets.WrapperToolset._call_tool] method.
 
-<!-- TODO: Example -->
+```python {title="wrapper_toolset.py" requires="combined_toolset.py"}
+from typing_extensions import Any
+from function_toolset import weather_toolset
 
-##### Changing available toolsets during a run
+from pydantic_ai.agent import Agent
+from pydantic_ai.tools import RunContext
+from pydantic_ai.toolsets import WrapperToolset
+
+
+class LoggingToolset(WrapperToolset):
+    async def _call_tool(self, ctx: RunContext, name: str, tool_args: dict[str, Any]) -> Any:
+        print(f'Calling tool {name!r} with args {tool_args!r}')
+        try:
+            result = await super()._call_tool(ctx, name, tool_args)
+            print(f'Finished calling tool {name!r} with result: {result!r}')
+        except Exception as e:
+            print(f'Error calling tool {name!r}: {e}')
+            raise e
+        else:
+            return result
+
+
+logging_toolset = LoggingToolset(weather_toolset)
+
+agent = Agent('openai:gpt-4o', toolsets=[logging_toolset])
+
+result = agent.run_sync('What is the temperature in Mexico City?')
+print(result.output)
+#> TODO: ...
+```
+
+##### Modifying Toolsets During a Run
 
 You can change the [`wrapped`][pydantic_ai.toolsets.WrapperToolset.wrapped] property during an agent run to swap out one toolset for another starting at the next run step.
 
@@ -856,7 +886,7 @@ To add or remove available toolsets, you can wrap a [`CombinedToolset`](#combini
 
 <!-- TODO: Example -->
 
-### Custom toolset
+### Building a Custom Toolset
 
 To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`BaseToolset`][pydantic_ai.toolsets.BaseToolset] or [`AsyncBaseToolset`][pydantic_ai.toolsets.AsyncBaseToolset], depending on whether listing the available tools can be done synchronously or requires an asynchronous network request. Tool calls themselves are always implemented asynchronously.
 
@@ -866,7 +896,7 @@ If you want to reuse a network connection or session across tool listings and ca
 
 <!-- TODO: Example -->
 
-#### Deferred toolset
+#### Deferred Toolset
 
 A deferred tool is one that will be executed not by Pydantic AI, but by the upstream service that called the agent, such as a web application that supports frontend-defined tools provided to Pydantic AI via a protocol like [AG-UI](https://docs.ag-ui.com/concepts/tools#frontend-defined-tools).
 
@@ -891,11 +921,31 @@ agent = Agent(..., toolsets=[...], output_type=SomeThing)
 result = agent.run_sync(toolsets=[deferred_toolset], output_type=[agent.output_type, DeferredToolCalls])
 ```
 
+### Overriding Toolsets
+
+When testing agents, it's useful to be able to customise toolsets.
+
+While this can sometimes be done by calling the agent directly within unit tests, we can also override toolsets
+while calling application code which in turn calls the agent.
+
+This is done via the [`override`][pydantic_ai.Agent.override] method on the agent.
+
+<!-- TODO: Improve example -->
+```python{title="override_toolsets.py"}
+agent = Agent('openai:gpt-4o', toolsets=[toolset])
+
+# Disable MCP servers
+with agent.override(toolsets=[toolset for toolset in agent.toolsets if not isinstance(toolset, MCPServer)]):
+    result = agent.run_sync('What is 2 + 2?')
+print(result.output)
+```
+
+
 ## Third-Party Tools
 
 ### MCP Tools {#mcp-tools}
 
-See the [MCP Client](./mcp/client.md) documentation for how to use MCP servers with Pydantic AI. To give you a hint, an [`MCPServer`](pydantic_ai.mcp.MCPServer) is a special type of [toolset](#toolsets)!
+See the [MCP Client](./mcp/client.md) documentation for how to use MCP servers with Pydantic AI.
 
 ### LangChain Tools {#langchain-tools}
 
