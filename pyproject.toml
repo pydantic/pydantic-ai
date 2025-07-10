@@ -125,7 +125,6 @@ extend-select = [
     "TID251",
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
-isort = { combine-as-imports = true, known-first-party = ["pydantic_ai"] }
 mccabe = { max-complexity = 15 }
 ignore = [
     "D100", # ignore missing docstring in module
@@ -134,6 +133,12 @@ ignore = [
     "D105", # ignore missing docstring in magic methods
     "D107", # ignore missing docstring in __init__ methods
 ]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["pydantic_ai"]
+# weird issue with ruff thinking fasta2a is still editable
+known-third-party = ["fasta2a"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -187,10 +192,7 @@ files = "tests/typed_agent.py,tests/typed_graph.py"
 strict = true
 
 [tool.pytest.ini_options]
-testpaths = [
-    "tests",
-    "docs/.hooks"
-]
+testpaths = ["tests", "docs/.hooks"]
 xfail_strict = true
 filterwarnings = [
     "error",
