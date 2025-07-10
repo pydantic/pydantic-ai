@@ -1274,7 +1274,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
                 runner = _system_prompt.SystemPromptRunner[AgentDepsT](func_, dynamic=dynamic)
                 self._system_prompt_functions.append(runner)
-                if dynamic:  # pragma: lax no cover
+                if dynamic:
                     self._system_prompt_dynamic_functions[func_.__qualname__] = runner
                 return func_
 
