@@ -674,12 +674,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
         output_validators = cast(list[_output.OutputValidator[AgentDepsT, RunOutputDataT]], self._output_validators)
 
-        model_settings = merge_model_settings(self.model_settings, model_settings)
+        # Merge model settings in order of precedence: run > agent > model
+        merged_settings = merge_model_settings(model_used.settings, self.model_settings)
+        model_settings = merge_model_settings(merged_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
 
         if isinstance(model_used, InstrumentedModel):
-            instrumentation_settings = model_used.settings
-            tracer = model_used.settings.tracer
+            instrumentation_settings = model_used.instrumentation_settings
+            tracer = model_used.instrumentation_settings.tracer
         else:
             instrumentation_settings = None
             tracer = NoOpTracer()
