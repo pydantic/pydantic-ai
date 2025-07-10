@@ -277,7 +277,7 @@ class MockMCPServer(BaseToolset[Any]):
     def _get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> SchemaValidator:
         return SchemaValidator(core_schema.any_schema())
 
-    def _call_tool(self, ctx: RunContext[Any], name: str, tool_args: dict[str, Any]) -> Any:
+    async def _call_tool(self, ctx: RunContext[Any], name: str, tool_args: dict[str, Any]) -> Any:
         return None  # pragma: lax no cover
 
 

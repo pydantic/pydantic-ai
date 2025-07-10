@@ -61,7 +61,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         raise NotImplementedError()
 
     @abstractmethod
-    def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         raise NotImplementedError()
 
     def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:

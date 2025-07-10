@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from abc import ABC
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -13,7 +12,7 @@ from ._abstract import AbstractToolset
 
 
 @dataclass
-class AbstractWrapperToolset(AbstractToolset[AgentDepsT], ABC):
+class AbstractWrapperToolset(AbstractToolset[AgentDepsT]):
     wrapped: AbstractToolset[AgentDepsT]
 
     @property
@@ -41,8 +40,8 @@ class AbstractWrapperToolset(AbstractToolset[AgentDepsT], ABC):
     def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
         return self.wrapped._get_tool_args_validator(ctx, name)
 
-    def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
-        return self.wrapped._call_tool(ctx, name, tool_args)
+    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+        return await self.wrapped._call_tool(ctx, name, tool_args)
 
     def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
         return self.wrapped.accept(visitor)

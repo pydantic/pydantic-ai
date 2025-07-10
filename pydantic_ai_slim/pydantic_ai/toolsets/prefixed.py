@@ -34,10 +34,10 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
         ctx = replace(ctx, tool_name=original_name)
         return super()._get_tool_args_validator(ctx, original_name)
 
-    def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         original_name = self._unprefixed_tool_name(name)
         ctx = replace(ctx, tool_name=original_name)
-        return super()._call_tool(ctx, original_name, tool_args)
+        return await super()._call_tool(ctx, original_name, tool_args)
 
     def _prefixed_tool_name(self, tool_name: str) -> str:
         return f'{self.prefix}_{tool_name}'

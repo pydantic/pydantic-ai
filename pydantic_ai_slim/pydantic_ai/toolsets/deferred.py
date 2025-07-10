@@ -31,5 +31,5 @@ class DeferredToolset(BaseToolset[AgentDepsT]):
     def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
         raise NotImplementedError('Deferred tools cannot be validated')
 
-    def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         raise NotImplementedError('Deferred tools cannot be called')

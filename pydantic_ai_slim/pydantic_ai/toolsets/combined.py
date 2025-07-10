@@ -86,8 +86,8 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
         return self._toolset_for_tool_name(name)._get_tool_args_validator(ctx, name)
 
-    def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
-        return self._toolset_for_tool_name(name)._call_tool(ctx, name, tool_args)
+    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+        return await self._toolset_for_tool_name(name)._call_tool(ctx, name, tool_args)
 
     def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
         for toolset in self.toolsets:
