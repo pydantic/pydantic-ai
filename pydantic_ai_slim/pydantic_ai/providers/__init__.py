@@ -111,6 +111,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .heroku import HerokuProvider
 
         return HerokuProvider
+    elif provider == 'huggingface':
+        from .huggingface import HuggingFaceProvider
+
+        return HuggingFaceProvider
     elif provider == 'github':
         from .github import GitHubProvider
 

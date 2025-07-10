@@ -1,0 +1,106 @@
+interactions:
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+    method: GET
+    uri: https://huggingface.co/api/models/Qwen/Qwen2.5-VL-72B-Instruct?expand=inferenceProviderMapping
+  response:
+    headers:
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-length:
+      - '293'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"125-DEMuQsKZBCb9/68jW5UsI3Q7x7E"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    parsed_body:
+      _id: 6797079422990ae89b5aff86
+      id: Qwen/Qwen2.5-VL-72B-Instruct
+      inferenceProviderMapping:
+        hyperbolic:
+          providerId: Qwen/Qwen2.5-VL-72B-Instruct
+          status: live
+          task: conversational
+        nebius:
+          providerId: Qwen/Qwen2.5-VL-72B-Instruct
+          status: live
+          task: conversational
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/nebius/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-length:
+      - '776'
+      content-type:
+      - application/json
+      cross-origin-opener-policy:
+      - same-origin
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          audio: null
+          content: The fruit in the image is a kiwi. It has been sliced in half, revealing its bright green flesh with small
+            black seeds arranged in a circular pattern around a white center. The outer skin of the kiwi is fuzzy and brown.
+          function_call: null
+          reasoning_content: null
+          refusal: null
+          role: assistant
+          tool_calls: []
+        stop_reason: null
+      created: 1751986733
+      id: chatcmpl-bd957b950cce4d61839e2af25f56f684
+      model: Qwen/Qwen2.5-VL-72B-Instruct
+      object: chat.completion
+      prompt_logprobs: null
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 49
+        completion_tokens_details: null
+        prompt_tokens: 7625
+        prompt_tokens_details: null
+        total_tokens: 7674
+    status:
+      code: 200
+      message: OK
+version: 1
