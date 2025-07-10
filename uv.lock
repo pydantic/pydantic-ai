@@ -19,7 +19,6 @@ resolution-markers = [
 [manifest]
 members = [
     "clai",
-    "fasta2a",
     "mcp-run-python",
     "pydantic-ai",
     "pydantic-ai-examples",
@@ -979,26 +978,17 @@ wheels = [
 
 [[package]]
 name = "fasta2a"
-source = { editable = "fasta2a" }
+version = "0.4.1"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "opentelemetry-api" },
     { name = "pydantic" },
     { name = "starlette" },
 ]
-
-[package.optional-dependencies]
-logfire = [
-    { name = "logfire" },
+sdist = { url = "https://files.pythonhosted.org/packages/1e/65/3728453396e5efa6166cf58b32e5aef7dabeba438c8bb20e1c9461fceaed/fasta2a-0.4.1.tar.gz", hash = "sha256:2c664d572480662a73201485ce0f909d607d5d28ba33409646454cef5d0645ed", size = 13966, upload-time = "2025-07-10T08:18:55.859Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8d/1e/e85fcd71af3a3f6c8262c89027a5c5e6c3faf348b1f9101b79d996c801df/fasta2a-0.4.1-py3-none-any.whl", hash = "sha256:f0b4a8162bd7fc9a363ef3724c395c5cb97e87d9d03769b9faaf675389c7fdfb", size = 16934, upload-time = "2025-07-10T08:18:45.014Z" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
-    { name = "opentelemetry-api", specifier = ">=1.28.0" },
-    { name = "pydantic", specifier = ">=2.10" },
-    { name = "starlette", specifier = ">0.29.0" },
-]
-provides-extras = ["logfire"]
 
 [[package]]
 name = "fastapi"
@@ -2998,7 +2988,7 @@ lint = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fasta2a", marker = "extra == 'a2a'", editable = "fasta2a" },
+    { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.11.0" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "mcp", "mistral", "openai", "vertexai"], editable = "pydantic_ai_slim" },
@@ -3152,7 +3142,7 @@ requires-dist = [
     { name = "duckduckgo-search", marker = "extra == 'duckduckgo'", specifier = ">=7.0.0" },
     { name = "eval-type-backport", specifier = ">=0.2.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
-    { name = "fasta2a", marker = "extra == 'a2a'", editable = "fasta2a" },
+    { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.24.0" },
     { name = "griffe", specifier = ">=1.3.2" },
