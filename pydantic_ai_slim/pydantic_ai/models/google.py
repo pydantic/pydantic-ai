@@ -54,12 +54,14 @@ try:
         FunctionDeclarationDict,
         GenerateContentConfigDict,
         GenerateContentResponse,
+        GoogleSearch,
         HttpOptionsDict,
         MediaResolution,
         Part,
         PartDict,
         SafetySettingDict,
         ThinkingConfigDict,
+        Tool,
         ToolConfigDict,
         ToolDict,
         ToolListUnionDict,
@@ -151,6 +153,7 @@ class GoogleModel(Model):
         *,
         provider: Literal['google-gla', 'google-vertex'] | Provider[genai.Client] = 'google-gla',
         profile: ModelProfileSpec | None = None,
+        enable_google_search: bool = False,
     ):
         """Initialize a Gemini model.
 
@@ -160,6 +163,7 @@ class GoogleModel(Model):
                 'google-gla' or 'google-vertex' or an instance of `Provider[httpx.AsyncClient]`.
                 If not provided, a new provider will be created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            enable_google_search: Whether to enable the Google Search tool for this model.
         """
         self._model_name = model_name
 
@@ -170,6 +174,7 @@ class GoogleModel(Model):
         self._system = provider.name
         self.client = provider.client
         self._profile = profile or provider.model_profile
+        self._enable_google_search = enable_google_search
 
     @property
     def base_url(self) -> str:
@@ -218,6 +223,14 @@ class GoogleModel(Model):
                 ToolDict(function_declarations=[_function_declaration_from_tool(t)])
                 for t in model_request_parameters.output_tools
             ]
+
+        # Add Google Search tool if enabled
+        if self._enable_google_search:
+            # Create a Google Search tool and add it to the tools list
+            # Note: ToolDict is expected to include tool objects directly
+            google_search_tool = cast(ToolDict, Tool(google_search=GoogleSearch()))
+            tools.append(google_search_tool)
+
         return tools or None
 
     def _get_tool_config(
