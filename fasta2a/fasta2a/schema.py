@@ -17,35 +17,45 @@ class AgentCard(TypedDict):
     name: str
     """Human readable name of the agent e.g. "Recipe Agent"."""
 
-    description: NotRequired[str]
+    description: str
     """A human-readable description of the agent.
 
     Used to assist users and other agents in understanding what the agent can do.
     (e.g. "Agent that helps users with recipes and cooking.")
     """
 
-    # TODO(Marcelo): The spec makes url required.
-    url: NotRequired[str]
+    url: str
     """A URL to the address the agent is hosted at."""
 
-    provider: NotRequired[Provider]
-    """The service provider of the agent."""
-
-    # TODO(Marcelo): The spec makes version required.
-    version: NotRequired[str]
+    version: str
     """The version of the agent - format is up to the provider. (e.g. "1.0.0")"""
+
+    protocol_version: str
+    """The version of the A2A protocol this agent supports."""
+
+    provider: NotRequired[AgentProvider]
+    """The service provider of the agent."""
 
     documentation_url: NotRequired[str]
     """A URL to documentation for the agent."""
 
-    capabilities: Capabilities
+    icon_url: NotRequired[str]
+    """A URL to an icon for the agent."""
+
+    preferred_transport: NotRequired[str]
+    """The transport of the preferred endpoint. If empty, defaults to JSONRPC."""
+
+    additional_interfaces: NotRequired[list[AgentInterface]]
+    """Announcement of additional supported transports."""
+
+    capabilities: AgentCapabilities
     """The capabilities of the agent."""
 
-    authentication: Authentication
-    """The authentication schemes supported by the agent.
+    security: NotRequired[list[dict[str, list[str]]]]
+    """Security requirements for contacting the agent."""
 
-    Intended to match OpenAPI authentication structure.
-    """
+    security_schemes: NotRequired[dict[str, SecurityScheme]]
+    """Security scheme definitions."""
 
     default_input_modes: list[str]
     """Supported mime types for input data."""
@@ -59,7 +69,7 @@ class AgentCard(TypedDict):
 agent_card_ta = pydantic.TypeAdapter(AgentCard)
 
 
-class Provider(TypedDict):
+class AgentProvider(TypedDict):
     """The service provider of the agent."""
 
     organization: str
@@ -67,7 +77,7 @@ class Provider(TypedDict):
 
 
 @pydantic.with_config({'alias_generator': to_camel})
-class Capabilities(TypedDict):
+class AgentCapabilities(TypedDict):
     """The capabilities of the agent."""
 
     streaming: NotRequired[bool]
@@ -81,14 +91,89 @@ class Capabilities(TypedDict):
 
 
 @pydantic.with_config({'alias_generator': to_camel})
-class Authentication(TypedDict):
-    """The authentication schemes supported by the agent."""
+class HttpSecurityScheme(TypedDict):
+    """HTTP security scheme."""
 
-    schemes: list[str]
-    """The authentication schemes supported by the agent. (e.g. "Basic", "Bearer")"""
+    type: Literal['http']
+    scheme: str
+    """The name of the HTTP Authorization scheme."""
+    bearer_format: NotRequired[str]
+    """A hint to the client to identify how the bearer token is formatted."""
+    description: NotRequired[str]
+    """Description of this security scheme."""
 
-    credentials: NotRequired[str]
-    """The credentials a client should use for private cards."""
+
+@pydantic.with_config({'alias_generator': to_camel})
+class ApiKeySecurityScheme(TypedDict):
+    """API Key security scheme."""
+
+    type: Literal['apiKey']
+    name: str
+    """The name of the header, query or cookie parameter to be used."""
+    in_: Literal['query', 'header', 'cookie']
+    """The location of the API key."""
+    description: NotRequired[str]
+    """Description of this security scheme."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class OAuth2SecurityScheme(TypedDict):
+    """OAuth2 security scheme."""
+
+    type: Literal['oauth2']
+    flows: dict[str, Any]
+    """An object containing configuration information for the flow types supported."""
+    description: NotRequired[str]
+    """Description of this security scheme."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class OpenIdConnectSecurityScheme(TypedDict):
+    """OpenID Connect security scheme."""
+
+    type: Literal['openIdConnect']
+    open_id_connect_url: str
+    """OpenId Connect URL to discover OAuth2 configuration values."""
+    description: NotRequired[str]
+    """Description of this security scheme."""
+
+
+SecurityScheme = Annotated[
+    Union[HttpSecurityScheme, ApiKeySecurityScheme, OAuth2SecurityScheme, OpenIdConnectSecurityScheme],
+    pydantic.Field(discriminator='type'),
+]
+"""A security scheme for authentication."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class AgentInterface(TypedDict):
+    """An interface that the agent supports."""
+
+    transport: str
+    """The transport protocol (e.g., 'jsonrpc', 'websocket')."""
+
+    url: str
+    """The URL endpoint for this transport."""
+
+    description: NotRequired[str]
+    """Description of this interface."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class AgentExtension(TypedDict):
+    """A declaration of an extension supported by an Agent."""
+
+    uri: str
+    """The URI of the extension."""
+
+    description: NotRequired[str]
+    """A description of how this agent uses this extension."""
+
+    required: NotRequired[bool]
+    """Whether the client must follow specific requirements of the extension."""
+
+    params: NotRequired[dict[str, Any]]
+    """Optional configuration for the extension."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
@@ -137,6 +222,9 @@ class Artifact(TypedDict):
     Artifacts.
     """
 
+    artifact_id: str
+    """Unique identifier for the artifact."""
+
     name: NotRequired[str]
     """The name of the artifact."""
 
@@ -149,8 +237,8 @@ class Artifact(TypedDict):
     metadata: NotRequired[dict[str, Any]]
     """Metadata about the artifact."""
 
-    index: int
-    """The index of the artifact."""
+    extensions: NotRequired[list[str]]
+    """Array of extensions."""
 
     append: NotRequired[bool]
     """Whether to append this artifact to an existing one."""
@@ -183,13 +271,16 @@ class PushNotificationConfig(TypedDict):
     mobile Push Notification Service).
     """
 
+    id: NotRequired[str]
+    """Server-assigned identifier."""
+
     url: str
     """The URL to send push notifications to."""
 
     token: NotRequired[str]
     """Token unique to this task/session."""
 
-    authentication: NotRequired[Authentication]
+    authentication: NotRequired[SecurityScheme]
     """Authentication details for push notifications."""
 
 
@@ -204,6 +295,7 @@ class TaskPushNotificationConfig(TypedDict):
     """The push notification configuration."""
 
 
+@pydantic.with_config({'alias_generator': to_camel})
 class Message(TypedDict):
     """A Message contains any content that is not an Artifact.
 
@@ -222,8 +314,27 @@ class Message(TypedDict):
     parts: list[Part]
     """The parts of the message."""
 
+    kind: Literal['message']
+    """Event type."""
+
     metadata: NotRequired[dict[str, Any]]
     """Metadata about the message."""
+
+    # Additional fields
+    message_id: str
+    """Identifier created by the message creator."""
+
+    context_id: NotRequired[str]
+    """The context the message is associated with."""
+
+    task_id: NotRequired[str]
+    """Identifier of task the message is related to."""
+
+    reference_task_ids: NotRequired[list[str]]
+    """Array of task IDs this message references."""
+
+    extensions: NotRequired[list[str]]
+    """Array of extensions."""
 
 
 class _BasePart(TypedDict):
@@ -232,76 +343,70 @@ class _BasePart(TypedDict):
     metadata: NotRequired[dict[str, Any]]
 
 
+@pydantic.with_config({'alias_generator': to_camel})
 class TextPart(_BasePart):
     """A part that contains text."""
 
-    type: Literal['text']
-    """The type of the part."""
+    kind: Literal['text']
+    """The kind of the part."""
 
     text: str
     """The text of the part."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
-class FilePart(_BasePart):
-    """A part that contains a file."""
+class FileWithBytes(TypedDict):
+    """File with base64 encoded data."""
 
-    type: Literal['file']
-    """The type of the part."""
+    bytes: str
+    """The base64 encoded content of the file."""
 
-    file: File
-    """The file of the part."""
+    mime_type: NotRequired[str]
+    """Optional mime type for the file."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
-class _BaseFile(_BasePart):
-    """A base class for all file types."""
+class FileWithUri(TypedDict):
+    """File with URI reference."""
 
-    name: NotRequired[str]
-    """The name of the file."""
+    uri: str
+    """The URI of the file."""
 
-    mime_type: str
+    mime_type: NotRequired[str]
     """The mime type of the file."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
-class _BinaryFile(_BaseFile):
-    """A binary file."""
+class FilePart(_BasePart):
+    """A part that contains a file."""
 
-    data: str
-    """The base64 encoded bytes of the file."""
+    kind: Literal['file']
+    """The kind of the part."""
 
-
-@pydantic.with_config({'alias_generator': to_camel})
-class _URLFile(_BaseFile):
-    """A file that is hosted on a remote URL."""
-
-    url: str
-    """The URL of the file."""
-
-
-File: TypeAlias = Union[_BinaryFile, _URLFile]
-"""A file is a binary file or a URL file."""
+    file: FileWithBytes | FileWithUri
+    """The file content - either bytes or URI."""
 
 
 @pydantic.with_config({'alias_generator': to_camel})
 class DataPart(_BasePart):
-    """A part that contains data."""
+    """A part that contains structured data."""
 
-    type: Literal['data']
-    """The type of the part."""
+    kind: Literal['data']
+    """The kind of the part."""
 
     data: dict[str, Any]
     """The data of the part."""
 
 
-Part = Annotated[Union[TextPart, FilePart, DataPart], pydantic.Field(discriminator='type')]
+Part = Annotated[Union[TextPart, FilePart, DataPart], pydantic.Field(discriminator='kind')]
 """A fully formed piece of content exchanged between a client and a remote agent as part of a Message or an Artifact.
 
 Each Part has its own content type and metadata.
 """
 
-TaskState: TypeAlias = Literal['submitted', 'working', 'input-required', 'completed', 'canceled', 'failed', 'unknown']
+TaskState: TypeAlias = Literal[
+    'submitted', 'working', 'input-required', 'completed', 'canceled', 'failed', 'rejected', 'auth-required', 'unknown'
+]
 """The possible states of a task."""
 
 
@@ -330,8 +435,11 @@ class Task(TypedDict):
     id: str
     """Unique identifier for the task."""
 
-    session_id: NotRequired[str]
-    """Client-generated id for the session holding the task."""
+    context_id: str
+    """The context the task is associated with."""
+
+    kind: Literal['task']
+    """Event type."""
 
     status: TaskStatus
     """Current status of the task."""
@@ -348,10 +456,16 @@ class Task(TypedDict):
 
 @pydantic.with_config({'alias_generator': to_camel})
 class TaskStatusUpdateEvent(TypedDict):
-    """Sent by server during sendSubscribe or subscribe requests."""
+    """Sent by server during message/stream requests."""
 
-    id: str
+    task_id: str
     """The id of the task."""
+
+    context_id: str
+    """The context the task is associated with."""
+
+    kind: Literal['status-update']
+    """Event type."""
 
     status: TaskStatus
     """The status of the task."""
@@ -365,13 +479,25 @@ class TaskStatusUpdateEvent(TypedDict):
 
 @pydantic.with_config({'alias_generator': to_camel})
 class TaskArtifactUpdateEvent(TypedDict):
-    """Sent by server during sendSubscribe or subscribe requests."""
+    """Sent by server during message/stream requests."""
 
-    id: str
+    task_id: str
     """The id of the task."""
+
+    context_id: str
+    """The context the task is associated with."""
+
+    kind: Literal['artifact-update']
+    """Event type identification."""
 
     artifact: Artifact
     """The artifact that was updated."""
+
+    append: NotRequired[bool]
+    """Whether to append to existing artifact (true) or replace (false)."""
+
+    last_chunk: NotRequired[bool]
+    """Indicates this is the final chunk of the artifact."""
 
     metadata: NotRequired[dict[str, Any]]
     """Extension metadata."""
@@ -394,23 +520,80 @@ class TaskQueryParams(TaskIdParams):
 
 
 @pydantic.with_config({'alias_generator': to_camel})
-class TaskSendParams(TypedDict):
-    """Sent by the client to the agent to create, continue, or restart a task."""
+class MessageSendConfiguration(TypedDict):
+    """Configuration for the send message request."""
 
-    id: str
-    """The id of the task."""
+    accepted_output_modes: list[str]
+    """Accepted output modalities by the client."""
 
-    session_id: NotRequired[str]
-    """The server creates a new sessionId for new tasks if not set."""
-
-    message: Message
-    """The message to send to the agent."""
+    blocking: NotRequired[bool]
+    """If the server should treat the client as a blocking request."""
 
     history_length: NotRequired[int]
     """Number of recent messages to be retrieved."""
 
-    push_notification: NotRequired[PushNotificationConfig]
+    push_notification_config: NotRequired[PushNotificationConfig]
     """Where the server should send notifications when disconnected."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class MessageSendParams(TypedDict):
+    """Parameters for message/send method."""
+
+    configuration: NotRequired[MessageSendConfiguration]
+    """Send message configuration."""
+
+    message: Message
+    """The message being sent to the server."""
+
+    metadata: NotRequired[dict[str, Any]]
+    """Extension metadata."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class TaskSendParams(TypedDict):
+    """Internal parameters for task execution within the framework.
+
+    Note: This is not part of the A2A protocol - it's used internally
+    for broker/worker communication.
+    """
+
+    id: str
+    """The id of the task."""
+
+    context_id: str
+    """The context id for the task."""
+
+    message: Message
+    """The message to process."""
+
+    history_length: NotRequired[int]
+    """Number of recent messages to be retrieved."""
+
+    metadata: NotRequired[dict[str, Any]]
+    """Extension metadata."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class ListTaskPushNotificationConfigParams(TypedDict):
+    """Parameters for getting list of pushNotificationConfigurations associated with a Task."""
+
+    id: str
+    """Task id."""
+
+    metadata: NotRequired[dict[str, Any]]
+    """Extension metadata."""
+
+
+@pydantic.with_config({'alias_generator': to_camel})
+class DeleteTaskPushNotificationConfigParams(TypedDict):
+    """Parameters for removing pushNotificationConfiguration associated with a Task."""
+
+    id: str
+    """Task id."""
+
+    push_notification_config_id: str
+    """The push notification config id to delete."""
 
     metadata: NotRequired[dict[str, Any]]
     """Extension metadata."""
@@ -497,21 +680,21 @@ UnsupportedOperationError = JSONRPCError[Literal[-32004], Literal['This operatio
 ContentTypeNotSupportedError = JSONRPCError[Literal[-32005], Literal['Incompatible content types']]
 """A JSON RPC error for incompatible content types."""
 
+InvalidAgentResponseError = JSONRPCError[Literal[-32006], Literal['Invalid agent response']]
+"""A JSON RPC error for invalid agent response."""
+
 ###############################################################################################
 #######################################   Requests and responses   ############################
 ###############################################################################################
 
-SendTaskRequest = JSONRPCRequest[Literal['tasks/send'], TaskSendParams]
-"""A JSON RPC request to send a task."""
+SendMessageRequest = JSONRPCRequest[Literal['message/send'], MessageSendParams]
+"""A JSON RPC request to send a message."""
 
-SendTaskResponse = JSONRPCResponse[Task, JSONRPCError[Any, Any]]
-"""A JSON RPC response to send a task."""
+SendMessageResponse = JSONRPCResponse[Union[Task, Message], JSONRPCError[Any, Any]]
+"""A JSON RPC response to send a message."""
 
-SendTaskStreamingRequest = JSONRPCRequest[Literal['tasks/sendSubscribe'], TaskSendParams]
-"""A JSON RPC request to send a task and receive updates."""
-
-SendTaskStreamingResponse = JSONRPCResponse[Union[TaskStatusUpdateEvent, TaskArtifactUpdateEvent], InternalError]
-"""A JSON RPC response to send a task and receive updates."""
+StreamMessageRequest = JSONRPCRequest[Literal['message/stream'], MessageSendParams]
+"""A JSON RPC request to stream a message."""
 
 GetTaskRequest = JSONRPCRequest[Literal['tasks/get'], TaskQueryParams]
 """A JSON RPC request to get a task."""
@@ -540,21 +723,34 @@ GetTaskPushNotificationResponse = JSONRPCResponse[TaskPushNotificationConfig, Pu
 ResubscribeTaskRequest = JSONRPCRequest[Literal['tasks/resubscribe'], TaskIdParams]
 """A JSON RPC request to resubscribe to a task."""
 
+ListTaskPushNotificationConfigRequest = JSONRPCRequest[
+    Literal['tasks/pushNotificationConfig/list'], ListTaskPushNotificationConfigParams
+]
+"""A JSON RPC request to list task push notification configs."""
+
+DeleteTaskPushNotificationConfigRequest = JSONRPCRequest[
+    Literal['tasks/pushNotificationConfig/delete'], DeleteTaskPushNotificationConfigParams
+]
+"""A JSON RPC request to delete a task push notification config."""
+
 A2ARequest = Annotated[
     Union[
-        SendTaskRequest,
+        SendMessageRequest,
+        StreamMessageRequest,
         GetTaskRequest,
         CancelTaskRequest,
         SetTaskPushNotificationRequest,
         GetTaskPushNotificationRequest,
         ResubscribeTaskRequest,
+        ListTaskPushNotificationConfigRequest,
+        DeleteTaskPushNotificationConfigRequest,
     ],
     Discriminator('method'),
 ]
 """A JSON RPC request to the A2A server."""
 
 A2AResponse: TypeAlias = Union[
-    SendTaskResponse,
+    SendMessageResponse,
     GetTaskResponse,
     CancelTaskResponse,
     SetTaskPushNotificationResponse,
@@ -565,3 +761,6 @@ A2AResponse: TypeAlias = Union[
 
 a2a_request_ta: TypeAdapter[A2ARequest] = TypeAdapter(A2ARequest)
 a2a_response_ta: TypeAdapter[A2AResponse] = TypeAdapter(A2AResponse)
+send_message_request_ta: TypeAdapter[SendMessageRequest] = TypeAdapter(SendMessageRequest)
+send_message_response_ta: TypeAdapter[SendMessageResponse] = TypeAdapter(SendMessageResponse)
+stream_message_request_ta: TypeAdapter[StreamMessageRequest] = TypeAdapter(StreamMessageRequest)

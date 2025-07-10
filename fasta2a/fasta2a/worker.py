@@ -4,26 +4,27 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic
 
 import anyio
 from opentelemetry.trace import get_tracer, use_span
 from typing_extensions import assert_never
 
+from .storage import ContextT, Storage
+
 if TYPE_CHECKING:
     from .broker import Broker, TaskOperation
     from .schema import Artifact, Message, TaskIdParams, TaskSendParams
-    from .storage import Storage
 
 tracer = get_tracer(__name__)
 
 
 @dataclass
-class Worker(ABC):
+class Worker(ABC, Generic[ContextT]):
     """A worker is responsible for executing tasks."""
 
     broker: Broker
-    storage: Storage
+    storage: Storage[ContextT]
 
     @asynccontextmanager
     async def run(self) -> AsyncIterator[None]:
@@ -62,7 +63,7 @@ class Worker(ABC):
     async def cancel_task(self, params: TaskIdParams) -> None: ...
 
     @abstractmethod
-    def build_message_history(self, task_history: list[Message]) -> list[Any]: ...
+    def build_message_history(self, history: list[Message]) -> list[Any]: ...
 
     @abstractmethod
     def build_artifacts(self, result: Any) -> list[Artifact]: ...

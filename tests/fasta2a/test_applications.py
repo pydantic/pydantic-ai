@@ -34,12 +34,13 @@ async def test_agent_card():
         assert response.json() == snapshot(
             {
                 'name': 'Agent',
+                'description': 'FastA2A Agent',
                 'url': 'http://localhost:8000',
                 'version': '1.0.0',
+                'protocolVersion': '0.2.5',
                 'skills': [],
                 'defaultInputModes': ['application/json'],
                 'defaultOutputModes': ['application/json'],
                 'capabilities': {'streaming': False, 'pushNotifications': False, 'stateTransitionHistory': False},
-                'authentication': {'schemes': []},
             }
         )

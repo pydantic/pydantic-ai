@@ -74,13 +74,13 @@ from .schema import (
     GetTaskRequest,
     GetTaskResponse,
     ResubscribeTaskRequest,
-    SendTaskRequest,
-    SendTaskResponse,
-    SendTaskStreamingRequest,
-    SendTaskStreamingResponse,
+    SendMessageRequest,
+    SendMessageResponse,
     SetTaskPushNotificationRequest,
     SetTaskPushNotificationResponse,
+    StreamMessageRequest,
     TaskNotFoundError,
+    TaskSendParams,
 )
 from .storage import Storage
 
@@ -90,7 +90,7 @@ class TaskManager:
     """A task manager responsible for managing tasks."""
 
     broker: Broker
-    storage: Storage
+    storage: Storage[Any]
 
     _aexit_stack: AsyncExitStack | None = field(default=None, init=False)
 
@@ -111,19 +111,22 @@ class TaskManager:
         await self._aexit_stack.__aexit__(exc_type, exc_value, traceback)
         self._aexit_stack = None
 
-    async def send_task(self, request: SendTaskRequest) -> SendTaskResponse:
-        """Send a task to the worker."""
-        request_id = str(uuid.uuid4())
-        task_id = request['params']['id']
-        task = await self.storage.load_task(task_id)
+    async def send_message(self, request: SendMessageRequest) -> SendMessageResponse:
+        """Send a message using the A2A v0.2.3 protocol."""
+        request_id = request['id']
+        message = request['params']['message']
+        context_id = message.get('context_id', str(uuid.uuid4()))
 
-        if task is None:
-            session_id = request['params'].get('session_id', str(uuid.uuid4()))
-            message = request['params']['message']
-            task = await self.storage.submit_task(task_id, session_id, message)
+        task = await self.storage.submit_task(context_id, message)
 
-        await self.broker.run_task(request['params'])
-        return SendTaskResponse(jsonrpc='2.0', id=request_id, result=task)
+        broker_params: TaskSendParams = {'id': task['id'], 'context_id': context_id, 'message': message}
+        config = request['params'].get('configuration', {})
+        history_length = config.get('history_length')
+        if history_length is not None:
+            broker_params['history_length'] = history_length
+
+        await self.broker.run_task(broker_params)
+        return SendMessageResponse(jsonrpc='2.0', id=request_id, result=task)
 
     async def get_task(self, request: GetTaskRequest) -> GetTaskResponse:
         """Get a task, and return it to the client.
@@ -152,8 +155,9 @@ class TaskManager:
             )
         return CancelTaskResponse(jsonrpc='2.0', id=request['id'], result=task)
 
-    async def send_task_streaming(self, request: SendTaskStreamingRequest) -> SendTaskStreamingResponse:
-        raise NotImplementedError('SendTaskStreaming is not implemented yet.')
+    async def stream_message(self, request: StreamMessageRequest) -> None:
+        """Stream messages using Server-Sent Events."""
+        raise NotImplementedError('message/stream method is not implemented yet.')
 
     async def set_task_push_notification(
         self, request: SetTaskPushNotificationRequest
@@ -165,5 +169,5 @@ class TaskManager:
     ) -> GetTaskPushNotificationResponse:
         raise NotImplementedError('GetTaskPushNotification is not implemented yet.')
 
-    async def resubscribe_task(self, request: ResubscribeTaskRequest) -> SendTaskStreamingResponse:
+    async def resubscribe_task(self, request: ResubscribeTaskRequest) -> None:
         raise NotImplementedError('Resubscribe is not implemented yet.')

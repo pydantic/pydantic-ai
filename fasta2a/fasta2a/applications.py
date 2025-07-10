@@ -13,10 +13,9 @@ from starlette.types import ExceptionHandler, Lifespan, Receive, Scope, Send
 
 from .broker import Broker
 from .schema import (
+    AgentCapabilities,
     AgentCard,
-    Authentication,
-    Capabilities,
-    Provider,
+    AgentProvider,
     Skill,
     a2a_request_ta,
     a2a_response_ta,
@@ -39,7 +38,7 @@ class FastA2A(Starlette):
         url: str = 'http://localhost:8000',
         version: str = '1.0.0',
         description: str | None = None,
-        provider: Provider | None = None,
+        provider: AgentProvider | None = None,
         skills: list[Skill] | None = None,
         # Starlette
         debug: bool = False,
@@ -85,16 +84,17 @@ class FastA2A(Starlette):
         if self._agent_card_json_schema is None:
             agent_card = AgentCard(
                 name=self.name,
+                description=self.description or 'FastA2A Agent',
                 url=self.url,
                 version=self.version,
+                protocol_version='0.2.5',
                 skills=self.skills,
                 default_input_modes=self.default_input_modes,
                 default_output_modes=self.default_output_modes,
-                capabilities=Capabilities(streaming=False, push_notifications=False, state_transition_history=False),
-                authentication=Authentication(schemes=[]),
+                capabilities=AgentCapabilities(
+                    streaming=False, push_notifications=False, state_transition_history=False
+                ),
             )
-            if self.description is not None:
-                agent_card['description'] = self.description
             if self.provider is not None:
                 agent_card['provider'] = self.provider
             self._agent_card_json_schema = agent_card_ta.dump_json(agent_card, by_alias=True)
@@ -116,8 +116,8 @@ class FastA2A(Starlette):
         data = await request.body()
         a2a_request = a2a_request_ta.validate_json(data)
 
-        if a2a_request['method'] == 'tasks/send':
-            jsonrpc_response = await self.task_manager.send_task(a2a_request)
+        if a2a_request['method'] == 'message/send':
+            jsonrpc_response = await self.task_manager.send_message(a2a_request)
         elif a2a_request['method'] == 'tasks/get':
             jsonrpc_response = await self.task_manager.get_task(a2a_request)
         elif a2a_request['method'] == 'tasks/cancel':
