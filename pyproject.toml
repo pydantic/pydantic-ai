@@ -52,7 +52,7 @@ dependencies = [
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 examples = ["pydantic-ai-examples=={{ version }}"]
 logfire = ["logfire>=3.11.0"]
-a2a = ["fasta2a=={{ version }}"]
+a2a = ["fasta2a>=0.4.1"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -68,7 +68,6 @@ pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
-fasta2a = { workspace = true }
 
 [tool.uv.workspace]
 members = [
@@ -78,7 +77,6 @@ members = [
     "mcp-run-python",
     "clai",
     "examples",
-    "fasta2a",
 ]
 
 [dependency-groups]
@@ -109,7 +107,6 @@ include = [
     "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
     "mcp-run-python/**/*.py",
-    "fasta2a/**/*.py",
     "examples/**/*.py",
     "clai/**/*.py",
     "tests/**/*.py",
@@ -167,7 +164,6 @@ include = [
     "pydantic_evals",
     "pydantic_graph",
     "mcp-run-python",
-    "fasta2a",
     "tests",
     "examples",
     "clai",
@@ -218,8 +214,6 @@ include = [
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
-    # TODO(Marcelo): Add 100% coverage for A2A.
-    # "fasta2a/**/*.py",
     "tests/**/*.py",
 ]
 omit = [

@@ -57,14 +57,14 @@ ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
 
 if TYPE_CHECKING:
-    from starlette.middleware import Middleware
-    from starlette.routing import Route
-    from starlette.types import ExceptionHandler, Lifespan
-
     from fasta2a.applications import FastA2A
     from fasta2a.broker import Broker
     from fasta2a.schema import AgentProvider, Skill
     from fasta2a.storage import Storage
+    from starlette.middleware import Middleware
+    from starlette.routing import Route
+    from starlette.types import ExceptionHandler, Lifespan
+
     from pydantic_ai.mcp import MCPServer
 
 
