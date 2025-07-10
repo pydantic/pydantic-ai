@@ -33,7 +33,7 @@ Python code that runs the chat app:
 
 Simple HTML page to render the app:
 
-```snippet {path="/examples/pydantic_ai_examples/chat_app.py"}```
+```snippet {path="/examples/pydantic_ai_examples/chat_app.html"}```
 
 TypeScript to handle rendering the messages, to keep this simple (and at the risk of offending frontend developers) the typescript code is passed to the browser as plain text and transpiled in the browser.
 

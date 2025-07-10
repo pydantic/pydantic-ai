@@ -994,6 +994,12 @@ class OpenAIStreamedResponse(StreamedResponse):
             if content is not None:
                 yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=content)
 
+            # Handle reasoning part of the response, present in DeepSeek models
+            if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id='reasoning_content', content=reasoning_content
+                )
+
             for dtc in choice.delta.tool_calls or []:
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=dtc.index,

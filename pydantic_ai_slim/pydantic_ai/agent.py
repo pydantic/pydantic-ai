@@ -568,7 +568,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent] | None,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -585,7 +585,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent] | None,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -603,7 +603,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @deprecated('`result_type` is deprecated, use `output_type` instead.')
     def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent] | None,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         result_type: type[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
