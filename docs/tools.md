@@ -744,7 +744,7 @@ Functions can be added as tools in three different ways:
 
 Functions registered in any of these ways can define an initial `ctx: RunContext` argument in order to receive the agent [context][pydantic_ai.tools.RunContext]. Dynamically registering new tools during a run to be available in future run steps is also supported when using the `toolset.add_function` and `toolset.add_tool` methods.
 
-```python {title="function_toolset.py}
+```python {title="function_toolset.py"}
 from datetime import datetime
 
 from pydantic_ai import RunContext
@@ -858,9 +858,9 @@ To add or remove available toolsets, you can wrap a [`CombinedToolset`](#combini
 
 ### Custom toolset
 
-To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`CallableToolset`][pydantic_ai.toolsets.callable.CallableToolset] or [`AsyncCallableToolset`][pydantic_ai.toolsets.callable.AsyncCallableToolset], depending on whether listing the available tools can be done synchronously or requires an asynchronous network request. Tool calls themselves are always implemented asynchronously.
+To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`BaseToolset`][pydantic_ai.toolsets.base.BaseToolset] or [`AsyncBaseToolset`][pydantic_ai.toolsets.base.AsyncBaseToolset], depending on whether listing the available tools can be done synchronously or requires an asynchronous network request. Tool calls themselves are always implemented asynchronously.
 
-These abstract classes require you to implement [`tool_defs()`][pydantic_ai.toolsets.AbstractToolset.tool_defs] or [`async_tool_defs()`][pydantic_ai.toolsets.callable.AsyncCallableToolset.async_tool_defs] respectively, as well as the [`_max_retries_for_tool()`][pydantic_ai.toolsets.AbstractToolset.tool_defs], [`_get_tool_args_validator()`][pydantic_ai.toolsets.callable.AbstractToolset._get_tool_args_validator] and [`_call_tool()`][pydantic_ai.toolsets.callable.AbstractToolset._call_tool] methods.
+These abstract classes require you to implement [`tool_defs()`][pydantic_ai.toolsets.AbstractToolset.tool_defs] or [`async_tool_defs()`][pydantic_ai.toolsets.base.AsyncBaseToolset.async_tool_defs] respectively, as well as the [`_max_retries_for_tool()`][pydantic_ai.toolsets.AbstractToolset.tool_defs], [`_get_tool_args_validator()`][pydantic_ai.toolsets.base.AbstractToolset._get_tool_args_validator] and [`_call_tool()`][pydantic_ai.toolsets.base.AbstractToolset._call_tool] methods.
 
 If you want to reuse a network connection or session across tool listings and calls, you can implement [`__aenter__()`][pydantic_ai.toolsets.AbstractToolset.__aenter__] and [`__aclose__()`][pydantic_ai.toolsets.AbstractToolset.__aclose__], which will be called when the agent that uses the toolset is itself entered using the [`async with agent`][pydantic_ai.Agent.__aenter__] context manager.
 

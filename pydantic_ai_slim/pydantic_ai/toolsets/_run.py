@@ -14,11 +14,11 @@ from ..exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from ..messages import ToolCallPart
 from ..tools import ToolDefinition
 from . import AbstractToolset
-from .wrapper import WrapperToolset
+from ._wrapper import AbstractWrapperToolset
 
 
 @dataclass(init=False)
-class RunToolset(WrapperToolset[AgentDepsT]):
+class RunToolset(AbstractWrapperToolset[AgentDepsT]):
     """A toolset that caches the wrapped toolset's tool definitions for a specific run step and handles retries."""
 
     ctx: RunContext[AgentDepsT]
@@ -31,12 +31,11 @@ class RunToolset(WrapperToolset[AgentDepsT]):
         self,
         wrapped: AbstractToolset[AgentDepsT],
         ctx: RunContext[AgentDepsT],
-        tool_defs: list[ToolDefinition] | None = None,
         original: AbstractToolset[AgentDepsT] | None = None,
     ):
         self.wrapped = wrapped
         self.ctx = ctx
-        self._tool_defs = wrapped.tool_defs if tool_defs is None else tool_defs
+        self._tool_defs = wrapped.tool_defs
         self._tool_names = [tool_def.name for tool_def in self._tool_defs]
         self._retries = ctx.retries.copy()
         self._original = original or wrapped

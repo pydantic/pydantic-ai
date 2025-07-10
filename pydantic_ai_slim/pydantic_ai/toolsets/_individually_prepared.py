@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from pydantic_ai.toolsets import AbstractToolset
+
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
 from ..tools import (
@@ -9,7 +11,6 @@ from ..tools import (
     ToolPrepareFunc,
 )
 from ._mapped import MappedToolset
-from ._run import RunToolset
 from .wrapper import WrapperToolset
 
 
@@ -19,12 +20,12 @@ class IndividuallyPreparedToolset(WrapperToolset[AgentDepsT]):
 
     prepare_func: ToolPrepareFunc[AgentDepsT]
 
-    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
-        wrapped_for_run = await self.wrapped.prepare_for_run(ctx)
-
+    async def _rewrap_for_run(
+        self, wrapped: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
+    ) -> WrapperToolset[AgentDepsT]:
         tool_defs: dict[str, ToolDefinition] = {}
         name_map: dict[str, str] = {}
-        for original_tool_def in wrapped_for_run.tool_defs:
+        for original_tool_def in wrapped.tool_defs:
             original_name = original_tool_def.name
 
             run_context = replace(ctx, tool_name=original_name, retry=ctx.retries.get(original_name, 0))
@@ -42,5 +43,4 @@ class IndividuallyPreparedToolset(WrapperToolset[AgentDepsT]):
 
             tool_defs[new_name] = tool_def
 
-        mapped_for_run = await MappedToolset(wrapped_for_run, list(tool_defs.values()), name_map).prepare_for_run(ctx)
-        return RunToolset(mapped_for_run, ctx, original=self)
+        return MappedToolset(wrapped, list(tool_defs.values()), name_map)

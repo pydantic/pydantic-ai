@@ -39,8 +39,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai.toolsets._run import RunToolset
+from pydantic_ai.toolsets.base import BaseToolset
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
@@ -261,15 +260,12 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         raise ValueError(f'Unexpected prompt: {prompt}')
 
 
-class MockMCPServer(AbstractToolset[Any]):
+class MockMCPServer(BaseToolset[Any]):
     async def __aenter__(self) -> MockMCPServer:
         return self
 
     async def __aexit__(self, *args: Any) -> None:
         pass
-
-    async def prepare_for_run(self, ctx: RunContext[Any]) -> RunToolset[Any]:
-        return RunToolset(self, ctx)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:

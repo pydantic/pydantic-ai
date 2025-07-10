@@ -8,35 +8,29 @@ from pydantic_core import SchemaValidator
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
 from . import AbstractToolset
-from ._run import RunToolset
+from ._tool_defs import ToolDefsToolset
 from .wrapper import WrapperToolset
 
 
 @dataclass(init=False)
-class MappedToolset(WrapperToolset[AgentDepsT]):
+class MappedToolset(ToolDefsToolset[AgentDepsT]):
     """A toolset that maps renamed tool names to original tool names. Used by `IndividuallyPreparedToolset` as the prepare function may rename a tool."""
 
     name_map: dict[str, str]
-    _tool_defs: list[ToolDefinition]
 
     def __init__(
         self,
         wrapped: AbstractToolset[AgentDepsT],
         tool_defs: list[ToolDefinition],
-        name_map: dict[str, str],
+        name_map: dict[str, str] | None = None,
     ):
-        super().__init__(wrapped)
-        self._tool_defs = tool_defs
-        self.name_map = name_map
+        super().__init__(wrapped, tool_defs)
+        self.name_map = name_map or {}
 
-    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
-        wrapped_for_run = await self.wrapped.prepare_for_run(ctx)
-        mapped_for_run = MappedToolset(wrapped_for_run, self._tool_defs, self.name_map)
-        return RunToolset(mapped_for_run, ctx)
-
-    @property
-    def tool_defs(self) -> list[ToolDefinition]:
-        return self._tool_defs
+    async def _rewrap_for_run(
+        self, wrapped: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
+    ) -> WrapperToolset[AgentDepsT]:
+        return MappedToolset(wrapped, self._tool_defs, self.name_map)
 
     def _max_retries_for_tool(self, name: str) -> int:
         return super()._max_retries_for_tool(self._map_name(name))

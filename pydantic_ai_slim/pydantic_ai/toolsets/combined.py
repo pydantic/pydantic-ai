@@ -70,7 +70,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
         toolsets_for_run = await asyncio.gather(*(toolset.prepare_for_run(ctx) for toolset in self.toolsets))
         combined_for_run = CombinedToolset(toolsets_for_run)
-        return RunToolset(combined_for_run, ctx)
+        return RunToolset(combined_for_run, ctx, original=self)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:

@@ -14,6 +14,8 @@
 
 ::: pydantic_ai.toolsets.wrapper.WrapperToolset
 
-::: pydantic_ai.toolsets.callable.CallableToolset
+::: pydantic_ai.toolsets.base.BaseToolset
+
+::: pydantic_ai.toolsets.base.AsyncBaseToolset
 
 ::: pydantic_ai.toolsets.deferred.DeferredToolset

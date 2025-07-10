@@ -7,7 +7,7 @@ from pydantic_core import SchemaValidator
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
-from ._run import RunToolset
+from .base import AbstractToolset
 from .wrapper import WrapperToolset
 
 
@@ -17,10 +17,10 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
 
     prefix: str
 
-    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
-        wrapped_for_run = await self.wrapped.prepare_for_run(ctx)
-        prefixed_for_run = PrefixedToolset(wrapped_for_run, self.prefix)
-        return RunToolset(prefixed_for_run, ctx)
+    async def _rewrap_for_run(
+        self, wrapped: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
+    ) -> WrapperToolset[AgentDepsT]:
+        return PrefixedToolset(wrapped, self.prefix)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:

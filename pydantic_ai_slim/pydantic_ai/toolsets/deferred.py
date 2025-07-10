@@ -7,11 +7,10 @@ from pydantic_core import SchemaValidator
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
-from . import AbstractToolset
-from ._run import RunToolset
+from .base import BaseToolset
 
 
-class DeferredToolset(AbstractToolset[AgentDepsT]):
+class DeferredToolset(BaseToolset[AgentDepsT]):
     """A toolset that holds deferred tools.
 
     See [`ToolDefinition.kind`][pydantic_ai.tools.ToolDefinition.kind] for more information about deferred tools.
@@ -20,20 +19,17 @@ class DeferredToolset(AbstractToolset[AgentDepsT]):
     _tool_defs: list[ToolDefinition]
 
     def __init__(self, tool_defs: list[ToolDefinition]):
-        self._tool_defs = tool_defs
-
-    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
-        return RunToolset(self, ctx)
+        self._tool_defs = [replace(tool_def, kind='deferred') for tool_def in tool_defs]
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
-        return [replace(tool_def, kind='deferred') for tool_def in self._tool_defs]
+        return self._tool_defs
 
     def _max_retries_for_tool(self, name: str) -> int:
         raise NotImplementedError('Deferred tools cannot be retried')
 
     def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        raise NotImplementedError('Deferred tools cannot be called')
+        raise NotImplementedError('Deferred tools cannot be validated')
 
     def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         raise NotImplementedError('Deferred tools cannot be called')

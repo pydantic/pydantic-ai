@@ -20,11 +20,11 @@ from ..tools import (
 )
 from ._individually_prepared import IndividuallyPreparedToolset
 from ._run import RunToolset
-from .callable import CallableToolset
+from .base import BaseToolset
 
 
 @dataclass(init=False)
-class FunctionToolset(CallableToolset[AgentDepsT]):
+class FunctionToolset(BaseToolset[AgentDepsT]):
     """A toolset that lets Python functions be used as tools."""
 
     max_retries: int = field(default=1)
@@ -169,7 +169,7 @@ class FunctionToolset(CallableToolset[AgentDepsT]):
         self.tools[tool.name] = tool
 
     async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
-        self_for_run = RunToolset(self, ctx)
+        self_for_run = await super().prepare_for_run(ctx)
         prepared_for_run = await IndividuallyPreparedToolset(self_for_run, self._prepare_tool_def).prepare_for_run(ctx)
         return RunToolset(prepared_for_run, ctx, original=self)
 

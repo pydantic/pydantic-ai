@@ -29,8 +29,7 @@ from .output import (
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
-from .toolsets._run import RunToolset
-from .toolsets.callable import CallableToolset
+from .toolsets.base import BaseToolset
 
 if TYPE_CHECKING:
     from .profiles import ModelProfile
@@ -829,7 +828,7 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
 
 
 @dataclass(init=False)
-class OutputToolset(CallableToolset[AgentDepsT]):
+class OutputToolset(BaseToolset[AgentDepsT]):
     """A toolset that contains output tools."""
 
     _tool_defs: list[ToolDefinition]
@@ -916,9 +915,6 @@ class OutputToolset(CallableToolset[AgentDepsT]):
         self._tool_defs = tool_defs
         self.max_retries = max_retries
         self.output_validators = output_validators or []
-
-    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
-        return RunToolset(self, ctx)
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:

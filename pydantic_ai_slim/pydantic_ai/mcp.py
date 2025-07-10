@@ -20,7 +20,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import ToolDefinition
 
 from .toolsets._run import RunToolset
-from .toolsets.callable import AsyncCallableToolset
+from .toolsets.base import AsyncBaseToolset
 from .toolsets.prefixed import PrefixedToolset
 
 try:
@@ -44,7 +44,7 @@ from . import _mcp, exceptions, messages, models
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
 
 
-class MCPServer(AsyncCallableToolset[Any], ABC):
+class MCPServer(AsyncBaseToolset[Any], ABC):
     """Base class for attaching agents to MCP servers.
 
     See <https://modelcontextprotocol.io> for more information.
