@@ -9,6 +9,7 @@ from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
 from typing_extensions import TypeAliasType, TypeVar
 
+from . import _utils
 from .tools import RunContext
 
 __all__ = (
@@ -273,23 +274,17 @@ class TextOutput(Generic[OutputDataT]):
 def StructuredDict(
     json_schema: JsonSchemaValue, name: str | None = None, description: str | None = None
 ) -> type[JsonSchemaValue]:
-    """Returns a dictionary subclass that enforces a JSON schema for structured output.
-
-    This class serves as both a container for structured data and the schema itself,
-    making it suitable for use as an output type in agents that require validated
-    dictionary responses.
+    """Returns a `dict[str, Any]` subclass with a JSON schema attached that will be used for structured output.
 
     Args:
-        json_schema: A JSON schema (as dict) defining the structure of the dictionary content.
-        name: The name of the structured output. If not provided, the `title` field of the JSON schema will be used.
-        description: The description of the structured output. If not provided, the `description` field of the JSON schema will be used.
-
-    Raises:
-        UserError: If json_schema is not an 'object' JSON schema.
+        json_schema: A JSON schema of type `object` defining the structure of the dictionary content.
+        name: Optional name of the structured output. If not provided, the `title` field of the JSON schema will be used if it's present.
+        description: Optional description of the structured output. If not provided, the `description` field of the JSON schema will be used if it's present.
 
     Example:
     ```python {title="structured_dict.py"}
     from pydantic_ai import Agent, StructuredDict
+
 
     schema = {
         "type": "object",
@@ -306,8 +301,7 @@ def StructuredDict(
     #> {'name': 'John Doe', 'age': 30}
     ```
     """
-    if json_schema.get('type') != 'object':
-        raise ValueError('json_schema must be an object')  # pragma: no cover
+    json_schema = _utils.check_object_json_schema(json_schema)
 
     if name:
         json_schema['title'] = name

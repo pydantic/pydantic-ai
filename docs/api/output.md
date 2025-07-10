@@ -9,3 +9,4 @@
             - NativeOutput
             - PromptedOutput
             - TextOutput
+            - StructuredDict
