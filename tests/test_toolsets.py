@@ -39,7 +39,6 @@ async def test_function_toolset_prepare_for_run():
     class PrefixDeps:
         prefix: str | None = None
 
-    context = build_run_context(PrefixDeps())
     toolset = FunctionToolset[PrefixDeps]()
 
     async def prepare_add_prefix(ctx: RunContext[PrefixDeps], tool_def: ToolDefinition) -> ToolDefinition | None:
@@ -68,15 +67,12 @@ async def test_function_toolset_prepare_for_run():
             )
         ]
     )
-    assert await toolset.call_tool(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2}), context) == 3
 
     no_prefix_context = build_run_context(PrefixDeps())
     no_prefix_toolset = await toolset.prepare_for_run(no_prefix_context)
     assert no_prefix_toolset.tool_names == toolset.tool_names
     assert no_prefix_toolset.tool_defs == toolset.tool_defs
-    assert (
-        await no_prefix_toolset.call_tool(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2}), no_prefix_context) == 3
-    )
+    assert await no_prefix_toolset.handle_call(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2})) == 3
 
     foo_context = build_run_context(PrefixDeps(prefix='foo'))
     foo_toolset = await toolset.prepare_for_run(foo_context)
@@ -95,7 +91,7 @@ async def test_function_toolset_prepare_for_run():
             )
         ]
     )
-    assert await foo_toolset.call_tool(ToolCallPart(tool_name='foo_add', args={'a': 1, 'b': 2}), foo_context) == 3
+    assert await foo_toolset.handle_call(ToolCallPart(tool_name='foo_add', args={'a': 1, 'b': 2})) == 3
 
     @toolset.tool
     def subtract(a: int, b: int) -> int:
@@ -131,7 +127,7 @@ async def test_function_toolset_prepare_for_run():
             ),
         ]
     )
-    assert await bar_toolset.call_tool(ToolCallPart(tool_name='bar_add', args={'a': 1, 'b': 2}), bar_context) == 3
+    assert await bar_toolset.handle_call(ToolCallPart(tool_name='bar_add', args={'a': 1, 'b': 2})) == 3
 
     bar_foo_toolset = await foo_toolset.prepare_for_run(bar_context)
     assert bar_foo_toolset == bar_toolset
@@ -212,7 +208,7 @@ async def test_prefixed_toolset_error_invalid_prefix():
 
     # Test calling with wrong prefix
     with pytest.raises(ValueError, match="Tool name 'wrong_add' does not start with prefix 'math_'"):
-        await prefixed_toolset.call_tool(ToolCallPart(tool_name='wrong_add', args={'a': 1, 'b': 2}), context)
+        await prefixed_toolset._call_tool(context, 'wrong_add', {'a': 1, 'b': 2})  # type: ignore[reportPrivateUsage]
 
 
 async def test_comprehensive_toolset_composition():
@@ -346,7 +342,7 @@ async def test_comprehensive_toolset_composition():
         ]
     )
     # Call a tool and check result
-    result = await final_toolset.call_tool(ToolCallPart(tool_name='math_add', args={'a': 5, 'b': 3}), regular_context)
+    result = await final_toolset.handle_call(ToolCallPart(tool_name='math_add', args={'a': 5, 'b': 3}))
     assert result == 8
 
     # Test with admin user context (should have string tools)
@@ -427,8 +423,8 @@ async def test_comprehensive_toolset_composition():
             ),
         ]
     )
-    result = await admin_final_toolset.call_tool(
-        ToolCallPart(tool_name='str_concat', args={'s1': 'Hello', 's2': 'World'}), admin_context
+    result = await admin_final_toolset.handle_call(
+        ToolCallPart(tool_name='str_concat', args={'s1': 'Hello', 's2': 'World'})
     )
     assert result == 'HelloWorld'
 

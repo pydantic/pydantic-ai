@@ -1,34 +1,31 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import replace
-from typing import Any
 
-from pydantic_core import SchemaValidator
+from pydantic_ai.toolsets._run import RunToolset
 
 from .._run_context import AgentDepsT, RunContext
-from ..messages import ToolCallPart
+from ..tools import ToolDefinition
 from . import AbstractToolset
 
 
 class CallableToolset(AbstractToolset[AgentDepsT], ABC):
-    """A toolset that implements tool args validation and tool calling."""
+    """A toolset that implements tool listing, tool args validation, and tool calling."""
+
+    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
+        return RunToolset(self, ctx)
+
+
+class AsyncCallableToolset(CallableToolset[AgentDepsT], ABC):
+    """A toolset that implements asynchronous tool listing, tool args validation, and tool calling."""
+
+    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
+        return RunToolset(self, ctx, await self.async_tool_defs())
 
     @abstractmethod
-    def _get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> SchemaValidator:
+    async def async_tool_defs(self) -> list[ToolDefinition]:
         raise NotImplementedError()
 
-    @abstractmethod
-    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
-        raise NotImplementedError()
-
-    async def call_tool(self, call: ToolCallPart, ctx: RunContext[AgentDepsT], allow_partial: bool = False) -> Any:
-        ctx = replace(ctx, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
-
-        pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
-        validator = self._get_tool_args_validator(ctx, call.tool_name)
-        if isinstance(call.args, str):
-            args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
-        else:
-            args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
-        return await self._call_tool(ctx, call.tool_name, args_dict)
+    @property
+    def tool_defs(self) -> list[ToolDefinition]:
+        return []

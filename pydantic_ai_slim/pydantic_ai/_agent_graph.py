@@ -16,7 +16,6 @@ from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._utils import is_async_callable, run_in_executor
-from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._run import RunToolset
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
@@ -576,7 +575,7 @@ def multi_modal_content_identifier(identifier: str | bytes) -> str:
 
 
 async def process_function_tools(  # noqa: C901
-    toolset: AbstractToolset[DepsT],
+    toolset: RunToolset[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     final_result: result.FinalResult[NodeRunEndT] | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
@@ -589,8 +588,6 @@ async def process_function_tools(  # noqa: C901
 
     Because async iterators can't have return values, we use `output_parts` and `output_final_result` as output arguments.
     """
-    run_context = build_run_context(ctx)
-
     tool_calls_by_kind: dict[ToolKind | Literal['unknown'], list[_messages.ToolCallPart]] = defaultdict(list)
     for call in tool_calls:
         tool_def = toolset.get_tool_def(call.tool_name)
@@ -618,7 +615,7 @@ async def process_function_tools(  # noqa: C901
             output_parts.append(part)
         else:
             try:
-                result_data = await toolset.call_tool(call, run_context)
+                result_data = await toolset.handle_call(call)
             except exceptions.UnexpectedModelBehavior as e:
                 ctx.state.increment_retries(ctx.deps.max_result_retries, e)
                 raise e
@@ -678,7 +675,7 @@ async def process_function_tools(  # noqa: C901
         ):
             tasks = [
                 asyncio.create_task(
-                    _call_function_tool(toolset, call, run_context, ctx.deps.tracer, include_content),
+                    _call_function_tool(toolset, call, ctx.deps.tracer, include_content),
                     name=call.tool_name,
                 )
                 for call in calls_to_run
@@ -719,9 +716,8 @@ async def process_function_tools(  # noqa: C901
 
 
 async def _call_function_tool(
-    toolset: AbstractToolset[DepsT],
+    toolset: RunToolset[DepsT],
     tool_call: _messages.ToolCallPart,
-    run_context: RunContext[DepsT],
     tracer: Tracer,
     include_content: bool = False,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, list[_messages.ModelRequestPart]]:
@@ -757,7 +753,7 @@ async def _call_function_tool(
 
     with tracer.start_as_current_span('running tool', attributes=span_attributes) as span:
         try:
-            tool_result = await toolset.call_tool(tool_call, run_context)
+            tool_result = await toolset.handle_call(tool_call)
         except ToolRetryError as e:
             part = e.tool_retry
             if include_content and span.is_recording():

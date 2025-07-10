@@ -6,12 +6,12 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from .._utils import get_async_lock
 from ..exceptions import UserError
-from ..messages import ToolCallPart
 from ..tools import ToolDefinition
 from . import AbstractToolset
 from ._run import RunToolset
@@ -83,8 +83,11 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     def _max_retries_for_tool(self, name: str) -> int:
         return self._toolset_for_tool_name(name)._max_retries_for_tool(name)
 
-    async def call_tool(self, call: ToolCallPart, ctx: RunContext[AgentDepsT], allow_partial: bool = False) -> Any:
-        return await self._toolset_for_tool_name(call.tool_name).call_tool(call, ctx, allow_partial=allow_partial)
+    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+        return self._toolset_for_tool_name(name)._get_tool_args_validator(ctx, name)
+
+    def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+        return self._toolset_for_tool_name(name)._call_tool(ctx, name, tool_args)
 
     def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
         for toolset in self.toolsets:

@@ -3,10 +3,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Callable, Generic
 
+from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
-from ..messages import ToolCallPart
 from ..tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -57,7 +57,11 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         raise NotImplementedError()
 
     @abstractmethod
-    async def call_tool(self, call: ToolCallPart, ctx: RunContext[AgentDepsT], allow_partial: bool = False) -> Any:
+    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         raise NotImplementedError()
 
     def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:

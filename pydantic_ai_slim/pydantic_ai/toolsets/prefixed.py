@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
+from pydantic_core import SchemaValidator
+
 from .._run_context import AgentDepsT, RunContext
-from ..messages import ToolCallPart
 from ..tools import ToolDefinition
 from ._run import RunToolset
 from .wrapper import WrapperToolset
@@ -28,9 +29,15 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
     def _max_retries_for_tool(self, name: str) -> int:
         return super()._max_retries_for_tool(self._unprefixed_tool_name(name))  # pragma: no cover
 
-    async def call_tool(self, call: ToolCallPart, ctx: RunContext[AgentDepsT], allow_partial: bool = False) -> Any:
-        call = replace(call, tool_name=self._unprefixed_tool_name(call.tool_name))
-        return await super().call_tool(call, ctx, allow_partial=allow_partial)
+    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+        original_name = self._unprefixed_tool_name(name)
+        ctx = replace(ctx, tool_name=original_name)
+        return super()._get_tool_args_validator(ctx, original_name)
+
+    def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+        original_name = self._unprefixed_tool_name(name)
+        ctx = replace(ctx, tool_name=original_name)
+        return super()._call_tool(ctx, original_name, tool_args)
 
     def _prefixed_tool_name(self, tool_name: str) -> str:
         return f'{self.prefix}_{tool_name}'

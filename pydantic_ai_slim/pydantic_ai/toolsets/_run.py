@@ -49,7 +49,8 @@ class RunToolset(WrapperToolset[AgentDepsT]):
         if ctx == self.ctx:
             return self
         else:
-            ctx = replace(ctx, retries=self._retries)
+            if self._retries and not ctx.retries:
+                ctx = replace(ctx, retries=self._retries)
             return await self._original.prepare_for_run(ctx)
 
     @property
@@ -60,7 +61,7 @@ class RunToolset(WrapperToolset[AgentDepsT]):
     def tool_names(self) -> list[str]:
         return self._tool_names
 
-    async def call_tool(self, call: ToolCallPart, ctx: RunContext[AgentDepsT], allow_partial: bool = False) -> Any:
+    async def handle_call(self, call: ToolCallPart, allow_partial: bool = False) -> Any:
         name = call.tool_name
         try:
             if name not in self.tool_names:
@@ -70,8 +71,20 @@ class RunToolset(WrapperToolset[AgentDepsT]):
                     msg = 'No tools available.'
                 raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
 
-            ctx = replace(ctx, retry=self._retries.get(name, 0), retries={})
-            output = await super().call_tool(call, ctx, allow_partial=allow_partial)
+            ctx = replace(
+                self.ctx,
+                tool_name=name,
+                tool_call_id=call.tool_call_id,
+                retry=self._retries.get(name, 0),
+            )
+
+            pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
+            validator = self._get_tool_args_validator(ctx, name)
+            if isinstance(call.args, str):
+                args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
+            else:
+                args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
+            output = await self._call_tool(ctx, name, args_dict)
         except (ValidationError, ModelRetry, UnexpectedModelBehavior, ToolRetryError) as e:
             try:
                 max_retries = self._max_retries_for_tool(name)

@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
+from pydantic_core import SchemaValidator
+
 from .._run_context import AgentDepsT, RunContext
-from ..messages import ToolCallPart
 from ..tools import ToolDefinition
 from . import AbstractToolset
 from ._run import RunToolset
@@ -31,5 +32,8 @@ class DeferredToolset(AbstractToolset[AgentDepsT]):
     def _max_retries_for_tool(self, name: str) -> int:
         raise NotImplementedError('Deferred tools cannot be retried')
 
-    async def call_tool(self, call: ToolCallPart, ctx: RunContext[AgentDepsT], allow_partial: bool = False) -> Any:
+    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+        raise NotImplementedError('Deferred tools cannot be called')
+
+    def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         raise NotImplementedError('Deferred tools cannot be called')

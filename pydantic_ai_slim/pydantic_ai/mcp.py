@@ -20,7 +20,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import ToolDefinition
 
 from .toolsets._run import RunToolset
-from .toolsets.callable import CallableToolset
+from .toolsets.callable import AsyncCallableToolset
 from .toolsets.prefixed import PrefixedToolset
 
 try:
@@ -44,7 +44,7 @@ from . import _mcp, exceptions, messages, models
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
 
 
-class MCPServer(CallableToolset[Any], ABC):
+class MCPServer(AsyncCallableToolset[Any], ABC):
     """Base class for attaching agents to MCP servers.
 
     See <https://modelcontextprotocol.io> for more information.
@@ -107,21 +107,18 @@ class MCPServer(CallableToolset[Any], ABC):
             result = await self._client.list_tools()
         return result.tools
 
-    async def _call_tool(
+    async def call_tool(
         self,
-        ctx: RunContext[Any],
         name: str,
-        tool_args: dict[str, Any],
+        args: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Call a tool on the server.
 
         Args:
-            ctx: The run context of the tool call.
             name: The name of the tool to call.
-            tool_args: The arguments to pass to the tool.
-            *args: Additional arguments passed by a tool call processor.
+            args: The arguments to pass to the tool.
             metadata: Request-level metadata (optional)
-            **kwargs: Additional keyword arguments passed by a tool call processor.
 
         Returns:
             The result of the tool call.
@@ -129,51 +126,51 @@ class MCPServer(CallableToolset[Any], ABC):
         Raises:
             ModelRetry: If the tool call fails.
         """
+        async with self:  # Ensure server is running
+            try:
+                result = await self._client.send_request(
+                    mcp_types.ClientRequest(
+                        mcp_types.CallToolRequest(
+                            method='tools/call',
+                            params=mcp_types.CallToolRequestParams(
+                                name=name,
+                                arguments=args,
+                                _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
+                            ),
+                        )
+                    ),
+                    mcp_types.CallToolResult,
+                )
+            except McpError as e:
+                raise exceptions.ModelRetry(e.error.message)
 
-        async def _call(name: str, args: dict[str, Any], metadata: dict[str, Any] | None = None) -> ToolResult:
-            async with self:  # Ensure server is running
-                try:
-                    result = await self._client.send_request(
-                        mcp_types.ClientRequest(
-                            mcp_types.CallToolRequest(
-                                method='tools/call',
-                                params=mcp_types.CallToolRequestParams(
-                                    name=name,
-                                    arguments=args,
-                                    _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
-                                ),
-                            )
-                        ),
-                        mcp_types.CallToolResult,
-                    )
-                except McpError as e:
-                    raise exceptions.ModelRetry(e.error.message)
+        content = [self._map_tool_result_part(part) for part in result.content]
 
-            content = [self._map_tool_result_part(part) for part in result.content]
-
-            if result.isError:
-                text = '\n'.join(str(part) for part in content)
-                raise exceptions.ModelRetry(text)
-            else:
-                return content[0] if len(content) == 1 else content
-
-        if self.process_tool_call is not None:
-            return await self.process_tool_call(ctx, _call, name, tool_args)
+        if result.isError:
+            text = '\n'.join(str(part) for part in content)
+            raise exceptions.ModelRetry(text)
         else:
-            return await _call(name, tool_args)
+            return content[0] if len(content) == 1 else content
+
+    async def _call_tool(
+        self,
+        ctx: RunContext[Any],
+        name: str,
+        tool_args: dict[str, Any],
+    ) -> ToolResult:
+        if self.process_tool_call is not None:
+            return await self.process_tool_call(ctx, self.call_tool, name, tool_args)
+        else:
+            return await self.call_tool(name, tool_args)
 
     async def prepare_for_run(self, ctx: RunContext[Any]) -> RunToolset[Any]:
-        frozen_toolset = RunToolset(self, ctx, await self.list_tool_defs())
+        frozen_toolset = await super().prepare_for_run(ctx)
         if self.tool_prefix:
-            frozen_toolset = await PrefixedToolset(frozen_toolset, self.tool_prefix).prepare_for_run(ctx)
-        return RunToolset(frozen_toolset, ctx, original=self)
+            prefixed_toolset = await PrefixedToolset(frozen_toolset, self.tool_prefix).prepare_for_run(ctx)
+            frozen_toolset = RunToolset(prefixed_toolset, ctx, original=self)
+        return frozen_toolset
 
-    @property
-    def tool_defs(self) -> list[ToolDefinition]:
-        # The actual tool definitions are loaded in `prepare_for_run` and cached on the `RunToolset` that will wrap us
-        return []
-
-    async def list_tool_defs(self) -> list[ToolDefinition]:
+    async def async_tool_defs(self) -> list[ToolDefinition]:
         mcp_tools = await self.list_tools()
         return [
             ToolDefinition(

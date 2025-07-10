@@ -4,10 +4,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
+from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
-from ..messages import ToolCallPart
 from ..tools import ToolDefinition
 from . import AbstractToolset
 
@@ -47,8 +47,11 @@ class WrapperToolset(AbstractToolset[AgentDepsT], ABC):
     def _max_retries_for_tool(self, name: str) -> int:
         return self.wrapped._max_retries_for_tool(name)
 
-    async def call_tool(self, call: ToolCallPart, ctx: RunContext[AgentDepsT], allow_partial: bool = False) -> Any:
-        return await self.wrapped.call_tool(call, ctx, allow_partial=allow_partial)
+    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+        return self.wrapped._get_tool_args_validator(ctx, name)
+
+    def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+        return self.wrapped._call_tool(ctx, name, tool_args)
 
     def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
         return self.wrapped.accept(visitor)

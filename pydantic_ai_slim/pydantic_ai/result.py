@@ -111,7 +111,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     f'Invalid response, unable to find tool call for {output_tool_name!r}'
                 )
-            return await self._toolset.call_tool(tool_call, self._run_ctx, allow_partial=allow_partial)
+            return await self._toolset.handle_call(tool_call, allow_partial=allow_partial)
         elif deferred_tool_calls := self._toolset.get_deferred_tool_calls(message.parts):
             if not self._output_schema.allows_deferred_tool_calls:
                 raise exceptions.UserError(  # pragma: no cover
@@ -443,7 +443,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     f'Invalid response, unable to find tool call for {self._output_tool_name!r}'
                 )
-            return await self._toolset.call_tool(tool_call, self._run_ctx, allow_partial=allow_partial)
+            return await self._toolset.handle_call(tool_call, allow_partial=allow_partial)
         elif deferred_tool_calls := self._toolset.get_deferred_tool_calls(message.parts):
             if not self._output_schema.allows_deferred_tool_calls:
                 raise exceptions.UserError(
