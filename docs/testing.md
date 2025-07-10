@@ -13,6 +13,8 @@ Unless you're really sure you know better, you'll probably want to follow roughl
 * Use [`Agent.override`][pydantic_ai.agent.Agent.override] to replace your model inside your application logic
 * Set [`ALLOW_MODEL_REQUESTS=False`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] globally to block any requests from being made to non-test models accidentally
 
+<!-- TODO: Override toolsets -->
+
 ### Unit testing with `TestModel`
 
 The simplest and fastest way to exercise most of your application code is using [`TestModel`][pydantic_ai.models.test.TestModel], this will (by default) call all tools in the agent, then return either plain text or a structured response depending on the return type of the agent.

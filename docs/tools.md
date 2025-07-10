@@ -1,25 +1,29 @@
 # Function Tools
 
-Function tools provide a mechanism for models to retrieve extra information to help them generate a response.
+Function tools provide a mechanism for models to perform actions and retrieve extra information to help them generate a response.
 
-They're useful when you want to enable the model to take some action and use the result, when it is impractical or impossible to put all the context an agent might need into the system prompt, or when you want to make agents' behavior more deterministic or reliable by deferring some of the logic required to generate a response to another (not necessarily AI-powered) tool.
+They're useful when you want to enable the model to take some action and use the result, when it is impractical or impossible to put all the context an agent might need into the instructions, or when you want to make agents' behavior more deterministic or reliable by deferring some of the logic required to generate a response to another (not necessarily AI-powered) tool.
 
 If you want a model to be able to call a function as its final action, without the result being sent back to the model, you can use an [output function](output.md#output-functions) instead.
-
-!!! info "Function tools vs. RAG"
-    Function tools are basically the "R" of RAG (Retrieval-Augmented Generation) — they augment what the model can do by letting it request extra information.
-
-    The main semantic difference between PydanticAI Tools and RAG is RAG is synonymous with vector search, while PydanticAI tools are more general-purpose. (Note: we may add support for vector search functionality in the future, particularly an API for generating embeddings. See [#58](https://github.com/pydantic/pydantic-ai/issues/58))
 
 There are a number of ways to register tools with an agent:
 
 * via the [`@agent.tool`][pydantic_ai.Agent.tool] decorator — for tools that need access to the agent [context][pydantic_ai.tools.RunContext]
 * via the [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
 * via the [`tools`][pydantic_ai.Agent.__init__] keyword argument to `Agent` which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
+* via the [`toolsets`][pydantic_ai.Agent.__init__] keyword argument to `Agent` which takes a list of [toolsets](#toolsets) that you can build yourself or get from a [third party](#third-party-tools), e.g. an [MCP server](mcp/client.md)
 
-## Registering Function Tools via Decorator
+!!! info "Function tools vs. RAG"
+    Function tools are basically the "R" of RAG (Retrieval-Augmented Generation) — they augment what the model can do by letting it request extra information.
 
-`@agent.tool` is considered the default decorator since in the majority of cases tools will need access to the agent context.
+    The main semantic difference between PydanticAI Tools and RAG is RAG is synonymous with vector search, while PydanticAI tools are more general-purpose. (Note: we may add support for vector search functionality in the future, particularly an API for generating embeddings. See [#58](https://github.com/pydantic/pydantic-ai/issues/58))
+
+!!! info "Function Tools vs. Structured Outputs"
+    As the name suggests, function tools use the model's "tools" or "functions" API to let the model know what is available to call. Tools or functions are also used to define the schema(s) for [structured output](output.md) when using the default [tool output mode](output.md#tool-output), thus a model might have access to many tools, some of which call function tools while others end the run and produce a final output.
+
+## Registering via Decorator {#registering-function-tools-via-decorator}
+
+`@agent.tool` is considered the default decorator since in the majority of cases tools will need access to the agent [context][pydantic_ai.tools.RunContext].
 
 Here's an example using both:
 
@@ -58,7 +62,7 @@ print(dice_result.output)
 
 1. This is a pretty simple task, so we can use the fast and cheap Gemini flash model.
 2. We pass the user's name as the dependency, to keep things simple we use just the name as a string as the dependency.
-3. This tool doesn't need any context, it just returns a random number. You could probably use a dynamic system prompt in this case.
+3. This tool doesn't need any context, it just returns a random number. You could probably use dynamic instructions in this case.
 4. This tool needs the player's name, so it uses `RunContext` to access dependencies which are just the player's name in this case.
 5. Run the agent, passing the player's name as the dependency.
 
@@ -176,7 +180,7 @@ sequenceDiagram
     Note over Agent: Game session complete
 ```
 
-## Registering Function Tools via Agent Argument
+## Registering via Agent Argument {#registering-function-tools-via-agent-argument}
 
 As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to reuse tools, and can also give more fine-grained control over the tools.
 
@@ -232,7 +236,7 @@ print(dice_result['b'].output)
 
 _(This example is complete, it can be run "as is")_
 
-## Function Tool Output
+## Tool Output {#function-tool-output}
 
 Tools can return anything that Pydantic can serialize to JSON, as well as audio, video, image or document content depending on the types of [multi-modal input](input.md) the model supports:
 
@@ -353,11 +357,7 @@ print(result.output)
 
 This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic.
 
-## Function Tools vs. Structured Outputs
-
-As the name suggests, function tools use the model's "tools" or "functions" API to let the model know what is available to call. Tools or functions are also used to define the schema(s) for structured responses, thus a model might have access to many tools, some of which call function tools while others end the run and produce a final output.
-
-## Function tools and schema
+## Tool Schema {#function-tools-and-schema}
 
 Function parameters are extracted from the function signature, and all parameters except `RunContext` are used to build the schema for that tool call.
 
@@ -469,7 +469,9 @@ print(test_model.last_model_request_parameters.function_tools)
 
 _(This example is complete, it can be run "as is")_
 
-If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of *args or **kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the `Tool.from_schema` function. With this you provide the name, description and JSON schema for the function directly:
+### Custom Tool Schema
+
+If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of *args or **kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the [`Tool.from_schema`][pydantic_ai.Tool.from_schema] function. With this you provide the name, description and JSON schema for the function directly:
 
 ```python
 from pydantic_ai import Agent, Tool
@@ -505,7 +507,7 @@ print(result.output)
 
 Please note that validation of the tool arguments will not be performed, and this will pass all arguments as keyword arguments.
 
-## Dynamic Function tools {#tool-prepare}
+## Dynamic Tools {#tool-prepare}
 
 Tools can optionally be defined with another function: `prepare`, which is called at each step of a run to
 customize the definition of the tool passed to the model, or omit the tool completely from that step.
@@ -606,7 +608,7 @@ print(test_model.last_model_request_parameters.function_tools)
 
 _(This example is complete, it can be run "as is")_
 
-## Agent-wide Dynamic Tool Preparation {#prepare-tools}
+### Agent-wide Dynamic Tools {#prepare-tools}
 
 In addition to per-tool `prepare` methods, you can also define an agent-wide `prepare_tools` function. This function is called at each step of a run and allows you to filter or modify the list of all tool definitions available to the agent for that step. This is especially useful if you want to enable or disable multiple tools at once, or apply global logic based on the current context.
 
@@ -720,6 +722,173 @@ def my_flaky_tool(query: str) -> str:
 ```
 Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the `retries` setting configured on the `Tool` or `Agent`.
 
+## Toolsets
+
+A toolset represents a collection of tools that can be registered with an agent in one go. They can be reused by different agents, swapped out at runtime or during testing, and composed in order to dynamically filter which tools are available, modify tool definitions, or change tool execution behavior. A toolset can contain locally defined functions, depend on an external service like an [MCP server](mcp/client.md) to provide them, or implement custom logic to list available tools and handle them being called.
+
+The toolsets that will be available during an agent run can be specified in three different ways:
+
+* at agent construction time, via the [`toolsets`][pydantic_ai.Agent.__init__] keyword argument to `Agent`
+* at agent run time, via the `toolsets` keyword argument to [`agent.run()`][pydantic_ai.Agent.run], [`agent.run_sync()`][pydantic_ai.Agent.run_sync], [`agent.run_stream()`][pydantic_ai.Agent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. These toolsets will be additional to those provided to the `Agent` constructor
+* as a contextual override, via the `toolsets` keyword argument to the [`agent.override()`][pydantic_ai.Agent.iter] context manager. These toolsets will replace those provided at agent construction or run time during the life of the context manager
+
+### Function toolset
+
+As the name suggests, a [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset] makes locally defined functions available as tools.
+
+Functions can be added as tools in three different ways:
+
+* via the [`@toolset.tool`][pydantic_ai.toolsets.function.FunctionToolset.tool] decorator
+* via the [`tools`][pydantic_ai.toolsets.function.FunctionToolset.__init__] keyword argument to the constructor which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
+* via the [`toolset.add_function`][pydantic_ai.toolsets.function.FunctionToolset.add_function] and [`toolset.add_tool`][pydantic_ai.toolsets.function.FunctionToolset.add_tool] methods which can take a plain function or an instance of [`Tool`][pydantic_ai.tools.Tool] respectively
+
+Functions registered in any of these ways can define an initial `ctx: RunContext` argument in order to receive the agent [context][pydantic_ai.tools.RunContext]. Dynamically registering new tools during a run to be available in future run steps is also supported when using the `toolset.add_function` and `toolset.add_tool` methods.
+
+```python {title="function_toolset.py}
+from datetime import datetime
+
+from pydantic_ai import RunContext
+from pydantic_ai.toolsets.function import FunctionToolset
+
+
+def temperature_celsius(city: str) -> float:
+    return 21.0
+
+
+def temperature_fahrenheit(city: str) -> float:
+    return 69.8
+
+
+weather_toolset = FunctionToolset(tools=[temperature_celsius, temperature_fahrenheit])
+
+@weather_toolset.tool
+def conditions(ctx: RunContext, city: str) -> str:
+    if ctx.run_step % 2 == 0:
+        return "It's sunny"
+    else:
+        return "It's raining
+
+datetime_toolset = FunctionToolset()
+datetime_toolset.add_function(datetime.now)
+
+print(weather_toolset.tool_names)
+#> temperature_celsius, temperature_fahrenheit, conditions
+
+print(datetime_toolset.tool_names)
+#> now
+```
+
+### Toolset composition
+
+Toolsets can be composed to dynamically filter which tools are available, modify tool definitions, or change tool execution behavior. Multiple toolsets can also be combined into one.
+
+#### Combining toolsets
+
+[`CombinedToolset`][pydantic_ai.toolsets.combined.CombinedToolset] takes a list of toolsets and lets them be used as one.
+
+```python {title="combined_toolset.py" requires="function_toolset.py"}
+from function_toolset import weather_toolset, datetime_toolset
+
+from pydantic_ai.toolsets.combined import CombinedToolset
+
+
+combined_toolset = CombinedToolset([weather_toolset, datetime_toolset])
+print(combined_toolset.tool_names)
+#> temperature_celsius, temperature_fahrenheit, conditions, now
+```
+
+#### Filtering tools
+
+[`FilteredToolset`][pydantic_ai.toolsets.filtered.FilteredToolset] filters available tools ahead of each step of the run based on a user-defined function that is passed each tool's [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] and the agent [run context][pydantic_ai.tools.RunContext].
+
+```python {title="filtered_toolset.py" requires="combined_toolset.py"}
+from combined_toolset import combined_toolset
+
+from pydantic_ai.toolsets.filtered import FilteredToolset
+
+filtered_toolset = FilteredToolset(combined_toolset, lambda ctx, tool_def: 'fahrenheit' not in tool_def.name)
+print(filtered_toolset.tool_names)
+#> temperature_celsius, conditions, now
+```
+#### Prefixing tools
+
+[`PrefixedToolset`][pydantic_ai.toolsets.prefixed.PrefixedToolset] adds a prefix to each tool name to prevent tool name conflicts between different toolsets.
+
+```python {title="combined_toolset.py" requires="function_toolset.py"}
+from function_toolset import weather_toolset, datetime_toolset
+
+from pydantic_ai.toolsets.combined import CombinedToolset
+from pydantic_ai.toolsets.prefixed import PrefixedToolset
+
+
+prefixed_weather_toolset = PrefixedToolset(weather_toolset, prefix='weather')
+prefixed_datetime_toolset = PrefixedToolset(datetime_toolset, prefix='datetime')
+combined_toolset = CombinedToolset([prefixed_weather_toolset, prefixed_datetime_toolset])
+print(combined_toolset.tool_names)
+#> weather_temperature_celsius, weather_temperature_fahrenheit, weather_conditions, datetime_now
+```
+
+#### Preparing tool definitions
+
+[`PreparedToolset`][pydantic_ai.toolsets.prepared.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a function that takes all of the [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and the agent [run context][pydantic_ai.tools.RunContext] and lets you return a list of modified `ToolDefinition`s.
+
+This is similar to the [`prepare_tools`](#prepare-tools) argument to `Agent`.
+
+<!-- TODO: Example -->
+
+#### Wrapping a toolset
+
+[`WrapperToolset`][pydantic_ai.toolsets.function.WrapperToolset] wraps another toolset and delegates all responsibility to it.
+
+This is a no-op by default, but enables some useful abilities:
+
+##### Changing tool execution
+
+You can subclass `WrapperToolset` to change the wrapped toolset's tool execution behavior by overriding the [`_call_tool()`][pydantic_ai.toolsets.wrapper.WrapperToolset._call_tool] method.
+
+<!-- TODO: Example -->
+
+##### Changing available toolsets during a run
+
+You can change the [`wrapped`][pydantic_ai.toolsets.function.WrapperToolset.wrapped] property during an agent run to swap out one toolset for another starting at the next run step.
+
+To add or remove available toolsets, you can wrap a [`CombinedToolset`](#combining-toolsets) and replace it during the run with one that can include fewer, more, or entirely different toolsets.
+
+<!-- TODO: Example -->
+
+### Custom toolset
+
+To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`CallableToolset`][pydantic_ai.toolsets.callable.CallableToolset] or [`AsyncCallableToolset`][pydantic_ai.toolsets.callable.AsyncCallableToolset], depending on whether listing the available tools can be done synchronously or requires an asynchronous network request. Tool calls themselves are always implemented asynchronously.
+
+These abstract classes require you to implement [`tool_defs()`][pydantic_ai.toolsets.AbstractToolset.tool_defs] or [`async_tool_defs()`][pydantic_ai.toolsets.callable.AsyncCallableToolset.async_tool_defs] respectively, as well as the [`_max_retries_for_tool()`][pydantic_ai.toolsets.AbstractToolset.tool_defs], [`_get_tool_args_validator()`][pydantic_ai.toolsets.callable.AbstractToolset._get_tool_args_validator] and [`_call_tool()`][pydantic_ai.toolsets.callable.AbstractToolset._call_tool] methods.
+
+If you want to reuse a network connection or session across tool listings and calls, you can implement [`__aenter__()`][pydantic_ai.toolsets.AbstractToolset.__aenter__] and [`__aclose__()`][pydantic_ai.toolsets.AbstractToolset.__aclose__], which will be called when the agent that uses the toolset is itself entered using the [`async with agent`][pydantic_ai.Agent.__aenter__] context manager.
+
+<!-- TODO: Example -->
+
+#### Deferred toolset
+
+A deferred tool is one that will be executed not by Pydantic AI, but by the upstream service that called the agent, such as a web application that supports frontend-defined tools provided to Pydantic AI via a protocol like [AG-UI](https://docs.ag-ui.com/concepts/tools#frontend-defined-tools).
+
+!!! note
+    This is typically not something you need to bother with, unless you are implementing support for such a protocol between an upstream tool provider and Pydantic AI.
+
+When the model calls a deferred tool, the agent run ends with a [`DeferredToolCalls`][pydantic_ai.output.DeferredToolCalls] object containing the deferred tool call names and arguments, which is expected to be returned to the upstream tool provider. This upstream service is then expected to generate a response for each tool call and start a new Pydantic AI agent run with the message history and new [`ToolReturnPart`s][pydantic_ai.messages.ToolReturnPart] corresponding to each deferred call, after which the run will continue.
+
+To enable an agent to call deferred tools, you create a [`DeferredToolset`][pydantic_ai.toolsets.deferred.DeferredToolset], pass it a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition], and provide it to the agent using one of the methods described above. Additionally, you need to add `DeferredToolCalls` to the `Agent`'s [output types](output.md#structured-output) so that the agent run's output type is correctly inferred. Finally, you should handle the possible `DeferredToolCalls` result by returning it to the upstream tool provider.
+
+If your agent can also be used in a context where no deferred tools are available, you will not want to include `DeferredToolCalls` in the `output_type` passed to the `Agent` constructor as you'd have to deal with that type everywhere you use the agent. Instead, you can pass the `toolsets` and `output_type` keyword arguments when you run the agent using [`agent.run()`][pydantic_ai.Agent.run], [`agent.run_sync()`][pydantic_ai.Agent.run_sync], [`agent.run_stream()`][pydantic_ai.Agent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. Note that while `toolsets` provided at this stage are additional to the toolsets provided to the constructor, the `output_type` overrides the one specified at construction time (for type inference reasons), so you'll need to include the original output types explicitly:
+
+<!-- TODO: Improve example -->
+```python {title="deferred_toolset.py"}
+
+deferred_toolset = DeferredToolset()
+
+agent = Agent(..., toolsets=[...], output_type=SomeThing)
+# ...
+result = agent.run_sync(toolsets=[deferred_toolset], output_type=[agent.output_type, DeferredToolCalls])
+```
+
 ## Third-Party Tools
 
 ### MCP Tools {#mcp-tools}
@@ -728,7 +897,7 @@ See the [MCP Client](./mcp/client.md) documentation for how to use MCP servers w
 
 ### LangChain Tools {#langchain-tools}
 
-If you'd like to use a tool from LangChain's [community tool library](https://python.langchain.com/docs/integrations/tools/) with Pydantic AI, you can use the `pydancic_ai.ext.langchain.tool_from_langchain` convenience method. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the LangChain tool, and up to the LangChain tool to raise an error if the arguments are invalid.
+If you'd like to use a tool from LangChain's [community tool library](https://python.langchain.com/docs/integrations/tools/) with Pydantic AI, you can use the [`tool_from_langchain`][pydantic_ai.ext.langchain.tool_from_langchain] convenience method. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the LangChain tool, and up to the LangChain tool to raise an error if the arguments are invalid.
 
 You will need to install the `langchain-community` package and any others required by the tool in question.
 
@@ -755,9 +924,11 @@ print(result.output)
 
 1. The release date of this game is the 30th of May 2025, which is after the knowledge cutoff for Gemini 2.0 (August 2024).
 
+<!-- TODO: LangChainToolset -->
+
 ### ACI.dev Tools {#aci-tools}
 
-If you'd like to use a tool from the [ACI.dev tool library](https://www.aci.dev/tools) with Pydantic AI, you can use the `pydancic_ai.ext.aci.tool_from_aci` convenience method. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the ACI tool, and up to the ACI tool to raise an error if the arguments are invalid.
+If you'd like to use a tool from the [ACI.dev tool library](https://www.aci.dev/tools) with Pydantic AI, you can use the [`tool_from_aci`][pydantic_ai.ext.aci.tool_from_aci] convenience method. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the ACI tool, and up to the ACI tool to raise an error if the arguments are invalid.
 
 You will need to install the `aci-sdk` package, set your ACI API key in the `ACI_API_KEY` environment variable, and pass your ACI "linked account owner ID" to the function.
 
@@ -785,3 +956,5 @@ print(result.output)
 ```
 
 1. The release date of this game is the 30th of May 2025, which is after the knowledge cutoff for Gemini 2.0 (August 2024).
+
+<!-- TODO: ACIToolset -->

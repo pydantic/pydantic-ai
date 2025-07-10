@@ -277,6 +277,8 @@ In the default Tool Output mode, the output JSON schema of each output type (or 
 
 If you'd like to change the name of the output tool, pass a custom description to aid the model, or turn on or off strict mode, you can wrap the type(s) in the [`ToolOutput`][pydantic_ai.output.ToolOutput] marker class and provide the appropriate arguments. Note that by default, the description is taken from the docstring specified on a Pydantic model or output function, so specifying it using the marker class is typically not necessary.
 
+<!-- TODO: prepare_output_tools -->
+
 ```python {title="tool_output.py"}
 from pydantic import BaseModel
 

@@ -24,6 +24,9 @@ PydanticAI comes with two ways to connect to MCP servers:
 
 Examples of both are shown below; [mcp-run-python](run-python.md) is used as the MCP server in both examples.
 
+<!-- TODO: Usage with an agent: toolsets argument and async enter -->
+<!-- TODO: max_retries -->
+
 ### SSE Client
 
 [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] connects over HTTP using the [HTTP + Server Sent Events transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) to a server.
@@ -312,6 +315,8 @@ When the model interacts with these servers, it will see the prefixed tool names
 Pydantic AI supports sampling as both a client and server. See the [server](./server.md#mcp-sampling) documentation for details on how to use sampling within a server.
 
 Sampling is automatically supported by Pydantic AI agents when they act as a client.
+
+<!-- TODO: Agent.set_mcp_sampling_model -->
 
 Let's say we have an MCP server that wants to use sampling (in this case to generate an SVG as per the tool arguments).
 

@@ -64,6 +64,7 @@ nav:
   - API Reference:
       - api/agent.md
       - api/tools.md
+      - api/toolsets.md
       - api/common_tools.md
       - api/output.md
       - api/result.md
