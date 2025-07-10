@@ -233,8 +233,10 @@ class MCPServer(ABC):
             return self._get_content(resource)
         elif isinstance(part, mcp_types.ResourceLink):
             resource_result: mcp_types.ReadResourceResult = await self._client.read_resource(part.uri)
-            return [self._get_content(resource) for resource in resource_result.contents]
-
+            if len(resource_result.contents) > 1:
+                return [self._get_content(resource) for resource in resource_result.contents]
+            else:
+                return self._get_content(resource_result.contents[0])
         else:
             assert_never(part)
 

@@ -8,6 +8,7 @@ from mcp.shared.context import LifespanContextT, RequestT
 from mcp.types import (
     BlobResourceContents,
     EmbeddedResource,
+    ResourceLink,
     SamplingMessage,
     TextContent,
     TextResourceContents,
@@ -50,10 +51,19 @@ async def get_image_resource() -> EmbeddedResource:
     return EmbeddedResource(
         type='resource',
         resource=BlobResourceContents(
-            uri='resource://kiwi.png',  # type: ignore
+            uri=AnyUrl('resource://kiwi.png'),
             blob=base64.b64encode(data).decode('utf-8'),
             mimeType='image/png',
         ),
+    )
+
+
+@mcp.tool()
+async def get_image_resource_1() -> ResourceLink:
+    return ResourceLink(
+        type='resource_link',
+        uri=AnyUrl(Path(__file__).parent.joinpath('assets/kiwi.png').absolute().as_uri()),
+        name='kiwi.png',
     )
 
 
@@ -71,13 +81,31 @@ async def get_audio_resource() -> EmbeddedResource:
 
 
 @mcp.tool()
+async def get_audio_resource_1() -> ResourceLink:
+    return ResourceLink(
+        type='resource_link',
+        uri=AnyUrl(Path(__file__).parent.joinpath('assets/marcelo.mp3').absolute().as_uri()),
+        name='marcelo.mp3',
+    )
+
+
+@mcp.tool()
 async def get_product_name() -> EmbeddedResource:
     return EmbeddedResource(
         type='resource',
         resource=TextResourceContents(
-            uri='resource://product_name.txt',  # type: ignore
+            uri=AnyUrl('resource://product_name.txt'),
             text='PydanticAI',
         ),
+    )
+
+
+@mcp.tool()
+async def get_product_name_1() -> ResourceLink:
+    return ResourceLink(
+        type='resource_link',
+        uri=AnyUrl(Path(__file__).parent.joinpath('assets/product_name.txt').absolute().as_uri()),
+        name='product_name.txt',
     )
 
 
