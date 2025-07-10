@@ -9,7 +9,7 @@ from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
-from . import AbstractToolset
+from ._abstract import AbstractToolset
 
 
 @dataclass

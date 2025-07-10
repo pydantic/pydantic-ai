@@ -734,13 +734,13 @@ The toolsets that will be available during an agent run can be specified in thre
 
 ### Function toolset
 
-As the name suggests, a [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset] makes locally defined functions available as tools.
+As the name suggests, a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] makes locally defined functions available as tools.
 
 Functions can be added as tools in three different ways:
 
-* via the [`@toolset.tool`][pydantic_ai.toolsets.function.FunctionToolset.tool] decorator
-* via the [`tools`][pydantic_ai.toolsets.function.FunctionToolset.__init__] keyword argument to the constructor which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
-* via the [`toolset.add_function`][pydantic_ai.toolsets.function.FunctionToolset.add_function] and [`toolset.add_tool`][pydantic_ai.toolsets.function.FunctionToolset.add_tool] methods which can take a plain function or an instance of [`Tool`][pydantic_ai.tools.Tool] respectively
+* via the [`@toolset.tool`][pydantic_ai.toolsets.FunctionToolset.tool] decorator
+* via the [`tools`][pydantic_ai.toolsets.FunctionToolset.__init__] keyword argument to the constructor which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
+* via the [`toolset.add_function`][pydantic_ai.toolsets.FunctionToolset.add_function] and [`toolset.add_tool`][pydantic_ai.toolsets.FunctionToolset.add_tool] methods which can take a plain function or an instance of [`Tool`][pydantic_ai.tools.Tool] respectively
 
 Functions registered in any of these ways can define an initial `ctx: RunContext` argument in order to receive the agent [context][pydantic_ai.tools.RunContext]. Dynamically registering new tools during a run to be available in future run steps is also supported when using the `toolset.add_function` and `toolset.add_tool` methods.
 
@@ -748,7 +748,7 @@ Functions registered in any of these ways can define an initial `ctx: RunContext
 from datetime import datetime
 
 from pydantic_ai import RunContext
-from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.toolsets import FunctionToolset
 
 
 def temperature_celsius(city: str) -> float:
@@ -766,7 +766,7 @@ def conditions(ctx: RunContext, city: str) -> str:
     if ctx.run_step % 2 == 0:
         return "It's sunny"
     else:
-        return "It's raining
+        return "It's raining"
 
 datetime_toolset = FunctionToolset()
 datetime_toolset.add_function(datetime.now)
@@ -784,12 +784,12 @@ Toolsets can be composed to dynamically filter which tools are available, modify
 
 #### Combining toolsets
 
-[`CombinedToolset`][pydantic_ai.toolsets.combined.CombinedToolset] takes a list of toolsets and lets them be used as one.
+[`CombinedToolset`][pydantic_ai.toolsets.CombinedToolset] takes a list of toolsets and lets them be used as one.
 
 ```python {title="combined_toolset.py" requires="function_toolset.py"}
 from function_toolset import weather_toolset, datetime_toolset
 
-from pydantic_ai.toolsets.combined import CombinedToolset
+from pydantic_ai.toolsets import CombinedToolset
 
 
 combined_toolset = CombinedToolset([weather_toolset, datetime_toolset])
@@ -799,12 +799,12 @@ print(combined_toolset.tool_names)
 
 #### Filtering tools
 
-[`FilteredToolset`][pydantic_ai.toolsets.filtered.FilteredToolset] filters available tools ahead of each step of the run based on a user-defined function that is passed each tool's [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] and the agent [run context][pydantic_ai.tools.RunContext].
+[`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset] filters available tools ahead of each step of the run based on a user-defined function that is passed each tool's [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] and the agent [run context][pydantic_ai.tools.RunContext].
 
 ```python {title="filtered_toolset.py" requires="combined_toolset.py"}
 from combined_toolset import combined_toolset
 
-from pydantic_ai.toolsets.filtered import FilteredToolset
+from pydantic_ai.toolsets import FilteredToolset
 
 filtered_toolset = FilteredToolset(combined_toolset, lambda ctx, tool_def: 'fahrenheit' not in tool_def.name)
 print(filtered_toolset.tool_names)
@@ -812,13 +812,13 @@ print(filtered_toolset.tool_names)
 ```
 #### Prefixing tools
 
-[`PrefixedToolset`][pydantic_ai.toolsets.prefixed.PrefixedToolset] adds a prefix to each tool name to prevent tool name conflicts between different toolsets.
+[`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset] adds a prefix to each tool name to prevent tool name conflicts between different toolsets.
 
 ```python {title="combined_toolset.py" requires="function_toolset.py"}
 from function_toolset import weather_toolset, datetime_toolset
 
-from pydantic_ai.toolsets.combined import CombinedToolset
-from pydantic_ai.toolsets.prefixed import PrefixedToolset
+from pydantic_ai.toolsets import CombinedToolset
+from pydantic_ai.toolsets import PrefixedToolset
 
 
 prefixed_weather_toolset = PrefixedToolset(weather_toolset, prefix='weather')
@@ -830,7 +830,7 @@ print(combined_toolset.tool_names)
 
 #### Preparing tool definitions
 
-[`PreparedToolset`][pydantic_ai.toolsets.prepared.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a function that takes all of the [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and the agent [run context][pydantic_ai.tools.RunContext] and lets you return a list of modified `ToolDefinition`s.
+[`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a function that takes all of the [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and the agent [run context][pydantic_ai.tools.RunContext] and lets you return a list of modified `ToolDefinition`s.
 
 This is similar to the [`prepare_tools`](#prepare-tools) argument to `Agent`.
 
@@ -838,19 +838,19 @@ This is similar to the [`prepare_tools`](#prepare-tools) argument to `Agent`.
 
 #### Wrapping a toolset
 
-[`WrapperToolset`][pydantic_ai.toolsets.function.WrapperToolset] wraps another toolset and delegates all responsibility to it.
+[`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] wraps another toolset and delegates all responsibility to it.
 
 This is a no-op by default, but enables some useful abilities:
 
 ##### Changing tool execution
 
-You can subclass `WrapperToolset` to change the wrapped toolset's tool execution behavior by overriding the [`_call_tool()`][pydantic_ai.toolsets.wrapper.WrapperToolset._call_tool] method.
+You can subclass `WrapperToolset` to change the wrapped toolset's tool execution behavior by overriding the [`_call_tool()`][pydantic_ai.toolsets.WrapperToolset._call_tool] method.
 
 <!-- TODO: Example -->
 
 ##### Changing available toolsets during a run
 
-You can change the [`wrapped`][pydantic_ai.toolsets.function.WrapperToolset.wrapped] property during an agent run to swap out one toolset for another starting at the next run step.
+You can change the [`wrapped`][pydantic_ai.toolsets.WrapperToolset.wrapped] property during an agent run to swap out one toolset for another starting at the next run step.
 
 To add or remove available toolsets, you can wrap a [`CombinedToolset`](#combining-toolsets) and replace it during the run with one that can include fewer, more, or entirely different toolsets.
 
@@ -858,9 +858,9 @@ To add or remove available toolsets, you can wrap a [`CombinedToolset`](#combini
 
 ### Custom toolset
 
-To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`BaseToolset`][pydantic_ai.toolsets.base.BaseToolset] or [`AsyncBaseToolset`][pydantic_ai.toolsets.base.AsyncBaseToolset], depending on whether listing the available tools can be done synchronously or requires an asynchronous network request. Tool calls themselves are always implemented asynchronously.
+To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`BaseToolset`][pydantic_ai.toolsets.BaseToolset] or [`AsyncBaseToolset`][pydantic_ai.toolsets.AsyncBaseToolset], depending on whether listing the available tools can be done synchronously or requires an asynchronous network request. Tool calls themselves are always implemented asynchronously.
 
-These abstract classes require you to implement [`tool_defs()`][pydantic_ai.toolsets.AbstractToolset.tool_defs] or [`async_tool_defs()`][pydantic_ai.toolsets.base.AsyncBaseToolset.async_tool_defs] respectively, as well as the [`_max_retries_for_tool()`][pydantic_ai.toolsets.AbstractToolset.tool_defs], [`_get_tool_args_validator()`][pydantic_ai.toolsets.base.AbstractToolset._get_tool_args_validator] and [`_call_tool()`][pydantic_ai.toolsets.base.AbstractToolset._call_tool] methods.
+These abstract classes require you to implement [`tool_defs()`][pydantic_ai.toolsets.AbstractToolset.tool_defs] or [`async_tool_defs()`][pydantic_ai.toolsets.AsyncBaseToolset.async_tool_defs] respectively, as well as the [`_max_retries_for_tool()`][pydantic_ai.toolsets.AbstractToolset.tool_defs], [`_get_tool_args_validator()`][pydantic_ai.toolsets.AbstractToolset._get_tool_args_validator] and [`_call_tool()`][pydantic_ai.toolsets.AbstractToolset._call_tool] methods.
 
 If you want to reuse a network connection or session across tool listings and calls, you can implement [`__aenter__()`][pydantic_ai.toolsets.AbstractToolset.__aenter__] and [`__aclose__()`][pydantic_ai.toolsets.AbstractToolset.__aclose__], which will be called when the agent that uses the toolset is itself entered using the [`async with agent`][pydantic_ai.Agent.__aenter__] context manager.
 
@@ -875,12 +875,14 @@ A deferred tool is one that will be executed not by Pydantic AI, but by the upst
 
 When the model calls a deferred tool, the agent run ends with a [`DeferredToolCalls`][pydantic_ai.output.DeferredToolCalls] object containing the deferred tool call names and arguments, which is expected to be returned to the upstream tool provider. This upstream service is then expected to generate a response for each tool call and start a new Pydantic AI agent run with the message history and new [`ToolReturnPart`s][pydantic_ai.messages.ToolReturnPart] corresponding to each deferred call, after which the run will continue.
 
-To enable an agent to call deferred tools, you create a [`DeferredToolset`][pydantic_ai.toolsets.deferred.DeferredToolset], pass it a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition], and provide it to the agent using one of the methods described above. Additionally, you need to add `DeferredToolCalls` to the `Agent`'s [output types](output.md#structured-output) so that the agent run's output type is correctly inferred. Finally, you should handle the possible `DeferredToolCalls` result by returning it to the upstream tool provider.
+To enable an agent to call deferred tools, you create a [`DeferredToolset`][pydantic_ai.toolsets.DeferredToolset], pass it a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition], and provide it to the agent using one of the methods described above. Additionally, you need to add `DeferredToolCalls` to the `Agent`'s [output types](output.md#structured-output) so that the agent run's output type is correctly inferred. Finally, you should handle the possible `DeferredToolCalls` result by returning it to the upstream tool provider.
 
 If your agent can also be used in a context where no deferred tools are available, you will not want to include `DeferredToolCalls` in the `output_type` passed to the `Agent` constructor as you'd have to deal with that type everywhere you use the agent. Instead, you can pass the `toolsets` and `output_type` keyword arguments when you run the agent using [`agent.run()`][pydantic_ai.Agent.run], [`agent.run_sync()`][pydantic_ai.Agent.run_sync], [`agent.run_stream()`][pydantic_ai.Agent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. Note that while `toolsets` provided at this stage are additional to the toolsets provided to the constructor, the `output_type` overrides the one specified at construction time (for type inference reasons), so you'll need to include the original output types explicitly:
 
 <!-- TODO: Improve example -->
 ```python {title="deferred_toolset.py"}
+from pydantic_ai import Agent
+from pydantic_ai.output import DeferredToolCalls
 
 deferred_toolset = DeferredToolset()
 

@@ -13,7 +13,7 @@ from .._run_context import AgentDepsT, RunContext
 from .._utils import get_async_lock
 from ..exceptions import UserError
 from ..tools import ToolDefinition
-from . import AbstractToolset
+from ._abstract import AbstractToolset
 from ._run import RunToolset
 
 

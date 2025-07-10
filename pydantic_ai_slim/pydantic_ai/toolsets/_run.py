@@ -13,7 +13,7 @@ from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from ..messages import ToolCallPart
 from ..tools import ToolDefinition
-from . import AbstractToolset
+from ._abstract import AbstractToolset
 from ._wrapper import AbstractWrapperToolset
 
 

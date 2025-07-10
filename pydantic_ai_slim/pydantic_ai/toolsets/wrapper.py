@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from .._run_context import AgentDepsT, RunContext
-from . import AbstractToolset
+from ._abstract import AbstractToolset
 from ._run import RunToolset
 from ._wrapper import AbstractWrapperToolset
 
