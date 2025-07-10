@@ -444,6 +444,10 @@ text_responses: dict[str, str | ToolCallPart] = {
     'What is a Ford Explorer?': '{"result": {"kind": "Vehicle", "data": {"name": "Ford Explorer", "wheels": 4}}}',
     'What is a MacBook?': '{"result": {"kind": "Device", "data": {"name": "MacBook", "kind": "laptop"}}}',
     'Write a creative story about space exploration': 'In the year 2157, Captain Maya Chen piloted her spacecraft through the vast expanse of the Andromeda Galaxy. As she discovered a planet with crystalline mountains that sang in harmony with the cosmic winds, she realized that space exploration was not just about finding new worlds, but about finding new ways to understand the universe and our place within it.',
+    'Create a person': ToolCallPart(
+        tool_name='final_result',
+        args={'name': 'John Doe', 'age': 30},
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
