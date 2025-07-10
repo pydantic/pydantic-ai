@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import pytest
 from pytest_mock import MockerFixture
 
-from ..conftest import try_import
+from ..conftest import BinaryContent, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.settings import ModelSettings
@@ -139,6 +139,31 @@ async def test_judge_input_output_mock(mocker: MockerFixture):
     assert '<Input>\nHello\n</Input>' in call_args[0]
     assert '<Output>\nHello world\n</Output>' in call_args[0]
     assert '<Rubric>\nOutput contains input\n</Rubric>' in call_args[0]
+
+
+async def test_judge_input_output_binary_content_mock(mocker: MockerFixture, image_content: BinaryContent):
+    """Test judge_input_output function with mocked agent."""
+    # Mock the agent run method
+    mock_result = mocker.MagicMock()
+    mock_result.output = GradingOutput(reason='Test passed', pass_=True, score=1.0)
+    mock_run = mocker.patch('pydantic_ai.Agent.run', return_value=mock_result)
+
+    # Test with string input and output
+    result = await judge_input_output(image_content, 'Hello world', 'Output contains input')
+    assert isinstance(result, GradingOutput)
+    assert result.reason == 'Test passed'
+    assert result.pass_ is True
+    assert result.score == 1.0
+
+    # Verify the agent was called with correct prompt
+    mock_run.assert_called_once()
+    raw_prompt = mock_run.call_args[0][0]
+
+    # 1) It must be a list
+    assert isinstance(raw_prompt, list), 'Expected prompt to be a list when passing binary'
+
+    # 2) The BinaryContent you passed in should be one of the elements
+    assert image_content in raw_prompt, 'Expected the exact BinaryContent instance to be in the prompt list'
 
 
 @pytest.mark.anyio
