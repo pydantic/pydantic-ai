@@ -6,10 +6,10 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 import pydantic_core
-from typing_extensions import TypeAlias, assert_never
+from typing_extensions import assert_never
 
 from .. import _utils
 from ..messages import (
@@ -46,54 +46,6 @@ class _WrappedToolOutput:
     value: Any | None
 
 
-@dataclass
-class TestToolCallPart:
-    """Represents a tool call in the test model."""
-
-    # NOTE: Avoid test discovery by pytest.
-    __test__ = False
-
-    call_tools: list[str] | Literal['all'] = 'all'
-
-
-@dataclass
-class TestTextPart:
-    """Represents a text part in the test model."""
-
-    # NOTE: Avoid test discovery by pytest.
-    __test__ = False
-
-    text: str
-
-
-@dataclass
-class TestThinkingPart:
-    """Represents a thinking part in the test model.
-
-    This is used to simulate the model thinking about the response.
-    """
-
-    # NOTE: Avoid test discovery by pytest.
-    __test__ = False
-
-    content: str = 'Thinking...'
-
-
-TestPart: TypeAlias = Union[TestTextPart, TestToolCallPart, TestThinkingPart]
-"""A part of the test model response."""
-
-
-@dataclass
-class TestNode:
-    """A node in the test model."""
-
-    # NOTE: Avoid test discovery by pytest.
-    __test__ = False
-
-    parts: list[TestPart]
-    id: str = field(default_factory=_utils.generate_tool_call_id)
-
-
 @dataclass(init=False)
 class TestModel(Model):
     """A model specifically for testing purposes.
@@ -112,10 +64,6 @@ class TestModel(Model):
 
     call_tools: list[str] | Literal['all'] = 'all'
     """List of tools to call. If `'all'`, all tools will be called."""
-    tool_call_deltas: set[str] = field(default_factory=set)
-    """A set of tool call names which should result in tool call part deltas."""
-    custom_response_nodes: list[TestNode] | None = None
-    """A list of nodes which defines a custom model response."""
     custom_output_text: str | None = None
     """If set, this text is returned as the final output."""
     custom_output_args: Any | None = None
@@ -175,10 +123,7 @@ class TestModel(Model):
 
         model_response = self._request(messages, model_settings, model_request_parameters)
         yield TestStreamedResponse(
-            _model_name=self._model_name,
-            _structured_response=model_response,
-            _messages=messages,
-            _tool_call_deltas=self.tool_call_deltas,
+            _model_name=self._model_name, _structured_response=model_response, _messages=messages
         )
 
     @property
@@ -217,65 +162,14 @@ class TestModel(Model):
 
             if k := output_tool.outer_typed_dict_key:
                 return _WrappedToolOutput({k: self.custom_output_args})
-
-            return _WrappedToolOutput(self.custom_output_args)
+            else:
+                return _WrappedToolOutput(self.custom_output_args)
         elif model_request_parameters.allow_text_output:
             return _WrappedTextOutput(None)
-        elif model_request_parameters.output_tools:  # pragma: no branch
+        elif model_request_parameters.output_tools:
             return _WrappedToolOutput(None)
         else:
-            return _WrappedTextOutput(None)  # pragma: no cover
-
-    def _node_response(
-        self,
-        messages: list[ModelMessage],
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse | None:
-        """Returns a ModelResponse based on configured nodes.
-
-        Args:
-            messages: The messages sent to the model.
-            model_request_parameters: The parameters for the model request.
-
-        Returns:
-            The response from the model, or `None` if no nodes configured or
-            all nodes have already been processed.
-        """
-        if not self.custom_response_nodes:
-            # No nodes configured, follow the default behaviour.
-            return None
-
-        # Pick up where we left off by counting the number of ModelResponse messages in the stream.
-        # This allows us to stream the response in chunks, simulating a real model response.
-        node: TestNode
-        count: int = sum(isinstance(m, ModelResponse) for m in messages)
-        if count < len(self.custom_response_nodes):
-            node: TestNode = self.custom_response_nodes[count]
-            assert node.parts, 'Node parts should not be empty.'
-
-            parts: list[ModelResponsePart] = []
-            part: TestPart
-            for part in node.parts:
-                if isinstance(part, TestTextPart):  # pragma: no branch
-                    assert model_request_parameters.allow_text_output, (  # pragma: no cover
-                        'Plain response not allowed, but `part` is a `TestText`.'
-                    )
-                    parts.append(TextPart(part.text))  # pragma: no cover
-                elif isinstance(part, TestToolCallPart):  # pragma: no branch
-                    tool_calls = self._get_tool_calls(model_request_parameters)
-                    if part.call_tools == 'all':  # pragma: no branch
-                        parts.extend(
-                            ToolCallPart(name, self.gen_tool_args(args)) for name, args in tool_calls
-                        )  # pragma: no cover
-                    else:
-                        parts.extend(
-                            ToolCallPart(name, self.gen_tool_args(args))
-                            for name, args in tool_calls
-                            if name in part.call_tools
-                        )
-                elif isinstance(part, TestThinkingPart):  # pragma: no branch
-                    parts.append(ThinkingPart(content=part.content))
-            return ModelResponse(vendor_id=node.id, parts=parts, model_name=self._model_name)
+            return _WrappedTextOutput(None)
 
     def _request(
         self,
@@ -283,18 +177,17 @@ class TestModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        if (response := self._node_response(messages, model_request_parameters)) is not None:
-            return response
-
         tool_calls = self._get_tool_calls(model_request_parameters)
+        output_wrapper = self._get_output(model_request_parameters)
+        output_tools = model_request_parameters.output_tools
+
+        # if there are tools, the first thing we want to do is call all of them
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(
                 parts=[ToolCallPart(name, self.gen_tool_args(args)) for name, args in tool_calls],
                 model_name=self._model_name,
             )
 
-        output_wrapper = self._get_output(model_request_parameters)
-        output_tools = model_request_parameters.output_tools
         if messages:  # pragma: no branch
             last_message = messages[-1]
             assert isinstance(last_message, ModelRequest), 'Expected last message to be a `ModelRequest`.'
@@ -360,7 +253,6 @@ class TestStreamedResponse(StreamedResponse):
     _model_name: str
     _structured_response: ModelResponse
     _messages: InitVar[Iterable[ModelMessage]]
-    _tool_call_deltas: set[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
@@ -382,47 +274,12 @@ class TestStreamedResponse(StreamedResponse):
                     self._usage += _get_string_usage(word)
                     yield self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
             elif isinstance(part, ToolCallPart):
-                if part.tool_name in self._tool_call_deltas:
-                    # Start with empty tool call delta.
-                    event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=i, tool_name=part.tool_name, args='', tool_call_id=part.tool_call_id
-                    )
-                    if event is not None:  # pragma: no branch
-                        yield event
-
-                    # Stream the args as JSON string in chunks.
-                    args_json = pydantic_core.to_json(part.args).decode()
-                    *chunks, last_chunk = args_json.split(',') if ',' in args_json else [args_json]
-                    chunks = [f'{chunk},' for chunk in chunks] if chunks else []
-                    if last_chunk:  # pragma: no branch
-                        chunks.append(last_chunk)
-
-                    for chunk in chunks:
-                        event = self._parts_manager.handle_tool_call_delta(
-                            vendor_part_id=i, tool_name=None, args=chunk, tool_call_id=part.tool_call_id
-                        )
-                        if event is not None:  # pragma: no branch
-                            yield event
-                else:
-                    yield self._parts_manager.handle_tool_call_part(
-                        vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
-                    )
-            elif isinstance(part, ThinkingPart):
-                content_json = pydantic_core.to_json(part.content).decode()
-                *chunks, last_chunk = content_json.split(' ') if ' ' in content_json else [content_json]
-                if len(chunks) == 0:
-                    # Single word thinking delta.
-                    yield self._parts_manager.handle_thinking_delta(vendor_part_id=i, content=content_json)
-                else:
-                    # Start with empty thinking delta.
-                    yield self._parts_manager.handle_thinking_delta(vendor_part_id=i, content='')
-
-                    # Stream the content as JSON string in chunks.
-                    chunks = [f'{chunk} ' for chunk in chunks] if chunks else []
-                    chunks.append(last_chunk)
-
-                    for chunk in chunks:
-                        yield self._parts_manager.handle_thinking_delta(vendor_part_id=i, content=chunk)
+                yield self._parts_manager.handle_tool_call_part(
+                    vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
+                )
+            elif isinstance(part, ThinkingPart):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since we don't generate ThinkingPart on TestModel.
+                assert False, "This should be unreachable — we don't generate ThinkingPart on TestModel."
             else:
                 assert_never(part)
 

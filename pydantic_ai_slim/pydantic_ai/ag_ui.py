@@ -535,7 +535,7 @@ def _convert_history(messages: list[Message]) -> _History:
             result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
         elif isinstance(msg, ToolMessage):
             tool_name = tool_calls.get(msg.tool_call_id)
-            if tool_name is None:
+            if tool_name is None:  # pragma: no cover
                 raise ToolCallNotFoundError(tool_call_id=msg.tool_call_id)
 
             result.append(
@@ -587,7 +587,7 @@ class _RunError(Exception):
     message: str
     code: str
 
-    def __str__(self) -> str:
+    def __str__(self) -> str:  # pragma: no cover
         return self.message
 
 
@@ -620,7 +620,7 @@ class ToolCallNotFoundError(_RunError, ValueError):
 
     def __init__(self, tool_call_id: str) -> None:
         """Initialize the exception with the tool call ID."""
-        super().__init__(
+        super().__init__(  # pragma: no cover
             message=f'Tool call with ID {tool_call_id} not found in the history.',
             code='tool_call_not_found',
         )
