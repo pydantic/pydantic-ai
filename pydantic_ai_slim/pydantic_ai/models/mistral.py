@@ -138,14 +138,14 @@ class MistralModel(Model):
             json_mode_schema_prompt: The prompt to show when the model expects a JSON object as input.
             settings: Model-specific settings that will be used as defaults for this model.
         """
-        super().__init__(settings=settings)
         self._model_name = model_name
         self.json_mode_schema_prompt = json_mode_schema_prompt
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:

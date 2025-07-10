@@ -163,7 +163,6 @@ class GoogleModel(Model):
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: The model settings to use. Defaults to None.
         """
-        super().__init__(settings=settings)
         self._model_name = model_name
 
         if isinstance(provider, str):
@@ -172,7 +171,8 @@ class GoogleModel(Model):
         self._provider = provider
         self._system = provider.name
         self.client = provider.client
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:

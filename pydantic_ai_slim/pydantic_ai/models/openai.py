@@ -209,15 +209,15 @@ class OpenAIModel(Model):
                 In the future, this may be inferred from the model name.
             settings: Default model settings for this model instance.
         """
-        super().__init__(settings=settings)
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
-        self._profile = profile or provider.model_profile
 
         self.system_prompt_role = system_prompt_role
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
@@ -611,13 +611,13 @@ class OpenAIResponsesModel(Model):
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Default model settings for this model instance.
         """
-        super().__init__(settings=settings)
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def model_name(self) -> OpenAIModelName:

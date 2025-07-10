@@ -24,6 +24,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import Usage
@@ -45,7 +46,7 @@ class _WrappedToolOutput:
     value: Any | None
 
 
-@dataclass
+@dataclass(init=False)
 class TestModel(Model):
     """A model specifically for testing purposes.
 
@@ -86,9 +87,10 @@ class TestModel(Model):
         custom_output_text: str | None = None,
         custom_output_args: Any | None = None,
         seed: int = 0,
+        profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
-        """Initialize TestModel with optional settings."""
+        """Initialize TestModel with optional settings and profile."""
         self.call_tools = call_tools
         self.custom_output_text = custom_output_text
         self.custom_output_args = custom_output_args
@@ -96,7 +98,7 @@ class TestModel(Model):
         self.last_model_request_parameters = None
         self._model_name = 'test'
         self._system = 'test'
-        super().__init__(settings=settings)
+        super().__init__(settings=settings, profile=profile)
 
     async def request(
         self,

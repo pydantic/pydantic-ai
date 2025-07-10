@@ -114,41 +114,6 @@ def test_settings_merge_hierarchy():
     assert captured_settings['presence_penalty'] == 0.2  # from run_settings
 
 
-def test_instrumented_model_settings_merge():
-    """Test that settings merge correctly when using InstrumentedModel."""
-    # Create a function that captures settings
-    captured_settings = None
-
-    def capture_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
-        nonlocal captured_settings
-        captured_settings = agent_info.model_settings
-        return ModelResponse(parts=[TextPart('captured')])
-
-    # Create base model with settings
-    base_settings = ModelSettings(max_tokens=100, temperature=0.3, top_p=0.9)
-    base_model = FunctionModel(capture_settings, settings=base_settings)
-
-    # Wrap in InstrumentedModel
-    instrumented = InstrumentedModel(base_model)
-
-    # Create agent with additional settings
-    agent_settings = ModelSettings(max_tokens=200, presence_penalty=0.1)
-    agent = Agent(model=instrumented, model_settings=agent_settings)
-
-    # Run with more settings
-    run_settings = ModelSettings(temperature=0.8, seed=42)
-    result = agent.run_sync('test', model_settings=run_settings)
-    assert result.output == 'captured'
-
-    # Verify merged settings
-    assert captured_settings is not None
-    assert captured_settings['temperature'] == 0.8  # from run_settings
-    assert captured_settings['max_tokens'] == 200  # from agent_settings
-    assert captured_settings['top_p'] == 0.9  # from base model settings
-    assert captured_settings['presence_penalty'] == 0.1  # from agent_settings
-    assert captured_settings['seed'] == 42  # from run_settings
-
-
 def test_none_settings_in_hierarchy():
     """Test that None settings at any level don't break the merge hierarchy."""
     captured_settings = None

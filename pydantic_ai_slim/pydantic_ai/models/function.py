@@ -103,14 +103,15 @@ class FunctionModel(Model):
         """
         if function is None and stream_function is None:
             raise TypeError('Either `function` or `stream_function` must be provided')
-        super().__init__(settings=settings)
+
         self.function = function
         self.stream_function = stream_function
 
         function_name = self.function.__name__ if self.function is not None else ''
         stream_function_name = self.stream_function.__name__ if self.stream_function is not None else ''
         self._model_name = model_name or f'function:{function_name}:{stream_function_name}'
-        self._profile = profile
+
+        super().__init__(settings=settings, profile=profile)
 
     async def request(
         self,

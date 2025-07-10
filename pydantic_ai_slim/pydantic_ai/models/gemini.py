@@ -145,7 +145,6 @@ class GeminiModel(Model):
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Default model settings for this model instance.
         """
-        super().__init__(settings=settings)
         self._model_name = model_name
         self._provider = provider
 
@@ -154,7 +153,8 @@ class GeminiModel(Model):
         self._system = provider.name
         self.client = provider.client
         self._url = str(self.client.base_url)
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
