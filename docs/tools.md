@@ -895,7 +895,7 @@ result = agent.run_sync(toolsets=[deferred_toolset], output_type=[agent.output_t
 
 ### MCP Tools {#mcp-tools}
 
-See the [MCP Client](./mcp/client.md) documentation for how to use MCP servers with Pydantic AI.
+See the [MCP Client](./mcp/client.md) documentation for how to use MCP servers with Pydantic AI. To give you a hint, an [`MCPServer`](pydantic_ai.mcp.MCPServer) is a special type of [toolset](#toolsets)!
 
 ### LangChain Tools {#langchain-tools}
 
@@ -910,6 +910,7 @@ from langchain_community.tools import DuckDuckGoSearchRun
 
 from pydantic_ai import Agent
 from pydantic_ai.ext.langchain import tool_from_langchain
+
 
 search = DuckDuckGoSearchRun()
 search_tool = tool_from_langchain(search)
@@ -926,7 +927,21 @@ print(result.output)
 
 1. The release date of this game is the 30th of May 2025, which is after the knowledge cutoff for Gemini 2.0 (August 2024).
 
-<!-- TODO: LangChainToolset -->
+If you'd like to use multiple LangChain tools or a LangChain [toolkit](https://python.langchain.com/docs/concepts/tools/#toolkits), you can use the [`LangChainToolset`][pydantic_ai.ext.langchain.LangChainToolset] which takes a list of LangChain tools:
+
+```python {test="skip"}
+from langchain_community.agent_toolkits import SlackToolkit
+
+from pydantic_ai import Agent
+from pydantic_ai.ext.langchain import LangChainToolset
+
+
+toolkit = SlackToolkit()
+toolset = LangChainToolset(toolkit.get_tools())
+
+agent = Agent('openai:gpt-4o', toolsets=[toolset])
+# ...
+```
 
 ### ACI.dev Tools {#aci-tools}
 
@@ -942,14 +957,15 @@ import os
 from pydantic_ai import Agent
 from pydantic_ai.ext.aci import tool_from_aci
 
+
 tavily_search = tool_from_aci(
     'TAVILY__SEARCH',
-    linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID')
+    linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
 )
 
 agent = Agent(
     'google-gla:gemini-2.0-flash',
-    tools=[tavily_search]
+    tools=[tavily_search],
 )
 
 result = agent.run_sync('What is the release date of Elden Ring Nightreign?')  # (1)!
@@ -959,4 +975,22 @@ print(result.output)
 
 1. The release date of this game is the 30th of May 2025, which is after the knowledge cutoff for Gemini 2.0 (August 2024).
 
-<!-- TODO: ACIToolset -->
+If you'd like to use multiple ACI.dev tools, you can use the [`ACIToolset`][pydantic_ai.ext.aci.ACIToolset] which takes a list of ACI tool names as well as the `linked_account_owner_id`:
+
+```python {test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.ext.aci import ACIToolset
+
+
+toolset = ACIToolset(
+    [
+        'OPEN_WEATHER_MAP__CURRENT_WEATHER',
+        'OPEN_WEATHER_MAP__FORECAST',
+    ],
+    linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
+)
+
+agent = Agent('openai:gpt-4o', toolsets=[toolset])
+```
