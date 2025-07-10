@@ -13,7 +13,7 @@ bump = true
 [project]
 name = "pydantic-ai-examples"
 dynamic = ["version", "dependencies"]
-description = "Examples of how to use PydanticAI and what it can do."
+description = "Examples of how to use Pydantic AI and what it can do."
 authors = [{ name = "Samuel Colvin", email = "samuel@pydantic.dev" }]
 license = "MIT"
 readme = "README.md"
