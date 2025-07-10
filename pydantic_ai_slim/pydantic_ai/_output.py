@@ -577,6 +577,9 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
                 json_schema.pop('title')
 
+        if name is None and (json_schema_title := json_schema.get('title', None)):
+            name = json_schema_title
+
         if json_schema_description := json_schema.pop('description', None):
             if description is None:
                 description = json_schema_description
@@ -867,23 +870,23 @@ class OutputToolset(BaseToolset[AgentDepsT]):
 
                 output = output.output
 
-            if name is None:
-                name = default_name
-                if multiple:
-                    name += f'_{output.__name__}'
-
-            i = 1
-            original_name = name
-            while name in processors:
-                i += 1
-                name = f'{original_name}_{i}'
-
             description = description or default_description
             if strict is None:
                 strict = default_strict
 
             processor = ObjectOutputProcessor(output=output, description=description, strict=strict)
             object_def = processor.object_def
+
+            if name is None:
+                name = default_name
+                if multiple:
+                    name += f'_{object_def.name}'
+
+            i = 1
+            original_name = name
+            while name in processors:
+                i += 1
+                name = f'{original_name}_{i}'
 
             description = object_def.description
             if not description:

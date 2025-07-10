@@ -466,25 +466,42 @@ PydanticAI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSetting
 This structure allows you to configure common parameters that influence the model's behavior, such as `temperature`, `max_tokens`,
 `timeout`, and more.
 
-There are two ways to apply these settings:
+There are three ways to apply these settings, with a clear precedence order:
 
-1. Passing to `run{_sync,_stream}` functions via the `model_settings` argument. This allows for fine-tuning on a per-request basis.
-2. Setting during [`Agent`][pydantic_ai.agent.Agent] initialization via the `model_settings` argument. These settings will be applied by default to all subsequent run calls using said agent. However, `model_settings` provided during a specific run call will override the agent's default settings.
+1. **Model-level defaults** - Set when creating a model instance via the `settings` parameter. These serve as the base defaults for that model.
+2. **Agent-level defaults** - Set during [`Agent`][pydantic_ai.agent.Agent] initialization via the `model_settings` argument. These are merged with model defaults, with agent settings taking precedence.
+3. **Run-time overrides** - Passed to `run{_sync,_stream}` functions via the `model_settings` argument. These have the highest priority and are merged with the combined agent and model defaults.
 
 For example, if you'd like to set the `temperature` setting to `0.0` to ensure less random behavior,
 you can do the following:
 
 ```py
 from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.settings import ModelSettings
 
-agent = Agent('openai:gpt-4o')
+# 1. Model-level defaults
+model = OpenAIModel(
+    'gpt-4o',
+    settings=ModelSettings(temperature=0.8, max_tokens=500)  # Base defaults
+)
 
+# 2. Agent-level defaults (overrides model defaults by merging)
+agent = Agent(model, model_settings=ModelSettings(temperature=0.5))
+
+# 3. Run-time overrides (highest priority)
 result_sync = agent.run_sync(
-    'What is the capital of Italy?', model_settings={'temperature': 0.0}
+    'What is the capital of Italy?',
+    model_settings=ModelSettings(temperature=0.0)  # Final temperature: 0.0
 )
 print(result_sync.output)
 #> Rome
 ```
+
+The final request uses `temperature=0.0` (run-time), `max_tokens=500` (from model), demonstrating how settings merge with run-time taking precedence.
+
+!!! note "Model Settings Support"
+    Model-level settings are supported by all concrete model implementations (OpenAI, Anthropic, Google, etc.). Wrapper models like `FallbackModel`, `WrapperModel`, and `InstrumentedModel` don't have their own settings - they use the settings of their underlying models.
 
 ### Model specific settings
 

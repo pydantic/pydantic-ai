@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import json
 import sys
 from dataclasses import dataclass
@@ -8,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from dirty_equals import HasRepr
+from dirty_equals import HasRepr, IsNumber
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
@@ -178,21 +177,21 @@ async def test_add_evaluator(
     }
 
 
-async def test_evaluate(
+async def test_evaluate_async(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
 ):
     """Test evaluating a dataset."""
     example_dataset.add_evaluator(simple_evaluator())
 
-    async def mock_task(inputs: TaskInput) -> TaskOutput:
+    async def mock_async_task(inputs: TaskInput) -> TaskOutput:
         if inputs.query == 'What is 2+2?':
             return TaskOutput(answer='4')
         elif inputs.query == 'What is the capital of France?':
             return TaskOutput(answer='Paris')
         return TaskOutput(answer='Unknown')  # pragma: no cover
 
-    report = await example_dataset.evaluate(mock_task)
+    report = await example_dataset.evaluate(mock_async_task)
 
     assert report is not None
     assert len(report.cases) == 2
@@ -225,6 +224,58 @@ async def test_evaluate(
             'span_id': '0000000000000003',
             'task_duration': 1.0,
             'total_duration': 6.0,
+            'trace_id': '00000000000000000000000000000001',
+        }
+    )
+
+
+async def test_evaluate_sync(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+):
+    """Test evaluating a dataset."""
+    example_dataset.add_evaluator(simple_evaluator())
+
+    def mock_sync_task(inputs: TaskInput) -> TaskOutput:
+        if inputs.query == 'What is 2+2?':
+            return TaskOutput(answer='4')
+        elif inputs.query == 'What is the capital of France?':
+            return TaskOutput(answer='Paris')
+        return TaskOutput(answer='Unknown')  # pragma: no cover
+
+    report = await example_dataset.evaluate(mock_sync_task)
+
+    assert report is not None
+    assert len(report.cases) == 2
+    assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
+        {
+            'assertions': {
+                'correct': {
+                    'name': 'correct',
+                    'reason': None,
+                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                    'value': True,
+                }
+            },
+            'attributes': {},
+            'expected_output': {'answer': '4', 'confidence': 1.0},
+            'inputs': {'query': 'What is 2+2?'},
+            'labels': {},
+            'metadata': {'category': 'general', 'difficulty': 'easy'},
+            'metrics': {},
+            'name': 'case1',
+            'output': {'answer': '4', 'confidence': 1.0},
+            'scores': {
+                'confidence': {
+                    'name': 'confidence',
+                    'reason': None,
+                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                    'value': 1.0,
+                }
+            },
+            'span_id': '0000000000000003',
+            'task_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
+            'total_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
             'trace_id': '00000000000000000000000000000001',
         }
     )
@@ -828,8 +879,8 @@ async def test_dataset_evaluate_with_sync_task(example_dataset: Dataset[TaskInpu
     def sync_task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer=inputs.query.upper())
 
-    report = await example_dataset.evaluate(lambda x: asyncio.sleep(0, sync_task(x)))
-    assert report.name == '<lambda>'
+    report = await example_dataset.evaluate(sync_task)
+    assert report.name == 'sync_task'
     assert len(report.cases) == 2
 
 

@@ -120,6 +120,7 @@ class GroqModel(Model):
         *,
         provider: Literal['groq'] | Provider[AsyncGroq] = 'groq',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Groq model.
 
@@ -130,13 +131,15 @@ class GroqModel(Model):
                 'groq' or an instance of `Provider[AsyncGroq]`. If not provided, a new provider will be
                 created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:

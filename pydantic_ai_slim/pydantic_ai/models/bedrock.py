@@ -202,6 +202,7 @@ class BedrockConverseModel(Model):
         *,
         provider: Literal['bedrock'] | Provider[BaseClient] = 'bedrock',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Bedrock model.
 
@@ -213,13 +214,15 @@ class BedrockConverseModel(Model):
                 'bedrock' or an instance of `Provider[BaseClient]`. If not provided, a new provider will be
                 created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = cast('BedrockRuntimeClient', provider.client)
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
