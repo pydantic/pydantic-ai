@@ -182,15 +182,15 @@ GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
 GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
 
 
-@dataclass
+@dataclass(init=False)
 class InstrumentedModel(WrapperModel):
     """Model which wraps another model so that requests are instrumented with OpenTelemetry.
 
     See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
     """
 
-    settings: InstrumentationSettings
-    """Configuration for instrumenting requests."""
+    instrumentation_settings: InstrumentationSettings
+    """Instrumentation settings for this model."""
 
     def __init__(
         self,
@@ -198,7 +198,7 @@ class InstrumentedModel(WrapperModel):
         options: InstrumentationSettings | None = None,
     ) -> None:
         super().__init__(wrapped)
-        self.settings = options or InstrumentationSettings()
+        self.instrumentation_settings = options or InstrumentationSettings()
 
     async def request(
         self,
@@ -260,7 +260,7 @@ class InstrumentedModel(WrapperModel):
 
         record_metrics: Callable[[], None] | None = None
         try:
-            with self.settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
+            with self.instrumentation_settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
 
                 def finish(response: ModelResponse):
                     # FallbackModel updates these span attributes.
@@ -278,12 +278,12 @@ class InstrumentedModel(WrapperModel):
                             'gen_ai.response.model': response_model,
                         }
                         if response.usage.request_tokens:  # pragma: no branch
-                            self.settings.tokens_histogram.record(
+                            self.instrumentation_settings.tokens_histogram.record(
                                 response.usage.request_tokens,
                                 {**metric_attributes, 'gen_ai.token.type': 'input'},
                             )
                         if response.usage.response_tokens:  # pragma: no branch
-                            self.settings.tokens_histogram.record(
+                            self.instrumentation_settings.tokens_histogram.record(
                                 response.usage.response_tokens,
                                 {**metric_attributes, 'gen_ai.token.type': 'output'},
                             )
@@ -294,8 +294,8 @@ class InstrumentedModel(WrapperModel):
                     if not span.is_recording():
                         return
 
-                    events = self.settings.messages_to_otel_events(messages)
-                    for event in self.settings.messages_to_otel_events([response]):
+                    events = self.instrumentation_settings.messages_to_otel_events(messages)
+                    for event in self.instrumentation_settings.messages_to_otel_events([response]):
                         events.append(
                             Event(
                                 'gen_ai.choice',
@@ -328,9 +328,9 @@ class InstrumentedModel(WrapperModel):
                 record_metrics()
 
     def _emit_events(self, span: Span, events: list[Event]) -> None:
-        if self.settings.event_mode == 'logs':
+        if self.instrumentation_settings.event_mode == 'logs':
             for event in events:
-                self.settings.event_logger.emit(event)
+                self.instrumentation_settings.event_logger.emit(event)
         else:
             attr_name = 'events'
             span.set_attributes(

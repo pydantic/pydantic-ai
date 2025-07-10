@@ -133,6 +133,7 @@ class GeminiModel(Model):
         *,
         provider: Literal['google-gla', 'google-vertex'] | Provider[httpx.AsyncClient] = 'google-gla',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Gemini model.
 
@@ -142,6 +143,7 @@ class GeminiModel(Model):
                 'google-gla' or 'google-vertex' or an instance of `Provider[httpx.AsyncClient]`.
                 If not provided, a new provider will be created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Default model settings for this model instance.
         """
         self._model_name = model_name
         self._provider = provider
@@ -151,7 +153,8 @@ class GeminiModel(Model):
         self._system = provider.name
         self.client = provider.client
         self._url = str(self.client.base_url)
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
@@ -921,10 +924,10 @@ def _ensure_decodeable(content: bytearray) -> bytearray:
 
     This is a temporary workaround until https://github.com/pydantic/pydantic-core/issues/1633 is resolved
     """
-    while True:
-        try:
-            content.decode()
-        except UnicodeDecodeError:
-            content = content[:-1]  # this will definitely succeed before we run out of bytes
-        else:
-            return content
+    try:
+        content.decode()
+    except UnicodeDecodeError as e:
+        # e.start marks the start of the invalid decoded bytes, so cut up to before the first invalid byte
+        return content[: e.start]
+    else:
+        return content

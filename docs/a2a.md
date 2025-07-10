@@ -32,7 +32,7 @@ The library is designed to be used with any agentic framework, and is **not excl
 Given the nature of the A2A protocol, it's important to understand the design before using it, as a developer
 you'll need to provide some components:
 
-- [`Storage`][fasta2a.Storage]: to save and load tasks
+- [`Storage`][fasta2a.Storage]: to save and load tasks, as well as store context for conversations
 - [`Broker`][fasta2a.Broker]: to schedule tasks
 - [`Worker`][fasta2a.Worker]: to execute tasks
 
@@ -54,6 +54,28 @@ flowchart TB
 ```
 
 FastA2A allows you to bring your own [`Storage`][fasta2a.Storage], [`Broker`][fasta2a.Broker] and [`Worker`][fasta2a.Worker].
+
+#### Understanding Tasks and Context
+
+In the A2A protocol:
+
+- **Task**: Represents one complete execution of an agent. When a client sends a message to the agent, a new task is created. The agent runs until completion (or failure), and this entire execution is considered one task. The final output is stored as a task artifact.
+
+- **Context**: Represents a conversation thread that can span multiple tasks. The A2A protocol uses a `context_id` to maintain conversation continuity:
+  - When a new message is sent without a `context_id`, the server generates a new one
+  - Subsequent messages can include the same `context_id` to continue the conversation
+  - All tasks sharing the same `context_id` have access to the complete message history
+
+#### Storage Architecture
+
+The [`Storage`][fasta2a.Storage] component serves two purposes:
+
+1. **Task Storage**: Stores tasks in A2A protocol format, including their status, artifacts, and message history
+2. **Context Storage**: Stores conversation context in a format optimized for the specific agent implementation
+
+This design allows for agents to store rich internal state (e.g., tool calls, reasoning traces) as well as store task-specific A2A-formatted messages and artifacts.
+
+For example, a PydanticAI agent might store its complete internal message format (including tool calls and responses) in the context storage, while storing only the A2A-compliant messages in the task history.
 
 
 ### Installation
@@ -94,3 +116,12 @@ uvicorn agent_to_a2a:app --host 0.0.0.0 --port 8000
 ```
 
 Since the goal of `to_a2a` is to be a convenience method, it accepts the same arguments as the [`FastA2A`][fasta2a.FastA2A] constructor.
+
+When using `to_a2a()`, PydanticAI automatically:
+
+- Stores the complete conversation history (including tool calls and responses) in the context storage
+- Ensures that subsequent messages with the same `context_id` have access to the full conversation history
+- Persists agent results as A2A artifacts:
+  - String results become `TextPart` artifacts and also appear in the message history
+  - Structured data (Pydantic models, dataclasses, tuples, etc.) become `DataPart` artifacts with the data wrapped as `{"result": <your_data>}`
+  - Artifacts include metadata with type information and JSON schema when available

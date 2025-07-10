@@ -41,7 +41,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import ToolOutput
+from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
@@ -1261,6 +1261,77 @@ def test_output_type_multiple_custom_tools():
                     'title': 'Weather',
                     'type': 'object',
                 },
+            ),
+        ]
+    )
+
+
+def test_output_type_structured_dict():
+    PersonDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'age': {'type': 'integer'},
+            },
+            'required': ['name', 'age'],
+        },
+        name='Person',
+        description='A person',
+    )
+    AnimalDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'species': {'type': 'string'},
+            },
+            'required': ['name', 'species'],
+        },
+        name='Animal',
+        description='An animal',
+    )
+
+    output_tools = None
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        nonlocal output_tools
+        output_tools = info.output_tools
+
+        args_json = '{"name": "John Doe", "age": 30}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        output_type=[PersonDict, AnimalDict],
+    )
+
+    result = agent.run_sync('Generate a person')
+
+    assert result.output == snapshot({'name': 'John Doe', 'age': 30})
+    assert output_tools == snapshot(
+        [
+            ToolDefinition(
+                name='final_result_Person',
+                parameters_json_schema={
+                    'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+                    'required': ['name', 'age'],
+                    'title': 'Person',
+                    'type': 'object',
+                },
+                description='A person',
+            ),
+            ToolDefinition(
+                name='final_result_Animal',
+                parameters_json_schema={
+                    'properties': {'name': {'type': 'string'}, 'species': {'type': 'string'}},
+                    'required': ['name', 'species'],
+                    'title': 'Animal',
+                    'type': 'object',
+                },
+                description='An animal',
             ),
         ]
     )

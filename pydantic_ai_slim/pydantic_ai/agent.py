@@ -57,14 +57,14 @@ ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
 
 if TYPE_CHECKING:
+    from fasta2a.applications import FastA2A
+    from fasta2a.broker import Broker
+    from fasta2a.schema import AgentProvider, Skill
+    from fasta2a.storage import Storage
     from starlette.middleware import Middleware
     from starlette.routing import Route
     from starlette.types import ExceptionHandler, Lifespan
 
-    from fasta2a.applications import FastA2A
-    from fasta2a.broker import Broker
-    from fasta2a.schema import Provider, Skill
-    from fasta2a.storage import Storage
     from pydantic_ai.mcp import MCPServer
 
 
@@ -500,7 +500,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent] | None,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -516,7 +516,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent] | None,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -533,7 +533,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @deprecated('`result_type` is deprecated, use `output_type` instead.')
     def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent] | None,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         result_type: type[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -674,12 +674,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
         output_validators = cast(list[_output.OutputValidator[AgentDepsT, RunOutputDataT]], self._output_validators)
 
-        model_settings = merge_model_settings(self.model_settings, model_settings)
+        # Merge model settings in order of precedence: run > agent > model
+        merged_settings = merge_model_settings(model_used.settings, self.model_settings)
+        model_settings = merge_model_settings(merged_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
 
         if isinstance(model_used, InstrumentedModel):
-            instrumentation_settings = model_used.settings
-            tracer = model_used.settings.tracer
+            instrumentation_settings = model_used.instrumentation_settings
+            tracer = model_used.instrumentation_settings.tracer
         else:
             instrumentation_settings = None
             tracer = NoOpTracer()
@@ -1764,7 +1766,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         url: str = 'http://localhost:8000',
         version: str = '1.0.0',
         description: str | None = None,
-        provider: Provider | None = None,
+        provider: AgentProvider | None = None,
         skills: list[Skill] | None = None,
         # Starlette
         debug: bool = False,

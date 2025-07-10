@@ -195,6 +195,7 @@ class OpenAIModel(Model):
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize an OpenAI model.
 
@@ -206,15 +207,17 @@ class OpenAIModel(Model):
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             system_prompt_role: The role to use for the system prompt message. If not provided, defaults to `'system'`.
                 In the future, this may be inferred from the model name.
+            settings: Default model settings for this model instance.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
-        self._profile = profile or provider.model_profile
 
         self.system_prompt_role = system_prompt_role
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
@@ -598,6 +601,7 @@ class OpenAIResponsesModel(Model):
         provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together']
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize an OpenAI Responses model.
 
@@ -605,13 +609,15 @@ class OpenAIResponsesModel(Model):
             model_name: The name of the OpenAI model to use.
             provider: The provider to use. Defaults to `'openai'`.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Default model settings for this model instance.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -987,6 +993,12 @@ class OpenAIStreamedResponse(StreamedResponse):
             content = choice.delta.content
             if content is not None:
                 yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=content)
+
+            # Handle reasoning part of the response, present in DeepSeek models
+            if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id='reasoning_content', content=reasoning_content
+                )
 
             for dtc in choice.delta.tool_calls or []:
                 maybe_event = self._parts_manager.handle_tool_call_delta(
