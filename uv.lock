@@ -2962,10 +2962,13 @@ wheels = [
 name = "pydantic-ai"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["a2a", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "mcp", "mistral", "openai", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "mcp", "mistral", "openai", "vertexai"] },
 ]
 
 [package.optional-dependencies]
+a2a = [
+    { name = "fasta2a" },
+]
 examples = [
     { name = "pydantic-ai-examples" },
 ]
@@ -2981,6 +2984,7 @@ docs = [
     { name = "mkdocs-llmstxt" },
     { name = "mkdocs-material", extra = ["imaging"] },
     { name = "mkdocstrings-python" },
+    { name = "pydantic-ai", extra = ["a2a"] },
 ]
 docs-upload = [
     { name = "algoliasearch" },
@@ -2994,11 +2998,12 @@ lint = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fasta2a", marker = "extra == 'a2a'", editable = "fasta2a" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.11.0" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["a2a", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "mcp", "mistral", "openai", "vertexai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "mcp", "mistral", "openai", "vertexai"], editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["examples", "logfire"]
+provides-extras = ["a2a", "examples", "logfire"]
 
 [package.metadata.requires-dev]
 docs = [
@@ -3008,6 +3013,7 @@ docs = [
     { name = "mkdocs-llmstxt", specifier = ">=0.2.0" },
     { name = "mkdocs-material", extras = ["imaging"], specifier = ">=9.5.45" },
     { name = "mkdocstrings-python", specifier = ">=1.12.2" },
+    { name = "pydantic-ai", extras = ["a2a"] },
 ]
 docs-upload = [
     { name = "algoliasearch", specifier = ">=4.12.0" },

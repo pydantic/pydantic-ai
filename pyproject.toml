@@ -46,12 +46,13 @@ requires-python = ">=3.9"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,cli,mcp,evals,a2a]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,cli,mcp,evals]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 examples = ["pydantic-ai-examples=={{ version }}"]
 logfire = ["logfire>=3.11.0"]
+a2a = ["fasta2a=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -84,6 +85,7 @@ members = [
 # dev dependencies are defined in `pydantic-ai-slim/pyproject.toml` to allow for minimal testing
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
+    "pydantic-ai[a2a]",
     "black>=24.10.0",
     "mkdocs>=1.6.1",
     "mkdocs-glightbox>=0.4.0",
