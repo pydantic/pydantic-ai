@@ -1568,7 +1568,7 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
                 instructions="""\
 Always respond with a JSON object that's compatible with this schema:
 
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "title": "CityLocation"}
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
 
 Don't include any text or Markdown fencing before or after.\
 """,
@@ -1605,7 +1605,7 @@ Don't include any text or Markdown fencing before or after.\
                 instructions="""\
 Always respond with a JSON object that's compatible with this schema:
 
-{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object", "title": "CityLocation"}
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
 
 Don't include any text or Markdown fencing before or after.\
 """,

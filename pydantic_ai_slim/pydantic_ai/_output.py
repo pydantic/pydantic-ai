@@ -617,7 +617,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
                 json_schema.pop('title')
 
-        if name is None and (json_schema_title := json_schema.pop('title', None)):
+        if name is None and (json_schema_title := json_schema.get('title', None)):
             name = json_schema_title
 
         if json_schema_description := json_schema.pop('description', None):
