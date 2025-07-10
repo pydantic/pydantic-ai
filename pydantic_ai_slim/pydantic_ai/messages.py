@@ -411,9 +411,9 @@ class UserPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:
-        content: str | list[dict[str, Any] | str]
+        content: str | list[dict[str, Any] | str] | dict[str, Any]
         if isinstance(self.content, str):
-            content = self.content if settings.include_content else [{'kind': 'text'}]
+            content = self.content if settings.include_content else {'kind': 'text'}
         else:
             content = []
             for part in self.content:
