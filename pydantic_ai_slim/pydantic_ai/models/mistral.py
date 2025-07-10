@@ -214,8 +214,8 @@ class MistralModel(Model):
                 stop=model_settings.get('stop_sequences', None),
                 http_headers={'User-Agent': get_user_agent()},
             )
-        except SDKError as e:  # pragma: no cover
-            if (status_code := e.status_code) >= 400:
+        except SDKError as e:
+            if (status_code := e.status_code) >= 400:  # pragma: no cover
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise
 

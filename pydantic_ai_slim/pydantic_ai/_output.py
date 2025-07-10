@@ -899,7 +899,7 @@ class OutputTool(Generic[OutputDataT]):
             output = await self.processor.process(
                 tool_call.args, run_context, allow_partial=allow_partial, wrap_validation_errors=False
             )
-        except ValidationError as e:  # pragma: no cover
+        except ValidationError as e:  # pragma: lax no cover
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
                     tool_name=tool_call.tool_name,
@@ -909,7 +909,7 @@ class OutputTool(Generic[OutputDataT]):
                 raise ToolRetryError(m) from e
             else:
                 raise
-        except ModelRetry as r:  # pragma: no cover
+        except ModelRetry as r:  # pragma: lax no cover
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
                     tool_name=tool_call.tool_name,
