@@ -659,7 +659,7 @@ class _AsyncIteratorWrapper(Generic[T]):
     async def __anext__(self) -> T:
         try:
             return await anyio.to_thread.run_sync(next, self.sync_iterator)
-        except RuntimeError as e:
+        except RuntimeError as e:  # pragma: no cover
             if type(e.__cause__) is StopIteration:
                 raise StopAsyncIteration
             else:

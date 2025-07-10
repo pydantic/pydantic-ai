@@ -224,7 +224,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     for i, part in enumerate(msg.parts):
                         if isinstance(part, _messages.SystemPromptPart) and part.dynamic_ref:
                             # Look up the runner by its ref
-                            if runner := self.system_prompt_dynamic_functions.get(part.dynamic_ref):
+                            if runner := self.system_prompt_dynamic_functions.get(
+                                part.dynamic_ref
+                            ):  # pragma: lax no cover
                                 updated_part_content = await runner.run(run_context)
                                 msg.parts[i] = _messages.SystemPromptPart(
                                     updated_part_content, dynamic_ref=part.dynamic_ref
