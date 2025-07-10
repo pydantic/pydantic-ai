@@ -316,7 +316,7 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
             tokens += len(_TOKEN_SPLIT_RE.split(part.strip()))
         elif isinstance(part, BinaryContent):
             tokens += len(part.data)
-        # We don't need explicit handling for AudioUrl or ImageUrl, since they add 0
+        # TODO(Marcelo): We need to study how we can estimate the tokens for AudioUrl or ImageUrl.
 
     return tokens
 
