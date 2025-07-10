@@ -478,7 +478,7 @@ async def test_comprehensive_toolset_composition():
 async def test_context_manager():
     try:
         from pydantic_ai.mcp import MCPServerStdio
-    except ImportError:
+    except ImportError:  # pragma: no cover
         pytest.skip('mcp is not installed')
 
     server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
