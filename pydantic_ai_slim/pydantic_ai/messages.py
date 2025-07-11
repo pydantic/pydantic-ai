@@ -433,7 +433,9 @@ class UserPromptPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(Any, config=pydantic.ConfigDict(defer_build=True))
+tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
+    Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
+)
 
 
 @dataclass(repr=False)
