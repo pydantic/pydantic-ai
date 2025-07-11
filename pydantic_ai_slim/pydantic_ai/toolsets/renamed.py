@@ -13,24 +13,34 @@ from .wrapper import WrapperToolset
 
 
 @dataclass(init=False)
-class MappedToolset(ToolDefsToolset[AgentDepsT]):
-    """A toolset that maps renamed tool names to original tool names. Used by `IndividuallyPreparedToolset` as the prepare function may rename a tool."""
+class RenamedToolset(ToolDefsToolset[AgentDepsT]):
+    """A toolset that maps renamed tool names to original tool names."""
 
     name_map: dict[str, str]
 
     def __init__(
         self,
         wrapped: AbstractToolset[AgentDepsT],
-        tool_defs: list[ToolDefinition],
-        name_map: dict[str, str] | None = None,
+        name_map: dict[str, str],
+        tool_defs: list[ToolDefinition] | None = None,
     ):
-        super().__init__(wrapped, tool_defs)
-        self.name_map = name_map or {}
+        self.name_map = name_map
 
-    async def _rewrap_for_run(
+        if tool_defs is None:
+            original_to_new_name_map = {v: k for k, v in name_map.items()}
+            tool_defs = [
+                replace(tool_def, name=new_name)
+                if (new_name := original_to_new_name_map.get(tool_def.name, None))
+                else tool_def
+                for tool_def in wrapped.tool_defs
+            ]
+
+        super().__init__(wrapped, tool_defs)
+
+    async def rewrap_for_run(
         self, wrapped: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
     ) -> WrapperToolset[AgentDepsT]:
-        return MappedToolset(wrapped, self._tool_defs, self.name_map)
+        return RenamedToolset(wrapped, self.name_map, self._tool_defs)
 
     def _max_retries_for_tool(self, name: str) -> int:
         return super()._max_retries_for_tool(self._map_name(name))

@@ -10,7 +10,7 @@ from ..tools import (
     ToolDefinition,
     ToolPrepareFunc,
 )
-from ._mapped import MappedToolset
+from .renamed import RenamedToolset
 from .wrapper import WrapperToolset
 
 
@@ -20,7 +20,7 @@ class IndividuallyPreparedToolset(WrapperToolset[AgentDepsT]):
 
     prepare_func: ToolPrepareFunc[AgentDepsT]
 
-    async def _rewrap_for_run(
+    async def rewrap_for_run(
         self, wrapped: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
     ) -> WrapperToolset[AgentDepsT]:
         tool_defs: dict[str, ToolDefinition] = {}
@@ -43,4 +43,4 @@ class IndividuallyPreparedToolset(WrapperToolset[AgentDepsT]):
 
             tool_defs[new_name] = tool_def
 
-        return MappedToolset(wrapped, list(tool_defs.values()), name_map)
+        return RenamedToolset(wrapped, name_map, tool_defs=list(tool_defs.values()))

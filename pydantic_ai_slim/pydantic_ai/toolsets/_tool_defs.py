@@ -22,7 +22,7 @@ class ToolDefsToolset(WrapperToolset[AgentDepsT]):
         super().__init__(wrapped)
         self._tool_defs = tool_defs
 
-    async def _rewrap_for_run(
+    async def rewrap_for_run(
         self, wrapped: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
     ) -> WrapperToolset[AgentDepsT]:
         return ToolDefsToolset(wrapped, self._tool_defs)

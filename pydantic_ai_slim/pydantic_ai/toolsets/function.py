@@ -31,13 +31,20 @@ class FunctionToolset(BaseToolset[AgentDepsT]):
     tools: dict[str, Tool[Any]] = field(default_factory=dict)
 
     def __init__(self, tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [], max_retries: int = 1):
-        self.max_retries = max_retries
+        """Build a new function toolset.
+
+        Args:
+            tools: The tools to add to the toolset.
+            max_retries: The maximum number of retries for each tool during a run.
+        """
         self.tools = {}
         for tool in tools:
             if isinstance(tool, Tool):
                 self.add_tool(tool)
             else:
                 self.add_function(tool)
+
+        self.max_retries = max_retries
 
     @overload
     def tool(self, func: ToolFuncEither[AgentDepsT, ToolParams], /) -> ToolFuncEither[AgentDepsT, ToolParams]: ...
@@ -147,7 +154,29 @@ class FunctionToolset(BaseToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
     ) -> None:
-        """Register a function as a tool."""
+        """Add a function as a tool to the toolset.
+
+        Can take a sync or async function.
+
+        The docstring is inspected to extract both the tool description and description of each parameter,
+        [learn more](../tools.md#function-tools-and-schema).
+
+        Args:
+            func: The tool function to register.
+            takes_ctx: Whether the function takes a [`RunContext`][pydantic_ai.tools.RunContext] as its first argument. If `None`, this is inferred from the function signature.
+            name: The name of the tool, defaults to the function name.
+            retries: The number of retries to allow for this tool, defaults to the agent's default retries,
+                which defaults to 1.
+            prepare: custom method to prepare the tool definition for each step, return `None` to omit this
+                tool from a given step. This is useful if you want to customise a tool at call time,
+                or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
+            docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
+                Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
+            require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
+            schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
+            strict: Whether to enforce JSON schema compliance (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+        """
         tool = Tool[AgentDepsT](
             func,
             takes_ctx=takes_ctx,
@@ -162,6 +191,11 @@ class FunctionToolset(BaseToolset[AgentDepsT]):
         self.add_tool(tool)
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
+        """Add a tool to the toolset.
+
+        Args:
+            tool: The tool to add.
+        """
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
         if tool.max_retries is None:

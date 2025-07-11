@@ -17,7 +17,7 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
 
     prefix: str
 
-    async def _rewrap_for_run(
+    async def rewrap_for_run(
         self, wrapped: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
     ) -> WrapperToolset[AgentDepsT]:
         return PrefixedToolset(wrapped, self.prefix)

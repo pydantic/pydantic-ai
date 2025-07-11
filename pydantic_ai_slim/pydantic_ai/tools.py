@@ -338,7 +338,7 @@ class ToolDefinition:
     name: str
     """The name of the tool."""
 
-    parameters_json_schema: ObjectJsonSchema
+    parameters_json_schema: ObjectJsonSchema = field(default_factory=lambda: {'type': 'object', 'properties': {}})
     """The JSON schema for the tool's parameters."""
 
     description: str | None = None

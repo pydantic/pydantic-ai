@@ -26,6 +26,10 @@ class AsyncBaseToolset(BaseToolset[AgentDepsT], ABC):
 
     @abstractmethod
     async def async_tool_defs(self) -> list[ToolDefinition]:
+        """The tool definitions that are available in this toolset.
+
+        Here you can perform an async request to fetch available tool definitions from a remote source.
+        """
         raise NotImplementedError()
 
     @property

@@ -16,7 +16,7 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
 
     prepare_func: ToolsPrepareFunc[AgentDepsT]
 
-    async def _rewrap_for_run(
+    async def rewrap_for_run(
         self, wrapped: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
     ) -> WrapperToolset[AgentDepsT]:
         original_tool_defs = wrapped.tool_defs
@@ -25,6 +25,8 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
         original_tool_names = {tool_def.name for tool_def in original_tool_defs}
         prepared_tool_names = {tool_def.name for tool_def in prepared_tool_defs}
         if len(prepared_tool_names - original_tool_names) > 0:
-            raise UserError('Prepare function is not allowed to change tool names or add new tools.')
+            raise UserError(
+                'Prepare function cannot add or rename tools. Use `FunctionToolset.add_function()` or `RenamedToolset` instead.'
+            )
 
         return ToolDefsToolset(wrapped, prepared_tool_defs)

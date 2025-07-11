@@ -563,6 +563,21 @@ async def model_logic(  # noqa: C901
                     )
                 ]
             )
+        elif m.content == 'Greet the user in a personalized way':
+            if any(t.name == 'get_preferred_language' for t in info.function_tools):
+                part = ToolCallPart(
+                    tool_name='get_preferred_language',
+                    args={'default_language': 'en-US'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            else:
+                part = ToolCallPart(
+                    tool_name='final_result',
+                    args={'greeting': 'Hello, David!', 'language_code': 'en-US'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+
+            return ModelResponse(parts=[part])
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
@@ -707,6 +722,16 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'image_generator':
         return ModelResponse(parts=[TextPart('Image file written to robot_punk.svg.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_preferred_language':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'greeting': 'Hola, David! Espero que tengas un gran día!', 'language_code': 'es-MX'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')
