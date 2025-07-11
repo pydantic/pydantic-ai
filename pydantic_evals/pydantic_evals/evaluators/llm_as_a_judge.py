@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from textwrap import dedent
-from typing import Any
+from typing import Any, Union, Optional
 
 from pydantic import BaseModel, Field
 from pydantic_core import to_json
@@ -64,16 +64,7 @@ async def judge_output(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = dedent(
-        f"""
-        <Output>
-        {_stringify(output)}
-        </Output>
-        <Rubric>
-        {rubric}
-        </Rubric>
-        """
-    )
+    user_prompt = _build_prompt(None, output, rubric)
     return (
         await _judge_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
     ).output
@@ -102,60 +93,65 @@ _judge_input_output_agent = Agent(
 )
 
 
-def _build_prompt_with_input(
-    inputs: Any,
+def _build_prompt(
+    inputs: Optional[Any],
     output: Any,
     rubric: str,
     expected_output: Any | None = None,
-) -> str | Sequence[UserContent]:
+) -> Union[str, Sequence[Union[str, 'UserContent']]]:
     """Build a prompt that includes input, output, and rubric.
 
-    If inputs is a string, returns a formatted string.
+    If inputs is a string, returns a dedented string.
     If inputs is not a string (e.g., BinaryContent), returns a list of UserContent.
     """
-    if isinstance(inputs, str):
-        # For string inputs, use simple string formatting
+    if inputs is None or isinstance(inputs, str):
+        sections: list[str] = []
+        if isinstance(inputs, str):
+            sections.append(
+                dedent(f"""
+                <Input>
+                {inputs}
+                </Input>
+                """).strip()
+            )
         if expected_output is not None:
-            return dedent(f"""
-            <Input>
-            {inputs}
-            </Input>
-            <ExpectedOutput>
-            {_stringify(expected_output)}
-            </ExpectedOutput>
+            sections.append(
+                dedent(f"""
+                <ExpectedOutput>
+                {_stringify(expected_output)}
+                </ExpectedOutput>
+                """).strip()
+            )
+        sections.append(
+            dedent(f"""
             <Output>
             {_stringify(output)}
             </Output>
+            """).strip()
+        )
+        sections.append(
+            dedent(f"""
             <Rubric>
             {rubric}
             </Rubric>
-            """)
-        else:
-            return dedent(f"""
-            <Input>
-            {inputs}
-            </Input>
-            <Output>
-            {_stringify(output)}
-            </Output>
-            <Rubric>
-            {rubric}
-            </Rubric>
-            """)
-    else:
-        # For non-string inputs (e.g., BinaryContent), build a list
-        prompt_parts: list[str | UserContent] = []
-        prompt_parts.append('<Input>\n')
-        prompt_parts.append(inputs)
-        prompt_parts.append('</Input>')
+            """).strip()
+        )
+        return "\n\n".join(sections)
 
-        if expected_output is not None:
-            prompt_parts.append(f'<ExpectedOutput>\n{_stringify(expected_output)}\n</ExpectedOutput>')
+    prompt_parts: list['UserContent'] = []
+    prompt_parts.append('<Input>\n')
+    prompt_parts.append(inputs)
+    prompt_parts.append('\n</Input>')
 
-        prompt_parts.append(f'<Output>\n{_stringify(output)}\n</Output>')
-        prompt_parts.append(f'<Rubric>\n{rubric}\n</Rubric>')
+    if expected_output is not None:
+        prompt_parts.append(
+            f'<ExpectedOutput>\n{_stringify(expected_output)}\n</ExpectedOutput>'
+        )
 
-        return prompt_parts
+    prompt_parts.append(f'<Output>\n{_stringify(output)}\n</Output>')
+    prompt_parts.append(f'<Rubric>\n{rubric}\n</Rubric>')
+
+    return prompt_parts
 
 
 async def judge_input_output(
@@ -170,7 +166,7 @@ async def judge_input_output(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = _build_prompt_with_input(inputs, output, rubric)
+    user_prompt = _build_prompt(inputs, output, rubric)
 
     return (
         await _judge_input_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
@@ -215,7 +211,7 @@ async def judge_input_output_expected(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = _build_prompt_with_input(inputs, output, rubric, expected_output)
+    user_prompt = _build_prompt(inputs, output, rubric, expected_output)
 
     return (
         await _judge_input_output_expected_agent.run(
@@ -259,19 +255,7 @@ async def judge_output_expected(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = dedent(
-        f"""
-        <ExpectedOutput>
-        {_stringify(expected_output)}
-        </ExpectedOutput>
-        <Output>
-        {_stringify(output)}
-        </Output>
-        <Rubric>
-        {rubric}
-        </Rubric>
-        """
-    )
+    user_prompt = _build_prompt(None, output, rubric, expected_output)
     return (
         await _judge_output_expected_agent.run(
             user_prompt, model=model or _default_model, model_settings=model_settings
