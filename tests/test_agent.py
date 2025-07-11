@@ -2936,26 +2936,21 @@ def test_binary_content_all_messages_json():
 
 def test_tool_return_part_binary_content_serialization():
     """Test that ToolReturnPart can properly serialize BinaryContent."""
-    # Create a simple binary content
     png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
     binary_content = BinaryContent(png_data, media_type="image/png")
-    
-    # Create a ToolReturnPart with BinaryContent
+
     tool_return = ToolReturnPart(
         tool_name="test_tool",
         content=binary_content,
         tool_call_id="test_call_123"
     )
-    
-    # Test model_response_str method - this was failing before the fix
+
     response_str = tool_return.model_response_str()
-    
-    # Verify the response contains the expected serialized BinaryContent
+
     assert '"kind":"binary"' in response_str
     assert '"media_type":"image/png"' in response_str
-    assert '"data":"' in response_str  # Should contain base64 encoded data
-    
-    # Test model_response_object method as well
+    assert '"data":"' in response_str
+
     response_obj = tool_return.model_response_object()
     assert response_obj['return_value']['kind'] == 'binary'
     assert response_obj['return_value']['media_type'] == 'image/png'
