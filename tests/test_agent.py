@@ -2937,13 +2937,9 @@ def test_binary_content_all_messages_json():
 def test_tool_return_part_binary_content_serialization():
     """Test that ToolReturnPart can properly serialize BinaryContent."""
     png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
-    binary_content = BinaryContent(png_data, media_type="image/png")
+    binary_content = BinaryContent(png_data, media_type='image/png')
 
-    tool_return = ToolReturnPart(
-        tool_name="test_tool",
-        content=binary_content,
-        tool_call_id="test_call_123"
-    )
+    tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
 
     response_str = tool_return.model_response_str()
 
@@ -2959,6 +2955,7 @@ def test_tool_return_part_binary_content_serialization():
 
 def test_tool_returning_binary_content_directly():
     """Test that a tool returning BinaryContent directly works correctly."""
+
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('get_image', {})])
@@ -2971,7 +2968,7 @@ def test_tool_returning_binary_content_directly():
     def get_image() -> BinaryContent:
         """Return a simple image."""
         png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
-        return BinaryContent(png_data, media_type="image/png")
+        return BinaryContent(png_data, media_type='image/png')
 
     # This should work without the serialization error
     result = agent.run_sync('Get an image')
