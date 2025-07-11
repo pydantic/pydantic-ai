@@ -149,6 +149,22 @@ async def test_judge_input_output_binary_content_mock(mocker: MockerFixture, ima
     mock_run = mocker.patch('pydantic_ai.Agent.run', return_value=mock_result)
 
     # Test with string input and output
+    result = await judge_input_output([image_content, image_content], 'Hello world', 'Output contains input')
+    assert isinstance(result, GradingOutput)
+    assert result.reason == 'Test passed'
+    assert result.pass_ is True
+    assert result.score == 1.0
+
+    # Verify the agent was called with correct prompt
+    mock_run.assert_called_once()
+    raw_prompt = mock_run.call_args[0][0]
+
+    # 1) It must be a list
+    assert isinstance(raw_prompt, list), 'Expected prompt to be a list when passing binary'
+
+    # 2) The BinaryContent you passed in should be one of the elements
+    assert image_content in raw_prompt, 'Expected the exact BinaryContent instance to be in the prompt list'
+
     result = await judge_input_output(image_content, 'Hello world', 'Output contains input')
     assert isinstance(result, GradingOutput)
     assert result.reason == 'Test passed'
