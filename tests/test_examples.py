@@ -16,11 +16,13 @@ import httpx
 import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
+from pydantic_core import SchemaValidator, core_schema
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_mock import MockerFixture
 from rich.console import Console
 
 from pydantic_ai import ModelHTTPError
+from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -36,6 +38,8 @@ from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets.base import BaseToolset
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
@@ -258,18 +262,25 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         raise ValueError(f'Unexpected prompt: {prompt}')
 
 
-class MockMCPServer:
-    is_running = True
-
+class MockMCPServer(BaseToolset[Any]):
     async def __aenter__(self) -> MockMCPServer:
         return self
 
     async def __aexit__(self, *args: Any) -> None:
         pass
 
-    @staticmethod
-    async def list_tools() -> list[None]:
+    @property
+    def tool_defs(self) -> list[ToolDefinition]:
         return []
+
+    def _max_retries_for_tool(self, name: str) -> int:
+        return 0  # pragma: lax no cover
+
+    def _get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> SchemaValidator:
+        return SchemaValidator(core_schema.any_schema())
+
+    async def _call_tool(self, ctx: RunContext[Any], name: str, tool_args: dict[str, Any]) -> Any:
+        return None  # pragma: lax no cover
 
 
 text_responses: dict[str, str | ToolCallPart] = {
@@ -552,6 +563,21 @@ async def model_logic(  # noqa: C901
                     )
                 ]
             )
+        elif m.content == 'Greet the user in a personalized way':
+            if any(t.name == 'get_preferred_language' for t in info.function_tools):
+                part = ToolCallPart(
+                    tool_name='get_preferred_language',
+                    args={'default_language': 'en-US'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            else:
+                part = ToolCallPart(
+                    tool_name='final_result',
+                    args={'greeting': 'Hello, David!', 'language_code': 'en-US'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+
+            return ModelResponse(parts=[part])
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
@@ -696,6 +722,16 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'image_generator':
         return ModelResponse(parts=[TextPart('Image file written to robot_punk.svg.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_preferred_language':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'greeting': 'Hola, David! Espero que tengas un gran día!', 'language_code': 'es-MX'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')

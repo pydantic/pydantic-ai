@@ -3,6 +3,7 @@ from typing import Any, Protocol
 from pydantic.json_schema import JsonSchemaValue
 
 from pydantic_ai.tools import Tool
+from pydantic_ai.toolsets.function import FunctionToolset
 
 
 class LangChainTool(Protocol):
@@ -23,7 +24,7 @@ class LangChainTool(Protocol):
     def run(self, *args: Any, **kwargs: Any) -> str: ...
 
 
-__all__ = ('tool_from_langchain',)
+__all__ = ('tool_from_langchain', 'LangChainToolset')
 
 
 def tool_from_langchain(langchain_tool: LangChainTool) -> Tool:
@@ -59,3 +60,10 @@ def tool_from_langchain(langchain_tool: LangChainTool) -> Tool:
         description=function_description,
         json_schema=schema,
     )
+
+
+class LangChainToolset(FunctionToolset):
+    """A toolset that wraps LangChain tools."""
+
+    def __init__(self, tools: list[LangChainTool]):
+        super().__init__([tool_from_langchain(tool) for tool in tools])

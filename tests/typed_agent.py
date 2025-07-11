@@ -10,7 +10,7 @@ from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.output import StructuredDict, TextOutput, ToolOutput
+from pydantic_ai.output import DeferredToolCalls, StructuredDict, TextOutput, ToolOutput
 from pydantic_ai.tools import ToolDefinition
 
 # Define here so we can check `if MYPY` below. This will not be executed, MYPY will always set it to True
@@ -222,6 +222,14 @@ if MYPY:
     assert_type(
         complex_output_agent, Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]]
     )
+
+    complex_deferred_output_agent = Agent[
+        None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolCalls
+    ](output_type=[complex_output_agent.output_type, DeferredToolCalls])
+    assert_type(
+        complex_deferred_output_agent,
+        Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolCalls],
+    )
 else:
     # pyright is able to correctly infer the type here
     async_int_function_agent = Agent(output_type=foobar_plain)
@@ -239,6 +247,12 @@ else:
     )
     assert_type(
         complex_output_agent, Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]]
+    )
+
+    complex_deferred_output_agent = Agent(output_type=[complex_output_agent.output_type, DeferredToolCalls])
+    assert_type(
+        complex_deferred_output_agent,
+        Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolCalls],
     )
 
 
