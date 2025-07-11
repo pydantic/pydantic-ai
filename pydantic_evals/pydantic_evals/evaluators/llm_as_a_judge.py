@@ -94,7 +94,7 @@ _judge_input_output_agent = Agent(
 
 
 def _build_prompt(
-    inputs: Optional[Any],
+    inputs: Optional[UserContent | Sequence[UserContent]],
     output: Any,
     rubric: str,
     expected_output: Any | None = None,
@@ -140,7 +140,7 @@ def _build_prompt(
 
     prompt_parts: list['UserContent'] = []
     prompt_parts.append('<Input>\n')
-    if isinstance(inputs, list):
+    if isinstance(inputs, Sequence):
         prompt_parts.extend(inputs)
     else:
         prompt_parts.append(inputs)
