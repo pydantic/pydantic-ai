@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from typing import TypeVar
 
@@ -159,7 +160,12 @@ async def test_prepared_toolset_user_error_add_new_tools():
 
     prepared_toolset = PreparedToolset(base_toolset, prepare_add_new_tool)
 
-    with pytest.raises(UserError, match='Prepare function is not allowed to change tool names or add new tools.'):
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Prepare function cannot add or rename tools. Use `FunctionToolset.add_function()` or `RenamedToolset` instead.'
+        ),
+    ):
         await prepared_toolset.prepare_for_run(context)
 
 
@@ -190,7 +196,12 @@ async def test_prepared_toolset_user_error_change_tool_names():
 
     prepared_toolset = PreparedToolset(base_toolset, prepare_change_names)
 
-    with pytest.raises(UserError, match='Prepare function is not allowed to change tool names or add new tools.'):
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Prepare function cannot add or rename tools. Use `FunctionToolset.add_function()` or `RenamedToolset` instead.'
+        ),
+    ):
         await prepared_toolset.prepare_for_run(context)
 
 

@@ -37,14 +37,13 @@ class FunctionToolset(BaseToolset[AgentDepsT]):
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
         """
+        self.max_retries = max_retries
         self.tools = {}
         for tool in tools:
             if isinstance(tool, Tool):
                 self.add_tool(tool)
             else:
                 self.add_function(tool)
-
-        self.max_retries = max_retries
 
     @overload
     def tool(self, func: ToolFuncEither[AgentDepsT, ToolParams], /) -> ToolFuncEither[AgentDepsT, ToolParams]: ...
