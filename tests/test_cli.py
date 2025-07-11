@@ -29,7 +29,7 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli ex
 
 
 class CliTester:
-    """Tester for our click-based CLI to help us test it."""
+    """Tester for our click-based CLI."""
 
     def __init__(self):
         self._runner = CliRunner()
@@ -51,7 +51,7 @@ def cli(env: TestEnv):
 
 
 def test_cli_version(cli: CliTester):
-    result = cli(['--version'])  # version now becomes a command, rather than an option that triggers the command
+    result = cli(['--version'])
 
     assert 'pai - PydanticAI CLI' in result.output
     assert result.exit_code == 0
