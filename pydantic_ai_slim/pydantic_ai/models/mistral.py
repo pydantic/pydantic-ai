@@ -215,9 +215,9 @@ class MistralModel(Model):
                 http_headers={'User-Agent': get_user_agent()},
             )
         except SDKError as e:
-            if (status_code := e.status_code) >= 400:  # pragma: no cover
+            if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise
+            raise  # pragma: no cover
 
         assert response, 'A unexpected empty response from Mistral.'
         return response

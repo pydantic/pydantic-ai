@@ -343,9 +343,9 @@ class OpenAIModel(Model):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
-            if (status_code := e.status_code) >= 400:  # pragma: no cover
+            if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise
+            raise  # pragma: no cover
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -779,9 +779,9 @@ class OpenAIResponsesModel(Model):
                 extra_body=model_settings.get('extra_body'),
             )
         except APIStatusError as e:
-            if (status_code := e.status_code) >= 400:  # pragma: no cover
+            if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise
+            raise  # pragma: no cover
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)

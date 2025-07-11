@@ -842,14 +842,14 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
 
         try:
             output = await self._function_schema.call(args, run_context)
-        except ModelRetry as r:  # pragma: lax no cover
+        except ModelRetry as r:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
                     content=r.message,
                 )
                 raise ToolRetryError(m) from r
             else:
-                raise
+                raise  # pragma: no cover
 
         return cast(OutputDataT, output)
 
@@ -909,7 +909,7 @@ class OutputTool(Generic[OutputDataT]):
                 raise ToolRetryError(m) from e
             else:
                 raise
-        except ModelRetry as r:  # pragma: lax no cover
+        except ModelRetry as r:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
                     tool_name=tool_call.tool_name,
@@ -918,7 +918,7 @@ class OutputTool(Generic[OutputDataT]):
                 )
                 raise ToolRetryError(m) from r
             else:
-                raise
+                raise  # pragma: no cover
         else:
             return output
 
