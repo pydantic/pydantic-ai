@@ -86,7 +86,7 @@ class GoogleProvider(Provider[genai.Client]):
             # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
             api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
 
-            if vertexai is None:  # pragma: lax no cover
+            if vertexai is None:
                 vertexai = bool(location or project or credentials)
 
             if not vertexai:
@@ -114,7 +114,7 @@ class GoogleProvider(Provider[genai.Client]):
                     http_options={'headers': {'User-Agent': get_user_agent()}},
                 )
         else:
-            self._client = client  # pragma: lax no cover
+            self._client = client
 
 
 VertexAILocation = Literal[

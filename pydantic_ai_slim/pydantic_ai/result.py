@@ -320,7 +320,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 yield await self.validate_structured_output(structured_message, allow_partial=not is_last)
             except ValidationError:
                 if is_last:
-                    raise  # pragma: lax no cover
+                    raise  # pragma: no cover
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.

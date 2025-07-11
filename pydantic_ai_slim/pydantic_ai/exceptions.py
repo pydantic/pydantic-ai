@@ -4,9 +4,9 @@ import json
 import sys
 
 if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
+    from exceptiongroup import ExceptionGroup
 else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
+    ExceptionGroup = ExceptionGroup
 
 __all__ = (
     'ModelRetry',

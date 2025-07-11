@@ -138,7 +138,7 @@ class InstrumentationSettings:
                 **tokens_histogram_kwargs,
                 explicit_bucket_boundaries_advisory=TOKEN_HISTOGRAM_BOUNDARIES,
             )
-        except TypeError:  # pragma: lax no cover
+        except TypeError:
             # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
             self.tokens_histogram = self.meter.create_histogram(
                 **tokens_histogram_kwargs,  # pyright: ignore

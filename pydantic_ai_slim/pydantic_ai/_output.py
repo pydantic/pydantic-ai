@@ -664,7 +664,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 )
                 raise ToolRetryError(m) from e
             else:
-                raise  # pragma: lax no cover
+                raise
 
         if k := self.outer_typed_dict_key:
             output = output[k]
@@ -679,7 +679,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                     )
                     raise ToolRetryError(m) from r
                 else:
-                    raise  # pragma: lax no cover
+                    raise
 
         return output
 
@@ -849,7 +849,7 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 )
                 raise ToolRetryError(m) from r
             else:
-                raise  # pragma: lax no cover
+                raise  # pragma: no cover
 
         return cast(OutputDataT, output)
 
@@ -908,7 +908,7 @@ class OutputTool(Generic[OutputDataT]):
                 )
                 raise ToolRetryError(m) from e
             else:
-                raise  # pragma: lax no cover
+                raise  # pragma: no cover
         except ModelRetry as r:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -918,7 +918,7 @@ class OutputTool(Generic[OutputDataT]):
                 )
                 raise ToolRetryError(m) from r
             else:
-                raise  # pragma: lax no cover
+                raise  # pragma: no cover
         else:
             return output
 
