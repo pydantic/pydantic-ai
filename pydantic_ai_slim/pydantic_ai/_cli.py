@@ -1,17 +1,16 @@
 from __future__ import annotations as _annotations
 
-import argparse
 import asyncio
 import importlib
 import os
 import sys
 from asyncio import CancelledError
-from collections.abc import Sequence
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
+import click
 from typing_inspection.introspection import get_literal_values
 
 from . import __version__
@@ -19,11 +18,10 @@ from ._run_context import AgentDepsT
 from .agent import Agent
 from .exceptions import UserError
 from .messages import ModelMessage
-from .models import KnownModelName, infer_model
+from .models import KnownModelName, Model, infer_model
 from .output import OutputDataT
 
 try:
-    import argcomplete
     from prompt_toolkit import PromptSession
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory, Suggestion
     from prompt_toolkit.buffer import Buffer
@@ -64,7 +62,13 @@ class SimpleCodeBlock(CodeBlock):
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         code = str(self.text).rstrip()
         yield Text(self.lexer_name, style='dim')
-        yield Syntax(code, self.lexer_name, theme=self.theme, background_color='default', word_wrap=True)
+        yield Syntax(
+            code,
+            self.lexer_name,
+            theme=self.theme,
+            background_color='default',
+            word_wrap=True,
+        )
         yield Text(f'/{self.lexer_name}', style='dim')
 
 
@@ -101,119 +105,197 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai') -> int:  # noqa: C901
-    """Run the CLI and return the exit code for the process."""
-    parser = argparse.ArgumentParser(
-        prog=prog_name,
-        description=f"""\
-PydanticAI CLI v{__version__}\n\n
+# we don't want to autocomplete or list models that don't include the provider,
+# e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
+qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
+
+
+def _handle_version_and_list(
+    console: Console,
+    prog_name: str,
+    name_version: str,
+    version: bool,
+    list_models: bool,
+) -> int | None:
+    """Handle --version and --list-models flags."""
+    if version:
+        console.print(name_version, highlight=False)
+        return 0
+    if list_models:
+        console.print(f'{name_version}\n\n[green]Available models:[/green]')
+        for model in qualified_model_names:
+            console.print(f'  {model}', highlight=False)
+        return 0
+    return None
+
+
+def _setup_agent(
+    console: Console,
+    agent_path: str | None,
+    model_name: str | None,
+) -> tuple[Agent[None, str], int | None]:
+    """Set up the agent based on command line arguments."""
+    agent: Agent[None, str] = cli_agent
+    if agent_path:
+        sys.path.append(os.getcwd())
+        try:
+            module_path, variable_name = agent_path.split(':')
+        except ValueError:
+            console.print('[red]Error: Agent must be specified in "module:variable" format[/red]')
+            return agent, 1
+
+        module = importlib.import_module(module_path)
+        agent = getattr(module, variable_name)
+        if not isinstance(agent, Agent):
+            console.print(f'[red]Error: {agent_path} is not an Agent instance[/red]')
+            return agent, 1
+
+    model_arg_set = model_name is not None
+    if agent.model is None or model_arg_set:
+        try:
+            agent.model = infer_model(model_name or 'openai:gpt-4o')
+        except UserError as e:
+            console.print(f'Error initializing [magenta]{model_name}[/magenta]:\n[red]{e}[/red]')
+            return agent, 1
+
+    return agent, None
+
+
+def _print_agent_info(
+    console: Console,
+    name_version: str,
+    agent: Agent[None, str],
+    agent_path: str | None,
+    model_name: str | None,
+) -> None:
+    """Print agent and model information."""
+    if isinstance(agent.model, str):
+        model_display = agent.model
+    elif isinstance(agent.model, Model):
+        model_display = f'{agent.model.system}:{agent.model.model_name}'
+    else:
+        model_display = 'unknown'
+
+    if agent_path and model_name is not None:
+        console.print(
+            f'{name_version} using custom agent [magenta]{agent_path}[/magenta] with [magenta]{model_display}[/magenta]',
+            highlight=False,
+        )
+    elif agent_path:
+        console.print(
+            f'{name_version} using custom agent [magenta]{agent_path}[/magenta]',
+            highlight=False,
+        )
+    else:
+        console.print(
+            f'{name_version} with [magenta]{model_display}[/magenta]',
+            highlight=False,
+        )
+
+
+def _handle_prompt(
+    console: Console,
+    prog_name: str,
+    prompt: tuple[str, ...],
+    agent: Agent[None, str],
+    stream: bool,
+    code_theme: str,
+) -> int:
+    """Handle prompt input and execution."""
+    if prompt:
+        # If prompt is provided, run it and exit
+        prompt_str = ' '.join(prompt)
+        try:
+            asyncio.run(ask_agent(agent, prompt_str, not stream, console, code_theme))
+            return 0
+        except (KeyboardInterrupt, CancelledError):
+            return 1
+        except Exception as e:
+            console.print(f'[red]Error: {e}[/red]')
+            return 1
+    else:
+        # Otherwise, start interactive mode
+        try:
+            asyncio.run(run_chat(not stream, agent, console, code_theme, prog_name))
+            return 0
+        except (KeyboardInterrupt, CancelledError):
+            return 1
+        except Exception as e:
+            console.print(f'[red]Error: {e}[/red]')
+            return 1
+
+
+@click.command(
+    name='pai',
+    help=f"""
+PydanticAI CLI v{__version__}
 
 Special prompts:
 * `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
 * `/markdown` - show the last markdown output of the last question
 * `/multiline` - toggle multiline mode
 """,
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
-    parser.add_argument('prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode')
-    arg = parser.add_argument(
-        '-m',
-        '--model',
-        nargs='?',
-        help='Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o" or "anthropic:claude-3-7-sonnet-latest". Defaults to "openai:gpt-4o".',
-    )
-    # we don't want to autocomplete or list models that don't include the provider,
-    # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
-    qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
-    arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
-    parser.add_argument(
-        '-a',
-        '--agent',
-        help='Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
-    )
-    parser.add_argument(
-        '-l',
-        '--list-models',
-        action='store_true',
-        help='List all available models and exit',
-    )
-    parser.add_argument(
-        '-t',
-        '--code-theme',
-        nargs='?',
-        help='Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.',
-        default='dark',
-    )
-    parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
-    parser.add_argument('--version', action='store_true', help='Show version and exit')
-
-    argcomplete.autocomplete(parser)
-    args = parser.parse_args(args_list)
-
+    context_settings={'help_option_names': ['-h', '--help']},
+)
+@click.argument('prompt', nargs=-1)
+@click.option(
+    '-m',
+    '--model',
+    'model_name',
+    type=click.Choice(qualified_model_names),
+    help='Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o" or "anthropic:claude-3-7-sonnet-latest". Defaults to "openai:gpt-4o".',
+)
+@click.option(
+    '-a',
+    '--agent',
+    'agent_path',
+    help='Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
+)
+@click.option(
+    '-l',
+    '--list-models',
+    is_flag=True,
+    help='List all available models and exit',
+)
+@click.option(
+    '-t',
+    '--code-theme',
+    type=click.Choice(['dark', 'light']),
+    default='dark',
+    help='Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.',
+)
+@click.option('--no-stream', is_flag=True, help='Disable streaming from the model')
+@click.option('--version', is_flag=True, help='Show version and exit')
+@click.pass_context
+def cli(
+    ctx: click.Context,
+    prompt: tuple[str, ...],
+    model_name: str | None,
+    agent_path: str | None,
+    list_models: bool,
+    code_theme: str,
+    no_stream: bool,
+    version: bool,
+) -> int:
+    """Run the CLI and return the exit code for the process."""
     console = Console()
-    name_version = f'[green]{prog_name} - PydanticAI CLI v{__version__}[/green]'
-    if args.version:
-        console.print(name_version, highlight=False)
-        return 0
-    if args.list_models:
-        console.print(f'{name_version}\n\n[green]Available models:[/green]')
-        for model in qualified_model_names:
-            console.print(f'  {model}', highlight=False)
-        return 0
+    prog_name = ctx.find_root().info_name or 'pai'
+    name_version = f'{prog_name} - PydanticAI CLI v{__version__}'
 
-    agent: Agent[None, str] = cli_agent
-    if args.agent:
-        sys.path.append(os.getcwd())
-        try:
-            module_path, variable_name = args.agent.split(':')
-        except ValueError:
-            console.print('[red]Error: Agent must be specified in "module:variable" format[/red]')
-            return 1
+    # Handle version and list-models flags
+    if result := _handle_version_and_list(console, prog_name, name_version, version, list_models):
+        return result
 
-        module = importlib.import_module(module_path)
-        agent = getattr(module, variable_name)
-        if not isinstance(agent, Agent):
-            console.print(f'[red]Error: {args.agent} is not an Agent instance[/red]')
-            return 1
+    # Set up the agent
+    agent, result = _setup_agent(console, agent_path, model_name)
+    if result is not None:
+        return result
 
-    model_arg_set = args.model is not None
-    if agent.model is None or model_arg_set:
-        try:
-            agent.model = infer_model(args.model or 'openai:gpt-4o')
-        except UserError as e:
-            console.print(f'Error initializing [magenta]{args.model}[/magenta]:\n[red]{e}[/red]')
-            return 1
+    # Print agent info
+    _print_agent_info(console, name_version, agent, agent_path, model_name)
 
-    model_name = agent.model if isinstance(agent.model, str) else f'{agent.model.system}:{agent.model.model_name}'
-    if args.agent and model_arg_set:
-        console.print(
-            f'{name_version} using custom agent [magenta]{args.agent}[/magenta] with [magenta]{model_name}[/magenta]',
-            highlight=False,
-        )
-    elif args.agent:
-        console.print(f'{name_version} using custom agent [magenta]{args.agent}[/magenta]', highlight=False)
-    else:
-        console.print(f'{name_version} with [magenta]{model_name}[/magenta]', highlight=False)
-
-    stream = not args.no_stream
-    if args.code_theme == 'light':
-        code_theme = 'default'
-    elif args.code_theme == 'dark':
-        code_theme = 'monokai'
-    else:
-        code_theme = args.code_theme  # pragma: no cover
-
-    if prompt := cast(str, args.prompt):
-        try:
-            asyncio.run(ask_agent(agent, prompt, stream, console, code_theme))
-        except KeyboardInterrupt:
-            pass
-        return 0
-
-    try:
-        return asyncio.run(run_chat(stream, agent, console, code_theme, prog_name))
-    except KeyboardInterrupt:  # pragma: no cover
-        return 0
+    # Handle prompt or start interactive mode
+    return _handle_prompt(console, prog_name, prompt, agent, no_stream, code_theme)
 
 
 async def run_chat(
@@ -312,7 +394,11 @@ class CustomAutoSuggest(AutoSuggestFromHistory):
 
 
 def handle_slash_command(
-    ident_prompt: str, messages: list[ModelMessage], multiline: bool, console: Console, code_theme: str
+    ident_prompt: str,
+    messages: list[ModelMessage],
+    multiline: bool,
+    console: Console,
+    code_theme: str,
 ) -> tuple[int | None, bool]:
     if ident_prompt == '/markdown':
         try:
