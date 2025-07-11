@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from textwrap import dedent
-from typing import Any, Union, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 from pydantic_core import to_json
@@ -94,11 +94,11 @@ _judge_input_output_agent = Agent(
 
 
 def _build_prompt(
-    inputs: Optional[UserContent | Sequence[UserContent]],
+    inputs: UserContent | Sequence[UserContent] | None,
     output: Any,
     rubric: str,
-    expected_output: Optional[Any | None] = None,
-) -> Union[str, Sequence[Union[str, 'UserContent']]]:
+    expected_output: Any | None = None,
+) -> str | Sequence[UserContent]:
     """Build a prompt that includes input, output, and rubric.
 
     If inputs is a string, returns a dedented string.
@@ -127,9 +127,9 @@ def _build_prompt(
 
         sections.append(output_section)
         sections.append(rubric_section)
-        return "\n\n".join(sections)
+        return '\n\n'.join(sections)
 
-    prompt_parts: list['UserContent'] = []
+    prompt_parts: list[UserContent] = []
     prompt_parts.append('<Input>\n')
     if isinstance(inputs, Sequence):
         prompt_parts.extend(inputs)
