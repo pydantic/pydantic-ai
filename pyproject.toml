@@ -283,3 +283,10 @@ check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
 ignore-words-list = 'asend,aci'
+
+[tool.codeflash]
+module-root = "pydantic_ai_slim/pydantic_ai"
+tests-root = "tests"
+test-framework = "pytest"
+ignore-paths = []
+formatter-cmds = ["ruff check --exit-zero --fix $file", "ruff format $file"]
