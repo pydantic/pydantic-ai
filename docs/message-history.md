@@ -522,6 +522,42 @@ agent = Agent('openai:gpt-4o', history_processors=[filter_responses, summarize_o
 In this case, the `filter_responses` processor will be applied first, and the
 `summarize_old_messages` processor will be applied second.
 
+### Modifying Message History
+
+By default, history processors only modify the messages sent to the model without changing the original conversation history. However, you can use `HistoryProcessors` with `replace_history=True` to actually modify the original message history stored in the agent.
+
+This is useful for scenarios like permanently compressing long conversations, implementing sliding window memory management, or removing sensitive information from the conversation history.
+
+```python {title="modify_message_history_with_replace_history.py"}
+from pydantic_ai import Agent, HistoryProcessors
+from pydantic_ai.messages import ModelMessage
+
+# Use a cheaper model to summarize old messages.
+summarize_agent = Agent(
+    'openai:gpt-4o-mini',
+    instructions="""
+Summarize this conversation, omitting small talk and unrelated topics.
+Focus on the technical discussion and next steps.
+""",
+)
+
+
+async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    # Summarize the oldest 10 messages
+    if len(messages) > 10:
+        oldest_messages = messages[:10]
+        summary = await summarize_agent.run(message_history=oldest_messages)
+        # Return the last message and the summary
+        return summary.new_messages() + messages[-1:]
+
+    return messages
+
+
+agent = Agent('openai:gpt-4o', history_processors=HistoryProcessors(funcs=[summarize_old_messages], replace_history=True))
+```
+
+**Note:** When `replace_history=False` (the default), the behavior is the same as using a list of processors directly - the original conversation history remains unchanged.
+
 ## Examples
 
 For a more complete example of using messages in conversations, see the [chat app](examples/chat-app.md) example.

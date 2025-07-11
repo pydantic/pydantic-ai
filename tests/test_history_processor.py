@@ -4,7 +4,7 @@ from typing import Any, cast
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, HistoryProcessors
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
@@ -301,3 +301,111 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
         user_part = msg.parts[0]
         assert isinstance(user_part, UserPromptPart)
         assert cast(str, user_part.content).startswith('TEST: ')
+
+
+async def test_history_processors_replace_history_true(function_model: FunctionModel):
+    """Test HistoryProcessors with replace_history=True modifies original history."""
+
+    def keep_only_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+    processors = HistoryProcessors(funcs=[keep_only_requests], replace_history=True)  # type: ignore
+    agent = Agent(function_model, history_processors=processors)  # type: ignore
+
+    original_history = [
+        ModelRequest(parts=[UserPromptPart(content='Question 1')]),
+        ModelResponse(parts=[TextPart(content='Answer 1')]),
+        ModelRequest(parts=[UserPromptPart(content='Question 2')]),
+        ModelResponse(parts=[TextPart(content='Answer 2')]),
+    ]
+
+    result = await agent.run('Question 3', message_history=original_history.copy())
+
+    # Verify the history was modified - responses should be removed
+    all_messages = result.all_messages()
+    requests = [msg for msg in all_messages if isinstance(msg, ModelRequest)]
+    responses = [msg for msg in all_messages if isinstance(msg, ModelResponse)]
+
+    # Should have 3 requests (2 original + 1 new) and 1 response (only the new one)
+    assert len(requests) == 3
+    assert len(responses) == 1
+
+
+async def test_history_processors_multiple_with_replace_history(function_model: FunctionModel):
+    """Test multiple processors with replace_history=True."""
+
+    def remove_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+    def keep_recent(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[-2:] if len(messages) > 2 else messages
+
+    processors = HistoryProcessors(  # type: ignore
+        funcs=[remove_responses, keep_recent], replace_history=True
+    )
+    agent = Agent(function_model, history_processors=processors)  # type: ignore
+
+    # Create history with 4 requests and 4 responses
+    original_history: list[ModelMessage] = []
+    for i in range(4):
+        original_history.append(ModelRequest(parts=[UserPromptPart(content=f'Question {i + 1}')]))
+        original_history.append(ModelResponse(parts=[TextPart(content=f'Answer {i + 1}')]))
+
+    result = await agent.run('Final question', message_history=original_history.copy())
+
+    # After processing: remove responses -> keep recent 2 -> add new exchange
+    all_messages = result.all_messages()
+    requests = [msg for msg in all_messages if isinstance(msg, ModelRequest)]
+    responses = [msg for msg in all_messages if isinstance(msg, ModelResponse)]
+
+    # Should have 2 requests (1 requests + 1 new) and 1 response (new only), responses should be removed
+    assert len(requests) == 2
+    assert len(responses) == 1
+
+
+async def test_history_processors_streaming_with_replace_history(function_model: FunctionModel):
+    """Test replace_history=True works with streaming runs."""
+
+    def summarize_history(messages: list[ModelMessage]) -> list[ModelMessage]:
+        # Simple summarization - keep only the last message
+        return messages[-1:] if messages else []
+
+    processors = HistoryProcessors(funcs=[summarize_history], replace_history=True)  # type: ignore
+    agent = Agent(function_model, history_processors=processors)  # type: ignore
+
+    original_history = [
+        ModelRequest(parts=[UserPromptPart(content='Question 1')]),
+        ModelResponse(parts=[TextPart(content='Answer 1')]),
+        ModelRequest(parts=[UserPromptPart(content='Question 2')]),
+        ModelResponse(parts=[TextPart(content='Answer 2')]),
+    ]
+
+    async with agent.run_stream('Question 3', message_history=original_history.copy()) as result:
+        async for _ in result.stream_text():
+            pass
+
+    # Verify history was modified during streaming
+    all_messages = result.all_messages()
+    # Should only have: new request + new response = 2 total
+    assert len(all_messages) == 2
+
+
+async def test_history_processors_replace_history_false_default(function_model: FunctionModel):
+    """Test HistoryProcessors with replace_history=False (default) preserves original history."""
+
+    def keep_only_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+    processors = HistoryProcessors(funcs=[keep_only_requests])  # replace_history=False by default  # type: ignore
+    agent = Agent(function_model, history_processors=processors)  # type: ignore
+
+    original_history = [
+        ModelRequest(parts=[UserPromptPart(content='Question 1')]),
+        ModelResponse(parts=[TextPart(content='Answer 1')]),
+    ]
+
+    result = await agent.run('Question 2', message_history=original_history.copy())
+
+    # Verify original history is preserved
+    all_messages = result.all_messages()
+    assert len(all_messages) == 4  # 2 original + 1 new request + 1 new response

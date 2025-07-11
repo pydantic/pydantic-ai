@@ -1,6 +1,14 @@
 from importlib.metadata import version as _metadata_version
 
-from .agent import Agent, CallToolsNode, EndStrategy, ModelRequestNode, UserPromptNode, capture_run_messages
+from .agent import (
+    Agent,
+    CallToolsNode,
+    EndStrategy,
+    HistoryProcessors,
+    ModelRequestNode,
+    UserPromptNode,
+    capture_run_messages,
+)
 from .exceptions import (
     AgentRunError,
     FallbackExceptionGroup,
@@ -19,6 +27,7 @@ __all__ = (
     '__version__',
     # agent
     'Agent',
+    'HistoryProcessors',
     'EndStrategy',
     'CallToolsNode',
     'ModelRequestNode',
