@@ -110,30 +110,10 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
 qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
 
 
-def _handle_version_and_list(
-    console: Console,
-    prog_name: str,
-    name_version: str,
-    version: bool,
-    list_models: bool,
-) -> int | None:
-    """Handle --version and --list-models flags."""
-    if version:
-        console.print(name_version, highlight=False)
-        return 0
-    if list_models:
-        console.print(f'{name_version}\n\n[green]Available models:[/green]')
-        for model in qualified_model_names:
-            console.print(f'  {model}', highlight=False)
-        return 0
-    return None
-
-
 def _setup_agent(
-    console: Console,
     agent_path: str | None,
     model_name: str | None,
-) -> tuple[Agent[None, str], int | None]:
+) -> Agent:
     """Set up the agent based on command line arguments."""
     agent: Agent[None, str] = cli_agent
     if agent_path:
@@ -141,24 +121,21 @@ def _setup_agent(
         try:
             module_path, variable_name = agent_path.split(':')
         except ValueError:
-            console.print('[red]Error: Agent must be specified in "module:variable" format[/red]')
-            return agent, 1
+            raise Exception('[red]Error: Agent must be specified in "module:variable" format[/red]')
 
         module = importlib.import_module(module_path)
         agent = getattr(module, variable_name)
         if not isinstance(agent, Agent):
-            console.print(f'[red]Error: {agent_path} is not an Agent instance[/red]')
-            return agent, 1
+            raise Exception(f'[red]Error: {agent_path} is not an Agent instance[/red]')
 
     model_arg_set = model_name is not None
     if agent.model is None or model_arg_set:
         try:
             agent.model = infer_model(model_name or 'openai:gpt-4o')
         except UserError as e:
-            console.print(f'Error initializing [magenta]{model_name}[/magenta]:\n[red]{e}[/red]')
-            return agent, 1
+            raise Exception(f'Error initializing [magenta]{model_name}[/magenta]:\n[red]{e}[/red]')
 
-    return agent, None
+    return agent
 
 
 def _print_agent_info(
@@ -196,7 +173,7 @@ def _print_agent_info(
 def _handle_prompt(
     console: Console,
     prog_name: str,
-    prompt: tuple[str, ...],
+    prompt: tuple[str],
     agent: Agent[None, str],
     stream: bool,
     code_theme: str,
@@ -205,24 +182,19 @@ def _handle_prompt(
     if prompt:
         # If prompt is provided, run it and exit
         prompt_str = ' '.join(prompt)
+
         try:
-            asyncio.run(ask_agent(agent, prompt_str, not stream, console, code_theme))
+            asyncio.run(ask_agent(agent, prompt_str, stream, console, code_theme))
+        except KeyboardInterrupt:
             return 0
-        except (KeyboardInterrupt, CancelledError):
-            return 1
-        except Exception as e:
-            console.print(f'[red]Error: {e}[/red]')
-            return 1
     else:
         # Otherwise, start interactive mode
         try:
-            asyncio.run(run_chat(not stream, agent, console, code_theme, prog_name))
+            asyncio.run(run_chat(stream, agent, console, code_theme, prog_name))
+        except KeyboardInterrupt:
             return 0
-        except (KeyboardInterrupt, CancelledError):
-            return 1
-        except Exception as e:
-            console.print(f'[red]Error: {e}[/red]')
-            return 1
+
+    return 0
 
 
 @click.command(
@@ -269,7 +241,7 @@ Special prompts:
 @click.pass_context
 def cli(
     ctx: click.Context,
-    prompt: tuple[str, ...],
+    prompt: tuple[str],
     model_name: str | None,
     agent_path: str | None,
     list_models: bool,
@@ -283,19 +255,32 @@ def cli(
     name_version = f'{prog_name} - PydanticAI CLI v{__version__}'
 
     # Handle version and list-models flags
-    if result := _handle_version_and_list(console, prog_name, name_version, version, list_models):
-        return result
+    if version:
+        console.print(name_version, highlight=False)
+        return 0
+
+    if list_models:
+        console.print(f'{name_version}\n\n[green]Available models:[/green]')
+        for model in qualified_model_names:
+            console.print(f'  {model}', highlight=False)
+        return 0
+
+    stream = not no_stream
+    if code_theme == 'light':
+        code_theme = 'default'
+    elif code_theme == 'dark':
+        code_theme = 'monokai'
+    else:
+        code_theme = code_theme  # pragma: no cover
 
     # Set up the agent
-    agent, result = _setup_agent(console, agent_path, model_name)
-    if result is not None:
-        return result
+    agent = _setup_agent(agent_path, model_name)
 
     # Print agent info
     _print_agent_info(console, name_version, agent, agent_path, model_name)
 
     # Handle prompt or start interactive mode
-    return _handle_prompt(console, prog_name, prompt, agent, no_stream, code_theme)
+    return _handle_prompt(console, prog_name, prompt, agent, stream, code_theme)
 
 
 async def run_chat(
