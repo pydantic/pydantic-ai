@@ -1056,10 +1056,10 @@ result = agent.run_sync('Call all the tools')
 print(LOG)
 """
 [
-    "Calling tool 'temperature_celsius' with args {'city': 'a'}",
-    "Calling tool 'temperature_fahrenheit' with args {'city': 'a'}",
-    "Calling tool 'weather_conditions' with args {'city': 'a'}",
-    "Calling tool 'current_time' with args {}",
+    "Calling tool 'temperature_celsius' with args: {'city': 'a'}",
+    "Calling tool 'temperature_fahrenheit' with args: {'city': 'a'}",
+    "Calling tool 'weather_conditions' with args: {'city': 'a'}",
+    "Calling tool 'current_time' with args: {}",
     "Finished calling tool 'temperature_celsius' with result: 21.0",
     "Finished calling tool 'temperature_fahrenheit' with result: 69.8",
     'Finished calling tool \'weather_conditions\' with result: "It\'s raining"',
