@@ -146,13 +146,13 @@ def test_agent_flag_non_agent(cli: CliTester, create_test_module: Callable[..., 
 
     result = cli(['--agent', 'test_module:custom_agent', 'hello'])
     assert result.exit_code == 1
-    assert 'is not an Agent' in str(result.exception)
+    assert 'is not an Agent' in result.output
 
 
 def test_agent_flag_bad_module_variable_path(cli: CliTester):
     result = cli(['--agent', 'bad_path', 'hello'])
     assert result.exit_code == 1
-    assert 'Agent must be specified in "module:variable" format' in str(result.exception)
+    assert 'Agent must be specified in "module:variable" format' in result.output
 
 
 def test_list_models(cli: CliTester):

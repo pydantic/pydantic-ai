@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+from click import ClickException
 from typing_inspection.introspection import get_literal_values
 
 from . import __version__
@@ -121,19 +122,21 @@ def _setup_agent(
         try:
             module_path, variable_name = agent_path.split(':')
         except ValueError:
-            raise Exception('[red]Error: Agent must be specified in "module:variable" format[/red]')
+            raise ClickException(click.style('Agent must be specified in "module:variable" format', fg='red'))
 
         module = importlib.import_module(module_path)
         agent = getattr(module, variable_name)
         if not isinstance(agent, Agent):
-            raise Exception(f'[red]Error: {agent_path} is not an Agent instance[/red]')
+            raise ClickException(click.style(f'{agent_path} is not an Agent instance'))
 
     model_arg_set = model_name is not None
     if agent.model is None or model_arg_set:
         try:
             agent.model = infer_model(model_name or 'openai:gpt-4o')
         except UserError as e:
-            raise Exception(f'Error initializing [magenta]{model_name}[/magenta]:\n[red]{e}[/red]')
+            raise ClickException(
+                f'Error initializing {click.style(model_name, fg="magenta")}:\n{click.style(str(e), fg="red")}'
+            )
 
     return agent
 
