@@ -140,7 +140,10 @@ def _build_prompt(
 
     prompt_parts: list['UserContent'] = []
     prompt_parts.append('<Input>\n')
-    prompt_parts.append(inputs)
+    if isinstance(inputs, list):
+        prompt_parts.extend(inputs)
+    else:
+        prompt_parts.append(inputs)
     prompt_parts.append('\n</Input>')
 
     if expected_output is not None:
