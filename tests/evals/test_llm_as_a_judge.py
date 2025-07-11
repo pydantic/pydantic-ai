@@ -141,14 +141,13 @@ async def test_judge_input_output_mock(mocker: MockerFixture):
     assert '<Rubric>\nOutput contains input\n</Rubric>' in call_args[0]
 
 
-async def test_judge_input_output_binary_content_mock(mocker: MockerFixture, image_content: BinaryContent):
+async def test_judge_input_output_binary_content_list_mock(mocker: MockerFixture, image_content: BinaryContent):
     """Test judge_input_output function with mocked agent."""
     # Mock the agent run method
     mock_result = mocker.MagicMock()
     mock_result.output = GradingOutput(reason='Test passed', pass_=True, score=1.0)
     mock_run = mocker.patch('pydantic_ai.Agent.run', return_value=mock_result)
 
-    # Test with string input and output
     result = await judge_input_output([image_content, image_content], 'Hello world', 'Output contains input')
     assert isinstance(result, GradingOutput)
     assert result.reason == 'Test passed'
@@ -164,6 +163,14 @@ async def test_judge_input_output_binary_content_mock(mocker: MockerFixture, ima
 
     # 2) The BinaryContent you passed in should be one of the elements
     assert image_content in raw_prompt, 'Expected the exact BinaryContent instance to be in the prompt list'
+
+
+async def test_judge_input_output_binary_content_mock(mocker: MockerFixture, image_content: BinaryContent):
+    """Test judge_input_output function with mocked agent."""
+    # Mock the agent run method
+    mock_result = mocker.MagicMock()
+    mock_result.output = GradingOutput(reason='Test passed', pass_=True, score=1.0)
+    mock_run = mocker.patch('pydantic_ai.Agent.run', return_value=mock_result)
 
     result = await judge_input_output(image_content, 'Hello world', 'Output contains input')
     assert isinstance(result, GradingOutput)
