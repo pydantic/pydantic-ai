@@ -120,13 +120,13 @@ def _build_prompt(
                 <Input>
                 {inputs}
                 </Input>
-                """).strip()
+                """)
             )
         if expected_output_section is not None:
-            sections.append(expected_output_section.strip())
+            sections.append(expected_output_section)
 
-        sections.append(output_section.strip())
-        sections.append(rubric_section.strip())
+        sections.append(output_section)
+        sections.append(rubric_section)
         return "\n\n".join(sections)
 
     prompt_parts: list['UserContent'] = []
