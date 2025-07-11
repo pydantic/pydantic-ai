@@ -97,13 +97,21 @@ def _build_prompt(
     inputs: Optional[UserContent | Sequence[UserContent]],
     output: Any,
     rubric: str,
-    expected_output: Any | None = None,
+    expected_output: Optional[Any | None] = None,
 ) -> Union[str, Sequence[Union[str, 'UserContent']]]:
     """Build a prompt that includes input, output, and rubric.
 
     If inputs is a string, returns a dedented string.
     If inputs is not a string (e.g., BinaryContent), returns a list of UserContent.
     """
+    expected_output_section = None
+    if expected_output is not None:
+        expected_output_section = f'<ExpectedOutput>\n{_stringify(expected_output)}\n</ExpectedOutput>'
+
+    output_section = f'<Output>\n{_stringify(output)}\n</Output>'
+
+    rubric_section = f'<Rubric>\n{rubric}\n</Rubric>'
+
     if inputs is None or isinstance(inputs, str):
         sections: list[str] = []
         if isinstance(inputs, str):
@@ -114,28 +122,11 @@ def _build_prompt(
                 </Input>
                 """).strip()
             )
-        if expected_output is not None:
-            sections.append(
-                dedent(f"""
-                <ExpectedOutput>
-                {_stringify(expected_output)}
-                </ExpectedOutput>
-                """).strip()
-            )
-        sections.append(
-            dedent(f"""
-            <Output>
-            {_stringify(output)}
-            </Output>
-            """).strip()
-        )
-        sections.append(
-            dedent(f"""
-            <Rubric>
-            {rubric}
-            </Rubric>
-            """).strip()
-        )
+        if expected_output_section is not None:
+            sections.append(expected_output_section.strip())
+
+        sections.append(output_section.strip())
+        sections.append(rubric_section.strip())
         return "\n\n".join(sections)
 
     prompt_parts: list['UserContent'] = []
@@ -146,13 +137,11 @@ def _build_prompt(
         prompt_parts.append(inputs)
     prompt_parts.append('\n</Input>')
 
-    if expected_output is not None:
-        prompt_parts.append(
-            f'<ExpectedOutput>\n{_stringify(expected_output)}\n</ExpectedOutput>'
-        )
+    if expected_output_section is not None:
+        prompt_parts.append(expected_output_section)
 
-    prompt_parts.append(f'<Output>\n{_stringify(output)}\n</Output>')
-    prompt_parts.append(f'<Rubric>\n{rubric}\n</Rubric>')
+    prompt_parts.append(output_section)
+    prompt_parts.append(rubric_section)
 
     return prompt_parts
 
