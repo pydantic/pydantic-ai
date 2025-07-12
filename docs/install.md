@@ -54,7 +54,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `groq` — installs `groq` [PyPI ↗](https://pypi.org/project/groq){:target="_blank"}
 * `mistral` — installs `mistralai` [PyPI ↗](https://pypi.org/project/mistralai){:target="_blank"}
 * `cohere` - installs `cohere` [PyPI ↗](https://pypi.org/project/cohere){:target="_blank"}
-* `duckduckgo` - installs `duckduckgo-search` [PyPI ↗](https://pypi.org/project/duckduckgo-search){:target="_blank"}
+* `duckduckgo` - installs `ddgs` [PyPI ↗](https://pypi.org/project/ddgs){:target="_blank"}
 * `tavily` - installs `tavily-python` [PyPI ↗](https://pypi.org/project/tavily-python){:target="_blank"}
 
 See the [models](models/index.md) documentation for information on which optional dependencies are required for each model.
