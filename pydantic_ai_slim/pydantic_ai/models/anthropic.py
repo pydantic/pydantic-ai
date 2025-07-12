@@ -33,7 +33,14 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    check_allow_model_requests,
+    download_item,
+    get_user_agent,
+)
 
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
@@ -238,7 +245,7 @@ class AnthropicModel(Model):
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
-                system=system_prompt or NOT_GIVEN,
+                system=system_prompt.strip() or NOT_GIVEN,
                 messages=anthropic_messages,
                 model=self._model_name,
                 tools=tools or NOT_GIVEN,
@@ -348,7 +355,9 @@ class AnthropicModel(Model):
                         if response_part.signature is not None:  # pragma: no branch
                             assistant_content_params.append(
                                 BetaThinkingBlockParam(
-                                    thinking=response_part.content, signature=response_part.signature, type='thinking'
+                                    thinking=response_part.content,
+                                    signature=response_part.signature,
+                                    type='thinking',
                                 )
                             )
                     else:
@@ -383,7 +392,11 @@ class AnthropicModel(Model):
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         yield BetaImageBlockParam(
-                            source={'data': io.BytesIO(item.data), 'media_type': item.media_type, 'type': 'base64'},  # type: ignore
+                            source={
+                                'data': io.BytesIO(item.data),
+                                'media_type': item.media_type,
+                                'type': 'base64',
+                            },  # type: ignore
                             type='image',
                         )
                     elif item.media_type == 'application/pdf':
