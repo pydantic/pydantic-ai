@@ -57,13 +57,19 @@ class Usage:
 
     def opentelemetry_attributes(self) -> dict[str, int]:
         """Get the token limits as OpenTelemetry attributes."""
-        result = {
-            'gen_ai.usage.input_tokens': self.request_tokens,
-            'gen_ai.usage.output_tokens': self.response_tokens,
-        }
-        for key, value in (self.details or {}).items():
-            result[f'gen_ai.usage.details.{key}'] = value  # pragma: no cover
-        return {k: v for k, v in result.items() if v}
+        result = {}
+        if self.request_tokens:
+            result['gen_ai.usage.input_tokens'] = self.request_tokens
+        if self.response_tokens:
+            result['gen_ai.usage.output_tokens'] = self.response_tokens
+        details = self.details
+        if details:
+            prefix = 'gen_ai.usage.details.'
+            for key, value in details.items():
+                # Skipping check for value since spec implies all detail values are relevant
+                if value:
+                    result[prefix + key] = value  # pragma: no cover
+        return result
 
     def has_values(self) -> bool:
         """Whether any values are set and non-zero."""
