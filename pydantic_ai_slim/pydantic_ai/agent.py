@@ -7,7 +7,6 @@ import warnings
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from copy import deepcopy
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
 
@@ -2101,9 +2100,21 @@ class AgentRunResult(Generic[OutputDataT]):
         """
         if not self._output_tool_name:
             raise ValueError('Cannot set output tool return content when the return type is `str`.')
-        messages = deepcopy(self._state.message_history)
+
+        # Fast and memory-efficient: shallow list copy, only copy last message and its parts
+        orig_messages = self._state.message_history
+        if not orig_messages:
+            raise LookupError(f'No tool call found with tool name {self._output_tool_name!r}.')
+
+        messages = list(orig_messages)
         last_message = messages[-1]
-        for part in last_message.parts:
+
+        # Create a shallow copy of the last message, and a shallow copy of its parts
+        last_message_copy = dataclasses.replace(last_message)
+        last_message_copy.parts = list(last_message.parts)
+        messages[-1] = last_message_copy
+
+        for part in last_message_copy.parts:
             if isinstance(part, _messages.ToolReturnPart) and part.tool_name == self._output_tool_name:
                 part.content = return_content
                 return messages
