@@ -509,16 +509,25 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
                 part_kind='text',
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Alice'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info',
+                args={'name': 'Alice'},
+                tool_call_id=IsStr(),
+                part_kind='tool-call',
             ),
             ToolCallPart(
                 tool_name='retrieve_entity_info', args={'name': 'Bob'}, tool_call_id=IsStr(), part_kind='tool-call'
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Charlie'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info',
+                args={'name': 'Charlie'},
+                tool_call_id=IsStr(),
+                part_kind='tool-call',
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Daisy'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info',
+                args={'name': 'Daisy'},
+                tool_call_id=IsStr(),
+                part_kind='tool-call',
             ),
         ]
     )
@@ -953,6 +962,58 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
     )
 
 
+async def test_anthropic_model_following_instructions(allow_model_requests: None, anthropic_api_key: str):
+    class UserName(BaseModel):
+        name: str
+
+    m = AnthropicModel('anthropic:claude-sonnet-4-20250514', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, instructions='my name is hamza')
+
+    result = await agent.run('what is my name?', output_type=UserName)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='what is my name?', timestamp=IsDatetime())],
+                instructions='my name is hamza',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'name': 'hamza'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=395,
+                    response_tokens=39,
+                    total_tokens=434,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 395,
+                        'output_tokens': 39,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                vendor_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+
 async def test_anthropic_model_thinking_part(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-7-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
@@ -1228,7 +1289,10 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
             lambda: anth_msg(BetaUsage(input_tokens=1, output_tokens=1)),
             snapshot(
                 Usage(
-                    request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
+                    request_tokens=1,
+                    response_tokens=1,
+                    total_tokens=2,
+                    details={'input_tokens': 1, 'output_tokens': 1},
                 )
             ),
             id='AnthropicMessage',
@@ -1258,7 +1322,10 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
             ),
             snapshot(
                 Usage(
-                    request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
+                    request_tokens=1,
+                    response_tokens=1,
+                    total_tokens=2,
+                    details={'input_tokens': 1, 'output_tokens': 1},
                 )
             ),
             id='RawMessageStartEvent',
