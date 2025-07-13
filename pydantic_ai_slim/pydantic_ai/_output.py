@@ -145,7 +145,31 @@ class TraceContext:
     def record_response(self, span: Any, response: Any) -> None:
         """Record the function response in the span if content inclusion is enabled."""
         if self.include_content and span.is_recording():
-            span.set_attribute('tool_response', response)
+            try:
+                # Convert response to a JSON string for OpenTelemetry compatibility
+                # OpenTelemetry span attributes only support primitive types
+                import json
+
+                if hasattr(response, 'model_dump'):
+                    # Pydantic model
+                    response_str = json.dumps(response.model_dump())
+                elif hasattr(response, 'dict'):
+                    # Older Pydantic models or dict-like objects
+                    response_str = json.dumps(response.dict())
+                elif isinstance(response, (str, int, float, bool)):
+                    # Already a primitive type
+                    response_str = str(response)
+                else:
+                    # Try to convert to JSON, fallback to string representation
+                    try:
+                        response_str = json.dumps(response)
+                    except (TypeError, ValueError):
+                        response_str = str(response)
+
+                span.set_attribute('tool_response', response_str)
+            except Exception:
+                # If serialization fails, set a fallback string to avoid breaking tracing
+                span.set_attribute('tool_response', f'<{type(response).__name__} object>')
 
     def _build_json_schema(self, include_tool_attrs: bool) -> str:
         """Build JSON schema for span attributes."""

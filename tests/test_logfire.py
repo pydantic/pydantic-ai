@@ -619,8 +619,6 @@ def test_output_type_function_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    """Test logfire attributes for basic function output type (matches test_output_type_function in test_agent.py)."""
-
     def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         args_json = '{"city": "Mexico City"}'
@@ -664,6 +662,7 @@ def test_output_type_function_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
     else:
@@ -694,8 +693,6 @@ def test_output_type_function_with_run_context_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    """Test logfire attributes for function with RunContext (matches test_output_type_function_with_run_context in test_agent.py)."""
-
     def get_weather_with_ctx(ctx: RunContext[None], city: str) -> WeatherInfo:
         assert ctx is not None
         return WeatherInfo(temperature=28.7, description='sunny')
@@ -743,6 +740,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
     else:
@@ -773,8 +771,6 @@ def test_output_type_function_with_retry_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    """Test logfire attributes for function with retry logic (matches test_output_type_function_with_retry in test_agent.py)."""
-
     def get_weather_with_retry(city: str) -> WeatherInfo:
         if city != 'Mexico City':
             from pydantic_ai import ModelRetry
@@ -831,6 +827,7 @@ def test_output_type_function_with_retry_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
     else:
@@ -861,8 +858,6 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    """Test logfire attributes for function with custom tool name (matches test_output_type_function_with_custom_tool_name in test_agent.py)."""
-
     def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         args_json = '{"city": "Mexico City"}'
@@ -908,6 +903,7 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
     else:
@@ -938,8 +934,6 @@ def test_output_type_bound_instance_method_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    """Test logfire attributes for bound instance method (matches test_output_type_bound_instance_method in test_agent.py)."""
-
     class Weather(BaseModel):
         temperature: float
         description: str
@@ -992,6 +986,7 @@ def test_output_type_bound_instance_method_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
     else:
@@ -1022,8 +1017,6 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    """Test logfire attributes for bound instance method with RunContext (matches test_output_type_bound_instance_method_with_run_context in test_agent.py)."""
-
     class Weather(BaseModel):
         temperature: float
         description: str
@@ -1077,6 +1070,7 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
     else:
@@ -1155,6 +1149,7 @@ def test_output_type_async_function_logfire_attributes(
                     )
                 ),
                 'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
     else:
@@ -1299,8 +1294,6 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    """Test logfire attributes for TextOutput function with retry (matches test_output_type_text_output_function_with_retry in test_agent.py)."""
-
     def get_weather_with_retry(ctx: RunContext[None], city: str) -> WeatherInfo:
         assert ctx is not None
         if city != 'Mexico City':
@@ -1341,6 +1334,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
         # Verify the basic span attributes without tool call attributes
         assert 'tool_arguments' in successful_attributes
         # Note: tool_response may not be present for TextOutput due to serialization limits
+        assert 'tool_response' in successful_attributes
         assert 'logfire.msg' in successful_attributes
         # These tool call specific attributes should NOT be present
         assert 'gen_ai.tool.name' not in successful_attributes
