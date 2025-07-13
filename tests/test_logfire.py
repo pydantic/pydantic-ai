@@ -654,8 +654,7 @@ def test_output_type_function_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'tool_arguments': '{"city": "Mexico City"}',
-                'tool_response': "temperature=28.7 description='sunny'",
-                'logfire.msg': 'running tool: final_result',
+                'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
@@ -677,7 +676,7 @@ def test_output_type_function_logfire_attributes(
             {
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
-                'logfire.msg': 'running tool: final_result',
+                'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
@@ -738,8 +737,7 @@ def test_output_type_async_function_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'tool_arguments': '{"product_id": "12345"}',
-                'tool_response': "name='Laptop' price=999.99",
-                'logfire.msg': 'running tool: final_result',
+                'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
@@ -761,7 +759,7 @@ def test_output_type_async_function_logfire_attributes(
             {
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
-                'logfire.msg': 'running tool: final_result',
+                'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
@@ -808,7 +806,8 @@ def test_text_output_function_logfire_attributes(
     # Find the text output function span attributes
     text_function_attributes = None
     for attributes in summary.attributes.values():
-        if 'running text output function' in attributes.get('logfire.msg', ''):
+        msg = attributes.get('logfire.msg', '')
+        if 'running output function: upcase_text' in msg:
             text_function_attributes = attributes
             break
 
