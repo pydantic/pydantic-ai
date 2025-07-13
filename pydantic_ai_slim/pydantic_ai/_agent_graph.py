@@ -589,7 +589,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         try:
             if isinstance(output_schema, _output.TextOutputSchema):
                 run_context = build_run_context(ctx)
-                result_data = await output_schema.process(text, run_context)
+                trace_context = _output.build_trace_context(ctx)
+                result_data = await output_schema.process(text, run_context, trace_context)
             else:
                 m = _messages.RetryPromptPart(
                     content='Plain text responses are not permitted, please include your response in a tool call',

@@ -9,12 +9,13 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import NotRequired, TypedDict
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent
 from pydantic_ai._utils import get_traceparent
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.output import PromptedOutput, TextOutput
 
 from .conftest import IsStr
 
@@ -778,90 +779,113 @@ def test_output_type_async_function_logfire_attributes(
 
 
 def upcase_text(text: str) -> str:
+    """Convert text to uppercase."""
     return text.upper()
-
-
-class OrderInfo(BaseModel):
-    order_id: str
-    total: float
-    status: str
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize('include_content', [True, False])
-def test_output_type_function_with_run_context_logfire_attributes(
+def test_text_output_function_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    """Test logfire attributes for output functions that use RunContext."""
+    """Test logfire attributes for TextOutput functions (PlainTextOutputProcessor)."""
 
-    def process_order(ctx: RunContext[None], order_data: str, customer_id: int) -> OrderInfo:
-        # Function with RunContext as first parameter and multiple other parameters
-        return OrderInfo(order_id='ORD-123', total=59.99, status='processed')
+    def call_text_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Return a plain text response (not a tool call)
+        from pydantic_ai.messages import TextPart
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.output_tools is not None
-        args_json = '{"order_data": "customer_order_details", "customer_id": 12345}'
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+        return ModelResponse(parts=[TextPart(content='hello world')])
 
     instrumentation_settings = InstrumentationSettings(include_content=include_content)
-    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+    my_agent = Agent(model=FunctionModel(call_text_response), instrument=instrumentation_settings)
 
-    result = my_agent.run_sync('Process order', output_type=process_order)
-    assert result.output == OrderInfo(order_id='ORD-123', total=59.99, status='processed')
+    result = my_agent.run_sync('Say hello', output_type=TextOutput(upcase_text))
+    assert result.output == 'HELLO WORLD'  # Assuming model returns 'hello world'
+
+    summary = get_logfire_summary()
+
+    # Find the text output function span attributes
+    text_function_attributes = None
+    for attributes in summary.attributes.values():
+        if 'running text output function' in attributes.get('logfire.msg', ''):
+            text_function_attributes = attributes
+            break
+
+    if include_content:
+        assert text_function_attributes is not None
+        # Verify the basic span attributes without tool call attributes
+        assert 'tool_arguments' in text_function_attributes
+        assert 'tool_response' in text_function_attributes
+        assert 'logfire.msg' in text_function_attributes
+        assert 'logfire.json_schema' in text_function_attributes
+        # These tool call specific attributes should NOT be present
+        assert 'gen_ai.tool.name' not in text_function_attributes
+        assert 'gen_ai.tool.call.id' not in text_function_attributes
+        # Verify the content
+        assert text_function_attributes['tool_response'] == 'HELLO WORLD'
+        assert 'upcase_text' in text_function_attributes['logfire.msg']
+    else:
+        # When include_content=False, we might still have the span but without content
+        if text_function_attributes is not None:
+            assert 'tool_arguments' not in text_function_attributes
+            assert 'tool_response' not in text_function_attributes
+            assert 'gen_ai.tool.name' not in text_function_attributes
+            assert 'gen_ai.tool.call.id' not in text_function_attributes
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_prompted_output_function_logfire_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    """Test that spans are created for PromptedOutput functions with appropriate attributes."""
+
+    def upcase_text(text: str) -> str:
+        return text.upper()
+
+    call_count = 0
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        # Simulate the model returning JSON that will be parsed and used to call the function
+        return ModelResponse(parts=[TextPart(content='{"text": "hello world"}')])
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    agent = Agent(
+        model=FunctionModel(call_tool), instrument=instrumentation_settings, output_type=PromptedOutput(upcase_text)
+    )
+
+    result = agent.run_sync('test')
+
+    # Check that the function was called and returned the expected result
+    assert result.output == 'HELLO WORLD'
+    assert call_count == 1
 
     summary = get_logfire_summary()
 
     # Find the output function span attributes
     output_function_attributes = None
     for attributes in summary.attributes.values():
-        if attributes.get('gen_ai.tool.name') == 'final_result':
+        if attributes.get('logfire.msg', '').startswith('running output function: upcase_text'):
             output_function_attributes = attributes
             break
 
     assert output_function_attributes is not None
 
+    # Check that tool call attributes are NOT present (this is not a tool call)
+    assert 'gen_ai.tool.name' not in output_function_attributes
+    assert 'gen_ai.tool.call.id' not in output_function_attributes
+
+    # Check content inclusion based on include_content flag
     if include_content:
-        assert output_function_attributes == snapshot(
-            {
-                'gen_ai.tool.name': 'final_result',
-                'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"order_data": "customer_order_details", "customer_id": 12345}',
-                'tool_response': "order_id='ORD-123' total=59.99 status='processed'",
-                'logfire.msg': 'running tool: final_result',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'tool_arguments': {'type': 'object'},
-                                'tool_response': {'type': 'object'},
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
-                            },
-                        }
-                    )
-                ),
-                'logfire.span_type': 'span',
-            }
-        )
+        assert 'tool_arguments' in output_function_attributes
+        assert 'tool_response' in output_function_attributes
+        # tool_arguments should contain the parsed JSON arguments
+        assert output_function_attributes['tool_arguments'] == '{"text": "hello world"}'
+        assert output_function_attributes['tool_response'] == 'HELLO WORLD'
     else:
-        assert output_function_attributes == snapshot(
-            {
-                'gen_ai.tool.name': 'final_result',
-                'gen_ai.tool.call.id': IsStr(),
-                'logfire.msg': 'running tool: final_result',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
-                            },
-                        }
-                    )
-                ),
-                'logfire.span_type': 'span',
-            }
-        )
+        assert 'tool_arguments' not in output_function_attributes
+        assert 'tool_response' not in output_function_attributes

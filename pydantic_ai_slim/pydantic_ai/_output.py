@@ -97,6 +97,10 @@ class TraceContext:
             raise UserError('No tool call is set in the trace context.')
         return self._call
 
+    def has_call(self) -> bool:
+        """Check if a tool call is set in the trace context."""
+        return self._call is not None
+
     @contextmanager
     def with_call(self, call: _messages.ToolCallPart) -> Iterator[None]:
         """Context manager to set the current tool call."""
@@ -736,7 +740,8 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
         if self._function_schema:
             try:
                 # Wraps the output function call in an OpenTelemetry span if trace_context is provided.
-                if trace_context:
+                if trace_context and trace_context.has_call():
+                    # This is a tool call context, so we include tool call attributes
                     message = trace_context.call
                     span_attributes = {
                         'gen_ai.tool.name': message.tool_name,
@@ -774,6 +779,39 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                                     'tool_response',
                                     str(output),
                                 )
+                elif trace_context and not trace_context.has_call():
+                    # This is not a tool call (e.g., PromptedOutput), so create a span without tool call attributes
+                    function_name = getattr(self._function_schema.function, '__name__', 'output_function')
+                    span_attributes = {
+                        **({'tool_arguments': json.dumps(output)} if trace_context.include_content else {}),
+                        'logfire.msg': f'running output function: {function_name}',
+                        # add the JSON schema so these attributes are formatted nicely in Logfire
+                        'logfire.json_schema': json.dumps(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    **(
+                                        {
+                                            'tool_arguments': {'type': 'object'},
+                                            'tool_response': {'type': 'object'},
+                                        }
+                                        if trace_context.include_content
+                                        else {}
+                                    ),
+                                },
+                            }
+                        ),
+                    }
+                    with trace_context.tracer.start_as_current_span(
+                        'running output function',
+                        attributes=span_attributes,
+                    ) as span:
+                        output = await self._function_schema.call(output, run_context)
+                        if trace_context.include_content and span.is_recording():
+                            span.set_attribute(
+                                'tool_response',
+                                str(output),
+                            )
                 else:
                     output = await self._function_schema.call(output, run_context)
             except ModelRetry as r:
@@ -947,7 +985,43 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
         args = {self._str_argument_name: data}
 
         try:
-            output = await self._function_schema.call(args, run_context)
+            # Wraps the output function call in an OpenTelemetry span if trace_context is provided.
+            # Note: PlainTextOutputProcessor is used for text responses (not tool calls),
+            # so we don't have tool call attributes like gen_ai.tool.name or gen_ai.tool.call.id
+            if trace_context:
+                function_name = getattr(self._function_schema.function, '__name__', 'text_output_function')
+                span_attributes = {
+                    **({'tool_arguments': json.dumps(args)} if trace_context.include_content else {}),
+                    'logfire.msg': f'running text output function: {function_name}',
+                    # add the JSON schema so these attributes are formatted nicely in Logfire
+                    'logfire.json_schema': json.dumps(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                **(
+                                    {
+                                        'tool_arguments': {'type': 'object'},
+                                        'tool_response': {'type': 'object'},
+                                    }
+                                    if trace_context.include_content
+                                    else {}
+                                ),
+                            },
+                        }
+                    ),
+                }
+                with trace_context.tracer.start_as_current_span(
+                    'running text output function',
+                    attributes=span_attributes,
+                ) as span:
+                    output = await self._function_schema.call(args, run_context)
+                    if trace_context.include_content and span.is_recording():
+                        span.set_attribute(
+                            'tool_response',
+                            str(output),
+                        )
+            else:
+                output = await self._function_schema.call(args, run_context)
         except ModelRetry as r:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
