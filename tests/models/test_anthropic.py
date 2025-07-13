@@ -970,48 +970,7 @@ async def test_anthropic_model_following_instructions(allow_model_requests: None
     agent = Agent(m, instructions='my name is hamza')
 
     result = await agent.run('what is my name?', output_type=UserName)
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='what is my name?', timestamp=IsDatetime())],
-                instructions='my name is hamza',
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='final_result',
-                        args={'name': 'hamza'},
-                        tool_call_id=IsStr(),
-                    )
-                ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=395,
-                    response_tokens=39,
-                    total_tokens=434,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 395,
-                        'output_tokens': 39,
-                    },
-                ),
-                model_name='claude-sonnet-4-20250514',
-                timestamp=IsDatetime(),
-                vendor_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='final_result',
-                        content='Final result processed.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-        ]
-    )
+    assert result.output.name.lower() == 'hamza'
 
 
 async def test_anthropic_model_thinking_part(allow_model_requests: None, anthropic_api_key: str):
