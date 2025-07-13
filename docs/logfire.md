@@ -5,7 +5,7 @@ Applications that use LLMs have some challenges that are well known and understo
 These applications also have some challenges that most developers have encountered much less often: LLMs are **fickle** and **non-deterministic**. Subtle changes in a prompt can completely change a model's performance, and there's no `EXPLAIN` query you can run to understand why.
 
 !!! danger "Warning"
-    From a software engineers point of view, you can think of LLMs as the worst database you've ever heard of, but worse.
+From a software engineers point of view, you can think of LLMs as the worst database you've ever heard of, but worse.
 
     If LLMs weren't so bloody useful, we'd never touch them.
 
@@ -18,8 +18,8 @@ LLM Observability tools that just let you understand how your model is performin
 [Pydantic Logfire](https://pydantic.dev/logfire) is an observability platform developed by the team who created and maintain Pydantic Validation and Pydantic AI. Logfire aims to let you understand your entire application: Gen AI, classic predictive AI, HTTP traffic, database queries and everything else a modern application needs, all using OpenTelemetry.
 
 !!! tip "Pydantic Logfire is a commercial product"
-    Logfire is a commercially supported, hosted platform with an extremely generous and perpetual [free tier](https://pydantic.dev/pricing/).
-    You can sign up and start using Logfire in a couple of minutes. Logfire can also be self-hosted on the enterprise tier.
+Logfire is a commercially supported, hosted platform with an extremely generous and perpetual [free tier](https://pydantic.dev/pricing/).
+You can sign up and start using Logfire in a couple of minutes. Logfire can also be self-hosted on the enterprise tier.
 
 Pydantic AI has built-in (but optional) support for Logfire. That means if the `logfire` package is installed and configured and agent instrumentation is enabled then detailed information about agent runs is sent to Logfire. Otherwise there's virtually no overhead and nothing is sent.
 
@@ -100,12 +100,11 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
 
 ### Monitoring HTTP Requests
 
-!!! tip ""F**k you, show me the prompt.""
-    As per Hamel Husain's influential 2024 blog post ["Fuck You, Show Me The Prompt."](https://hamel.dev/blog/posts/prompt/)
-    (bear with the capitalization, the point is valid), it's often useful to be able to view the raw HTTP requests and responses made to model providers.
+!!! tip ""F\*\*k you, show me the prompt.""
+As per Hamel Husain's influential 2024 blog post ["Fuck You, Show Me The Prompt."](https://hamel.dev/blog/posts/prompt/)
+(bear with the capitalization, the point is valid), it's often useful to be able to view the raw HTTP requests and responses made to model providers.
 
 To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) since all provider SDKs use the [HTTPX](https://www.python-httpx.org/) library internally.
-
 
 === "With HTTP instrumentation"
 

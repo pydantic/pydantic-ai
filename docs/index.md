@@ -10,33 +10,33 @@ We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI
 
 ## Why use PydanticAI
 
-* __Built by the Pydantic Team__:
-Built by the team behind [Pydantic Validation](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
+- **Built by the Pydantic Team**:
+  Built by the team behind [Pydantic Validation](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
 
-* __Model-agnostic__:
-Supports OpenAI, Anthropic, Gemini, Deepseek, Ollama, Groq, Cohere, and Mistral, and there is a simple interface to implement support for [other models](models/index.md).
+- **Model-agnostic**:
+  Supports OpenAI, Anthropic, Gemini, Deepseek, Ollama, Groq, Cohere, and Mistral, and there is a simple interface to implement support for [other models](models/index.md).
 
-* __Pydantic Logfire Integration__:
-Seamlessly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, performance monitoring, and behavior tracking of your LLM-powered applications.
+- **Pydantic Logfire Integration**:
+  Seamlessly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, performance monitoring, and behavior tracking of your LLM-powered applications.
 
-* __Type-safe__:
-Designed to make [type checking](agents.md#static-type-checking) as powerful and informative as possible for you.
+- **Type-safe**:
+  Designed to make [type checking](agents.md#static-type-checking) as powerful and informative as possible for you.
 
-* __Python-centric Design__:
-Leverages Python's familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project.
+- **Python-centric Design**:
+  Leverages Python's familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project.
 
-* __Structured Responses__:
-Harnesses the power of [Pydantic Validation](https://docs.pydantic.dev/latest/) to [validate and structure](output.md#structured-output) model outputs, ensuring responses are consistent across runs.
+- **Structured Responses**:
+  Harnesses the power of [Pydantic Validation](https://docs.pydantic.dev/latest/) to [validate and structure](output.md#structured-output) model outputs, ensuring responses are consistent across runs.
 
-* __Dependency Injection System__:
-Offers an optional [dependency injection](dependencies.md) system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [output validators](output.md#output-validator-functions).
-This is useful for testing and eval-driven iterative development.
+- **Dependency Injection System**:
+  Offers an optional [dependency injection](dependencies.md) system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [output validators](output.md#output-validator-functions).
+  This is useful for testing and eval-driven iterative development.
 
-* __Streamed Responses__:
-Provides the ability to [stream](output.md#streamed-results) LLM responses continuously, with immediate validation, ensuring real time access to validated outputs.
+- **Streamed Responses**:
+  Provides the ability to [stream](output.md#streamed-results) LLM responses continuously, with immediate validation, ensuring real time access to validated outputs.
 
-* __Graph Support__:
-[Pydantic Graph](graph.md) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.
+- **Graph Support**:
+  [Pydantic Graph](graph.md) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.
 
 ## Hello World Example
 
@@ -153,7 +153,7 @@ async def main():
 13. This [Pydantic](https://docs.pydantic.dev) model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
 
 !!! tip "Complete `bank_support.py` example"
-    The code included here is incomplete for the sake of brevity (the definition of `DatabaseConn` is missing); you can find the complete `bank_support.py` example [here](examples/bank-support.md).
+The code included here is incomplete for the sake of brevity (the definition of `DatabaseConn` is missing); you can find the complete `bank_support.py` example [here](examples/bank-support.md).
 
 ## Instrumentation with Pydantic Logfire
 
@@ -208,10 +208,9 @@ Two formats are available:
 - [llms-full.txt](https://ai.pydantic.dev/llms-full.txt): Similar to the `llms.txt` file,
   but every link content is included. Note that this file may be too large for some LLMs.
 
-As of today, these files *cannot* be natively leveraged by LLM frameworks or IDEs. Alternatively,
+As of today, these files _cannot_ be natively leveraged by LLM frameworks or IDEs. Alternatively,
 an [MCP server](https://modelcontextprotocol.io/) can be implemented to properly parse the `llms.txt`
 file.
-
 
 ## Next Steps
 

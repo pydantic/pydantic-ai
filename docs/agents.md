@@ -8,7 +8,7 @@ but multiple agents can also interact to embody more complex workflows.
 The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptually you can think of an agent as a container for:
 
 | **Component**                                 | **Description**                                                                                           |
-|-----------------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | [System prompt(s)](#system-prompts)           | A set of instructions for the LLM written by the developer.                                               |
 | [Function tool(s)](tools.md)                  | Functions that the LLM may call to get information while generating a response.                           |
 | [Structured output type](output.md)           | The structured datatype the LLM must return at the end of a run, if specified.                            |
@@ -56,9 +56,8 @@ print(result.output)
 3. In reality, you might want to use a random number here e.g. `random.randint(0, 36)`.
 4. `result.output` will be a boolean indicating if the square is a winner. Pydantic performs the output validation, and it'll be typed as a `bool` since its type is derived from the `output_type` generic parameter of the agent.
 
-
 !!! tip "Agents are designed for reuse, like FastAPI Apps"
-    Agents are intended to be instantiated once (frequently as module globals) and reused throughout your application, similar to a small [FastAPI][fastapi.FastAPI] app or an [APIRouter][fastapi.APIRouter].
+Agents are intended to be instantiated once (frequently as module globals) and reused throughout your application, similar to a small [FastAPI][fastapi.FastAPI] app or an [APIRouter][fastapi.APIRouter].
 
 ## Running Agents
 
@@ -90,10 +89,10 @@ async def main():
         print(await response.get_output())
         #> London
 ```
+
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 You can also pass messages from previous runs to continue a conversation or provide context, as described in [Messages and Chat History](message-history.md).
-
 
 ### Iterating Over an Agent's Graph
 
@@ -222,7 +221,7 @@ async def main():
 
 1. We start by grabbing the first node that will be run in the agent's graph.
 2. The agent run is finished once an `End` node has been produced; instances of `End` cannot be passed to `next`.
-3. When you call `await agent_run.next(node)`, it executes that node in the agent's graph, updates the run's history, and returns the *next* node to run.
+3. When you call `await agent_run.next(node)`, it executes that node in the agent's graph, updates the run's history, and returns the _next_ node to run.
 4. You could also inspect or mutate the new `node` here as needed.
 
 #### Accessing usage and the final output
@@ -458,7 +457,7 @@ except UsageLimitExceeded as e:
 2. This run will error after 3 requests, preventing the infinite tool calling.
 
 !!! note
-    This is especially relevant if you've registered many tools. The `request_limit` can be used to prevent the model from calling them in a loop too many times.
+This is especially relevant if you've registered many tools. The `request_limit` can be used to prevent the model from calling them in a loop too many times.
 
 #### Model (Run) Settings
 
@@ -501,7 +500,7 @@ print(result_sync.output)
 The final request uses `temperature=0.0` (run-time), `max_tokens=500` (from model), demonstrating how settings merge with run-time taking precedence.
 
 !!! note "Model Settings Support"
-    Model-level settings are supported by all concrete model implementations (OpenAI, Anthropic, Google, etc.). Wrapper models like `FallbackModel`, `WrapperModel`, and `InstrumentedModel` don't have their own settings - they use the settings of their underlying models.
+Model-level settings are supported by all concrete model implementations (OpenAI, Anthropic, Google, etc.). Wrapper models like `FallbackModel`, `WrapperModel`, and `InstrumentedModel` don't have their own settings - they use the settings of their underlying models.
 
 ### Model specific settings
 
@@ -576,7 +575,7 @@ _(This example is complete, it can be run "as is")_
 Pydantic AI is designed to work well with static type checkers, like mypy and pyright.
 
 !!! tip "Typing is (somewhat) optional"
-    Pydantic AI is designed to make type checking as useful as possible for you if you choose to use it, but you don't have to use types everywhere all the time.
+Pydantic AI is designed to make type checking as useful as possible for you if you choose to use it, but you don't have to use types everywhere all the time.
 
     That said, because Pydantic AI uses Pydantic, and Pydantic uses type hints as the definition for schema and validation, some types (specifically type hints on parameters to tools, and the `output_type` arguments to [`Agent`][pydantic_ai.Agent]) are used at runtime.
 
@@ -637,7 +636,7 @@ Running `pyright` would identify the same issues.
 System prompts might seem simple at first glance since they're just strings (or sequences of strings that are concatenated), but crafting the right system prompt is key to getting the model to behave as you want.
 
 !!! tip
-    For most use cases, you should use `instructions` instead of "system prompts".
+For most use cases, you should use `instructions` instead of "system prompts".
 
     If you know what you are doing though and want to preserve system prompt messages in the message history sent to the
     LLM in subsequent completions requests, you can achieve this using the `system_prompt` argument/decorator.
@@ -891,4 +890,4 @@ with capture_run_messages() as messages:  # (2)!
 _(This example is complete, it can be run "as is")_
 
 !!! note
-    If you call [`run`][pydantic_ai.Agent.run], [`run_sync`][pydantic_ai.Agent.run_sync], or [`run_stream`][pydantic_ai.Agent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.
+If you call [`run`][pydantic_ai.Agent.run], [`run_sync`][pydantic_ai.Agent.run_sync], or [`run_stream`][pydantic_ai.Agent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.
