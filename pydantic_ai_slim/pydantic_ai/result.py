@@ -114,7 +114,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
 
             result_data = await self._output_schema.process(
-                text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
+                text, self._run_ctx, self._trace_ctx, allow_partial=allow_partial, wrap_validation_errors=False
             )
         else:
             raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
@@ -434,7 +434,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
 
             result_data = await self._output_schema.process(
-                text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
+                text, self._run_ctx, self._trace_ctx, allow_partial=allow_partial, wrap_validation_errors=False
             )
         else:
             raise exceptions.UnexpectedModelBehavior(  # pragma: no cover

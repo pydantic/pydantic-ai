@@ -1197,7 +1197,7 @@ def test_text_output_function_logfire_attributes(
     my_agent = Agent(model=FunctionModel(call_text_response), instrument=instrumentation_settings)
 
     result = my_agent.run_sync('Say hello', output_type=TextOutput(upcase_text))
-    assert result.output == 'HELLO WORLD'  # Assuming model returns 'hello world'
+    assert result.output == 'HELLO WORLD'
 
     summary = get_logfire_summary()
 
@@ -1209,26 +1209,43 @@ def test_text_output_function_logfire_attributes(
             text_function_attributes = attributes
             break
 
+    assert text_function_attributes is not None
+
     if include_content:
-        assert text_function_attributes is not None
-        # Verify the basic span attributes without tool call attributes
-        assert 'tool_arguments' in text_function_attributes
-        assert 'tool_response' in text_function_attributes
-        assert 'logfire.msg' in text_function_attributes
-        assert 'logfire.json_schema' in text_function_attributes
-        # These tool call specific attributes should NOT be present
-        assert 'gen_ai.tool.name' not in text_function_attributes
-        assert 'gen_ai.tool.call.id' not in text_function_attributes
-        # Verify the content
-        assert text_function_attributes['tool_response'] == 'HELLO WORLD'
-        assert 'upcase_text' in text_function_attributes['logfire.msg']
+        assert text_function_attributes == snapshot(
+            {
+                'tool_arguments': '{"text":"hello world"}',
+                'logfire.msg': 'running output function: upcase_text',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'tool_response': 'HELLO WORLD',
+            }
+        )
     else:
-        # When include_content=False, we might still have the span but without content
-        if text_function_attributes is not None:
-            assert 'tool_arguments' not in text_function_attributes
-            assert 'tool_response' not in text_function_attributes
-            assert 'gen_ai.tool.name' not in text_function_attributes
-            assert 'gen_ai.tool.call.id' not in text_function_attributes
+        assert text_function_attributes == snapshot(
+            {
+                'logfire.msg': 'running output function: upcase_text',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {},
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+            }
+        )
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -1272,20 +1289,41 @@ def test_prompted_output_function_logfire_attributes(
 
     assert output_function_attributes is not None
 
-    # Check that tool call attributes are NOT present (this is not a tool call)
-    assert 'gen_ai.tool.name' not in output_function_attributes
-    assert 'gen_ai.tool.call.id' not in output_function_attributes
-
-    # Check content inclusion based on include_content flag
     if include_content:
-        assert 'tool_arguments' in output_function_attributes
-        assert 'tool_response' in output_function_attributes
-        # tool_arguments should contain the parsed JSON arguments
-        assert output_function_attributes['tool_arguments'] == '{"text": "hello world"}'
-        assert output_function_attributes['tool_response'] == 'HELLO WORLD'
+        assert output_function_attributes == snapshot(
+            {
+                'tool_arguments': '{"text": "hello world"}',
+                'logfire.msg': 'running output function: upcase_text',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'tool_response': 'HELLO WORLD',
+            }
+        )
     else:
-        assert 'tool_arguments' not in output_function_attributes
-        assert 'tool_response' not in output_function_attributes
+        assert output_function_attributes == snapshot(
+            {
+                'logfire.msg': 'running output function: upcase_text',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {},
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+            }
+        )
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -1331,18 +1369,37 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
     successful_attributes = text_function_attributes[-1]  # Last one should be successful
 
     if include_content:
-        # Verify the basic span attributes without tool call attributes
-        assert 'tool_arguments' in successful_attributes
-        assert 'tool_response' in successful_attributes
-        assert 'logfire.msg' in successful_attributes
-        # These tool call specific attributes should NOT be present
-        assert 'gen_ai.tool.name' not in successful_attributes
-        assert 'gen_ai.tool.call.id' not in successful_attributes
-        # Verify the content
-        assert 'get_weather_with_retry' in successful_attributes['logfire.msg']
+        assert successful_attributes == snapshot(
+            {
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.msg': 'running output function: get_weather_with_retry',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+            }
+        )
     else:
-        # When include_content=False, span should exist but without content
-        assert 'tool_arguments' not in successful_attributes
-        assert 'tool_response' not in successful_attributes
-        assert 'gen_ai.tool.name' not in successful_attributes
-        assert 'gen_ai.tool.call.id' not in successful_attributes
+        assert successful_attributes == snapshot(
+            {
+                'logfire.msg': 'running output function: get_weather_with_retry',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {},
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+            }
+        )
