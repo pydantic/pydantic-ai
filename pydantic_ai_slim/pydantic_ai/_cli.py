@@ -111,6 +111,14 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
 qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
 
 
+class HiddenChoice(click.Choice):
+    """A Choice type that validates against choices but doesn't show them in help text."""
+
+    def get_help_record(self, ctx: click.Context) -> tuple[str, str] | None:
+        # Return None to hide the choices from help text
+        return None
+
+
 def _setup_agent(
     agent_path: str | None,
     model_name: str | None,
