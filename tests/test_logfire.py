@@ -6,10 +6,13 @@ from typing import Any, Callable
 import pytest
 from dirty_equals import IsInt, IsJson, IsList
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 from typing_extensions import NotRequired, TypedDict
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai._utils import get_traceparent
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 
@@ -583,6 +586,271 @@ def test_include_tool_args_span_attributes(
                 'gen_ai.tool.name': 'add_numbers',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running tool: add_numbers',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+            }
+        )
+
+
+class WeatherInfo(BaseModel):
+    temperature: float
+    description: str
+
+
+def get_weather_info(city: str) -> WeatherInfo:
+    return WeatherInfo(temperature=28.7, description='sunny')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_output_type_function_logfire_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    """Test that output function arguments and response are included/excluded in span attributes based on instrumentation settings.
+
+    This test specifically verifies the logfire span attributes for output type functions,
+    checking that tool_arguments and tool_response are properly included when include_content=True
+    and excluded when include_content=False. This tests the functionality introduced in _output.py
+    where output functions are wrapped in OpenTelemetry spans with appropriate attributes.
+    """
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+
+    result = my_agent.run_sync('Mexico City', output_type=get_weather_info)
+    assert result.output == WeatherInfo(temperature=28.7, description='sunny')
+
+    summary = get_logfire_summary()
+
+    # Find the output function span attributes
+    output_function_attributes = None
+    for attributes in summary.attributes.values():
+        if attributes.get('gen_ai.tool.name') == 'final_result':
+            output_function_attributes = attributes
+            break
+
+    assert output_function_attributes is not None
+
+    if include_content:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"city": "Mexico City"}',
+                'tool_response': "temperature=28.7 description='sunny'",
+                'logfire.msg': 'running tool: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+            }
+        )
+    else:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running tool: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+            }
+        )
+
+
+class Product(BaseModel):
+    name: str
+    price: float
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_output_type_async_function_logfire_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    """Test logfire attributes for async output function types."""
+
+    async def get_product(product_id: str) -> Product:
+        return Product(name='Laptop', price=999.99)
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"product_id": "12345"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+
+    result = my_agent.run_sync('Get product', output_type=get_product)
+    assert result.output == Product(name='Laptop', price=999.99)
+
+    summary = get_logfire_summary()
+
+    # Find the output function span attributes
+    output_function_attributes = None
+    for attributes in summary.attributes.values():
+        if attributes.get('gen_ai.tool.name') == 'final_result':
+            output_function_attributes = attributes
+            break
+
+    assert output_function_attributes is not None
+
+    if include_content:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"product_id": "12345"}',
+                'tool_response': "name='Laptop' price=999.99",
+                'logfire.msg': 'running tool: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+            }
+        )
+    else:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running tool: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+            }
+        )
+
+
+def upcase_text(text: str) -> str:
+    return text.upper()
+
+
+class OrderInfo(BaseModel):
+    order_id: str
+    total: float
+    status: str
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_output_type_function_with_run_context_logfire_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    """Test logfire attributes for output functions that use RunContext."""
+
+    def process_order(ctx: RunContext[None], order_data: str, customer_id: int) -> OrderInfo:
+        # Function with RunContext as first parameter and multiple other parameters
+        return OrderInfo(order_id='ORD-123', total=59.99, status='processed')
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"order_data": "customer_order_details", "customer_id": 12345}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+
+    result = my_agent.run_sync('Process order', output_type=process_order)
+    assert result.output == OrderInfo(order_id='ORD-123', total=59.99, status='processed')
+
+    summary = get_logfire_summary()
+
+    # Find the output function span attributes
+    output_function_attributes = None
+    for attributes in summary.attributes.values():
+        if attributes.get('gen_ai.tool.name') == 'final_result':
+            output_function_attributes = attributes
+            break
+
+    assert output_function_attributes is not None
+
+    if include_content:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"order_data": "customer_order_details", "customer_id": 12345}',
+                'tool_response': "order_id='ORD-123' total=59.99 status='processed'",
+                'logfire.msg': 'running tool: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+            }
+        )
+    else:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running tool: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {

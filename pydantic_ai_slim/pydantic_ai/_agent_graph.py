@@ -341,6 +341,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx.deps.output_schema,
                 ctx.deps.output_validators,
                 build_run_context(ctx),
+                _output.build_trace_context(ctx),
                 ctx.deps.usage_limits,
             )
             yield agent_stream
@@ -529,7 +530,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         if isinstance(output_schema, _output.ToolOutputSchema):
             for call, output_tool in output_schema.find_tool(tool_calls):
                 try:
-                    result_data = await output_tool.process(call, run_context)
+                    trace_context = _output.build_trace_context(ctx)
+                    with trace_context.with_call(call):
+                        result_data = await output_tool.process(call, run_context, trace_context)
                     result_data = await _validate_output(result_data, ctx, call)
                 except _output.ToolRetryError as e:
                     # TODO: Should only increment retry stuff once per node execution, not for each tool call

@@ -19,6 +19,7 @@ from ._output import (
     PlainTextOutputSchema,
     TextOutputSchema,
     ToolOutputSchema,
+    TraceContext,
 )
 from ._run_context import AgentDepsT, RunContext
 from .messages import AgentStreamEvent, FinalResultEvent
@@ -46,6 +47,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _output_schema: OutputSchema[OutputDataT]
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]
+    _trace_ctx: TraceContext
     _usage_limits: UsageLimits | None
 
     _agent_stream_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
@@ -104,9 +106,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 )
 
             call, output_tool = match
-            result_data = await output_tool.process(
-                call, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
-            )
+            with self._trace_ctx.with_call(call):
+                result_data = await output_tool.process(
+                    call, self._run_ctx, self._trace_ctx, allow_partial=allow_partial, wrap_validation_errors=False
+                )
         elif isinstance(self._output_schema, TextOutputSchema):
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
 
@@ -177,6 +180,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     _stream_response: models.StreamedResponse
     _output_schema: OutputSchema[OutputDataT]
     _run_ctx: RunContext[AgentDepsT]
+    _trace_ctx: TraceContext
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _output_tool_name: str | None
     _on_complete: Callable[[], Awaitable[None]]
@@ -422,9 +426,10 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 )
 
             call, output_tool = match
-            result_data = await output_tool.process(
-                call, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
-            )
+            with self._trace_ctx.with_call(call):
+                result_data = await output_tool.process(
+                    call, self._run_ctx, self._trace_ctx, allow_partial=allow_partial, wrap_validation_errors=False
+                )
         elif isinstance(self._output_schema, TextOutputSchema):
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
 

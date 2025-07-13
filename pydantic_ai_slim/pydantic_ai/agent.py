@@ -1089,6 +1089,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                 streamed_response,
                                 graph_ctx.deps.output_schema,
                                 _agent_graph.build_run_context(graph_ctx),
+                                _output.build_trace_context(graph_ctx),
                                 graph_ctx.deps.output_validators,
                                 final_result_details.tool_name,
                                 on_complete,
