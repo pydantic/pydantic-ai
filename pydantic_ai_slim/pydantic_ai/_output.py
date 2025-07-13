@@ -1020,7 +1020,7 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
                     output = await self._function_schema.call(args, run_context)
                     trace_context.record_response(span, output)
             else:
-                output = await self._function_schema.call(args, run_context)
+                assert_never(trace_context)  # type: ignore[arg-type]
         except ModelRetry as r:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(

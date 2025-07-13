@@ -633,13 +633,9 @@ def test_output_type_function_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes
-    output_function_attributes = None
-    for attributes in summary.attributes.values():
-        if attributes.get('gen_ai.tool.name') == 'final_result':
-            output_function_attributes = attributes
-            break
-
-    assert output_function_attributes is not None
+    [output_function_attributes] = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+    ]
 
     if include_content:
         assert output_function_attributes == snapshot(
@@ -711,13 +707,9 @@ def test_output_type_function_with_run_context_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes
-    output_function_attributes = None
-    for attributes in summary.attributes.values():
-        if attributes.get('gen_ai.tool.name') == 'final_result':
-            output_function_attributes = attributes
-            break
-
-    assert output_function_attributes is not None
+    [output_function_attributes] = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+    ]
 
     if include_content:
         assert output_function_attributes == snapshot(
@@ -874,13 +866,9 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes with custom tool name
-    output_function_attributes = None
-    for attributes in summary.attributes.values():
-        if attributes.get('gen_ai.tool.name') == 'get_weather':
-            output_function_attributes = attributes
-            break
-
-    assert output_function_attributes is not None
+    [output_function_attributes] = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'get_weather'
+    ]
 
     if include_content:
         assert output_function_attributes == snapshot(
@@ -957,13 +945,9 @@ def test_output_type_bound_instance_method_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes
-    output_function_attributes = None
-    for attributes in summary.attributes.values():
-        if attributes.get('gen_ai.tool.name') == 'final_result':
-            output_function_attributes = attributes
-            break
-
-    assert output_function_attributes is not None
+    [output_function_attributes] = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+    ]
 
     if include_content:
         assert output_function_attributes == snapshot(
@@ -1041,13 +1025,9 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes
-    output_function_attributes = None
-    for attributes in summary.attributes.values():
-        if attributes.get('gen_ai.tool.name') == 'final_result':
-            output_function_attributes = attributes
-            break
-
-    assert output_function_attributes is not None
+    [output_function_attributes] = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+    ]
 
     if include_content:
         assert output_function_attributes == snapshot(
@@ -1120,13 +1100,9 @@ def test_output_type_async_function_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes
-    output_function_attributes = None
-    for attributes in summary.attributes.values():
-        if attributes.get('gen_ai.tool.name') == 'final_result':
-            output_function_attributes = attributes
-            break
-
-    assert output_function_attributes is not None
+    [output_function_attributes] = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+    ]
 
     if include_content:
         assert output_function_attributes == snapshot(
@@ -1202,14 +1178,11 @@ def test_text_output_function_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the text output function span attributes
-    text_function_attributes = None
-    for attributes in summary.attributes.values():
-        msg = attributes.get('logfire.msg', '')
-        if 'running output function: upcase_text' in msg:
-            text_function_attributes = attributes
-            break
-
-    assert text_function_attributes is not None
+    [text_function_attributes] = [
+        attributes
+        for attributes in summary.attributes.values()
+        if 'running output function: upcase_text' in attributes.get('logfire.msg', '')
+    ]
 
     if include_content:
         assert text_function_attributes == snapshot(
@@ -1281,13 +1254,11 @@ def test_prompted_output_function_logfire_attributes(
     summary = get_logfire_summary()
 
     # Find the output function span attributes
-    output_function_attributes = None
-    for attributes in summary.attributes.values():
-        if attributes.get('logfire.msg', '').startswith('running output function: upcase_text'):
-            output_function_attributes = attributes
-            break
-
-    assert output_function_attributes is not None
+    [output_function_attributes] = [
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('logfire.msg', '').startswith('running output function: upcase_text')
+    ]
 
     if include_content:
         assert output_function_attributes == snapshot(
