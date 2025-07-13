@@ -33,6 +33,8 @@ from .output import (
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 
 if TYPE_CHECKING:
+    from opentelemetry.trace.span import Span
+
     from pydantic_ai._agent_graph import DepsT, GraphAgentDeps, GraphAgentState
 
     from .profiles import ModelProfile
@@ -113,7 +115,7 @@ class TraceContext:
             self._call = None
 
     @contextmanager
-    def span_for_tool_call_function(self, function_name: str, arguments: str):
+    def span_for_tool_call_function(self, function_name: str, arguments: str) -> Iterator[Span]:
         """Create a span for a function called via tool call (e.g., ToolOutput functions)."""
         if not self.has_call():
             raise UserError('Cannot create tool call span without a tool call context.')
@@ -131,7 +133,7 @@ class TraceContext:
             yield span
 
     @contextmanager
-    def span_for_direct_function_call(self, function_name: str, arguments: str):
+    def span_for_direct_function_call(self, function_name: str, arguments: str) -> Iterator[Span]:
         """Create a span for a function called directly (e.g., PromptedOutput, TextOutput functions)."""
         span_attributes = {
             **({'tool_arguments': arguments} if self.include_content else {}),
@@ -142,7 +144,7 @@ class TraceContext:
         with self.tracer.start_as_current_span('running output function', attributes=span_attributes) as span:
             yield span
 
-    def record_response(self, span: Any, response: Any) -> None:
+    def record_response(self, span: Span, response: Any) -> None:
         """Record the function response in the span if content inclusion is enabled."""
         if self.include_content and span.is_recording():
             try:

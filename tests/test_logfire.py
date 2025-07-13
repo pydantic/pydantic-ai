@@ -1333,7 +1333,6 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
     if include_content:
         # Verify the basic span attributes without tool call attributes
         assert 'tool_arguments' in successful_attributes
-        # Note: tool_response may not be present for TextOutput due to serialization limits
         assert 'tool_response' in successful_attributes
         assert 'logfire.msg' in successful_attributes
         # These tool call specific attributes should NOT be present
