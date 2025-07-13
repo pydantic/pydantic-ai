@@ -24,18 +24,18 @@
 
 ---
 
-PydanticAI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.
+Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.
 
-FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic](https://docs.pydantic.dev).
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev).
 
-Similarly, virtually every agent framework and LLM library in Python uses Pydantic, yet when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+Similarly, virtually every agent framework and LLM library in Python uses Pydantic Validation, yet when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
 
-We built PydanticAI with one simple aim: to bring that FastAPI feeling to GenAI app development.
+We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app development.
 
-## Why use PydanticAI
+## Why use Pydantic AI
 
 * __Built by the Pydantic Team__
-Built by the team behind [Pydantic](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
+Built by the team behind [Pydantic Validation](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
 
 * __Model-agnostic__
 Supports OpenAI, Anthropic, Gemini, Deepseek, Ollama, Groq, Cohere, and Mistral, and there is a simple interface to implement support for [other models](https://ai.pydantic.dev/models/).
@@ -50,7 +50,7 @@ Designed to make [type checking](https://ai.pydantic.dev/agents/#static-type-che
 Leverages Python's familiar control flow and agent composition to build your AI-driven projects, making it easy to apply standard Python best practices you'd use in any other (non-AI) project.
 
 * __Structured Responses__
-Harnesses the power of [Pydantic](https://docs.pydantic.dev/latest/) to [validate and structure](https://ai.pydantic.dev/output/#structured-output) model outputs, ensuring responses are consistent across runs.
+Harnesses the power of [Pydantic Validation](https://docs.pydantic.dev/latest/) to [validate and structure](https://ai.pydantic.dev/output/#structured-output) model outputs, ensuring responses are consistent across runs.
 
 * __Dependency Injection System__
 Offers an optional [dependency injection](https://ai.pydantic.dev/dependencies/) system to provide data and services to your agent's [system prompts](https://ai.pydantic.dev/agents/#system-prompts), [tools](https://ai.pydantic.dev/tools/) and [output validators](https://ai.pydantic.dev/output/#output-validator-functions).
