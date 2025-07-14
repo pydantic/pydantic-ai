@@ -111,12 +111,31 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
 qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
 
 
-class HiddenChoice(click.Choice):
-    """A Choice type that validates against choices but doesn't show them in help text."""
+# Custom option to hide the huge list of model names from the ``--help`` output
+class _ModelOption(click.Option):
+    """Click ``Option`` that strips the automatically appended choices list from the help text.
+
+    We still want the underlying :class:`click.Choice` type for validation & completion, but we
+    *don't* want Click to append the full list of ~300 model names to the help output (it makes
+    ``pai --help`` almost unusable).
+    """
 
     def get_help_record(self, ctx: click.Context) -> tuple[str, str] | None:
-        # Return None to hide the choices from help text
-        return None
+        # Get Click's default help record first.
+        record = super().get_help_record(ctx)
+        if record is None:
+            return None
+
+        option_str, help_str = record
+
+        # Click shows choices in brackets like [choice1|choice2|choice3...]
+        # We need to strip this massive list. Look for the pattern [xxx|xxx|xxx...]
+        import re
+
+        # Remove the entire choices section that starts with [ and contains | separators
+        help_str = re.sub(r'\s*\[([^[\]]*\|[^[\]]*)+\]', '', help_str)
+
+        return option_str, help_str
 
 
 def _setup_agent(
@@ -226,6 +245,7 @@ Special prompts:
     '--model',
     'model_name',
     type=click.Choice(qualified_model_names),
+    cls=_ModelOption,
     help='Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o" or "anthropic:claude-3-7-sonnet-latest". Defaults to "openai:gpt-4o".',
 )
 @click.option(
