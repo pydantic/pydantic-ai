@@ -651,100 +651,98 @@ Instead of running the entire graph in a single process invocation, we run the g
 ```python {title="ai_q_and_a_graph.py" noqa="I001" py="3.10"}
 from __future__ import annotations as _annotations
 
-    from dataclasses import dataclass, field
+from dataclasses import dataclass, field
+from pydantic import BaseModel
+from pydantic_graph import (
+    BaseNode,
+    End,
+    Graph,
+    GraphRunContext,
+)
+from pydantic_ai import Agent, format_as_xml
+from pydantic_ai.messages import ModelMessage
 
-    from pydantic import BaseModel
-    from pydantic_graph import (
-        BaseNode,
-        End,
-        Graph,
-        GraphRunContext,
-    )
-
-    from pydantic_ai import Agent, format_as_xml
-    from pydantic_ai.messages import ModelMessage
-
-    ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
+ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
 
 
-    @dataclass
-    class QuestionState:
-        question: str | None = None
-        ask_agent_messages: list[ModelMessage] = field(default_factory=list)
-        evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
+@dataclass
+class QuestionState:
+    question: str | None = None
+    ask_agent_messages: list[ModelMessage] = field(default_factory=list)
+    evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
 
 
-    @dataclass
-    class Ask(BaseNode[QuestionState]):
-        async def run(self, ctx: GraphRunContext[QuestionState]) -> Answer:
-            result = await ask_agent.run(
-                'Ask a simple question with a single correct answer.',
-                message_history=ctx.state.ask_agent_messages,
-            )
-            ctx.state.ask_agent_messages += result.new_messages()
-            ctx.state.question = result.output
-            return Answer(result.output)
+@dataclass
+class Ask(BaseNode[QuestionState]):
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Answer:
+        result = await ask_agent.run(
+            'Ask a simple question with a single correct answer.',
+            message_history=ctx.state.ask_agent_messages,
+        )
+        ctx.state.ask_agent_messages += result.new_messages()
+        ctx.state.question = result.output
+        return Answer(result.output)
 
 
-    @dataclass
-    class Answer(BaseNode[QuestionState]):
-        question: str
+@dataclass
+class Answer(BaseNode[QuestionState]):
+    question: str
 
-        async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
-            answer = input(f'{self.question}: ')
-            return Evaluate(answer)
-
-
-    class EvaluationResult(BaseModel, use_attribute_docstrings=True):
-        correct: bool
-        """Whether the answer is correct."""
-        comment: str
-        """Comment on the answer, reprimand the user if the answer is wrong."""
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
+        answer = input(f'{self.question}: ')
+        return Evaluate(answer)
 
 
-    evaluate_agent = Agent(
-        'openai:gpt-4o',
-        output_type=EvaluationResult,
-        system_prompt='Given a question and answer, evaluate if the answer is correct.',
-    )
+class EvaluationResult(BaseModel, use_attribute_docstrings=True):
+    correct: bool
+    """Whether the answer is correct."""
+    comment: str
+    """Comment on the answer, reprimand the user if the answer is wrong."""
 
 
-    @dataclass
-    class Evaluate(BaseNode[QuestionState, None, str]):
-        answer: str
-
-        async def run(
-            self,
-            ctx: GraphRunContext[QuestionState],
-        ) -> Annotated[End[str], Edge(label='success')] | Reprimand:
-            assert ctx.state.question is not None
-            result = await evaluate_agent.run(
-                format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
-                message_history=ctx.state.evaluate_agent_messages,
-            )
-            ctx.state.evaluate_agent_messages += result.new_messages()
-            if result.output.correct:
-                return End(result.output.comment)
-            else:
-                return Reprimand(result.output.comment)
+evaluate_agent = Agent(
+    'openai:gpt-4o',
+    output_type=EvaluationResult,
+    system_prompt='Given a question and answer, evaluate if the answer is correct.',
+)
 
 
-    @dataclass
-    class Reprimand(BaseNode[QuestionState]):
-        comment: str
+@dataclass
+class Evaluate(BaseNode[QuestionState, None, str]):
+    answer: str
 
-        async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
-            print(f'Comment: {self.comment}')
-            ctx.state.question = None
-            return Ask()
+    async def run(
+        self,
+        ctx: GraphRunContext[QuestionState],
+    ) -> Annotated[End[str], Edge(label='success')] | Reprimand:
+        assert ctx.state.question is not None
+        result = await evaluate_agent.run(
+            format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
+            message_history=ctx.state.evaluate_agent_messages,
+        )
+        ctx.state.evaluate_agent_messages += result.new_messages()
+        if result.output.correct:
+            return End(result.output.comment)
+        else:
+            return Reprimand(result.output.comment)
 
 
-    question_graph = Graph(
-        nodes=(Ask, Answer, Evaluate, Reprimand), state_type=QuestionState
-    )
-    ```
+@dataclass
+class Reprimand(BaseNode[QuestionState]):
+    comment: str
 
-    _(This example is complete, it can be run "as is" with Python 3.10+)_
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
+        print(f'Comment: {self.comment}')
+        ctx.state.question = None
+        return Ask()
+
+
+question_graph = Graph(
+    nodes=(Ask, Answer, Evaluate, Reprimand), state_type=QuestionState
+)
+```
+
+_(This example is complete, it can be run "as is" with Python 3.10+)_
 
 ```python {title="ai_q_and_a_run.py" noqa="I001" py="3.10" requires="ai_q_and_a_graph.py"}
 import sys
@@ -903,7 +901,15 @@ from typing import Annotated
 
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext, Edge
 
-...
+ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
+
+
+@dataclass
+class QuestionState:
+    question: str | None = None
+    ask_agent_messages: list[ModelMessage] = field(default_factory=list)
+    evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
+
 
 @dataclass
 class Ask(BaseNode[QuestionState]):
@@ -912,23 +918,71 @@ class Ask(BaseNode[QuestionState]):
     async def run(
         self, ctx: GraphRunContext[QuestionState]
     ) -> Annotated[Answer, Edge(label='Ask the question')]:
-        ...
+        result = await ask_agent.run(
+            'Ask a simple question with a single correct answer.',
+            message_history=ctx.state.ask_agent_messages,
+        )
+        ctx.state.ask_agent_messages += result.new_messages()
+        ctx.state.question = result.output
+        return Answer(result.output)
 
-...
 
 @dataclass
-class Evaluate(BaseNode[QuestionState]):
+class Answer(BaseNode[QuestionState]):
+    question: str
+
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
+        answer = input(f'{self.question}: ')
+        return Evaluate(answer)
+
+
+class EvaluationResult(BaseModel, use_attribute_docstrings=True):
+    correct: bool
+    """Whether the answer is correct."""
+    comment: str
+    """Comment on the answer, reprimand the user if the answer is wrong."""
+
+
+evaluate_agent = Agent(
+    'openai:gpt-4o',
+    output_type=EvaluationResult,
+    system_prompt='Given a question and answer, evaluate if the answer is correct.',
+)
+
+
+@dataclass
+class Evaluate(BaseNode[QuestionState, None, str]):
     answer: str
 
     async def run(
-            self,
-            ctx: GraphRunContext[QuestionState],
+        self,
+        ctx: GraphRunContext[QuestionState],
     ) -> Annotated[End[str], Edge(label='success')] | Reprimand:
-        ...
+        assert ctx.state.question is not None
+        result = await evaluate_agent.run(
+            format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
+            message_history=ctx.state.evaluate_agent_messages,
+        )
+        ctx.state.evaluate_agent_messages += result.new_messages()
+        if result.output.correct:
+            return End(result.output.comment)
+        else:
+            return Reprimand(result.output.comment)
 
-...
 
-question_graph.mermaid_save('image.png', highlighted_nodes=[Answer])
+@dataclass
+class Reprimand(BaseNode[QuestionState]):
+    comment: str
+
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
+        print(f'Comment: {self.comment}')
+        ctx.state.question = None
+        return Ask()
+
+
+question_graph = Graph(
+    nodes=(Ask, Answer, Evaluate, Reprimand), state_type=QuestionState
+)
 ```
 
 _(This example is not complete and cannot be run directly)_
