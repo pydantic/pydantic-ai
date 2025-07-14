@@ -424,53 +424,49 @@ class AnthropicModel(Model):
 
 def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Usage:
     """Maps Anthropic API message object to pydantic-ai Usage object, extracting integer-type usage statistics.
+
     Handles BetaMessage, BetaRawMessageStartEvent, BetaRawMessageDeltaEvent.
     Returns empty Usage if type doesn't contain usage info.
     """
     msg_type = type(message)
 
-    # Fast type checks for only usage-carrying types
     if msg_type is BetaMessage:
-        response_usage = message.usage
+        response_usage = cast(BetaMessage, message).usage
     elif msg_type is BetaRawMessageStartEvent:
-        response_usage = message.message.usage
+        response_usage = cast(BetaRawMessageStartEvent, message).message.usage
     elif msg_type is BetaRawMessageDeltaEvent:
-        response_usage = message.usage
+        response_usage = cast(BetaRawMessageDeltaEvent, message).usage
     else:
-        # No usage information provided for other stream event variants.
+        # No usage information provided in:
+        # - RawMessageStopEvent
+        # - RawContentBlockStartEvent
+        # - RawContentBlockDeltaEvent
+        # - RawContentBlockStopEvent
         return _EMPTY_USAGE
 
-    # Dump once and filter for ints in one pass; fewer attribute lookups
-    dumped = response_usage.model_dump()
-    # If there are few keys, a for-loop is faster than dict comprehension
-    details = {}
-    for key, value in dumped.items():
-        if isinstance(value, int):
-            details[key] = value
+    # Store all integer-typed usage values in the details, except 'output_tokens' which is represented exactly by
+    # `response_tokens`
+    details: dict[str, int] = {
+        key: value for key, value in response_usage.model_dump().items() if isinstance(value, int)
+    }
 
-    # Compute input tokens, prefer fast lookup first
-    input_tokens = details.get('input_tokens')
-    cache_creation_input = details.get('cache_creation_input_tokens')
-    cache_read_input = details.get('cache_read_input_tokens')
+    # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence using `get`
+    # Tokens are only counted once between input_tokens, cache_creation_input_tokens, and cache_read_input_tokens
+    # This approach maintains request_tokens as the count of all input tokens, with cached counts as details
     request_tokens = (
-        (input_tokens if input_tokens is not None else 0)
-        + (cache_creation_input if cache_creation_input is not None else 0)
-        + (cache_read_input if cache_read_input is not None else 0)
+        details.get('input_tokens', 0)
+        + details.get('cache_creation_input_tokens', 0)
+        + details.get('cache_read_input_tokens', 0)
     )
 
-    # Only set None if empty, minimize dict allocation
-    details_arg = details if details else None
-    req_arg = request_tokens or None
-
-    # All downstream attribute accesses are direct, no extra function calls
     output_tokens = response_usage.output_tokens
     total_tokens = request_tokens + output_tokens
 
     return usage.Usage(
-        request_tokens=req_arg,
+        request_tokens=request_tokens or None,
         response_tokens=output_tokens,
         total_tokens=total_tokens,
-        details=details_arg,
+        details=details or None,
     )
 
 
