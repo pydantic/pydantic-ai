@@ -1,4 +1,4 @@
-name: Codeflash
+name: Codeflash Optimization
 on:
   pull_request:
     paths:
