@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import importlib
 import os
+import re
 import sys
 from asyncio import CancelledError
 from contextlib import ExitStack
@@ -129,9 +130,6 @@ class _ModelOption(click.Option):
         option_str, help_str = record
 
         # Click shows choices in brackets like [choice1|choice2|choice3...]
-        # We need to strip this massive list. Look for the pattern [xxx|xxx|xxx...]
-        import re
-
         # Remove the entire choices section that starts with [ and contains | separators
         help_str = re.sub(r'\s*\[([^[\]]*\|[^[\]]*)+\]', '', help_str)
 
