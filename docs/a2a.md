@@ -18,7 +18,7 @@ _You can run the example with `uvicorn agent_to_a2a:app --host 0.0.0.0 --port 80
 
 This will expose the agent as an A2A server, and you can start sending requests to it.
 
-See more about [exposing Pydantic AI agents as A2A servers](#Pydantic AI-agent-to-a2a-server).
+See more about [exposing Pydantic AI agents as A2A servers](#pydanticai-agent-to-a2a-server).
 
 ## FastA2A
 
