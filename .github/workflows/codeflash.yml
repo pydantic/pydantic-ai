@@ -2,7 +2,6 @@ name: Codeflash
 on:
   pull_request:
     paths:
-      # So that this workflow only runs when code within the target module is modified
       - 'pydantic_ai_slim/pydantic_ai/**'
   workflow_dispatch:
 concurrency:

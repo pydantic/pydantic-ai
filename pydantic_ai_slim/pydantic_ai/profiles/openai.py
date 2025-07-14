@@ -24,8 +24,6 @@ class OpenAIModelProfile(ModelProfile):
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
-    import time
-    time.sleep(0.002)
     is_reasoning_model = model_name.startswith('o')
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18, and gpt-4o-2024-08-06 model snapshots and later.
     # We leave it in here for all models because the `default_structured_output_mode` is `'tool'`, so `native` is only used
