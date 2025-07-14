@@ -651,6 +651,8 @@ Instead of running the entire graph in a single process invocation, we run the g
 ```python {title="ai_q_and_a_graph.py" noqa="I001" py="3.10"}
 from __future__ import annotations as _annotations
 
+from typing import Annotated
+from pydantic_graph import Edge
 from dataclasses import dataclass, field
 from pydantic import BaseModel
 from pydantic_graph import (
@@ -674,7 +676,11 @@ class QuestionState:
 
 @dataclass
 class Ask(BaseNode[QuestionState]):
-    async def run(self, ctx: GraphRunContext[QuestionState]) -> Answer:
+    """Generate question using GPT-4o."""
+    docstring_notes = True
+    async def run(
+        self, ctx: GraphRunContext[QuestionState]
+    ) -> Annotated[Answer, Edge(label='Ask the question')]:
         result = await ask_agent.run(
             'Ask a simple question with a single correct answer.',
             message_history=ctx.state.ask_agent_messages,
