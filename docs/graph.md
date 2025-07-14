@@ -649,7 +649,7 @@ Instead of running the entire graph in a single process invocation, we run the g
 
 ??? example "`ai_q_and_a_graph.py` — `question_graph` definition"
 ```python {title="ai_q_and_a_graph.py" noqa="I001" py="3.10"}
-from **future** import annotations as \_annotations
+from __future__ import annotations as _annotations
 
     from dataclasses import dataclass, field
 
@@ -716,7 +716,7 @@ from **future** import annotations as \_annotations
         async def run(
             self,
             ctx: GraphRunContext[QuestionState],
-        ) -> End[str] | Reprimand:
+        ) -> Annotated[End[str], Edge(label='success')] | Reprimand:
             assert ctx.state.question is not None
             result = await evaluate_agent.run(
                 format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
@@ -899,7 +899,6 @@ Putting that together, we can edit the last [`ai_q_and_a_graph.py`](#example-hum
 - save the diagram as a `PNG` image to file
 
 ```python {title="ai_q_and_a_graph_extra.py" test="skip" lint="skip" hl_lines="2 4 10-11 14 26 31"}
-...
 from typing import Annotated
 
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext, Edge
