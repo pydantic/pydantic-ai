@@ -8,12 +8,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, Union, cast, overload
 
-from anthropic.types.beta import (
-    BetaMessage,
-    BetaRawMessageDeltaEvent,
-    BetaRawMessageStartEvent,
-    BetaRawMessageStreamEvent,
-)
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
