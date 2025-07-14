@@ -96,7 +96,7 @@ To demonstrate how Logfire can let you visualise the flow of a Pydantic AI run, 
 
 We can also query data with SQL in Logfire to monitor the performance of an application. Here's a real world example of using Logfire to monitor Pydantic AI runs inside Logfire itself:
 
-![Logfire monitoring Pydantic AI](img/logfire-monitoring-Pydantic AI.png)
+![Logfire monitoring Pydantic AI](img/logfire-monitoring-pydanticai.png)
 
 ### Monitoring HTTP Requests
 
