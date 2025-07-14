@@ -1,7 +1,7 @@
 # Gemini
 
 !!! note
-    We've developed a new Google model called `GoogleModel` which uses `google-genai` under the hood.
+We've developed a new Google model called `GoogleModel` which uses `google-genai` under the hood.
 
     Honestly, Google packages are a mess, and that's why we've used plain `httpx` instead of relying on their own client
     to create `GeminiModel`. That said, it's easier to use the `google-genai` package directly, since they keep the package
@@ -10,7 +10,7 @@
 
     Check it out [here](../api/models/google.md).
 
-PydanticAI supports Google's Gemini models through two different APIs:
+Pydantic AI supports Google's Gemini models through two different APIs:
 
 - Generative Language API (`generativelanguage.googleapis.com`)
 - Vertex AI API (`*-aiplatform.googleapis.com`)
@@ -47,8 +47,8 @@ agent = Agent('google-gla:gemini-2.0-flash')
 ```
 
 !!! note
-    The `google-gla` provider prefix represents the [Google **G**enerative **L**anguage **A**PI](https://ai.google.dev/api/all-methods) for `GeminiModel`s.
-    `google-vertex` is used with [Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models).
+The `google-gla` provider prefix represents the [Google **G**enerative **L**anguage **A**PI](https://ai.google.dev/api/all-methods) for `GeminiModel`s.
+`google-vertex` is used with [Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models).
 
 Or initialise the model directly with just the model name and provider:
 
@@ -115,7 +115,7 @@ This interface has a number of advantages over `generativelanguage.googleapis.co
 
 1. The VertexAI API comes with more enterprise readiness guarantees.
 2. You can [purchase provisioned throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput#purchase-provisioned-throughput) with VertexAI to guarantee capacity.
-3. If you're running PydanticAI inside GCP, you don't need to set up authentication, it should "just work".
+3. If you're running Pydantic AI inside GCP, you don't need to set up authentication, it should "just work".
 4. You can decide which region to use, which might be important from a regulatory perspective, and might improve latency.
 
 The big disadvantage is that for local development you may need to create and configure a "service account", which can be challenging to get right.
@@ -124,7 +124,7 @@ Whichever way you authenticate, you'll need to have VertexAI enabled in your GCP
 
 ### Application default credentials
 
-Luckily if you're running PydanticAI inside GCP, or you have the [`gcloud` CLI](https://cloud.google.com/sdk/gcloud) installed and configured, you should be able to use `VertexAIModel` without any additional setup.
+Luckily if you're running Pydantic AI inside GCP, or you have the [`gcloud` CLI](https://cloud.google.com/sdk/gcloud) installed and configured, you should be able to use `VertexAIModel` without any additional setup.
 
 To use `VertexAIModel`, with [application default credentials](https://cloud.google.com/docs/authentication/application-default-credentials) configured (e.g. with `gcloud`), you can simply use:
 
@@ -140,7 +140,7 @@ agent = Agent(model)
 Internally this uses [`google.auth.default()`](https://google-auth.readthedocs.io/en/master/reference/google.auth.html) from the `google-auth` package to obtain credentials.
 
 !!! note "Won't fail until `agent.run()`"
-    Because `google.auth.default()` requires network requests and can be slow, it's not run until you call `agent.run()`.
+Because `google.auth.default()` requires network requests and can be slow, it's not run until you call `agent.run()`.
 
 You may also need to pass the `project_id` argument to `GoogleVertexProvider` if application default credentials don't set a project, if you pass `project_id` and it conflicts with the project set by application default credentials, an error is raised.
 

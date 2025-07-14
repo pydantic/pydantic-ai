@@ -1,4 +1,4 @@
-"""Example of PydanticAI with multiple tools which the LLM needs to call in turn to answer a question.
+"""Example of Pydantic AI with multiple tools which the LLM needs to call in turn to answer a question.
 
 In this case the idea is a "weather" agent — the user can ask for the weather in multiple cities,
 the agent will use the `get_lat_lng` tool to get the latitude and longitude of the locations, then use

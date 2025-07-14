@@ -20,7 +20,7 @@ Full documentation is available at [ai.pydantic.dev/evals](https://ai.pydantic.d
 
 ## Example
 
-While you'd typically use Pydantic Evals with more complex functions (such as PydanticAI agents or graphs), here's a
+While you'd typically use Pydantic Evals with more complex functions (such as Pydantic AI agents or graphs), here's a
 quick example that evaluates a simple function against a test case using both custom and built-in evaluators:
 
 ```python
@@ -68,7 +68,7 @@ report.print(include_input=True, include_output=True)
 """
 ```
 
-Using the library with more complex functions, such as PydanticAI agents, is similar — all you need to do is define a
+Using the library with more complex functions, such as Pydantic AI agents, is similar — all you need to do is define a
 task function wrapping the function you want to evaluate, with a signature that matches the inputs and outputs of your
 test cases.
 

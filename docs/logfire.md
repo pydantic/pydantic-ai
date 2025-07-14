@@ -72,7 +72,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 ```
 
 1. [`logfire.configure()`][logfire.configure] configures the SDK, by default it will find the write token from the `.logfire` directory, but you can also pass a token directly.
-2. [`logfire.instrument_pydantic_ai()`][logfire.Logfire.instrument_pydantic_ai] enables instrumentation of PydanticAI.
+2. [`logfire.instrument_pydantic_ai()`][logfire.Logfire.instrument_pydantic_ai] enables instrumentation of Pydantic AI.
 3. Since we've enabled instrumentation, a trace will be generated for each run, with spans emitted for models calls and tool function execution
 
 _(This example is complete, it can be run "as is")_
@@ -96,7 +96,7 @@ To demonstrate how Logfire can let you visualise the flow of a Pydantic AI run, 
 
 We can also query data with SQL in Logfire to monitor the performance of an application. Here's a real world example of using Logfire to monitor Pydantic AI runs inside Logfire itself:
 
-![Logfire monitoring PydanticAI](img/logfire-monitoring-pydanticai.png)
+![Logfire monitoring Pydantic AI](img/logfire-monitoring-Pydantic AI.png)
 
 ### Monitoring HTTP Requests
 
@@ -200,7 +200,7 @@ For more information on using the Logfire SDK to send data to alternative backen
 
 ### OTel without Logfire
 
-You can also emit OpenTelemetry data from PydanticAI without using Logfire at all.
+You can also emit OpenTelemetry data from Pydantic AI without using Logfire at all.
 
 To do this, you'll need to install and configure the OpenTelemetry packages you need. To run the following examples, use
 
@@ -259,7 +259,7 @@ The following providers have dedicated documentation on Pydantic AI:
 
 ### Configuring data format
 
-PydanticAI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), with one caveat. The semantic conventions specify that messages should be captured as individual events (logs) that are children of the request span. By default, PydanticAI instead collects these events into a JSON array which is set as a single large attribute called `events` on the request span. To change this, use `event_mode='logs'`:
+Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), with one caveat. The semantic conventions specify that messages should be captured as individual events (logs) that are children of the request span. By default, Pydantic AI instead collects these events into a JSON array which is set as a single large attribute called `events` on the request span. To change this, use `event_mode='logs'`:
 
 ```python {title="instrumentation_settings_event_mode.py"}
 import logfire
@@ -325,9 +325,9 @@ Agent.instrument_all(instrumentation_settings)
 
 ### Excluding prompts and completions
 
-For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. PydanticAI allows you to exclude the actual content from instrumentation events while preserving the structural information needed for debugging and monitoring.
+For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. Pydantic AI allows you to exclude the actual content from instrumentation events while preserving the structural information needed for debugging and monitoring.
 
-When `include_content=False` is set, PydanticAI will exclude sensitive content from OpenTelemetry events, including user prompts and model completions, tool call arguments and responses, and any other message content.
+When `include_content=False` is set, Pydantic AI will exclude sensitive content from OpenTelemetry events, including user prompts and model completions, tool call arguments and responses, and any other message content.
 
 ```python {title="excluding_sensitive_content.py"}
 from pydantic_ai.agent import Agent

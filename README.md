@@ -2,7 +2,7 @@
   <a href="https://ai.pydantic.dev/">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://ai.pydantic.dev/img/pydantic-ai-dark.svg">
-      <img src="https://ai.pydantic.dev/img/pydantic-ai-light.svg" alt="PydanticAI">
+      <img src="https://ai.pydantic.dev/img/pydantic-ai-light.svg" alt="Pydantic AI">
     </picture>
   </a>
 </div>
@@ -64,7 +64,7 @@ We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI
 
 ## Hello World Example
 
-Here's a minimal example of PydanticAI:
+Here's a minimal example of Pydantic AI:
 
 ```python
 from pydantic_ai import Agent
@@ -78,7 +78,7 @@ agent = Agent(
 )
 
 # Run the agent synchronously, conducting a conversation with the LLM.
-# Here the exchange should be very short: PydanticAI will send the system prompt and the user query to the LLM,
+# Here the exchange should be very short: Pydantic AI will send the system prompt and the user query to the LLM,
 # the model will return a text response. See below for a more complex run.
 result = agent.run_sync('Where does "hello world" come from?')
 print(result.output)
@@ -93,7 +93,7 @@ Not very interesting yet, but we can easily add "tools", dynamic system prompts,
 
 ## Tools & Dependency Injection Example
 
-Here is a concise example using PydanticAI to build a support agent for a bank:
+Here is a concise example using Pydantic AI to build a support agent for a bank:
 
 **(Better documented example [in the docs](https://ai.pydantic.dev/#tools-dependency-injection-example))**
 
@@ -187,8 +187,8 @@ async def main():
 
 ## Next Steps
 
-To try PydanticAI yourself, follow the instructions [in the examples](https://ai.pydantic.dev/examples/).
+To try Pydantic AI yourself, follow the instructions [in the examples](https://ai.pydantic.dev/examples/).
 
-Read the [docs](https://ai.pydantic.dev/agents/) to learn more about building applications with PydanticAI.
+Read the [docs](https://ai.pydantic.dev/agents/) to learn more about building applications with Pydantic AI.
 
-Read the [API Reference](https://ai.pydantic.dev/api/agent/) to understand PydanticAI's interface.
+Read the [API Reference](https://ai.pydantic.dev/api/agent/) to understand Pydantic AI's interface.

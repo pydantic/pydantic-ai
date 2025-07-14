@@ -3,14 +3,14 @@
 "Evals" refers to evaluating a model's performance for a specific application.
 
 !!! danger "Warning"
-    Unlike unit tests, evals are an emerging art/science; anyone who claims to know for sure exactly how your evals should be defined can safely be ignored.
+Unlike unit tests, evals are an emerging art/science; anyone who claims to know for sure exactly how your evals should be defined can safely be ignored.
 
 Pydantic Evals is a powerful evaluation framework designed to help you systematically test and evaluate the performance and accuracy of the systems you build, especially when working with LLMs.
 
 We've designed Pydantic Evals to be useful while not being too opinionated since we (along with everyone else) are still figuring out best practices. We'd love your [feedback](help.md) on the package and how we can improve it.
 
 !!! note "In Beta"
-    Pydantic Evals support was [introduced](https://github.com/pydantic/pydantic-ai/pull/935) in v0.0.47 and is currently in beta. The API is subject to change and the documentation is incomplete.
+Pydantic Evals support was [introduced](https://github.com/pydantic/pydantic-ai/pull/935) in v0.0.47 and is currently in beta. The API is subject to change and the documentation is incomplete.
 
 ## Installation
 
@@ -408,8 +408,8 @@ the spans generated during function execution. This provides a way to access the
 evaluation.
 
 !!! note
-    If you just want to write unit tests that ensure that specific spans are produced during calls to your evaluation
-    task, it's usually better to just use the `logfire.testing.capfire` fixture directly.
+If you just want to write unit tests that ensure that specific spans are produced during calls to your evaluation
+task, it's usually better to just use the `logfire.testing.capfire` fixture directly.
 
 There are two main ways this is useful.
 
@@ -732,7 +732,7 @@ This can be especially helpful when attempting to write evaluators that make use
 
 This allows you to write evaluations that depend on information about which code paths were executed during the call to
 the task function without needing to manually instrument the code being evaluated, as long as the code being evaluated
-is already adequately instrumented with OpenTelemetry. In the case of PydanticAI agents, for example, this can be used
+is already adequately instrumented with OpenTelemetry. In the case of Pydantic AI agents, for example, this can be used
 to ensure specific tools are (or are not) called during the execution of specific cases.
 
 Using OpenTelemetry in this way also means that all data used to evaluate the task executions will be accessible in

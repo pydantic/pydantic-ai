@@ -1,6 +1,6 @@
 # Common Tools
 
-PydanticAI ships with native tools that can be used to enhance your agent's capabilities.
+Pydantic AI ships with native tools that can be used to enhance your agent's capabilities.
 
 ## DuckDuckGo Search Tool
 
@@ -84,7 +84,7 @@ Would you like help finding a current source or additional details on where to l
 ## Tavily Search Tool
 
 !!! info
-    Tavily is a paid service, but they have free credits to explore their product.
+Tavily is a paid service, but they have free credits to explore their product.
 
     You need to [sign up for an account](https://app.tavily.com/home) and get an API key to use the Tavily search tool.
 

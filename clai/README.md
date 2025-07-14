@@ -8,7 +8,7 @@
 
 (pronounced "clay")
 
-Command line interface to chat to LLMs, part of the [PydanticAI project](https://github.com/pydantic/pydantic-ai).
+Command line interface to chat to LLMs, part of the [Pydantic AI project](https://github.com/pydantic/pydantic-ai).
 
 ## Usage
 
@@ -55,7 +55,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 ```
 usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]
 
-PydanticAI CLI v...
+Pydantic AI CLI v...
 
 Special prompts:
 * `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)

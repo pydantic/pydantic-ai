@@ -8,7 +8,7 @@ Similarly, virtually every agent framework and LLM library in Python uses Pydant
 
 We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app development.
 
-## Why use PydanticAI
+## Why use Pydantic AI
 
 - **Built by the Pydantic Team**:
   Built by the team behind [Pydantic Validation](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
@@ -40,7 +40,7 @@ We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI
 
 ## Hello World Example
 
-Here's a minimal example of PydanticAI:
+Here's a minimal example of Pydantic AI:
 
 ```python {title="hello_world.py"}
 from pydantic_ai import Agent
@@ -63,13 +63,13 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 _(This example is complete, it can be run "as is")_
 
-The exchange should be very short: PydanticAI will send the system prompt and the user query to the LLM, the model will return a text response.
+The exchange should be very short: Pydantic AI will send the system prompt and the user query to the LLM, the model will return a text response.
 
 Not very interesting yet, but we can easily add "tools", dynamic system prompts, and structured responses to build more powerful agents.
 
 ## Tools & Dependency Injection Example
 
-Here is a concise example using PydanticAI to build a support agent for a bank:
+Here is a concise example using Pydantic AI to build a support agent for a bank:
 
 ```python {title="bank_support.py"}
 from dataclasses import dataclass
@@ -140,7 +140,7 @@ async def main():
 
 1. This [agent](agents.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportOutput]`.
 2. Here we configure the agent to use [OpenAI's GPT-4o model](api/models/openai.md), you can also set the model when running the agent.
-3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [system prompt](agents.md#system-prompts) and [tool](tools.md) functions. PydanticAI's system of dependency injection provides a [type-safe](agents.md#static-type-checking) way to customise the behavior of your agents, and can be especially useful when running [unit tests](testing.md) and evals.
+3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [system prompt](agents.md#system-prompts) and [tool](tools.md) functions. Pydantic AI's system of dependency injection provides a [type-safe](agents.md#static-type-checking) way to customise the behavior of your agents, and can be especially useful when running [unit tests](testing.md) and evals.
 4. Static [system prompts](agents.md#system-prompts) can be registered with the [`system_prompt` keyword argument][pydantic_ai.Agent.__init__] to the agent.
 5. Dynamic [system prompts](agents.md#system-prompts) can be registered with the [`@agent.system_prompt`][pydantic_ai.Agent.system_prompt] decorator, and can make use of dependency injection. Dependencies are carried via the [`RunContext`][pydantic_ai.tools.RunContext] argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
 6. [`tool`](tools.md) let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via [`RunContext`][pydantic_ai.tools.RunContext], any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
@@ -197,7 +197,7 @@ See [Monitoring and Performance](logfire.md) to learn more.
 
 ## llms.txt
 
-The PydanticAI documentation is available in the [llms.txt](https://llmstxt.org/) format.
+The Pydantic AI documentation is available in the [llms.txt](https://llmstxt.org/) format.
 This format is defined in Markdown and suited for large language models.
 
 Two formats are available:
@@ -214,8 +214,8 @@ file.
 
 ## Next Steps
 
-To try PydanticAI yourself, follow the instructions [in the examples](examples/index.md).
+To try Pydantic AI yourself, follow the instructions [in the examples](examples/index.md).
 
-Read the [docs](agents.md) to learn more about building applications with PydanticAI.
+Read the [docs](agents.md) to learn more about building applications with Pydantic AI.
 
-Read the [API Reference](api/agent.md) to understand PydanticAI's interface.
+Read the [API Reference](api/agent.md) to understand Pydantic AI's interface.

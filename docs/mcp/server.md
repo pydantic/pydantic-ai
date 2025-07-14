@@ -1,17 +1,17 @@
 # Server
 
-PydanticAI models can also be used within MCP Servers.
+Pydantic AI models can also be used within MCP Servers.
 
 ## MCP Server
 
-Here's a simple example of a [Python MCP server](https://github.com/modelcontextprotocol/python-sdk) using PydanticAI within a tool call:
+Here's a simple example of a [Python MCP server](https://github.com/modelcontextprotocol/python-sdk) using Pydantic AI within a tool call:
 
 ```py {title="mcp_server.py" py="3.10"}
 from mcp.server.fastmcp import FastMCP
 
 from pydantic_ai import Agent
 
-server = FastMCP('PydanticAI Server')
+server = FastMCP('Pydantic AI Server')
 server_agent = Agent(
     'anthropic:claude-3-5-haiku-latest', system_prompt='always reply in rhyme'
 )
@@ -64,7 +64,7 @@ if __name__ == '__main__':
 ## MCP Sampling
 
 !!! info "What is MCP Sampling?"
-    See the [MCP client docs](./client.md#mcp-sampling) for details of what MCP sampling is, and how you can support it when using Pydantic AI as an MCP client.
+See the [MCP client docs](./client.md#mcp-sampling) for details of what MCP sampling is, and how you can support it when using Pydantic AI as an MCP client.
 
 When Pydantic AI agents are used within MCP servers, they can use sampling via [`MCPSamplingModel`][pydantic_ai.models.mcp_sampling.MCPSamplingModel].
 
@@ -76,7 +76,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from pydantic_ai import Agent
 from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
-server = FastMCP('PydanticAI Server with sampling')
+server = FastMCP('Pydantic AI Server with sampling')
 server_agent = Agent(system_prompt='always reply in rhyme')
 
 
