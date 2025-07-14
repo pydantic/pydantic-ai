@@ -18,4 +18,6 @@ python/uv-run -m pydantic_ai_examples.bank_support
 
 ## Example Code
 
-`snippet {path="/examples/pydantic_ai_examples/bank_support.py"}`
+```
+
+```
