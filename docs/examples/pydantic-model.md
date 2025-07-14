@@ -24,3 +24,5 @@ PYDANTIC_AI_MODEL=gemini-1.5-pro python/uv-run -m pydantic_ai_examples.pydantic_
 (or `PYDANTIC_AI_MODEL=gemini-1.5-flash ...`)
 
 ## Example Code
+
+```snippet {path="/examples/pydantic_ai_examples/pydantic_model.py"}```

@@ -25,9 +25,7 @@ python/uv-run -m pydantic_ai_examples.weather_agent
 ```
 
 ## Example Code
-
-```
-```
+```snippet {path="/examples/pydantic_ai_examples/weather_agent.py"}```
 
 ## Running the UI
 
@@ -45,7 +43,4 @@ python/uv-run -m pydantic_ai_examples.weather_agent_gradio
 ```
 
 ## UI Code
-
-```
-
-```
+```snippet {path="/examples/pydantic_ai_examples/weather_agent_gradio.py"}```
