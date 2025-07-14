@@ -2109,8 +2109,6 @@ class AgentRunResult(Generic[OutputDataT]):
                 # Only do deepcopy when we have to modify
                 copied_messages = list(messages)
                 copied_last = deepcopy(last_message)
-                # Copy all parts by reference except the one being replaced/mutated
-                copied_last.parts = list(copied_last.parts)  # type: ignore[assignment]
                 copied_last.parts[idx].content = return_content  # type: ignore[misc]
                 copied_messages[-1] = copied_last
                 return copied_messages
