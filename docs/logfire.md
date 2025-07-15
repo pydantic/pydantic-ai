@@ -255,6 +255,7 @@ The following providers have dedicated documentation on Pydantic AI:
 - [Patronus AI](https://docs.patronus.ai/docs/percival/pydantic)
 - [Opik](https://www.comet.com/docs/opik/tracing/integrations/pydantic-ai)
 - [mlflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
+- [Agenta](https://docs.agenta.ai/observability/integrations/pydanticai)
 
 ## Advanced usage
 
