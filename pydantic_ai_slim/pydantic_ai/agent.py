@@ -1853,7 +1853,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             if isinstance(toolset, MCPServer):
                 toolset.sampling_model = sampling_model
 
-        self._get_toolset().accept(_set_sampling_model)
+        self._get_toolset().apply(_set_sampling_model)
 
     @asynccontextmanager
     @deprecated(

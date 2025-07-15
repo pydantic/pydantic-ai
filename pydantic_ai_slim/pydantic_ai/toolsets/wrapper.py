@@ -38,5 +38,5 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
-    def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
-        return self.wrapped.accept(visitor)
+    def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
+        return self.wrapped.apply(visitor)

@@ -77,6 +77,6 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         raise NotImplementedError()
 
-    def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
+    def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
         """Run a visitor function on all toolsets that implement tool listing and calling themselves instead of delegating to other toolsets."""
         return visitor(self)
