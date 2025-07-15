@@ -5,9 +5,9 @@ import sys
 from typing import TYPE_CHECKING
 
 if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
+    from exceptiongroup import ExceptionGroup
 else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
+    ExceptionGroup = ExceptionGroup
 
 if TYPE_CHECKING:
     from .messages import RetryPromptPart

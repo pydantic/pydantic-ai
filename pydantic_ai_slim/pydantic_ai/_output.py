@@ -620,7 +620,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 )
                 raise ToolRetryError(m) from e
             else:
-                raise  # pragma: lax no cover
+                raise
 
         try:
             output = await self.call(output, run_context)
@@ -631,7 +631,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 )
                 raise ToolRetryError(m) from r
             else:
-                raise  # pragma: lax no cover
+                raise
 
         return output
 
@@ -825,7 +825,7 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 )
                 raise ToolRetryError(m) from r
             else:
-                raise  # pragma: lax no cover
+                raise  # pragma: no cover
 
         return cast(OutputDataT, output)
 

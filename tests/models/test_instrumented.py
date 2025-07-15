@@ -863,6 +863,7 @@ def test_messages_without_content(document_content: BinaryContent):
         ModelRequest(parts=[ToolReturnPart('tool', 'tool_return_content', 'tool_call_1')]),
         ModelRequest(parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')]),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])]),
+        ModelRequest(parts=[UserPromptPart('simple text prompt')]),
     ]
     settings = InstrumentationSettings(include_content=False)
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -896,7 +897,7 @@ def test_messages_without_content(document_content: BinaryContent):
                     {
                         'id': IsStr(),
                         'type': 'function',
-                        'function': {'name': 'my_tool', 'arguments': {'a': 13, 'b': 4}},
+                        'function': {'name': 'my_tool'},
                     }
                 ],
                 'gen_ai.message.index': 3,
@@ -920,6 +921,12 @@ def test_messages_without_content(document_content: BinaryContent):
                 'content': [{'kind': 'text'}, {'kind': 'binary', 'media_type': 'application/pdf'}],
                 'role': 'user',
                 'gen_ai.message.index': 6,
+                'event.name': 'gen_ai.user.message',
+            },
+            {
+                'content': {'kind': 'text'},
+                'role': 'user',
+                'gen_ai.message.index': 7,
                 'event.name': 'gen_ai.user.message',
             },
         ]
