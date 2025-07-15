@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Callable, Generic
+from typing import Any, Callable, Generic
 
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
-
-if TYPE_CHECKING:
-    from ._run import RunToolset
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):
@@ -29,7 +26,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         return self.__class__.__name__.replace('Toolset', ' toolset')
 
     @property
-    def _tool_name_conflict_hint(self) -> str:
+    def tool_name_conflict_hint(self) -> str:
         """A hint for how to avoid name conflicts with other toolsets for use in error messages."""
         return 'Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts.'
 
@@ -47,28 +44,14 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    @abstractmethod
-    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
-        """Prepare the toolset for a run by returning a `RunToolset` that caches the toolset's tool definitions.
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """TODO: Docstring."""
+        return self
 
-        This is also where you can perform an async request to fetch available tool definitions from a remote source and pass them into the new `RunToolset`.
-        """
-        raise NotImplementedError()
-
-    @property
     @abstractmethod
-    def tool_defs(self) -> list[ToolDefinition]:
+    async def list_tool_defs(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
         """The tool definitions that are available in this toolset."""
         raise NotImplementedError()
-
-    @property
-    def tool_names(self) -> list[str]:
-        """The names of the tools that are available in this toolset."""
-        return [tool_def.name for tool_def in self.tool_defs]
-
-    def get_tool_def(self, name: str) -> ToolDefinition | None:
-        """Get the tool definition for a given tool name, or `None` if the tool is unknown."""
-        return next((tool_def for tool_def in self.tool_defs if tool_def.name == name), None)
 
     @abstractmethod
     def max_retries_for_tool(self, name: str) -> int:

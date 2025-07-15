@@ -5,20 +5,14 @@ from typing import Callable
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
-from ._individually_prepared import IndividuallyPreparedToolset
-from .abstract import AbstractToolset
+from .wrapper import WrapperToolset
 
 
 @dataclass(init=False)
-class FilteredToolset(IndividuallyPreparedToolset[AgentDepsT]):
+class FilteredToolset(WrapperToolset[AgentDepsT]):
     """A toolset that filters the tools it contains using a filter function."""
 
-    def __init__(
-        self,
-        toolset: AbstractToolset[AgentDepsT],
-        filter_func: Callable[[RunContext[AgentDepsT], ToolDefinition], bool],
-    ):
-        async def filter_tool_def(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
-            return tool_def if filter_func(ctx, tool_def) else None
+    filter_func: Callable[[RunContext[AgentDepsT], ToolDefinition], bool]
 
-        super().__init__(toolset, filter_tool_def)
+    async def list_tool_defs(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        return [tool_def for tool_def in await super().list_tool_defs(ctx) if self.filter_func(ctx, tool_def)]

@@ -4,8 +4,6 @@
     options:
         members:
         - AbstractToolset
-        - AsyncBaseToolset
-        - BaseToolset
         - CombinedToolset
         - DeferredToolset
         - FilteredToolset

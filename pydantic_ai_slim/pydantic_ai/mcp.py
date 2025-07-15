@@ -19,8 +19,7 @@ from typing_extensions import Self, assert_never, deprecated
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import ToolDefinition
 
-from .toolsets._run import RunToolset
-from .toolsets.base import AsyncBaseToolset
+from .toolsets.abstract import AbstractToolset
 from .toolsets.prefixed import PrefixedToolset
 
 try:
@@ -44,7 +43,7 @@ from . import _mcp, exceptions, messages, models
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
 
 
-class MCPServer(AsyncBaseToolset[Any], ABC):
+class MCPServer(AbstractToolset[Any], ABC):
     """Base class for attaching agents to MCP servers.
 
     See <https://modelcontextprotocol.io> for more information.
@@ -93,7 +92,7 @@ class MCPServer(AsyncBaseToolset[Any], ABC):
         return repr(self)
 
     @property
-    def _tool_name_conflict_hint(self) -> str:
+    def tool_name_conflict_hint(self) -> str:
         return 'Consider setting `tool_prefix` to avoid name conflicts.'
 
     async def list_tools(self) -> list[mcp_types.Tool]:
@@ -166,22 +165,20 @@ class MCPServer(AsyncBaseToolset[Any], ABC):
         else:
             return await self._call_tool(name, tool_args, metadata)
 
-    async def prepare_for_run(self, ctx: RunContext[Any]) -> RunToolset[Any]:
-        frozen_toolset = await super().prepare_for_run(ctx)
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractToolset[Any]:
         if self.tool_prefix:
-            prefixed_toolset = await PrefixedToolset(frozen_toolset, self.tool_prefix).prepare_for_run(ctx)
-            frozen_toolset = RunToolset(prefixed_toolset, ctx, original=self)
-        return frozen_toolset
+            return PrefixedToolset(self, self.tool_prefix)
+        else:
+            return self
 
-    async def async_tool_defs(self) -> list[ToolDefinition]:
-        mcp_tools = await self.list_tools()
+    async def list_tool_defs(self, ctx: RunContext[Any]) -> list[ToolDefinition]:
         return [
             ToolDefinition(
                 name=mcp_tool.name,
                 description=mcp_tool.description,
                 parameters_json_schema=mcp_tool.inputSchema,
             )
-            for mcp_tool in mcp_tools
+            for mcp_tool in await self.list_tools()
         ]
 
     def get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> pydantic_core.SchemaValidator:

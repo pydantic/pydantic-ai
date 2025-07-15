@@ -7,7 +7,6 @@ from pydantic_core import SchemaValidator
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
-from .base import AbstractToolset
 from .wrapper import WrapperToolset
 
 
@@ -17,14 +16,11 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
 
     prefix: str
 
-    async def rewrap_for_run(
-        self, wrapped: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
-    ) -> WrapperToolset[AgentDepsT]:
-        return PrefixedToolset(wrapped, self.prefix)
-
-    @property
-    def tool_defs(self) -> list[ToolDefinition]:
-        return [replace(tool_def, name=self._prefixed_tool_name(tool_def.name)) for tool_def in super().tool_defs]
+    async def list_tool_defs(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        return [
+            replace(tool_def, name=self._prefixed_tool_name(tool_def.name))
+            for tool_def in await super().list_tool_defs(ctx)
+        ]
 
     def max_retries_for_tool(self, name: str) -> int:
         return super().max_retries_for_tool(self._unprefixed_tool_name(name))  # pragma: no cover

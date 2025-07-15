@@ -4,9 +4,7 @@ from dataclasses import dataclass
 
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
-from ..tools import ToolsPrepareFunc
-from ._tool_defs import ToolDefsToolset
-from .abstract import AbstractToolset
+from ..tools import ToolDefinition, ToolsPrepareFunc
 from .wrapper import WrapperToolset
 
 
@@ -16,10 +14,8 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
 
     prepare_func: ToolsPrepareFunc[AgentDepsT]
 
-    async def rewrap_for_run(
-        self, wrapped: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
-    ) -> WrapperToolset[AgentDepsT]:
-        original_tool_defs = wrapped.tool_defs
+    async def list_tool_defs(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        original_tool_defs = await super().list_tool_defs(ctx)
         prepared_tool_defs = await self.prepare_func(ctx, original_tool_defs) or []
 
         original_tool_names = {tool_def.name for tool_def in original_tool_defs}
@@ -29,4 +25,4 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
                 'Prepare function cannot add or rename tools. Use `FunctionToolset.add_function()` or `RenamedToolset` instead.'
             )
 
-        return ToolDefsToolset(wrapped, prepared_tool_defs)
+        return prepared_tool_defs

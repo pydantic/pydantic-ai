@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, overload
 
 from pydantic.json_schema import GenerateJsonSchema
@@ -18,13 +18,23 @@ from ..tools import (
     ToolParams,
     ToolPrepareFunc,
 )
-from ._individually_prepared import IndividuallyPreparedToolset
-from ._run import RunToolset
-from .base import BaseToolset
+from .abstract import AbstractToolset
+from .renamed import RenamedToolset
+from .wrapper import WrapperToolset
+
+
+@dataclass
+class FrozenToolDefsToolset(WrapperToolset[AgentDepsT]):
+    """A toolset that caches specific tool definitions."""
+
+    tool_defs: list[ToolDefinition]
+
+    async def list_tool_defs(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
+        return self._tool_defs
 
 
 @dataclass(init=False)
-class FunctionToolset(BaseToolset[AgentDepsT]):
+class FunctionToolset(AbstractToolset[AgentDepsT]):
     """A toolset that lets Python functions be used as tools."""
 
     max_retries: int = field(default=1)
@@ -201,16 +211,28 @@ class FunctionToolset(BaseToolset[AgentDepsT]):
             tool.max_retries = self.max_retries
         self.tools[tool.name] = tool
 
-    async def prepare_for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
-        self_for_run = await super().prepare_for_run(ctx)
-        prepared_for_run = await IndividuallyPreparedToolset(self_for_run, self._prepare_tool_def).prepare_for_run(ctx)
-        return RunToolset(prepared_for_run, ctx, original=self)
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        tool_defs: dict[str, ToolDefinition] = {}
+        name_map: dict[str, str] = {}
+        for original_name, tool in self.tools.items():
+            run_context = replace(ctx, tool_name=original_name, retry=ctx.retries.get(original_name, 0))
+            tool_def = await tool.prepare_tool_def(run_context)
+            if not tool_def:
+                continue
 
-    async def _prepare_tool_def(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
-        return await self.tools[tool_def.name].prepare_tool_def(ctx)
+            new_name = tool_def.name
+            if new_name in tool_defs:
+                if new_name != original_name:
+                    raise UserError(f'Renaming tool {original_name!r} to {new_name!r} conflicts with existing tool.')
+                else:
+                    raise UserError(f'Tool name conflicts with previously renamed tool: {new_name!r}.')
+            name_map[new_name] = original_name
 
-    @property
-    def tool_defs(self) -> list[ToolDefinition]:
+            tool_defs[new_name] = tool_def
+
+        return FrozenToolDefsToolset(RenamedToolset(self, name_map), list(tool_defs.values()))
+
+    async def list_tool_defs(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
         return [tool.tool_def for tool in self.tools.values()]
 
     def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
