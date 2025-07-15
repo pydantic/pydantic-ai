@@ -41,7 +41,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import ToolOutput
+from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
@@ -301,7 +301,7 @@ def test_plain_response_then_tuple():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
                 ],
-                usage=Usage(requests=1, request_tokens=72, response_tokens=8, total_tokens=80),
+                usage=Usage(requests=1, request_tokens=74, response_tokens=8, total_tokens=82),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -930,7 +930,7 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
-                usage=Usage(requests=1, request_tokens=68, response_tokens=5, total_tokens=73),
+                usage=Usage(requests=1, request_tokens=70, response_tokens=5, total_tokens=75),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
             ),
@@ -1266,6 +1266,77 @@ def test_output_type_multiple_custom_tools():
     )
 
 
+def test_output_type_structured_dict():
+    PersonDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'age': {'type': 'integer'},
+            },
+            'required': ['name', 'age'],
+        },
+        name='Person',
+        description='A person',
+    )
+    AnimalDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'species': {'type': 'string'},
+            },
+            'required': ['name', 'species'],
+        },
+        name='Animal',
+        description='An animal',
+    )
+
+    output_tools = None
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        nonlocal output_tools
+        output_tools = info.output_tools
+
+        args_json = '{"name": "John Doe", "age": 30}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        output_type=[PersonDict, AnimalDict],
+    )
+
+    result = agent.run_sync('Generate a person')
+
+    assert result.output == snapshot({'name': 'John Doe', 'age': 30})
+    assert output_tools == snapshot(
+        [
+            ToolDefinition(
+                name='final_result_Person',
+                parameters_json_schema={
+                    'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+                    'required': ['name', 'age'],
+                    'title': 'Person',
+                    'type': 'object',
+                },
+                description='A person',
+            ),
+            ToolDefinition(
+                name='final_result_Animal',
+                parameters_json_schema={
+                    'properties': {'name': {'type': 'string'}, 'species': {'type': 'string'}},
+                    'required': ['name', 'species'],
+                    'title': 'Animal',
+                    'type': 'object',
+                },
+                description='An animal',
+            ),
+        ]
+    )
+
+
 def test_default_structured_output_mode():
     def hello(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='hello')])  # pragma: no cover
@@ -1584,7 +1655,7 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
-                usage=Usage(requests=1, request_tokens=68, response_tokens=11, total_tokens=79),
+                usage=Usage(requests=1, request_tokens=70, response_tokens=11, total_tokens=81),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
             ),
@@ -2829,7 +2900,10 @@ def test_binary_content_all_messages_json():
             {
                 'parts': [
                     {
-                        'content': ['Hello', {'data': 'SGVsbG8=', 'media_type': 'text/plain', 'kind': 'binary'}],
+                        'content': [
+                            'Hello',
+                            {'data': 'SGVsbG8=', 'media_type': 'text/plain', 'vendor_metadata': None, 'kind': 'binary'},
+                        ],
                         'timestamp': IsStr(),
                         'part_kind': 'user-prompt',
                     }

@@ -61,6 +61,7 @@ try:
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
+    from openai.types.chat.chat_completion_prediction_content_param import ChatCompletionPredictionContentParam
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.shared import ReasoningEffort
@@ -95,10 +96,9 @@ OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
 class OpenAIModelSettings(ModelSettings, total=False):
-    """Settings used for an OpenAI model request.
+    """Settings used for an OpenAI model request."""
 
-    ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     openai_reasoning_effort: ReasoningEffort
     """Constrains effort on reasoning for [reasoning models](https://platform.openai.com/docs/guides/reasoning).
@@ -124,6 +124,12 @@ class OpenAIModelSettings(ModelSettings, total=False):
 
     Currently supported values are `auto`, `default`, and `flex`.
     For more information, see [OpenAI's service tiers documentation](https://platform.openai.com/docs/api-reference/chat/object#chat/object-service_tier).
+    """
+
+    openai_prediction: ChatCompletionPredictionContentParam
+    """Enables [predictive outputs](https://platform.openai.com/docs/guides/predicted-outputs).
+
+    This feature is currently only supported for some OpenAI models.
     """
 
 
@@ -183,10 +189,13 @@ class OpenAIModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku']
+        provider: Literal[
+            'openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku', 'github'
+        ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
         system_prompt_role: OpenAISystemPromptRole | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize an OpenAI model.
 
@@ -198,15 +207,17 @@ class OpenAIModel(Model):
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             system_prompt_role: The role to use for the system prompt message. If not provided, defaults to `'system'`.
                 In the future, this may be inferred from the model name.
+            settings: Default model settings for this model instance.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
-        self._profile = profile or provider.model_profile
 
         self.system_prompt_role = system_prompt_role
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
@@ -320,6 +331,7 @@ class OpenAIModel(Model):
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
+                prediction=model_settings.get('openai_prediction', NOT_GIVEN),
                 temperature=sampling_settings.get('temperature', NOT_GIVEN),
                 top_p=sampling_settings.get('top_p', NOT_GIVEN),
                 presence_penalty=sampling_settings.get('presence_penalty', NOT_GIVEN),
@@ -333,7 +345,7 @@ class OpenAIModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise  # pragma: no cover
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -460,7 +472,7 @@ class OpenAIModel(Model):
             'type': 'function',
             'function': {
                 'name': f.name,
-                'description': f.description,
+                'description': f.description or '',
                 'parameters': f.parameters_json_schema,
             },
         }
@@ -589,6 +601,7 @@ class OpenAIResponsesModel(Model):
         provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together']
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize an OpenAI Responses model.
 
@@ -596,13 +609,15 @@ class OpenAIResponsesModel(Model):
             model_name: The name of the OpenAI model to use.
             provider: The provider to use. Defaults to `'openai'`.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Default model settings for this model instance.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -766,7 +781,7 @@ class OpenAIResponsesModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise  # pragma: no cover
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
@@ -978,6 +993,12 @@ class OpenAIStreamedResponse(StreamedResponse):
             content = choice.delta.content
             if content is not None:
                 yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=content)
+
+            # Handle reasoning part of the response, present in DeepSeek models
+            if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id='reasoning_content', content=reasoning_content
+                )
 
             for dtc in choice.delta.tool_calls or []:
                 maybe_event = self._parts_manager.handle_tool_call_delta(

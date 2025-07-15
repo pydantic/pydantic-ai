@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
 import pydantic
 import pydantic_core
 from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import TypeAlias
+from typing_extensions import TypeAlias, deprecated
 
 from . import _utils
 from ._utils import (
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
 
-AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
+AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 DocumentMediaType: TypeAlias = Literal[
     'application/pdf',
@@ -48,7 +48,7 @@ VideoMediaType: TypeAlias = Literal[
     'video/3gpp',
 ]
 
-AudioFormat: TypeAlias = Literal['wav', 'mp3']
+AudioFormat: TypeAlias = Literal['wav', 'mp3', 'oga', 'flac', 'aiff', 'aac']
 ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
 DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
 VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
@@ -97,6 +97,13 @@ class FileUrl(ABC):
 
     * If True, the file is downloaded and the data is sent to the model as bytes.
     * If False, the URL is sent directly to the model and no download is performed.
+    """
+
+    vendor_metadata: dict[str, Any] | None = None
+    """Vendor-specific metadata for the file.
+
+    Supported by:
+    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     """
 
     @property
@@ -175,13 +182,25 @@ class AudioUrl(FileUrl):
 
     @property
     def media_type(self) -> AudioMediaType:
-        """Return the media type of the audio file, based on the url."""
+        """Return the media type of the audio file, based on the url.
+
+        References:
+        - Gemini: https://ai.google.dev/gemini-api/docs/audio#supported-formats
+        """
         if self.url.endswith('.mp3'):
             return 'audio/mpeg'
-        elif self.url.endswith('.wav'):
+        if self.url.endswith('.wav'):
             return 'audio/wav'
-        else:
-            raise ValueError(f'Unknown audio file extension: {self.url}')
+        if self.url.endswith('.flac'):
+            return 'audio/flac'
+        if self.url.endswith('.oga'):
+            return 'audio/ogg'
+        if self.url.endswith('.aiff'):
+            return 'audio/aiff'
+        if self.url.endswith('.aac'):
+            return 'audio/aac'
+
+        raise ValueError(f'Unknown audio file extension: {self.url}')
 
     @property
     def format(self) -> AudioFormat:
@@ -262,6 +281,13 @@ class BinaryContent:
 
     media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str
     """The media type of the binary data."""
+
+    vendor_metadata: dict[str, Any] | None = None
+    """Vendor-specific metadata for the file.
+
+    Supported by:
+    - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+    """
 
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
@@ -344,6 +370,10 @@ _document_format_lookup: dict[str, DocumentFormat] = {
 _audio_format_lookup: dict[str, AudioFormat] = {
     'audio/mpeg': 'mp3',
     'audio/wav': 'wav',
+    'audio/flac': 'flac',
+    'audio/ogg': 'oga',
+    'audio/aiff': 'aiff',
+    'audio/aac': 'aac',
 }
 _image_format_lookup: dict[str, ImageFormat] = {
     'image/jpeg': 'jpeg',
@@ -381,9 +411,9 @@ class UserPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:
-        content: str | list[dict[str, Any] | str]
+        content: str | list[dict[str, Any] | str] | dict[str, Any]
         if isinstance(self.content, str):
-            content = self.content
+            content = self.content if settings.include_content else {'kind': 'text'}
         else:
             content = []
             for part in self.content:
@@ -501,7 +531,10 @@ class RetryPromptPart:
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
         if isinstance(self.content, str):
-            description = self.content
+            if self.tool_name is None:
+                description = f'Validation feedback:\n{self.content}'
+            else:
+                description = self.content
         else:
             json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
             description = f'{len(self.content)} validation errors: {json_errors.decode()}'
@@ -710,7 +743,7 @@ class ModelResponse:
                         'type': 'function',  # TODO https://github.com/pydantic/pydantic-ai/issues/888
                         'function': {
                             'name': part.tool_name,
-                            'arguments': part.args,
+                            **({'arguments': part.args} if settings.include_content else {}),
                         },
                     }
                 )
@@ -1009,9 +1042,15 @@ class FunctionToolCallEvent:
     """Event type identifier, used as a discriminator."""
 
     @property
-    def call_id(self) -> str:
-        """An ID used for matching details about the call to its result. If present, defaults to the part's tool_call_id."""
+    def tool_call_id(self) -> str:
+        """An ID used for matching details about the call to its result."""
         return self.part.tool_call_id
+
+    @property
+    @deprecated('`call_id` is deprecated, use `tool_call_id` instead.')
+    def call_id(self) -> str:
+        """An ID used for matching details about the call to its result."""
+        return self.part.tool_call_id  # pragma: no cover
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1022,10 +1061,13 @@ class FunctionToolResultEvent:
 
     result: ToolReturnPart | RetryPromptPart
     """The result of the call to the function tool."""
-    tool_call_id: str
-    """An ID used to match the result to its original call."""
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""
+
+    @property
+    def tool_call_id(self) -> str:
+        """An ID used to match the result to its original call."""
+        return self.result.tool_call_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

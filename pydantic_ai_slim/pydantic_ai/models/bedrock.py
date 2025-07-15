@@ -62,6 +62,7 @@ if TYPE_CHECKING:
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
+        ToolSpecificationTypeDef,
         ToolTypeDef,
         VideoBlockTypeDef,
     )
@@ -133,11 +134,11 @@ T = typing.TypeVar('T')
 class BedrockModelSettings(ModelSettings, total=False):
     """Settings for Bedrock models.
 
-    ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-
     See [the Bedrock Converse API docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html#API_runtime_Converse_RequestSyntax) for a full list.
     See [the boto3 implementation](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/bedrock-runtime/client/converse.html) of the Bedrock Converse API.
     """
+
+    # ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     bedrock_guardrail_config: GuardrailConfigurationTypeDef
     """Content moderation and safety settings for Bedrock API requests.
@@ -201,6 +202,7 @@ class BedrockConverseModel(Model):
         *,
         provider: Literal['bedrock'] | Provider[BaseClient] = 'bedrock',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Bedrock model.
 
@@ -212,13 +214,15 @@ class BedrockConverseModel(Model):
                 'bedrock' or an instance of `Provider[BaseClient]`. If not provided, a new provider will be
                 created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = cast('BedrockRuntimeClient', provider.client)
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
@@ -228,13 +232,15 @@ class BedrockConverseModel(Model):
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
-        return {
-            'toolSpec': {
-                'name': f.name,
-                'description': f.description,
-                'inputSchema': {'json': f.parameters_json_schema},
-            }
+        tool_spec: ToolSpecificationTypeDef = {
+            'name': f.name,
+            'inputSchema': {'json': f.parameters_json_schema},
         }
+
+        if f.description:  # pragma: no branch
+            tool_spec['description'] = f.description
+
+        return {'toolSpec': tool_spec}
 
     @property
     def base_url(self) -> str:
@@ -657,4 +663,4 @@ class _AsyncIteratorWrapper(Generic[T]):
             if type(e.__cause__) is StopIteration:
                 raise StopAsyncIteration
             else:
-                raise e  # pragma: lax no cover
+                raise e  # pragma: no cover

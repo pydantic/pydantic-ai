@@ -1,0 +1,73 @@
+interactions:
+- request:
+    headers:
+      content-type:
+      - application/json
+    method: post
+    parsed_body:
+      contents:
+      - parts:
+        - text: Explain me this video
+        - fileData:
+            fileUri: https://youtu.be/lCdaVNyHtjU
+            mimeType: video/mp4
+          videoMetadata:
+            fps: 0.2
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2759'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=11467
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.4793745385795377
+        content:
+          parts:
+          - text: |-
+              Okay, based on the image, here's what I can infer:
+
+              *   **A camera monitor is mounted on top of a camera.**
+              *   **The monitor's screen is on, displaying a view of the rocky mountains.**
+              *   **This setting suggests a professional video shoot.**
+
+              If you'd like a more detailed explanation, please provide additional information about the video.
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: ldpraPqBM6HshMIPgsi60QI
+      usageMetadata:
+        candidatesTokenCount: 459
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 459
+        promptTokenCount: 4605
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 10
+        - modality: AUDIO
+          tokenCount: 1475
+        - modality: VIDEO
+          tokenCount: 3120
+        totalTokenCount: 5064
+    status:
+      code: 200
+      message: OK
+version: 1

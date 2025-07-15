@@ -31,7 +31,7 @@ _(This example is complete, it can be run "as is")_
 
 ## Output data {#structured-output}
 
-The [`Agent`][pydantic_ai.Agent] class constructor takes an `output_type` argument that takes one or more types or [output functions](#output-functions). It supports simple scalar types, list and dict types, dataclasses and Pydantic models, as well as type unions -- generally everything supported as type hints in a Pydantic model. You can also pass a list of multiple choices.
+The [`Agent`][pydantic_ai.Agent] class constructor takes an `output_type` argument that takes one or more types or [output functions](#output-functions). It supports simple scalar types, list and dict types (including `TypedDict`s and [`StructuredDict`s](#structured-dict)), dataclasses and Pydantic models, as well as type unions -- generally everything supported as type hints in a Pydantic model. You can also pass a list of multiple choices.
 
 By default, Pydantic AI leverages the model's tool calling capability to make it return structured data. When multiple output types are specified (in a union or list), each member is registered with the model as a separate output tool in order to reduce the complexity of the schema and maximise the chances a model will respond correctly. This has been shown to work well across a wide range of models. If you'd like to change the names of the output tools, use a model's native structured output feature, or pass the output schema to the model in its [instructions](agents.md#instructions), you can use an [output mode](#output-modes) marker class.
 
@@ -116,7 +116,6 @@ print(result.output)
 1. As explained in the "Type checking considerations" section above, using a union rather than a list requires explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
-
 
 ### Output functions
 
@@ -386,6 +385,37 @@ print(repr(result.output))
 1. This could also have been a union: `output_type=Vehicle | Device` (or in older Python, `output_type=Union[Vehicle, Device]`). However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
+
+### Custom JSON schema {#structured-dict}
+
+If it's not feasible to define your desired structured output object using a Pydantic `BaseModel`, dataclass, or `TypedDict`, for example when you get a JSON schema from an external source or generate it dynamically, you can use the [`StructuredDict()`][pydantic_ai.output.StructuredDict] helper function to generate a `dict[str, Any]` subclass with a JSON schema attached that Pydantic AI will pass to the model.
+
+Note that Pydantic AI will not perform any validation of the received JSON object and it's up to the model to correctly interpret the schema and any constraints expressed in it, like required fields or integer value ranges.
+
+The output type will be a `dict[str, Any]` and it's up to your code to defensively read from it in case the model made a mistake. You can use an [output validator](#output-validator-functions) to reflect validation errors back to the model and get it to try again.
+
+Along with the JSON schema, you can optionally pass `name` and `description` arguments to provide additional context to the model:
+
+```python
+from pydantic_ai import Agent, StructuredDict
+
+HumanDict = StructuredDict(
+    {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"}
+        },
+        "required": ["name", "age"]
+    },
+    name="Human",
+    description="A human with a name and age",
+)
+
+agent = Agent('openai:gpt-4o', output_type=HumanDict)
+result = agent.run_sync("Create a person")
+#> {'name': 'John Doe', 'age': 30}
+```
 
 ### Output validators {#output-validator-functions}
 
