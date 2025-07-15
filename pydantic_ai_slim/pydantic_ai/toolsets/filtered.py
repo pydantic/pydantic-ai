@@ -5,8 +5,8 @@ from typing import Callable
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
-from ._abstract import AbstractToolset
 from ._individually_prepared import IndividuallyPreparedToolset
+from .abstract import AbstractToolset
 
 
 @dataclass(init=False)

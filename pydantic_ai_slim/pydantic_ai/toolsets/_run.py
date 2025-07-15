@@ -13,8 +13,8 @@ from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from ..messages import ToolCallPart
 from ..tools import ToolDefinition
-from ._abstract import AbstractToolset
 from ._wrapper import AbstractWrapperToolset
+from .abstract import AbstractToolset
 
 
 @dataclass(init=False)
@@ -78,15 +78,15 @@ class RunToolset(AbstractWrapperToolset[AgentDepsT]):
             )
 
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
-            validator = self._get_tool_args_validator(ctx, name)
+            validator = self.get_tool_args_validator(ctx, name)
             if isinstance(call.args, str):
                 args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
             else:
                 args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
-            output = await self._call_tool(ctx, name, args_dict)
+            output = await self.call_tool(ctx, name, args_dict)
         except (ValidationError, ModelRetry, UnexpectedModelBehavior, ToolRetryError) as e:
             try:
-                max_retries = self._max_retries_for_tool(name)
+                max_retries = self.max_retries_for_tool(name)
             except Exception:
                 max_retries = 1
             current_retry = self._retries.get(name, 0)

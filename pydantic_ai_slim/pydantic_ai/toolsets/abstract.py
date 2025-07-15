@@ -71,17 +71,17 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         return next((tool_def for tool_def in self.tool_defs if tool_def.name == name), None)
 
     @abstractmethod
-    def _max_retries_for_tool(self, name: str) -> int:
+    def max_retries_for_tool(self, name: str) -> int:
         """The maximum number of retries for a given tool during an agent run."""
         raise NotImplementedError()
 
     @abstractmethod
-    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
         """Get the Pydantic Core schema validator for a given tool."""
         raise NotImplementedError()
 
     @abstractmethod
-    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         """Call a tool with the given arguments.
 
         Args:

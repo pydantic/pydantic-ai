@@ -8,7 +8,7 @@ from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
-from ._abstract import AbstractToolset
+from .abstract import AbstractToolset
 
 
 @dataclass
@@ -34,14 +34,14 @@ class AbstractWrapperToolset(AbstractToolset[AgentDepsT]):
     def tool_defs(self) -> list[ToolDefinition]:
         return self.wrapped.tool_defs
 
-    def _max_retries_for_tool(self, name: str) -> int:
-        return self.wrapped._max_retries_for_tool(name)
+    def max_retries_for_tool(self, name: str) -> int:
+        return self.wrapped.max_retries_for_tool(name)
 
-    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        return self.wrapped._get_tool_args_validator(ctx, name)
+    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+        return self.wrapped.get_tool_args_validator(ctx, name)
 
-    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
-        return await self.wrapped._call_tool(ctx, name, tool_args)
+    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+        return await self.wrapped.call_tool(ctx, name, tool_args)
 
     def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
         return self.wrapped.accept(visitor)

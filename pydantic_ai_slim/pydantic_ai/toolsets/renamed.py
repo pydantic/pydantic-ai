@@ -7,8 +7,8 @@ from pydantic_core import SchemaValidator
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
-from ._abstract import AbstractToolset
 from ._tool_defs import ToolDefsToolset
+from .abstract import AbstractToolset
 from .wrapper import WrapperToolset
 
 
@@ -42,18 +42,18 @@ class RenamedToolset(ToolDefsToolset[AgentDepsT]):
     ) -> WrapperToolset[AgentDepsT]:
         return RenamedToolset(wrapped, self.name_map, self._tool_defs)
 
-    def _max_retries_for_tool(self, name: str) -> int:
-        return super()._max_retries_for_tool(self._map_name(name))
+    def max_retries_for_tool(self, name: str) -> int:
+        return super().max_retries_for_tool(self._map_name(name))
 
-    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
         original_name = self._map_name(name)
         ctx = replace(ctx, tool_name=original_name)
-        return super()._get_tool_args_validator(ctx, original_name)
+        return super().get_tool_args_validator(ctx, original_name)
 
-    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         original_name = self._map_name(name)
         ctx = replace(ctx, tool_name=original_name)
-        return await super()._call_tool(ctx, self._map_name(name), tool_args)
+        return await super().call_tool(ctx, self._map_name(name), tool_args)
 
     def _map_name(self, name: str) -> str:
         return self.name_map.get(name, name)

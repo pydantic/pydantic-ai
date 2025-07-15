@@ -13,8 +13,8 @@ from .._run_context import AgentDepsT, RunContext
 from .._utils import get_async_lock
 from ..exceptions import UserError
 from ..tools import ToolDefinition
-from ._abstract import AbstractToolset
 from ._run import RunToolset
+from .abstract import AbstractToolset
 
 
 @dataclass(init=False)
@@ -80,14 +80,14 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     def tool_names(self) -> list[str]:
         return list(self._toolset_per_tool_name.keys())
 
-    def _max_retries_for_tool(self, name: str) -> int:
-        return self._toolset_for_tool_name(name)._max_retries_for_tool(name)
+    def max_retries_for_tool(self, name: str) -> int:
+        return self._toolset_for_tool_name(name).max_retries_for_tool(name)
 
-    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        return self._toolset_for_tool_name(name)._get_tool_args_validator(ctx, name)
+    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+        return self._toolset_for_tool_name(name).get_tool_args_validator(ctx, name)
 
-    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
-        return await self._toolset_for_tool_name(name)._call_tool(ctx, name, tool_args)
+    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+        return await self._toolset_for_tool_name(name).call_tool(ctx, name, tool_args)
 
     def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
         for toolset in self.toolsets:

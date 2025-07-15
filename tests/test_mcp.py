@@ -80,7 +80,7 @@ async def test_stdio_server(run_context: RunContext[int]):
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
         # Test calling the temperature conversion tool
-        result = await server.call_tool('celsius_to_fahrenheit', {'celsius': 0})
+        result = await server.call_tool(None, 'celsius_to_fahrenheit', {'celsius': 0})
         assert result == snapshot('32.0')
 
 
@@ -271,7 +271,7 @@ async def test_log_level_unset(run_context: RunContext[int]):
         assert len(tools) == snapshot(13)
         assert tools[10].name == 'get_log_level'
 
-        result = await server.call_tool('get_log_level', {})
+        result = await server.call_tool(None, 'get_log_level', {})
         assert result == snapshot('unset')
 
 
@@ -279,7 +279,7 @@ async def test_log_level_set(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
     assert server.log_level == 'info'
     async with server:
-        result = await server.call_tool('get_log_level', {})
+        result = await server.call_tool(None, 'get_log_level', {})
         assert result == snapshot('info')
 
 
@@ -992,7 +992,7 @@ async def test_client_sampling(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     server.sampling_model = TestModel(custom_output_text='sampling model response')
     async with server:
-        result = await server.call_tool('use_sampling', {'foo': 'bar'})
+        result = await server.call_tool(None, 'use_sampling', {'foo': 'bar'})
         assert result == snapshot(
             {
                 'meta': None,
@@ -1009,7 +1009,7 @@ async def test_client_sampling_disabled(run_context: RunContext[int]):
     server.sampling_model = TestModel(custom_output_text='sampling model response')
     async with server:
         with pytest.raises(ModelRetry, match='Error executing tool use_sampling: Sampling not supported'):
-            await server.call_tool('use_sampling', {'foo': 'bar'})
+            await server.call_tool(None, 'use_sampling', {'foo': 'bar'})
 
 
 async def test_mcp_server_raises_mcp_error(
@@ -1024,7 +1024,7 @@ async def test_mcp_server_raises_mcp_error(
             new=AsyncMock(side_effect=mcp_error),
         ):
             with pytest.raises(ModelRetry, match='Test MCP error conversion'):
-                await mcp_server.call_tool('test_tool', {})
+                await mcp_server.call_tool(None, 'test_tool', {})
 
 
 def test_map_from_mcp_params_model_request():

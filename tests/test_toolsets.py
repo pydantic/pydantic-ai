@@ -219,7 +219,7 @@ async def test_prefixed_toolset_error_invalid_prefix():
 
     # Test calling with wrong prefix
     with pytest.raises(ValueError, match="Tool name 'wrong_add' does not start with prefix 'math_'"):
-        await prefixed_toolset._call_tool(context, 'wrong_add', {'a': 1, 'b': 2})  # type: ignore[reportPrivateUsage]
+        await prefixed_toolset.call_tool(context, 'wrong_add', {'a': 1, 'b': 2})
 
 
 async def test_comprehensive_toolset_composition():

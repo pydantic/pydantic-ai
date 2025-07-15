@@ -213,12 +213,12 @@ class FunctionToolset(BaseToolset[AgentDepsT]):
     def tool_defs(self) -> list[ToolDefinition]:
         return [tool.tool_def for tool in self.tools.values()]
 
-    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
         return self.tools[name].function_schema.validator
 
-    def _max_retries_for_tool(self, name: str) -> int:
+    def max_retries_for_tool(self, name: str) -> int:
         tool = self.tools[name]
         return tool.max_retries if tool.max_retries is not None else self.max_retries
 
-    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         return await self.tools[name].function_schema.call(tool_args, ctx)

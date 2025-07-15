@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
-from ._abstract import AbstractToolset
+from .abstract import AbstractToolset
 from .wrapper import WrapperToolset
 
 

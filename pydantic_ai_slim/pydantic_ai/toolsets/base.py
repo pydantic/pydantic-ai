@@ -6,8 +6,8 @@ from pydantic_ai.toolsets._run import RunToolset
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
-from ._abstract import AbstractToolset
 from ._tool_defs import ToolDefsToolset
+from .abstract import AbstractToolset
 
 
 class BaseToolset(AbstractToolset[AgentDepsT], ABC):

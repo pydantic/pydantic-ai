@@ -923,13 +923,13 @@ class OutputToolset(BaseToolset[AgentDepsT]):
     def tool_defs(self) -> list[ToolDefinition]:
         return self._tool_defs
 
-    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
         return self.processors[name].validator
 
-    def _max_retries_for_tool(self, name: str) -> int:
+    def max_retries_for_tool(self, name: str) -> int:
         return self.max_retries
 
-    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         output = await self.processors[name].call(tool_args, ctx)
         for validator in self.output_validators:
             output = await validator.validate(output, ctx, wrap_validation_errors=False)

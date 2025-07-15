@@ -1,4 +1,4 @@
-from ._abstract import AbstractToolset
+from .abstract import AbstractToolset
 from .base import AsyncBaseToolset, BaseToolset
 from .combined import CombinedToolset
 from .deferred import DeferredToolset

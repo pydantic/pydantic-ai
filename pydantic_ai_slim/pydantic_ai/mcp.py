@@ -107,7 +107,7 @@ class MCPServer(AsyncBaseToolset[Any], ABC):
             result = await self._client.list_tools()
         return result.tools
 
-    async def call_tool(
+    async def _call_tool(
         self,
         name: str,
         args: dict[str, Any],
@@ -152,16 +152,19 @@ class MCPServer(AsyncBaseToolset[Any], ABC):
         else:
             return content[0] if len(content) == 1 else content
 
-    async def _call_tool(
+    async def call_tool(
         self,
-        ctx: RunContext[Any],
+        ctx: RunContext[Any] | None,
         name: str,
         tool_args: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
     ) -> ToolResult:
         if self.process_tool_call is not None:
-            return await self.process_tool_call(ctx, self.call_tool, name, tool_args)
+            if not ctx:
+                raise ValueError('`call_tool` `ctx` argument is required when `process_tool_call` is set')
+            return await self.process_tool_call(ctx, self._call_tool, name, tool_args)
         else:
-            return await self.call_tool(name, tool_args)
+            return await self._call_tool(name, tool_args, metadata)
 
     async def prepare_for_run(self, ctx: RunContext[Any]) -> RunToolset[Any]:
         frozen_toolset = await super().prepare_for_run(ctx)
@@ -181,14 +184,14 @@ class MCPServer(AsyncBaseToolset[Any], ABC):
             for mcp_tool in mcp_tools
         ]
 
-    def _get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> pydantic_core.SchemaValidator:
+    def get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> pydantic_core.SchemaValidator:
         return pydantic_core.SchemaValidator(
             schema=pydantic_core.core_schema.dict_schema(
                 pydantic_core.core_schema.str_schema(), pydantic_core.core_schema.any_schema()
             )
         )
 
-    def _max_retries_for_tool(self, name: str) -> int:
+    def max_retries_for_tool(self, name: str) -> int:
         return self.max_retries
 
     async def __aenter__(self) -> Self:

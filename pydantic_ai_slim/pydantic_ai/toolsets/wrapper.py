@@ -4,9 +4,9 @@ import inspect
 from dataclasses import dataclass
 
 from .._run_context import AgentDepsT, RunContext
-from ._abstract import AbstractToolset
 from ._run import RunToolset
 from ._wrapper import AbstractWrapperToolset
+from .abstract import AbstractToolset
 
 
 @dataclass

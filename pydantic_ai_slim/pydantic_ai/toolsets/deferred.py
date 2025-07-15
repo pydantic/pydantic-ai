@@ -25,11 +25,11 @@ class DeferredToolset(BaseToolset[AgentDepsT]):
     def tool_defs(self) -> list[ToolDefinition]:
         return self._tool_defs
 
-    def _max_retries_for_tool(self, name: str) -> int:
+    def max_retries_for_tool(self, name: str) -> int:
         raise NotImplementedError('Deferred tools cannot be retried')
 
-    def _get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
+    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
         raise NotImplementedError('Deferred tools cannot be validated')
 
-    async def _call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         raise NotImplementedError('Deferred tools cannot be called')

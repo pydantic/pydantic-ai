@@ -273,13 +273,13 @@ class MockMCPServer(BaseToolset[Any]):
     def tool_defs(self) -> list[ToolDefinition]:
         return []
 
-    def _max_retries_for_tool(self, name: str) -> int:
+    def max_retries_for_tool(self, name: str) -> int:
         return 0  # pragma: lax no cover
 
-    def _get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> SchemaValidator:
+    def get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> SchemaValidator:
         return SchemaValidator(core_schema.any_schema())
 
-    async def _call_tool(self, ctx: RunContext[Any], name: str, tool_args: dict[str, Any]) -> Any:
+    async def call_tool(self, ctx: RunContext[Any], name: str, tool_args: dict[str, Any]) -> Any:
         return None  # pragma: lax no cover
 
 
