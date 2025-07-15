@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Generic
 
 from pydantic import ValidationError
+from typing_extensions import assert_never
 
 from pydantic_ai.output import DeferredToolCalls
 
@@ -33,10 +34,7 @@ class ToolManager(Generic[AgentDepsT]):
         )
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
-        if ctx == self.ctx:
-            return self
-        else:
-            return await self.__class__.build(self.toolset, replace(ctx, retries=self.ctx.retries))
+        return await self.__class__.build(self.toolset, replace(ctx, retries=self.ctx.retries))
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
@@ -97,6 +95,8 @@ class ToolManager(Generic[AgentDepsT]):
                         tool_call_id=call.tool_call_id,
                     )
                     e = ToolRetryError(m)
+                else:
+                    assert_never(e)
 
                 self.ctx.retries[name] = current_retry + 1
                 raise e

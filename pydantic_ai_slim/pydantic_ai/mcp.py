@@ -111,7 +111,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             result = await self._client.list_tools()
         return result.tools
 
-    async def call_mcp_tool(
+    async def direct_call_tool(
         self,
         name: str,
         args: dict[str, Any],
@@ -168,9 +168,9 @@ class MCPServer(AbstractToolset[Any], ABC):
             ctx = replace(ctx, tool_name=name)
 
         if self.process_tool_call is not None:
-            return await self.process_tool_call(ctx, self.call_mcp_tool, name, tool_args)
+            return await self.process_tool_call(ctx, self.direct_call_tool, name, tool_args)
         else:
-            return await self.call_mcp_tool(name, tool_args)
+            return await self.direct_call_tool(name, tool_args)
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         return {

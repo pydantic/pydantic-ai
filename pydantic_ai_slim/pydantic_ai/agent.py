@@ -1696,11 +1696,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         else:
             return self._user_toolsets
 
-    @property
-    def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
-        """The toolsets registered with this agent."""
-        return self._get_user_toolsets()
-
     def _get_toolset(
         self,
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
@@ -1712,10 +1707,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_toolset: The output toolset to use instead of the one built at agent construction time.
             additional_toolsets: Additional toolsets to add.
         """
-        user_toolsets = self._user_toolsets
-        if additional_toolsets:
-            user_toolsets = [*user_toolsets, *additional_toolsets]
-        user_toolsets = self._get_user_toolsets(user_toolsets)
+        if some_user_toolsets := self._override_toolsets.get():
+            user_toolsets = some_user_toolsets.value
+        elif additional_toolsets is not None:
+            user_toolsets = [*self._user_toolsets, *additional_toolsets]
+        else:
+            user_toolsets = self._user_toolsets
 
         all_toolsets = [self._function_toolset, *user_toolsets]
 

@@ -15,14 +15,6 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
 
     wrapped: AbstractToolset[AgentDepsT]
 
-    @property
-    def name(self) -> str:
-        return self.wrapped.name
-
-    @property
-    def tool_name_conflict_hint(self) -> str:
-        return self.wrapped.tool_name_conflict_hint
-
     async def __aenter__(self) -> Self:
         await self.wrapped.__aenter__()
         return self

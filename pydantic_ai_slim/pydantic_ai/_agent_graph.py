@@ -618,7 +618,7 @@ async def process_function_tools(  # noqa: C901
                 result_data = await tool_manager.handle_call(call)
             except exceptions.UnexpectedModelBehavior as e:
                 ctx.state.increment_retries(ctx.deps.max_result_retries, e)
-                raise e
+                raise e  # pragma: no cover
             except ToolRetryError as e:
                 ctx.state.increment_retries(ctx.deps.max_result_retries, e)
                 yield _messages.FunctionToolCallEvent(call)

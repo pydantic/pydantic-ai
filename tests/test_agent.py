@@ -3805,7 +3805,7 @@ def test_prepare_output_tools():
 async def test_context_manager():
     try:
         from pydantic_ai.mcp import MCPServerStdio
-    except ImportError:
+    except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
     server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
@@ -3825,7 +3825,7 @@ async def test_context_manager():
 def test_set_mcp_sampling_model():
     try:
         from pydantic_ai.mcp import MCPServerStdio
-    except ImportError:
+    except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
     test_model = TestModel()

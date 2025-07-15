@@ -13,7 +13,6 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.filtered import FilteredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -35,10 +34,6 @@ def build_run_context(deps: T) -> RunContext[T]:
         messages=[],
         run_step=0,
     )
-
-
-async def get_tool_defs(toolset: AbstractToolset[T], deps: T) -> list[ToolDefinition]:
-    return [tool.tool_def for tool in (await toolset.get_tools(build_run_context(deps))).values()]
 
 
 async def test_function_toolset():
@@ -460,7 +455,7 @@ async def test_comprehensive_toolset_composition():
 async def test_context_manager():
     try:
         from pydantic_ai.mcp import MCPServerStdio
-    except ImportError:
+    except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
     server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])

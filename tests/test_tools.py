@@ -19,6 +19,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import DeferredToolCalls, ToolOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.deferred import DeferredToolset
+from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
 from .conftest import IsStr
 
@@ -589,6 +591,23 @@ def test_tool_return_conflict():
         Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(int, name='ctx_tool')).run_sync(
             '', deps=0
         )
+
+
+def test_tool_name_conflict_hint():
+    with pytest.raises(
+        UserError,
+        match="Prefixed toolset defines a tool whose name conflicts with existing tool from Function toolset: 'foo_tool'. Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts.",
+    ):
+
+        def tool(x: int) -> int:
+            return x + 1
+
+        def foo_tool(x: str) -> str:
+            return x + 'foo'
+
+        function_toolset = FunctionToolset([tool])
+        prefixed_toolset = PrefixedToolset(function_toolset, 'foo')
+        Agent('test', tools=[foo_tool], toolsets=[prefixed_toolset]).run_sync('')
 
 
 def test_init_ctx_tool_invalid():
