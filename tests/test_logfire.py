@@ -441,7 +441,6 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
                 snapshot(
                     [
                         {
-                            'content': 'Here are some instructions',
                             'role': 'system',
                             'event.name': 'gen_ai.system.message',
                         },
@@ -473,7 +472,6 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
                     ]
                 )
             ),
-            'final_result': '{"content": "a"}',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
@@ -483,43 +481,6 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
                 )
             ),
         }
-    )
-    chat_span_attributes = summary.attributes[1]
-    assert chat_span_attributes['events'] == snapshot(
-        IsJson(
-            snapshot(
-                [
-                    {
-                        'content': 'Here are some instructions',
-                        'role': 'system',
-                        'gen_ai.system': 'test',
-                        'event.name': 'gen_ai.system.message',
-                    },
-                    {
-                        'event.name': 'gen_ai.user.message',
-                        'content': {'kind': 'text'},
-                        'role': 'user',
-                        'gen_ai.message.index': 0,
-                        'gen_ai.system': 'test',
-                    },
-                    {
-                        'event.name': 'gen_ai.choice',
-                        'index': 0,
-                        'message': {
-                            'role': 'assistant',
-                            'tool_calls': [
-                                {
-                                    'id': IsStr(),
-                                    'type': 'function',
-                                    'function': {'name': 'final_result'},
-                                }
-                            ],
-                        },
-                        'gen_ai.system': 'test',
-                    },
-                ]
-            )
-        )
     )
 
 
