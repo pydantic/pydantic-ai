@@ -411,9 +411,9 @@ class UserPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:
-        content: str | list[dict[str, Any] | str]
+        content: str | list[dict[str, Any] | str] | dict[str, Any]
         if isinstance(self.content, str):
-            content = self.content
+            content = self.content if settings.include_content else {'kind': 'text'}
         else:
             content = []
             for part in self.content:
@@ -433,7 +433,9 @@ class UserPromptPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(Any, config=pydantic.ConfigDict(defer_build=True))
+tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
+    Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
+)
 
 
 @dataclass(repr=False)
@@ -743,7 +745,7 @@ class ModelResponse:
                         'type': 'function',  # TODO https://github.com/pydantic/pydantic-ai/issues/888
                         'function': {
                             'name': part.tool_name,
-                            'arguments': part.args,
+                            **({'arguments': part.args} if settings.include_content else {}),
                         },
                     }
                 )

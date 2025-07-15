@@ -2934,6 +2934,47 @@ def test_binary_content_all_messages_json():
     assert messages == result.all_messages()
 
 
+def test_tool_return_part_binary_content_serialization():
+    """Test that ToolReturnPart can properly serialize BinaryContent."""
+    png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
+    binary_content = BinaryContent(png_data, media_type='image/png')
+
+    tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
+
+    response_str = tool_return.model_response_str()
+
+    assert '"kind":"binary"' in response_str
+    assert '"media_type":"image/png"' in response_str
+    assert '"data":"' in response_str
+
+    response_obj = tool_return.model_response_object()
+    assert response_obj['return_value']['kind'] == 'binary'
+    assert response_obj['return_value']['media_type'] == 'image/png'
+    assert 'data' in response_obj['return_value']
+
+
+def test_tool_returning_binary_content_directly():
+    """Test that a tool returning BinaryContent directly works correctly."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('get_image', {})])
+        else:
+            return ModelResponse(parts=[TextPart('Image received')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def get_image() -> BinaryContent:
+        """Return a simple image."""
+        png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
+        return BinaryContent(png_data, media_type='image/png')
+
+    # This should work without the serialization error
+    result = agent.run_sync('Get an image')
+    assert result.output == 'Image received'
+
+
 def test_instructions_raise_error_when_system_prompt_is_set():
     agent = Agent('test', instructions='An instructions!')
 
