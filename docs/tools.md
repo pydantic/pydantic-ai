@@ -793,7 +793,8 @@ Functions registered in any of these ways can define an initial `ctx: RunContext
 ```python {title="function_toolset.py"}
 from datetime import datetime
 
-from pydantic_ai import RunContext
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
 
@@ -807,6 +808,7 @@ def temperature_fahrenheit(city: str) -> float:
 
 weather_toolset = FunctionToolset(tools=[temperature_celsius, temperature_fahrenheit])
 
+
 @weather_toolset.tool
 def conditions(ctx: RunContext, city: str) -> str:
     if ctx.run_step % 2 == 0:
@@ -814,15 +816,23 @@ def conditions(ctx: RunContext, city: str) -> str:
     else:
         return "It's raining"
 
+
 datetime_toolset = FunctionToolset()
 datetime_toolset.add_function(lambda: datetime.now(), name='now')
 
-print(weather_toolset.tool_names)
+test_model = TestModel() # (1)!
+agent = Agent(test_model)
+
+result = agent.run_sync('What tools are available?', toolsets=[weather_toolset])
+print([t.name for t in test_model.last_model_request_parameters.function_tools])
 #> ['temperature_celsius', 'temperature_fahrenheit', 'conditions']
 
-print(datetime_toolset.tool_names)
+result = agent.run_sync('What tools are available?', toolsets=[datetime_toolset])
+print([t.name for t in test_model.last_model_request_parameters.function_tools])
 #> ['now']
 ```
+
+1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
 
 _(This example is complete, it can be run "as is")_
 
@@ -837,13 +847,21 @@ Toolsets can be composed to dynamically filter which tools are available, modify
 ```python {title="combined_toolset.py" requires="function_toolset.py"}
 from function_toolset import weather_toolset, datetime_toolset
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import CombinedToolset
 
 
 combined_toolset = CombinedToolset([weather_toolset, datetime_toolset])
-print(combined_toolset.tool_names)
+
+test_model = TestModel() # (1)!
+agent = Agent(test_model, toolsets=[combined_toolset])
+result = agent.run_sync('What tools are available?')
+print([t.name for t in test_model.last_model_request_parameters.function_tools])
 #> ['temperature_celsius', 'temperature_fahrenheit', 'conditions', 'now']
 ```
+
+1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
 
 _(This example is complete, it can be run "as is")_
 
@@ -861,14 +879,13 @@ from pydantic_ai.toolsets import FilteredToolset
 filtered_toolset = FilteredToolset(combined_toolset, lambda ctx, tool_def: 'fahrenheit' not in tool_def.name)
 
 test_model = TestModel() # (1)!
-agent = Agent(test_model, toolsets=[filtered_toolset]) # (2)!
+agent = Agent(test_model, toolsets=[filtered_toolset])
 result = agent.run_sync('What tools are available?')
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
 #> ['weather_temperature_celsius', 'weather_conditions', 'datetime_now']
 ```
 
 1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
-2. Because the filter function takes the agent run context, it is only applied when we're performing (or in this case, simulating) a run, not when we just call `tool_defs()` or `tool_names()` as in the previous examples.
 
 _(This example is complete, it can be run "as is")_
 
@@ -879,14 +896,19 @@ _(This example is complete, it can be run "as is")_
 ```python {title="combined_toolset.py" requires="function_toolset.py"}
 from function_toolset import weather_toolset, datetime_toolset
 
-from pydantic_ai.toolsets import CombinedToolset
-from pydantic_ai.toolsets import PrefixedToolset
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import CombinedToolset, PrefixedToolset
 
 
 prefixed_weather_toolset = PrefixedToolset(weather_toolset, prefix='weather')
 prefixed_datetime_toolset = PrefixedToolset(datetime_toolset, prefix='datetime')
 combined_toolset = CombinedToolset([prefixed_weather_toolset, prefixed_datetime_toolset])
-print(combined_toolset.tool_names)
+
+test_model = TestModel() # (1)!
+agent = Agent(test_model, toolsets=[combined_toolset])
+result = agent.run_sync('What tools are available?')
+print([t.name for t in test_model.last_model_request_parameters.function_tools])
 """
 [
     'weather_temperature_celsius',
@@ -897,6 +919,8 @@ print(combined_toolset.tool_names)
 """
 ```
 
+1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
+
 _(This example is complete, it can be run "as is")_
 
 #### Renaming Tools
@@ -906,6 +930,8 @@ _(This example is complete, it can be run "as is")_
 ```python {title="renamed_toolset.py" requires="function_toolset.py,combined_toolset.py"}
 from combined_toolset import combined_toolset
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import RenamedToolset
 
 
@@ -917,11 +943,19 @@ renamed_toolset = RenamedToolset(
         'temperature_fahrenheit': 'weather_temperature_fahrenheit'
     }
 )
-print(renamed_toolset.tool_names)
+
+test_model = TestModel() # (1)!
+agent = Agent(test_model, toolsets=[renamed_toolset])
+result = agent.run_sync('What tools are available?')
+print([t.name for t in test_model.last_model_request_parameters.function_tools])
 """
 ['temperature_celsius', 'temperature_fahrenheit', 'weather_conditions', 'current_time']
 """
 ```
+
+1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
+
+_(This example is complete, it can be run "as is")_
 
 #### Preparing Tool Definitions
 
@@ -961,7 +995,7 @@ async def add_descriptions(ctx: RunContext, tool_defs: list[ToolDefinition]) -> 
 prepared_toolset = PreparedToolset(renamed_toolset, add_descriptions)
 
 test_model = TestModel() # (1)!
-agent = Agent(test_model, toolsets=[prepared_toolset]) # (2)!
+agent = Agent(test_model, toolsets=[prepared_toolset])
 result = agent.run_sync('What tools are available?')
 print(test_model.last_model_request_parameters.function_tools)
 """
@@ -1010,7 +1044,6 @@ print(test_model.last_model_request_parameters.function_tools)
 ```
 
 1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
-2. Because the prepare function takes the agent run context, it is only applied when we're performing (or in this case, simulating) a run, not when we just call `tool_defs()` or `tool_names()` as in the previous examples.
 
 #### Wrapping a Toolset
 
@@ -1022,8 +1055,6 @@ This is a no-op by default, but enables some useful abilities:
 
 You can subclass `WrapperToolset` to change the wrapped toolset's tool execution behavior by overriding the [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] method.
 
-Note that if your subclass adds new dataclass fields or `__init__` arguments, you must must implement [`rewrap_for_run()`][pydantic_ai.toolsets.WrapperToolset.rewrap_for_run] as described in the API docs.
-
 ```python {title="logging_toolset.py" requires="function_toolset.py,combined_toolset.py,renamed_toolset.py,prepared_toolset.py"}
 from typing_extensions import Any
 
@@ -1032,15 +1063,15 @@ from prepared_toolset import prepared_toolset
 from pydantic_ai.agent import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.toolsets import WrapperToolset
+from pydantic_ai.toolsets import WrapperToolset, ToolsetTool
 
 LOG = []
 
 class LoggingToolset(WrapperToolset):
-    async def call_tool(self, ctx: RunContext, name: str, tool_args: dict[str, Any]) -> Any:
+    async def call_tool(self, name: str, tool_args: dict[str, Any], ctx: RunContext, tool: ToolsetTool) -> Any:
         LOG.append(f'Calling tool {name!r} with args: {tool_args!r}')
         try:
-            result = await super().call_tool(ctx, name, tool_args)
+            result = await super().call_tool(name, tool_args, ctx, tool)
             LOG.append(f'Finished calling tool {name!r} with result: {result!r}')
         except Exception as e:
             LOG.append(f'Error calling tool {name!r}: {e}')
@@ -1099,23 +1130,22 @@ agent = Agent(
     deps_type=WrapperToolset, # (2)!
     toolsets=[togglable_toolset, FunctionToolset([toggle])]
 )
-print([t.name for ts in agent.toolsets for t in ts.tool_defs])
-#> ['temperature_celsius', 'temperature_fahrenheit', 'conditions', 'toggle']
+result = agent.run_sync('Toggle the toolset', deps=togglable_toolset)
+print([t.name for t in test_model.last_model_request_parameters.function_tools]) # (3)!
+#> ['now', 'toggle']
 
 result = agent.run_sync('Toggle the toolset', deps=togglable_toolset)
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
-#> ['now', 'toggle']
+#> ['temperature_celsius', 'temperature_fahrenheit', 'conditions', 'toggle']
 ```
 
 1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
-2. We're using the agent's dependencies to give the `toggle` tool access to the `togglable_toolset` via the `RunContext` argument
+2. We're using the agent's dependencies to give the `toggle` tool access to the `togglable_toolset` via the `RunContext` argument.
+3. This shows the available tools _after_ the `toggle` tool was executed, as the "last model request" was the one that returned the `toggle` tool result to the model.
 
 ### Building a Custom Toolset
 
-<!-- TODO: Update for AbstractToolset and list_tool_defs, no 2 classes needed anymore -->
-
-To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`BaseToolset`][pydantic_ai.toolsets.BaseToolset] or [`AsyncBaseToolset`][pydantic_ai.toolsets.AsyncBaseToolset], depending on whether listing the available tools can be done synchronously or requires an asynchronous network request. Tool calls themselves are always implemented asynchronously.
-These abstract classes require you to implement [`tool_defs()`][pydantic_ai.toolsets.AbstractToolset.tool_defs] or [`async_tool_defs()`][pydantic_ai.toolsets.AsyncBaseToolset.async_tool_defs] respectively, as well as the [`max_retries_for_tool()`][pydantic_ai.toolsets.AbstractToolset.max_retries_for_tool], [`get_tool_args_validator()`][pydantic_ai.toolsets.AbstractToolset.get_tool_args_validator] and [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] methods.
+To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] and implement the [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] and [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] methods.
 
 If you want to reuse a network connection or session across tool listings and calls during an agent run step, you can implement [`__aenter__()`][pydantic_ai.toolsets.AbstractToolset.__aenter__] and [`__aexit__()`][pydantic_ai.toolsets.AbstractToolset.__aexit__], which will be called when the agent that uses the toolset is itself entered using the [`async with agent`][pydantic_ai.Agent.__aenter__] context manager.
 
