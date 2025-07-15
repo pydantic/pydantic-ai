@@ -1,7 +1,7 @@
 # Gemini
 
 !!! note
-We've developed a new Google model called `GoogleModel` which uses `google-genai` under the hood.
+    We've developed a new Google model called `GoogleModel` which uses `google-genai` under the hood.
 
     Honestly, Google packages are a mess, and that's why we've used plain `httpx` instead of relying on their own client
     to create `GeminiModel`. That said, it's easier to use the `google-genai` package directly, since they keep the package
@@ -47,8 +47,8 @@ agent = Agent('google-gla:gemini-2.0-flash')
 ```
 
 !!! note
-The `google-gla` provider prefix represents the [Google **G**enerative **L**anguage **A**PI](https://ai.google.dev/api/all-methods) for `GeminiModel`s.
-`google-vertex` is used with [Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models).
+    The `google-gla` provider prefix represents the [Google **G**enerative **L**anguage **A**PI](https://ai.google.dev/api/all-methods) for `GeminiModel`s.
+    `google-vertex` is used with [Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models).
 
 Or initialise the model directly with just the model name and provider:
 
@@ -140,7 +140,7 @@ agent = Agent(model)
 Internally this uses [`google.auth.default()`](https://google-auth.readthedocs.io/en/master/reference/google.auth.html) from the `google-auth` package to obtain credentials.
 
 !!! note "Won't fail until `agent.run()`"
-Because `google.auth.default()` requires network requests and can be slow, it's not run until you call `agent.run()`.
+    Because `google.auth.default()` requires network requests and can be slow, it's not run until you call `agent.run()`.
 
 You may also need to pass the `project_id` argument to `GoogleVertexProvider` if application default credentials don't set a project, if you pass `project_id` and it conflicts with the project set by application default credentials, an error is raised.
 
