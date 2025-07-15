@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
-from ..tools import ToolDefinition, ToolsPrepareFunc
+from ..tools import ToolsPrepareFunc
+from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
 
@@ -14,15 +15,20 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
 
     prepare_func: ToolsPrepareFunc[AgentDepsT]
 
-    async def list_tool_defs(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
-        original_tool_defs = await super().list_tool_defs(ctx)
-        prepared_tool_defs = await self.prepare_func(ctx, original_tool_defs) or []
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        original_tools = await super().get_tools(ctx)
+        original_tool_defs = [tool.tool_def for tool in original_tools.values()]
+        prepared_tool_defs = {
+            tool_def.name: tool_def for tool_def in (await self.prepare_func(ctx, original_tool_defs) or [])
+        }
 
-        original_tool_names = {tool_def.name for tool_def in original_tool_defs}
-        prepared_tool_names = {tool_def.name for tool_def in prepared_tool_defs}
-        if len(prepared_tool_names - original_tool_names) > 0:
+        if len(prepared_tool_defs.keys() - original_tools.keys()) > 0:
             raise UserError(
                 'Prepare function cannot add or rename tools. Use `FunctionToolset.add_function()` or `RenamedToolset` instead.'
             )
 
-        return prepared_tool_defs
+        return {
+            name: replace(tool, tool_def=prepared_tool_defs[name])
+            for name, tool in original_tools.items()
+            if name in prepared_tool_defs
+        }

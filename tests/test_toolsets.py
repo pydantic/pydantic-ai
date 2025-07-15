@@ -8,10 +8,12 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.filtered import FilteredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -35,7 +37,11 @@ def build_run_context(deps: T) -> RunContext[T]:
     )
 
 
-async def test_function_toolset_prepare_for_run():
+async def get_tool_defs(toolset: AbstractToolset[T], deps: T) -> list[ToolDefinition]:
+    return [tool.tool_def for tool in (await toolset.get_tools(build_run_context(deps))).values()]
+
+
+async def test_function_toolset():
     @dataclass
     class PrefixDeps:
         prefix: str | None = None
@@ -53,31 +59,26 @@ async def test_function_toolset_prepare_for_run():
         """Add two numbers"""
         return a + b
 
-    assert toolset.tool_names == snapshot(['add'])
-    assert toolset.tool_defs == snapshot(
+    no_prefix_context = build_run_context(PrefixDeps())
+    no_prefix_toolset = await ToolManager[PrefixDeps].build(toolset, no_prefix_context)
+    assert no_prefix_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
                 name='add',
-                description='Add two numbers',
                 parameters_json_schema={
                     'additionalProperties': False,
                     'properties': {'a': {'type': 'integer'}, 'b': {'type': 'integer'}},
                     'required': ['a', 'b'],
                     'type': 'object',
                 },
+                description='Add two numbers',
             )
         ]
     )
-
-    no_prefix_context = build_run_context(PrefixDeps())
-    no_prefix_toolset = await toolset.prepare_for_run(no_prefix_context)
-    assert no_prefix_toolset.tool_names == toolset.tool_names
-    assert no_prefix_toolset.tool_defs == toolset.tool_defs
     assert await no_prefix_toolset.handle_call(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2})) == 3
 
     foo_context = build_run_context(PrefixDeps(prefix='foo'))
-    foo_toolset = await toolset.prepare_for_run(foo_context)
-    assert foo_toolset.tool_names == snapshot(['foo_add'])
+    foo_toolset = await ToolManager[PrefixDeps].build(toolset, foo_context)
     assert foo_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -99,11 +100,8 @@ async def test_function_toolset_prepare_for_run():
         """Subtract two numbers"""
         return a - b  # pragma: lax no cover
 
-    assert foo_toolset.tool_names == snapshot(['foo_add'])
-
     bar_context = build_run_context(PrefixDeps(prefix='bar'))
-    bar_toolset = await toolset.prepare_for_run(bar_context)
-    assert bar_toolset.tool_names == snapshot(['bar_add', 'subtract'])
+    bar_toolset = await ToolManager[PrefixDeps].build(toolset, bar_context)
     assert bar_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -129,9 +127,6 @@ async def test_function_toolset_prepare_for_run():
         ]
     )
     assert await bar_toolset.handle_call(ToolCallPart(tool_name='bar_add', args={'a': 1, 'b': 2})) == 3
-
-    bar_foo_toolset = await foo_toolset.prepare_for_run(bar_context)
-    assert bar_foo_toolset == bar_toolset
 
 
 async def test_prepared_toolset_user_error_add_new_tools():
@@ -166,7 +161,7 @@ async def test_prepared_toolset_user_error_add_new_tools():
             'Prepare function cannot add or rename tools. Use `FunctionToolset.add_function()` or `RenamedToolset` instead.'
         ),
     ):
-        await prepared_toolset.prepare_for_run(context)
+        await ToolManager[None].build(prepared_toolset, context)
 
 
 async def test_prepared_toolset_user_error_change_tool_names():
@@ -202,7 +197,7 @@ async def test_prepared_toolset_user_error_change_tool_names():
             'Prepare function cannot add or rename tools. Use `FunctionToolset.add_function()` or `RenamedToolset` instead.'
         ),
     ):
-        await prepared_toolset.prepare_for_run(context)
+        await ToolManager[None].build(prepared_toolset, context)
 
 
 async def test_prefixed_toolset_error_invalid_prefix():
@@ -306,7 +301,7 @@ async def test_comprehensive_toolset_composition():
     # Test with regular user context
     regular_deps = TestDeps(user_role='user', enable_advanced=True)
     regular_context = build_run_context(regular_deps)
-    final_toolset = await prepared_toolset.prepare_for_run(regular_context)
+    final_toolset = await ToolManager[TestDeps].build(prepared_toolset, regular_context)
     # Tool definitions should have role annotation
     assert final_toolset.tool_defs == snapshot(
         [
@@ -359,7 +354,7 @@ async def test_comprehensive_toolset_composition():
     # Test with admin user context (should have string tools)
     admin_deps = TestDeps(user_role='admin', enable_advanced=True)
     admin_context = build_run_context(admin_deps)
-    admin_final_toolset = await prepared_toolset.prepare_for_run(admin_context)
+    admin_final_toolset = await ToolManager[TestDeps].build(prepared_toolset, admin_context)
     assert admin_final_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -442,7 +437,7 @@ async def test_comprehensive_toolset_composition():
     # Test with advanced features disabled
     basic_deps = TestDeps(user_role='user', enable_advanced=False)
     basic_context = build_run_context(basic_deps)
-    basic_final_toolset = await prepared_toolset.prepare_for_run(basic_context)
+    basic_final_toolset = await ToolManager[TestDeps].build(prepared_toolset, basic_context)
     assert basic_final_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -477,13 +472,6 @@ async def test_comprehensive_toolset_composition():
             ),
         ]
     )
-
-    # Test prepare_for_run idempotency
-    ctx1 = build_run_context(TestDeps(user_role='user', enable_advanced=True))
-    ctx2 = build_run_context(TestDeps(user_role='admin', enable_advanced=True))
-    toolset_once = await prepared_toolset.prepare_for_run(ctx2)
-    toolset_twice = await (await prepared_toolset.prepare_for_run(ctx1)).prepare_for_run(ctx2)
-    assert toolset_once == toolset_twice
 
 
 async def test_context_manager():

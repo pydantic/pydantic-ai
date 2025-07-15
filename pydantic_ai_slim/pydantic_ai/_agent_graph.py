@@ -15,8 +15,8 @@ from opentelemetry.trace import Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
+from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai._utils import is_async_callable, run_in_executor
-from pydantic_ai.toolsets._run import RunToolset
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
@@ -113,7 +113,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     history_processors: Sequence[HistoryProcessor[DepsT]]
 
-    toolset: RunToolset[DepsT]
+    tool_manager: ToolManager[DepsT]
 
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None = None
@@ -250,7 +250,7 @@ async def _prepare_request_parameters(
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     run_context = build_run_context(ctx)
-    ctx.deps.toolset = await ctx.deps.toolset.prepare_for_run(run_context)
+    ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
     output_schema = ctx.deps.output_schema
     output_object = None
@@ -262,7 +262,7 @@ async def _prepare_request_parameters(
 
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
-    for tool_def in ctx.deps.toolset.tool_defs:
+    for tool_def in ctx.deps.tool_manager.tool_defs:
         if tool_def.kind == 'output':
             output_tools.append(tool_def)
         else:
@@ -311,7 +311,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx.deps.output_validators,
                 build_run_context(ctx),
                 ctx.deps.usage_limits,
-                ctx.deps.toolset,
+                ctx.deps.tool_manager,
             )
             yield agent_stream
             # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
@@ -494,14 +494,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
         async for event in process_function_tools(
-            ctx.deps.toolset, tool_calls, None, ctx, output_parts, output_final_result
+            ctx.deps.tool_manager, tool_calls, None, ctx, output_parts, output_final_result
         ):
             yield event
 
         if output_final_result:
             final_result = output_final_result[0]
             self._next_node = self._handle_final_result(ctx, final_result, output_parts)
-        elif deferred_tool_calls := ctx.deps.toolset.get_deferred_tool_calls(tool_calls):
+        elif deferred_tool_calls := ctx.deps.tool_manager.get_deferred_tool_calls(tool_calls):
             if not ctx.deps.output_schema.allows_deferred_tool_calls:
                 raise exceptions.UserError(
                     'A deferred tool call was present, but `DeferredToolCalls` is not among output types. To resolve this, add `DeferredToolCalls` to the list of output types for this agent.'
@@ -575,7 +575,7 @@ def multi_modal_content_identifier(identifier: str | bytes) -> str:
 
 
 async def process_function_tools(  # noqa: C901
-    toolset: RunToolset[DepsT],
+    tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     final_result: result.FinalResult[NodeRunEndT] | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
@@ -590,7 +590,7 @@ async def process_function_tools(  # noqa: C901
     """
     tool_calls_by_kind: dict[ToolKind | Literal['unknown'], list[_messages.ToolCallPart]] = defaultdict(list)
     for call in tool_calls:
-        tool_def = toolset.get_tool_def(call.tool_name)
+        tool_def = tool_manager.get_tool_def(call.tool_name)
         kind = tool_def.kind if tool_def else 'unknown'
         tool_calls_by_kind[kind].append(call)
 
@@ -615,7 +615,7 @@ async def process_function_tools(  # noqa: C901
             output_parts.append(part)
         else:
             try:
-                result_data = await toolset.handle_call(call)
+                result_data = await tool_manager.handle_call(call)
             except exceptions.UnexpectedModelBehavior as e:
                 ctx.state.increment_retries(ctx.deps.max_result_retries, e)
                 raise e
@@ -675,7 +675,7 @@ async def process_function_tools(  # noqa: C901
         ):
             tasks = [
                 asyncio.create_task(
-                    _call_function_tool(toolset, call, ctx.deps.tracer, include_content),
+                    _call_function_tool(tool_manager, call, ctx.deps.tracer, include_content),
                     name=call.tool_name,
                 )
                 for call in calls_to_run
@@ -716,7 +716,7 @@ async def process_function_tools(  # noqa: C901
 
 
 async def _call_function_tool(
-    toolset: RunToolset[DepsT],
+    tool_manager: ToolManager[DepsT],
     tool_call: _messages.ToolCallPart,
     tracer: Tracer,
     include_content: bool = False,
@@ -753,7 +753,7 @@ async def _call_function_tool(
 
     with tracer.start_as_current_span('running tool', attributes=span_attributes) as span:
         try:
-            tool_result = await toolset.handle_call(tool_call)
+            tool_result = await tool_manager.handle_call(tool_call)
         except ToolRetryError as e:
             part = e.tool_retry
             if include_content and span.is_recording():

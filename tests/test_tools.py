@@ -578,15 +578,17 @@ def test_repeat_tool():
 
 def test_tool_return_conflict():
     # this is okay
-    Agent('test', tools=[ctx_tool], deps_type=int)
+    Agent('test', tools=[ctx_tool], deps_type=int).run_sync('', deps=0)
     # this is also okay
-    Agent('test', tools=[ctx_tool], deps_type=int, output_type=int)
+    Agent('test', tools=[ctx_tool], deps_type=int, output_type=int).run_sync('', deps=0)
     # this raises an error
     with pytest.raises(
         UserError,
         match="Function toolset defines a tool whose name conflicts with existing tool from Output toolset: 'ctx_tool'. Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts.",
     ):
-        Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(int, name='ctx_tool'))
+        Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(int, name='ctx_tool')).run_sync(
+            '', deps=0
+        )
 
 
 def test_init_ctx_tool_invalid():

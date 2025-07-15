@@ -19,7 +19,7 @@ from typing_extensions import Self, assert_never, deprecated
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import ToolDefinition
 
-from .toolsets.abstract import AbstractToolset
+from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .toolsets.prefixed import PrefixedToolset
 
 try:
@@ -41,6 +41,12 @@ except ImportError as _import_error:
 from . import _mcp, exceptions, messages, models
 
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
+
+TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
+    schema=pydantic_core.core_schema.dict_schema(
+        pydantic_core.core_schema.str_schema(), pydantic_core.core_schema.any_schema()
+    )
+)
 
 
 class MCPServer(AbstractToolset[Any], ABC):
@@ -165,31 +171,26 @@ class MCPServer(AbstractToolset[Any], ABC):
         else:
             return await self._call_tool(name, tool_args, metadata)
 
-    async def for_run(self, ctx: RunContext[Any]) -> AbstractToolset[Any]:
+    async def for_run_step(self, ctx: RunContext[Any]) -> AbstractToolset[Any]:
         if self.tool_prefix:
             return PrefixedToolset(self, self.tool_prefix)
         else:
             return self
 
-    async def list_tool_defs(self, ctx: RunContext[Any]) -> list[ToolDefinition]:
-        return [
-            ToolDefinition(
-                name=mcp_tool.name,
-                description=mcp_tool.description,
-                parameters_json_schema=mcp_tool.inputSchema,
+    async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+        return {
+            mcp_tool.name: ToolsetTool(
+                toolset=self,
+                tool_def=ToolDefinition(
+                    name=mcp_tool.name,
+                    description=mcp_tool.description,
+                    parameters_json_schema=mcp_tool.inputSchema,
+                ),
+                max_retries=self.max_retries,
+                args_validator=TOOL_SCHEMA_VALIDATOR,
             )
             for mcp_tool in await self.list_tools()
-        ]
-
-    def get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> pydantic_core.SchemaValidator:
-        return pydantic_core.SchemaValidator(
-            schema=pydantic_core.core_schema.dict_schema(
-                pydantic_core.core_schema.str_schema(), pydantic_core.core_schema.any_schema()
-            )
-        )
-
-    def max_retries_for_tool(self, name: str) -> int:
-        return self.max_retries
+        }
 
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.

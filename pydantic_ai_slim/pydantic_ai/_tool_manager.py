@@ -8,67 +8,61 @@ from pydantic import ValidationError
 
 from pydantic_ai.output import DeferredToolCalls
 
-from .. import messages as _messages
-from .._run_context import AgentDepsT, RunContext
-from ..exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
-from ..messages import ToolCallPart
-from ..tools import ToolDefinition
-from .abstract import AbstractToolset
+from . import messages as _messages
+from ._run_context import AgentDepsT, RunContext
+from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
+from .messages import ToolCallPart
+from .tools import ToolDefinition
+from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 
 @dataclass
-class RunToolset(Generic[AgentDepsT]):
+class ToolManager(Generic[AgentDepsT]):
     """TODO: Update docstring -- A toolset that caches the wrapped toolset's tool definitions for a specific run step and handles retries."""
 
     ctx: RunContext[AgentDepsT]
     toolset: AbstractToolset[AgentDepsT]
-    toolset_for_run: AbstractToolset[AgentDepsT]
-    tool_defs: list[ToolDefinition]
-    tool_names: list[str]
-    retries: dict[str, int]
+    toolset_for_run_step: AbstractToolset[AgentDepsT]
+    tools: dict[str, ToolsetTool[AgentDepsT]]
 
     @classmethod
-    async def build(
-        cls, ctx: RunContext[AgentDepsT], toolset: AbstractToolset[AgentDepsT], retries: dict[str, int] | None = None
-    ) -> RunToolset[AgentDepsT]:
-        toolset_for_run = await toolset.for_run(ctx)
-        tool_defs = await toolset_for_run.list_tool_defs(ctx)
-
-        tool_names: list[str] = []
-        for tool_def in tool_defs:
-            name = tool_def.name
-            if name in tool_names:
-                raise UserError(
-                    # TODO: f'{toolset.name} defines a tool whose name conflicts with existing tool from {existing_toolset.name}: {name!r}. {toolset.tool_name_conflict_hint}'
-                    f'Tool name conflict: {name!r}. {toolset_for_run.tool_name_conflict_hint}'
-                )
-            tool_names.append(name)
+    async def build(cls, toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
+        toolset_for_run_step = await toolset.for_run_step(ctx)
+        tools = await toolset_for_run_step.get_tools(ctx)
 
         return cls(
             ctx=ctx,
             toolset=toolset,
-            toolset_for_run=toolset_for_run,
-            tool_defs=tool_defs,
-            tool_names=tool_names,
-            retries=retries or {},
+            toolset_for_run_step=toolset_for_run_step,
+            tools=tools,
         )
 
-    async def for_run(self, ctx: RunContext[AgentDepsT]) -> RunToolset[AgentDepsT]:
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
         if ctx == self.ctx:
             return self
         else:
-            return await self.__class__.build(ctx, self.toolset, self.retries)
+            return await self.__class__.build(self.toolset, replace(ctx, retries=self.ctx.retries))
+
+    @property
+    def tool_defs(self) -> list[ToolDefinition]:
+        return [tool.tool_def for tool in self.tools.values()]
 
     def get_tool_def(self, name: str) -> ToolDefinition | None:
         """Get the tool definition for a given tool name, or `None` if the tool is unknown."""
-        return next((tool_def for tool_def in self.tool_defs if tool_def.name == name), None)
+        try:
+            return self.tools[name].tool_def
+        except KeyError:
+            return None
 
     async def handle_call(self, call: ToolCallPart, allow_partial: bool = False) -> Any:
         name = call.tool_name
+        tool = None
         try:
-            if name not in self.tool_names:
-                if self.tool_names:
-                    msg = f'Available tools: {", ".join(f"{name!r}" for name in self.tool_names)}'
+            try:
+                tool = self.tools[name]
+            except KeyError:
+                if self.tools:
+                    msg = f'Available tools: {", ".join(f"{name!r}" for name in self.tools.keys())}'
                 else:
                     msg = 'No tools available.'
                 raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
@@ -77,22 +71,19 @@ class RunToolset(Generic[AgentDepsT]):
                 self.ctx,
                 tool_name=name,
                 tool_call_id=call.tool_call_id,
-                retry=self.retries.get(name, 0),
+                retry=self.ctx.retries.get(name, 0),
             )
 
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
-            validator = self.toolset_for_run.get_tool_args_validator(ctx, name)
+            validator = tool.args_validator
             if isinstance(call.args, str):
                 args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
             else:
                 args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
-            output = await self.toolset_for_run.call_tool(ctx, name, args_dict)
+            output = await self.toolset_for_run_step.call_tool(ctx, name, args_dict)
         except (ValidationError, ModelRetry) as e:
-            try:
-                max_retries = self.toolset_for_run.max_retries_for_tool(name)
-            except Exception:
-                max_retries = 1
-            current_retry = self.retries.get(name, 0)
+            max_retries = tool.max_retries if tool is not None else 1
+            current_retry = self.ctx.retries.get(name, 0)
 
             if current_retry == max_retries:
                 raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from e
@@ -112,10 +103,10 @@ class RunToolset(Generic[AgentDepsT]):
                     )
                     e = ToolRetryError(m)
 
-                self.retries[name] = current_retry + 1
+                self.ctx.retries[name] = current_retry + 1
                 raise e
         else:
-            self.retries.pop(name, None)
+            self.ctx.retries.pop(name, None)
             return output
 
     def get_deferred_tool_calls(self, parts: Iterable[_messages.ModelResponsePart]) -> DeferredToolCalls | None:

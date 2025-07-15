@@ -29,7 +29,7 @@ from .output import (
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
-from .toolsets.abstract import AbstractToolset
+from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
     from .profiles import ModelProfile
@@ -919,14 +919,16 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self.output_validators = output_validators or []
 
-    async def list_tool_defs(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
-        return self._tool_defs
-
-    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        return self.processors[name].validator
-
-    def max_retries_for_tool(self, name: str) -> int:
-        return self.max_retries
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        return {
+            tool_def.name: ToolsetTool(
+                toolset=self,
+                tool_def=tool_def,
+                max_retries=self.max_retries,
+                args_validator=self.processors[tool_def.name].validator,
+            )
+            for tool_def in self._tool_defs
+        }
 
     async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         output = await self.processors[name].call(tool_args, ctx)

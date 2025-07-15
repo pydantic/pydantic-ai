@@ -16,7 +16,6 @@ import httpx
 import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
-from pydantic_core import SchemaValidator, core_schema
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_mock import MockerFixture
 from rich.console import Console
@@ -38,8 +37,8 @@ from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
@@ -269,14 +268,8 @@ class MockMCPServer(AbstractToolset[Any]):
     async def __aexit__(self, *args: Any) -> None:
         pass
 
-    async def list_tool_defs(self, ctx: RunContext[Any]) -> list[ToolDefinition]:
-        return []
-
-    def max_retries_for_tool(self, name: str) -> int:
-        return 0  # pragma: lax no cover
-
-    def get_tool_args_validator(self, ctx: RunContext[Any], name: str) -> SchemaValidator:
-        return SchemaValidator(core_schema.any_schema())
+    async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+        return {}
 
     async def call_tool(self, ctx: RunContext[Any], name: str, tool_args: dict[str, Any]) -> Any:
         return None  # pragma: lax no cover

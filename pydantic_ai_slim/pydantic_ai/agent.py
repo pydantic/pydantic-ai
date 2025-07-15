@@ -32,6 +32,7 @@ from . import (
 )
 from ._agent_graph import HistoryProcessor
 from ._output import OutputToolset
+from ._tool_manager import ToolManager
 from .models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from .output import OutputDataT, OutputSpec
 from .profiles import ModelProfile
@@ -432,9 +433,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._entered_count = 0
         self._exit_stack = None
 
-        # This will raise errors for any name conflicts
-        self._get_toolset()
-
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
         """Set the instrumentation options for all agents where `instrument` is not set."""
@@ -764,7 +762,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         )
 
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
-        run_toolset = await toolset.prepare_for_run(run_context)
+        # This will raise errors for any name conflicts
+        run_toolset = await ToolManager[AgentDepsT].build(toolset, run_context)
 
         # Merge model settings in order of precedence: run > agent > model
         merged_settings = merge_model_settings(model_used.settings, self.model_settings)
@@ -815,7 +814,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_schema=output_schema,
             output_validators=output_validators,
             history_processors=self.history_processors,
-            toolset=run_toolset,
+            tool_manager=run_toolset,
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
@@ -1137,7 +1136,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                     ):
                                         return FinalResult(s, None, None)
                                     elif isinstance(new_part, _messages.ToolCallPart) and (
-                                        tool_def := graph_ctx.deps.toolset.get_tool_def(new_part.tool_name)
+                                        tool_def := graph_ctx.deps.tool_manager.get_tool_def(new_part.tool_name)
                                     ):
                                         if tool_def.kind == 'output':
                                             return FinalResult(s, new_part.tool_name, new_part.tool_call_id)
@@ -1167,7 +1166,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
                                 parts: list[_messages.ModelRequestPart] = []
                                 async for _event in _agent_graph.process_function_tools(
-                                    graph_ctx.deps.toolset,
+                                    graph_ctx.deps.tool_manager,
                                     tool_calls,
                                     final_result,
                                     graph_ctx,
@@ -1187,7 +1186,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                 graph_ctx.deps.output_validators,
                                 final_result.tool_name,
                                 on_complete,
-                                graph_ctx.deps.toolset,
+                                graph_ctx.deps.tool_manager,
                             )
                             break
                 next_node = await agent_run.next(node)
@@ -1543,8 +1542,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 schema_generator,
                 strict,
             )
-            # This will raise errors for any name conflicts
-            self._get_toolset()
             return func_
 
         return tool_decorator if func is None else tool_decorator(func)
@@ -1637,8 +1634,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 schema_generator,
                 strict,
             )
-            # This will raise errors for any name conflicts
-            self._get_toolset()
             return func_
 
         return tool_decorator if func is None else tool_decorator(func)
@@ -1711,7 +1706,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractToolset[AgentDepsT]:
-        """Get the complete toolset for a run. This will raise errors for any name conflicts.
+        """Get the complete toolset.
 
         Args:
             output_toolset: The output toolset to use instead of the one built at agent construction time.
@@ -1733,7 +1728,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
             all_toolsets = [output_toolset, *all_toolsets]
 
-        # This will raise errors for any name conflicts
         return CombinedToolset(all_toolsets)
 
     def _infer_name(self, function_frame: FrameType | None) -> None:

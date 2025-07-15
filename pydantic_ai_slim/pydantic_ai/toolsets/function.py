@@ -5,7 +5,6 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable, overload
 
 from pydantic.json_schema import GenerateJsonSchema
-from pydantic_core import SchemaValidator
 
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
@@ -18,19 +17,9 @@ from ..tools import (
     ToolParams,
     ToolPrepareFunc,
 )
-from .abstract import AbstractToolset
+from .abstract import AbstractToolset, ToolsetTool
 from .renamed import RenamedToolset
 from .wrapper import WrapperToolset
-
-
-@dataclass
-class FrozenToolDefsToolset(WrapperToolset[AgentDepsT]):
-    """A toolset that caches specific tool definitions."""
-
-    tool_defs: list[ToolDefinition]
-
-    async def list_tool_defs(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
-        return self._tool_defs
 
 
 @dataclass(init=False)
@@ -211,7 +200,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tool.max_retries = self.max_retries
         self.tools[tool.name] = tool
 
-    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         tool_defs: dict[str, ToolDefinition] = {}
         name_map: dict[str, str] = {}
         for original_name, tool in self.tools.items():
@@ -230,17 +219,35 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
             tool_defs[new_name] = tool_def
 
-        return FrozenToolDefsToolset(RenamedToolset(self, name_map), list(tool_defs.values()))
+        return _OverriddenToolDefsToolset(RenamedToolset(self, name_map), tool_defs)
 
-    async def list_tool_defs(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
-        return [tool.tool_def for tool in self.tools.values()]
-
-    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        return self.tools[name].function_schema.validator
-
-    def max_retries_for_tool(self, name: str) -> int:
-        tool = self.tools[name]
-        return tool.max_retries if tool.max_retries is not None else self.max_retries
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        return {
+            name: ToolsetTool(
+                toolset=self,
+                tool_def=tool.tool_def,
+                max_retries=tool.max_retries if tool.max_retries is not None else self.max_retries,
+                args_validator=tool.function_schema.validator,
+            )
+            for name, tool in self.tools.items()
+        }
 
     async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         return await self.tools[name].function_schema.call(tool_args, ctx)
+
+
+@dataclass
+class _OverriddenToolDefsToolset(WrapperToolset[AgentDepsT]):
+    """A toolset that caches specific tool definitions."""
+
+    tool_defs: dict[str, ToolDefinition]
+
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        return {
+            name: replace(
+                tool,
+                tool_def=tool_def,
+            )
+            for name, tool in (await super().get_tools(ctx)).items()
+            if (tool_def := self.tool_defs.get(name))
+        }

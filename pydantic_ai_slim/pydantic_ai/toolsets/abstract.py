@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Callable, Generic
 
 from pydantic_core import SchemaValidator
@@ -8,6 +9,14 @@ from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
+
+
+@dataclass
+class ToolsetTool(Generic[AgentDepsT]):
+    toolset: AbstractToolset[AgentDepsT]
+    tool_def: ToolDefinition
+    max_retries: int
+    args_validator: SchemaValidator
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):
@@ -44,23 +53,13 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """TODO: Docstring."""
         return self
 
     @abstractmethod
-    async def list_tool_defs(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
-        """The tool definitions that are available in this toolset."""
-        raise NotImplementedError()
-
-    @abstractmethod
-    def max_retries_for_tool(self, name: str) -> int:
-        """The maximum number of retries for a given tool during an agent run."""
-        raise NotImplementedError()
-
-    @abstractmethod
-    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        """Get the Pydantic Core schema validator for a given tool."""
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        """The tools that are available in this toolset."""
         raise NotImplementedError()
 
     @abstractmethod

@@ -3,10 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
-from pydantic_core import SchemaValidator
-
 from .._run_context import AgentDepsT, RunContext
-from ..tools import ToolDefinition
+from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
 
@@ -16,19 +14,16 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
 
     prefix: str
 
-    async def list_tool_defs(self, ctx: RunContext[AgentDepsT]) -> list[ToolDefinition]:
-        return [
-            replace(tool_def, name=self._prefixed_tool_name(tool_def.name))
-            for tool_def in await super().list_tool_defs(ctx)
-        ]
-
-    def max_retries_for_tool(self, name: str) -> int:
-        return super().max_retries_for_tool(self._unprefixed_tool_name(name))  # pragma: no cover
-
-    def get_tool_args_validator(self, ctx: RunContext[AgentDepsT], name: str) -> SchemaValidator:
-        original_name = self._unprefixed_tool_name(name)
-        ctx = replace(ctx, tool_name=original_name)
-        return super().get_tool_args_validator(ctx, original_name)
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        return {
+            new_name: replace(
+                tool,
+                toolset=self,
+                tool_def=replace(tool.tool_def, name=new_name),
+            )
+            for name, tool in (await super().get_tools(ctx)).items()
+            if (new_name := self._prefixed_tool_name(name))
+        }
 
     async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
         original_name = self._unprefixed_tool_name(name)

@@ -10,7 +10,7 @@ from typing import Generic, cast
 from pydantic import ValidationError
 from typing_extensions import TypeVar, deprecated, overload
 
-from pydantic_ai.toolsets._run import RunToolset
+from pydantic_ai._tool_manager import ToolManager
 
 from . import _utils, exceptions, messages as _messages, models
 from ._output import (
@@ -49,7 +49,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]
     _usage_limits: UsageLimits | None
-    _toolset: RunToolset[AgentDepsT]
+    _toolset: ToolManager[AgentDepsT]
 
     _agent_stream_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _final_result_event: FinalResultEvent | None = field(default=None, init=False)
@@ -196,7 +196,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _output_tool_name: str | None
     _on_complete: Callable[[], Awaitable[None]]
-    _toolset: RunToolset[AgentDepsT]
+    _toolset: ToolManager[AgentDepsT]
 
     _initial_run_ctx_usage: Usage = field(init=False)
     is_complete: bool = field(default=False, init=False)
