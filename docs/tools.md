@@ -1198,9 +1198,9 @@ print(repr(result.output))
 Next, let's define an function for a hypothetical "run agent" API endpoint that can be called by the frontend and takes a list of messages to send to the model plus a dict of frontend tool names and descriptions. This is where `DeferredToolset` and `DeferredToolCalls` come in:
 
 ```python {title="deferred_toolset_api.py" requires="deferred_toolset_agent.py"}
-from deferred_toolset_agent import agent
+from deferred_toolset_agent import agent, PersonalizedGreeting
 
-from typing_extensions import Any
+from typing import Union
 
 from pydantic_ai.output import DeferredToolCalls
 from pydantic_ai.tools import ToolDefinition
@@ -1209,7 +1209,7 @@ from pydantic_ai.messages import ModelMessage
 
 def run_agent(
     messages: list[ModelMessage] = [], frontend_tools: list[ToolDefinition] = {}
-) -> tuple[Any | DeferredToolCalls, list[ModelMessage]]:
+) -> tuple[Union[PersonalizedGreeting, DeferredToolCalls], list[ModelMessage]]:
     deferred_toolset = DeferredToolset(frontend_tools)
     result = agent.run_sync(
         toolsets=[deferred_toolset], # (1)!
