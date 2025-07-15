@@ -131,6 +131,18 @@ def build_trace_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
     )
 
 
+async def execute_function_call(
+    function_schema: _function_schema.FunctionSchema,
+    run_context: RunContext[AgentDepsT],
+    trace_context: TraceContext,
+    args: dict[str, Any] | Any,
+    span: Span,
+) -> Any:
+    output = await function_schema.call(args, run_context)
+    trace_context.record_response(span, output)
+    return output
+
+
 class ToolRetryError(Exception):
     """Exception used to signal a `ToolRetry` message should be returned to the LLM."""
 
@@ -757,8 +769,9 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                             _messages.ToolCallPart(tool_name=function_name, args=data), include_tool_call_id=False
                         )
                     with span_manager as span:
-                        output = await self._function_schema.call(output, run_context)
-                        trace_context.record_response(span, output)
+                        output = await execute_function_call(
+                            self._function_schema, run_context, trace_context, output, span
+                        )
                 else:
                     assert_never(output)
             except ModelRetry as r:
@@ -940,8 +953,7 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 with trace_context.span(
                     _messages.ToolCallPart(tool_name=function_name, args=args), include_tool_call_id=False
                 ) as span:
-                    output = await self._function_schema.call(args, run_context)
-                    trace_context.record_response(span, output)
+                    output = await execute_function_call(self._function_schema, run_context, trace_context, args, span)
             else:
                 assert_never(trace_context)  # type: ignore[arg-type]
         except ModelRetry as r:
