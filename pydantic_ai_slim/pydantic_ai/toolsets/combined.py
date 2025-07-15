@@ -15,6 +15,14 @@ from .abstract import AbstractToolset, ToolsetTool
 
 
 @dataclass
+class _CombinedToolsetTool(ToolsetTool[AgentDepsT]):
+    """A tool definition for a function toolset tool."""
+
+    source_toolset: AbstractToolset[AgentDepsT]
+    source_tool: ToolsetTool[AgentDepsT]
+
+
+@dataclass
 class CombinedToolset(AbstractToolset[AgentDepsT]):
     """A toolset that combines multiple toolsets."""
 
@@ -49,53 +57,33 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                 await self._exit_stack.aclose()
                 self._exit_stack = None
 
-    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        toolsets = await asyncio.gather(*(toolset.for_run_step(ctx) for toolset in self.toolsets))
-        tools, tool_toolsets = await self._get_tools(ctx, toolsets)
-        return _CachedCombinedToolset(toolsets, tools, tool_toolsets)
-
-    @staticmethod
-    async def _get_tools(
-        ctx: RunContext[AgentDepsT], toolsets: Sequence[AbstractToolset[AgentDepsT]]
-    ) -> tuple[dict[str, ToolsetTool[AgentDepsT]], dict[str, AbstractToolset[AgentDepsT]]]:
-        toolsets_tools = await asyncio.gather(*(toolset.get_tools(ctx) for toolset in toolsets))
-        combined_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
-        tool_toolsets: dict[str, AbstractToolset[AgentDepsT]] = {}
-
-        for toolset, tools in zip(toolsets, toolsets_tools):
-            for name, tool in tools.items():
-                try:
-                    existing_tool = combined_tools[name]
-                    raise UserError(
-                        f'{toolset.name} defines a tool whose name conflicts with existing tool from {existing_tool.toolset.name}: {name!r}. {toolset.tool_name_conflict_hint}'
-                    )
-                except KeyError:
-                    combined_tools[name] = tool
-                    tool_toolsets[name] = toolset
-        return combined_tools, tool_toolsets
-
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        tools, _ = await self._get_tools(ctx, self.toolsets)
-        return tools
+        toolsets_tools = await asyncio.gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
+        all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
 
-    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
-        raise NotImplementedError('CombinedToolset cannot be used to directly call tools')
+        for toolset, tools in zip(self.toolsets, toolsets_tools):
+            for name, tool in tools.items():
+                if existing_tools := all_tools.get(name):
+                    raise UserError(
+                        f'{toolset.name} defines a tool whose name conflicts with existing tool from {existing_tools.toolset.name}: {name!r}. {toolset.tool_name_conflict_hint}'
+                    )
+
+                all_tools[name] = _CombinedToolsetTool(
+                    toolset=tool.toolset,
+                    tool_def=tool.tool_def,
+                    max_retries=tool.max_retries,
+                    args_validator=tool.args_validator,
+                    source_toolset=toolset,
+                    source_tool=tool,
+                )
+        return all_tools
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    ) -> Any:
+        assert isinstance(tool, _CombinedToolsetTool)
+        return await tool.source_toolset.call_tool(name, tool_args, ctx, tool.source_tool)
 
     def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
         for toolset in self.toolsets:
             toolset.accept(visitor)
-
-
-@dataclass
-class _CachedCombinedToolset(CombinedToolset[AgentDepsT]):
-    tools: dict[str, ToolsetTool[AgentDepsT]]
-    tool_toolsets: dict[str, AbstractToolset[AgentDepsT]]
-
-    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        return self
-
-    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        return self.tools
-
-    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
-        return await self.tool_toolsets[name].call_tool(ctx, name, tool_args)

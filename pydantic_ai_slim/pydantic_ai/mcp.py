@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -20,7 +20,6 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import ToolDefinition
 
 from .toolsets.abstract import AbstractToolset, ToolsetTool
-from .toolsets.prefixed import PrefixedToolset
 
 try:
     from mcp import types as mcp_types
@@ -112,7 +111,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             result = await self._client.list_tools()
         return result.tools
 
-    async def _call_tool(
+    async def call_mcp_tool(
         self,
         name: str,
         args: dict[str, Any],
@@ -159,30 +158,26 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     async def call_tool(
         self,
-        ctx: RunContext[Any] | None,
         name: str,
         tool_args: dict[str, Any],
-        metadata: dict[str, Any] | None = None,
+        ctx: RunContext[Any],
+        tool: ToolsetTool[Any],
     ) -> ToolResult:
-        if self.process_tool_call is not None:
-            if not ctx:
-                raise ValueError('`call_tool` `ctx` argument is required when `process_tool_call` is set')
-            return await self.process_tool_call(ctx, self._call_tool, name, tool_args)
-        else:
-            return await self._call_tool(name, tool_args, metadata)
-
-    async def for_run_step(self, ctx: RunContext[Any]) -> AbstractToolset[Any]:
         if self.tool_prefix:
-            return PrefixedToolset(self, self.tool_prefix)
+            name = name.removeprefix(f'{self.tool_prefix}_')
+            ctx = replace(ctx, tool_name=name)
+
+        if self.process_tool_call is not None:
+            return await self.process_tool_call(ctx, self.call_mcp_tool, name, tool_args)
         else:
-            return self
+            return await self.call_mcp_tool(name, tool_args)
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         return {
-            mcp_tool.name: ToolsetTool(
+            name: ToolsetTool(
                 toolset=self,
                 tool_def=ToolDefinition(
-                    name=mcp_tool.name,
+                    name=name,
                     description=mcp_tool.description,
                     parameters_json_schema=mcp_tool.inputSchema,
                 ),
@@ -190,6 +185,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 args_validator=TOOL_SCHEMA_VALIDATOR,
             )
             for mcp_tool in await self.list_tools()
+            if (name := f'{self.tool_prefix}_{mcp_tool.name}' if self.tool_prefix else mcp_tool.name)
         }
 
     async def __aenter__(self) -> Self:

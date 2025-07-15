@@ -13,6 +13,11 @@ from ..tools import ToolDefinition
 
 @dataclass
 class ToolsetTool(Generic[AgentDepsT]):
+    """Definition of a tool made available by a toolset.
+
+    This is a wrapper around a plain tool definition that includes information about the toolset that provides it, the maximum number of retries to attempt if the tool call fails, and a validator for the tool's arguments.
+    """
+
     toolset: AbstractToolset[AgentDepsT]
     tool_def: ToolDefinition
     max_retries: int
@@ -53,23 +58,22 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        """TODO: Docstring."""
-        return self
-
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """The tools that are available in this toolset."""
         raise NotImplementedError()
 
     @abstractmethod
-    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    ) -> Any:
         """Call a tool with the given arguments.
 
         Args:
-            ctx: The run context.
             name: The name of the tool to call.
             tool_args: The arguments to pass to the tool.
+            ctx: The run context.
+            tool: The tool definition.
         """
         raise NotImplementedError()
 

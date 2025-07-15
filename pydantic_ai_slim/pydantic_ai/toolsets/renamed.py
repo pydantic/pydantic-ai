@@ -30,7 +30,10 @@ class RenamedToolset(WrapperToolset[AgentDepsT]):
                 tools[original_name] = tool
         return tools
 
-    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    ) -> Any:
         original_name = self.name_map.get(name, name)
         ctx = replace(ctx, tool_name=original_name)
-        return await super().call_tool(ctx, original_name, tool_args)
+        tool = replace(tool, tool_def=replace(tool.tool_def, name=original_name))
+        return await super().call_tool(original_name, tool_args, ctx, tool)

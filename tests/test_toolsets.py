@@ -200,23 +200,6 @@ async def test_prepared_toolset_user_error_change_tool_names():
         await ToolManager[None].build(prepared_toolset, context)
 
 
-async def test_prefixed_toolset_error_invalid_prefix():
-    """Test that PrefixedToolset raises ValueError for tool names that don't start with the prefix."""
-    context = build_run_context(None)
-    base_toolset = FunctionToolset[None]()
-
-    @base_toolset.tool
-    def add(a: int, b: int) -> int:
-        """Add two numbers"""
-        return a + b  # pragma: no cover
-
-    prefixed_toolset = PrefixedToolset(base_toolset, 'math')
-
-    # Test calling with wrong prefix
-    with pytest.raises(ValueError, match="Tool name 'wrong_add' does not start with prefix 'math_'"):
-        await prefixed_toolset.call_tool(context, 'wrong_add', {'a': 1, 'b': 2})
-
-
 async def test_comprehensive_toolset_composition():
     """Test that all toolsets can be composed together and work correctly."""
 

@@ -32,5 +32,7 @@ class DeferredToolset(AbstractToolset[AgentDepsT]):
             for tool_def in self.tool_defs
         }
 
-    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    ) -> Any:
         raise NotImplementedError('Deferred tools cannot be called')

@@ -22,19 +22,14 @@ class ToolManager(Generic[AgentDepsT]):
 
     ctx: RunContext[AgentDepsT]
     toolset: AbstractToolset[AgentDepsT]
-    toolset_for_run_step: AbstractToolset[AgentDepsT]
     tools: dict[str, ToolsetTool[AgentDepsT]]
 
     @classmethod
     async def build(cls, toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
-        toolset_for_run_step = await toolset.for_run_step(ctx)
-        tools = await toolset_for_run_step.get_tools(ctx)
-
         return cls(
             ctx=ctx,
             toolset=toolset,
-            toolset_for_run_step=toolset_for_run_step,
-            tools=tools,
+            tools=await toolset.get_tools(ctx),
         )
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
@@ -80,7 +75,7 @@ class ToolManager(Generic[AgentDepsT]):
                 args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
             else:
                 args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
-            output = await self.toolset_for_run_step.call_tool(ctx, name, args_dict)
+            output = await self.toolset.call_tool(name, args_dict, ctx, tool)
         except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else 1
             current_retry = self.ctx.retries.get(name, 0)

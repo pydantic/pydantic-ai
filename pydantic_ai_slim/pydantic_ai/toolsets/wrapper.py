@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from typing_extensions import Self
@@ -30,14 +30,13 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
     async def __aexit__(self, *args: Any) -> bool | None:
         return await self.wrapped.__aexit__(*args)
 
-    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        return replace(self, wrapped=await self.wrapped.for_run_step(ctx))
-
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return await self.wrapped.get_tools(ctx)
 
-    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
-        return await self.wrapped.call_tool(ctx, name, tool_args)
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    ) -> Any:
+        return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
     def accept(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
         return self.wrapped.accept(visitor)

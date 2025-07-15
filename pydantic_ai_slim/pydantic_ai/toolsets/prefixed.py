@@ -22,19 +22,13 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
                 tool_def=replace(tool.tool_def, name=new_name),
             )
             for name, tool in (await super().get_tools(ctx)).items()
-            if (new_name := self._prefixed_tool_name(name))
+            if (new_name := f'{self.prefix}_{name}')
         }
 
-    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
-        original_name = self._unprefixed_tool_name(name)
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    ) -> Any:
+        original_name = name.removeprefix(self.prefix + '_')
         ctx = replace(ctx, tool_name=original_name)
-        return await super().call_tool(ctx, original_name, tool_args)
-
-    def _prefixed_tool_name(self, tool_name: str) -> str:
-        return f'{self.prefix}_{tool_name}'
-
-    def _unprefixed_tool_name(self, tool_name: str) -> str:
-        full_prefix = f'{self.prefix}_'
-        if not tool_name.startswith(full_prefix):
-            raise ValueError(f"Tool name '{tool_name}' does not start with prefix '{full_prefix}'")
-        return tool_name[len(full_prefix) :]
+        tool = replace(tool, tool_def=replace(tool.tool_def, name=original_name))
+        return await super().call_tool(original_name, tool_args, ctx, tool)

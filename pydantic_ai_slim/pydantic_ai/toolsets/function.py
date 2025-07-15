@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, overload
 
@@ -12,14 +12,18 @@ from ..tools import (
     DocstringFormat,
     GenerateToolJsonSchema,
     Tool,
-    ToolDefinition,
     ToolFuncEither,
     ToolParams,
     ToolPrepareFunc,
 )
 from .abstract import AbstractToolset, ToolsetTool
-from .renamed import RenamedToolset
-from .wrapper import WrapperToolset
+
+
+@dataclass
+class _FunctionToolsetTool(ToolsetTool[AgentDepsT]):
+    """A tool definition for a function toolset tool."""
+
+    call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
 
 
 @dataclass(init=False)
@@ -200,9 +204,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tool.max_retries = self.max_retries
         self.tools[tool.name] = tool
 
-    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        tool_defs: dict[str, ToolDefinition] = {}
-        name_map: dict[str, str] = {}
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for original_name, tool in self.tools.items():
             run_context = replace(ctx, tool_name=original_name, retry=ctx.retries.get(original_name, 0))
             tool_def = await tool.prepare_tool_def(run_context)
@@ -210,44 +213,23 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 continue
 
             new_name = tool_def.name
-            if new_name in tool_defs:
+            if new_name in tools:
                 if new_name != original_name:
                     raise UserError(f'Renaming tool {original_name!r} to {new_name!r} conflicts with existing tool.')
                 else:
                     raise UserError(f'Tool name conflicts with previously renamed tool: {new_name!r}.')
-            name_map[new_name] = original_name
 
-            tool_defs[new_name] = tool_def
-
-        return _OverriddenToolDefsToolset(RenamedToolset(self, name_map), tool_defs)
-
-    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        return {
-            name: ToolsetTool(
+            tools[new_name] = _FunctionToolsetTool(
                 toolset=self,
-                tool_def=tool.tool_def,
+                tool_def=tool_def,
                 max_retries=tool.max_retries if tool.max_retries is not None else self.max_retries,
                 args_validator=tool.function_schema.validator,
+                call_func=tool.function_schema.call,
             )
-            for name, tool in self.tools.items()
-        }
+        return tools
 
-    async def call_tool(self, ctx: RunContext[AgentDepsT], name: str, tool_args: dict[str, Any]) -> Any:
-        return await self.tools[name].function_schema.call(tool_args, ctx)
-
-
-@dataclass
-class _OverriddenToolDefsToolset(WrapperToolset[AgentDepsT]):
-    """A toolset that caches specific tool definitions."""
-
-    tool_defs: dict[str, ToolDefinition]
-
-    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        return {
-            name: replace(
-                tool,
-                tool_def=tool_def,
-            )
-            for name, tool in (await super().get_tools(ctx)).items()
-            if (tool_def := self.tool_defs.get(name))
-        }
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    ) -> Any:
+        assert isinstance(tool, _FunctionToolsetTool)
+        return await tool.call_func(tool_args, ctx)
