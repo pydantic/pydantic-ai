@@ -757,16 +757,16 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 if (
                     (final_result := agent_run.result) is not None
                     and run_span.is_recording()
-                    and instrumentation_settings.include_content
                 ):
-                    run_span.set_attribute(
-                        'final_result',
-                        (
-                            final_result.output
-                            if isinstance(final_result.output, str)
-                            else json.dumps(InstrumentedModel.serialize_any(final_result.output))
-                        ),
-                    )
+                    if not instrumentation_settings or instrumentation_settings.include_content:
+                        run_span.set_attribute(
+                            'final_result',
+                            (
+                                final_result.output
+                                if isinstance(final_result.output, str)
+                                else json.dumps(InstrumentedModel.serialize_any(final_result.output))
+                            ),
+                        )
         finally:
             try:
                 if instrumentation_settings and run_span.is_recording():
