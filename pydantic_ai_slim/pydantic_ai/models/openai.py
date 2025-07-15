@@ -345,7 +345,7 @@ class OpenAIModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise  # pragma: no cover
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -781,7 +781,7 @@ class OpenAIResponsesModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise  # pragma: no cover
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
@@ -993,6 +993,12 @@ class OpenAIStreamedResponse(StreamedResponse):
             content = choice.delta.content
             if content is not None:
                 yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=content)
+
+            # Handle reasoning part of the response, present in DeepSeek models
+            if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id='reasoning_content', content=reasoning_content
+                )
 
             for dtc in choice.delta.tool_calls or []:
                 maybe_event = self._parts_manager.handle_tool_call_delta(

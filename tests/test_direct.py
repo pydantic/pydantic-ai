@@ -143,7 +143,7 @@ def test_model_request_stream_sync_without_context_manager():
 
     with pytest.raises(RuntimeError, match=expected_error_msg):
         for _ in stream_cm:
-            break
+            break  # pragma: no cover
 
 
 def test_model_request_stream_sync_exception_in_stream():
