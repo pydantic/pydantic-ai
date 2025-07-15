@@ -732,7 +732,7 @@ If you'd like to use a tool from LangChain's [community tool library](https://py
 
 You will need to install the `langchain-community` package and any others required by the tool in question.
 
-Here is how you can use the LangChain `DuckDuckGoSearchRun` tool, which requires the `duckduckgo-search` package:
+Here is how you can use the LangChain `DuckDuckGoSearchRun` tool, which requires the `ddgs` package:
 
 ```python {test="skip"}
 from langchain_community.tools import DuckDuckGoSearchRun

@@ -166,7 +166,7 @@ class GoogleModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = GoogleProvider(vertexai=provider == 'google-vertex')  # pragma: lax no cover
+            provider = GoogleProvider(vertexai=provider == 'google-vertex')
 
         self._provider = provider
         self._system = provider.name
