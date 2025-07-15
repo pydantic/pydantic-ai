@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import dataclasses
 import inspect
 import json
 from abc import ABC, abstractmethod
@@ -18,6 +19,7 @@ from pydantic_graph.nodes import GraphRunContext
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, UserError
+from .messages import ToolCallPart
 from .output import (
     NativeOutput,
     OutputDataT,
@@ -74,125 +76,49 @@ DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
 
 
+@dataclass(frozen=True)
 class TraceContext:
     """A context for tracing output processing."""
 
-    def __init__(self, tracer: Tracer, include_content: bool = False):
-        self._tracer = tracer
-        self._include_content = include_content
-        self._call: _messages.ToolCallPart | None = None
+    tracer: Tracer
+    include_content: bool
+    call: _messages.ToolCallPart | None = None
 
-    @property
-    def tracer(self) -> Tracer:
-        """Get the tracer for this context."""
-        return self._tracer
-
-    @property
-    def include_content(self) -> bool:
-        """Whether to include content in the trace."""
-        return self._include_content
-
-    @property
-    def call(self) -> _messages.ToolCallPart:
-        """Get the current tool call."""
-        if self._call is None:
-            raise UserError('No tool call is set in the trace context.')
-        return self._call
-
-    def has_call(self) -> bool:
-        """Check if a tool call is set in the trace context."""
-        return self._call is not None
+    def with_call(self, call: _messages.ToolCallPart):
+        return dataclasses.replace(self, call=call)
 
     @contextmanager
-    def with_call(self, call: _messages.ToolCallPart) -> Iterator[None]:
-        """Context manager to set the current tool call."""
-        if self._call is not None:
-            raise UserError('Cannot set a tool call while another one is already set.')
-        self._call = call
-        try:
-            yield
-        finally:
-            self._call = None
-
-    @contextmanager
-    def span_for_tool_call_function(self, function_name: str, arguments: str) -> Iterator[Span]:
-        """Create a span for a function called via tool call (e.g., ToolOutput functions)."""
-        if not self.has_call():
-            raise UserError('Cannot create tool call span without a tool call context.')
-
-        message = self.call
-        span_attributes = {
-            'gen_ai.tool.name': function_name,
-            'gen_ai.tool.call.id': message.tool_call_id,
-            **({'tool_arguments': arguments} if self.include_content else {}),
-            'logfire.msg': f'running output function: {message.tool_name}',
-            'logfire.json_schema': self._build_json_schema(include_tool_attrs=True),
+    def span(self, call: ToolCallPart, include_tool_call_id: bool) -> Iterator[Span]:
+        attributes = {
+            'gen_ai.tool.name': call.tool_name,
+            'logfire.msg': f'running output function: {call.tool_name}',
         }
+        if include_tool_call_id:
+            attributes['gen_ai.tool.call.id'] = call.tool_call_id
+        if self.include_content:
+            attributes['tool_arguments'] = call.args_as_json_str()
+            attributes['logfire.json_schema'] = json.dumps(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'tool_arguments': {'type': 'object'},
+                        'tool_response': {'type': 'object'},
+                    },
+                }
+            )
 
-        with self.tracer.start_as_current_span('running output function', attributes=span_attributes) as span:
-            yield span
-
-    @contextmanager
-    def span_for_direct_function_call(self, function_name: str, arguments: str) -> Iterator[Span]:
-        """Create a span for a function called directly (e.g., PromptedOutput, TextOutput functions)."""
-        span_attributes = {
-            **({'tool_arguments': arguments} if self.include_content else {}),
-            'logfire.msg': f'running output function: {function_name}',
-            'logfire.json_schema': self._build_json_schema(include_tool_attrs=False),
-        }
-
-        with self.tracer.start_as_current_span('running output function', attributes=span_attributes) as span:
+        with self.tracer.start_as_current_span('running output function', attributes=attributes) as span:
             yield span
 
     def record_response(self, span: Span, response: Any) -> None:
         """Record the function response in the span if content inclusion is enabled."""
         if self.include_content and span.is_recording():
-            try:
-                # Convert response to a JSON string for OpenTelemetry compatibility
-                # OpenTelemetry span attributes only support primitive types
-                import json
+            from .models.instrumented import InstrumentedModel
 
-                if hasattr(response, 'model_dump'):
-                    # Pydantic model
-                    response_str = json.dumps(response.model_dump())
-                elif hasattr(response, 'dict'):
-                    # Older Pydantic models or dict-like objects
-                    response_str = json.dumps(response.dict())
-                elif isinstance(response, (str, int, float, bool)):
-                    # Already a primitive type
-                    response_str = str(response)
-                else:
-                    # Try to convert to JSON, fallback to string representation
-                    try:
-                        response_str = json.dumps(response)
-                    except (TypeError, ValueError):
-                        response_str = str(response)
-
-                span.set_attribute('tool_response', response_str)
-            except Exception:
-                # If serialization fails, set a fallback string to avoid breaking tracing
-                span.set_attribute('tool_response', f'<{type(response).__name__} object>')
-
-    def _build_json_schema(self, include_tool_attrs: bool) -> str:
-        """Build JSON schema for span attributes."""
-        properties: dict[str, dict[str, Any]] = {}
-        if self.include_content:
-            properties.update(
-                {
-                    'tool_arguments': {'type': 'object'},
-                    'tool_response': {'type': 'object'},
-                }
+            span.set_attribute(
+                'tool_response',
+                response if isinstance(response, str) else json.dumps(InstrumentedModel.serialize_any(response)),
             )
-
-        if include_tool_attrs:
-            properties.update(
-                {
-                    'gen_ai.tool.name': {},
-                    'gen_ai.tool.call.id': {},
-                }
-            )
-
-        return json.dumps({'type': 'object', 'properties': properties})
 
 
 def build_trace_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> TraceContext:
@@ -822,19 +748,15 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
         if self._function_schema:
             try:
                 # Wraps the output function call in an OpenTelemetry span if trace_context is provided.
-                if trace_context and trace_context.has_call():
-                    # This is a tool call context, so we include tool call attributes
-                    message = trace_context.call
-                    with trace_context.span_for_tool_call_function(
-                        message.tool_name, message.args_as_json_str()
-                    ) as span:
-                        output = await self._function_schema.call(output, run_context)
-                        trace_context.record_response(span, output)
-                elif trace_context and not trace_context.has_call():
-                    # This is not a tool call (e.g., PromptedOutput), so create a span without tool call attributes
-                    function_name = getattr(self._function_schema.function, '__name__', 'output_function')
-                    arguments_json = _messages.ToolCallPart(tool_name=function_name, args=data).args_as_json_str()
-                    with trace_context.span_for_direct_function_call(function_name, arguments_json) as span:
+                if trace_context:
+                    if trace_context.call:
+                        span_manager = trace_context.span(trace_context.call, include_tool_call_id=True)
+                    else:
+                        function_name = getattr(self._function_schema.function, '__name__', 'output_function')
+                        span_manager = trace_context.span(
+                            _messages.ToolCallPart(tool_name=function_name, args=data), include_tool_call_id=False
+                        )
+                    with span_manager as span:
                         output = await self._function_schema.call(output, run_context)
                         trace_context.record_response(span, output)
                 else:
@@ -1015,8 +937,9 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
             # so we don't have tool call attributes like gen_ai.tool.name or gen_ai.tool.call.id
             if trace_context:
                 function_name = getattr(self._function_schema.function, '__name__', 'text_output_function')
-                arguments_json = _messages.ToolCallPart(tool_name=function_name, args=args).args_as_json_str()
-                with trace_context.span_for_direct_function_call(function_name, arguments_json) as span:
+                with trace_context.span(
+                    _messages.ToolCallPart(tool_name=function_name, args=args), include_tool_call_id=False
+                ) as span:
                     output = await self._function_schema.call(args, run_context)
                     trace_context.record_response(span, output)
             else:

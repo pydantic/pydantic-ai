@@ -651,8 +651,6 @@ def test_output_type_function_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -667,17 +665,6 @@ def test_output_type_function_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
-                            },
-                        }
-                    )
-                ),
                 'logfire.span_type': 'span',
             }
         )
@@ -725,8 +712,6 @@ def test_output_type_function_with_run_context_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -741,17 +726,6 @@ def test_output_type_function_with_run_context_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
-                            },
-                        }
-                    )
-                ),
                 'logfire.span_type': 'span',
             }
         )
@@ -812,8 +786,6 @@ def test_output_type_function_with_retry_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -828,17 +800,6 @@ def test_output_type_function_with_retry_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
-                            },
-                        }
-                    )
-                ),
                 'logfire.span_type': 'span',
             }
         )
@@ -884,8 +845,6 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -900,17 +859,6 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
                 'gen_ai.tool.name': 'get_weather',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: get_weather',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
-                            },
-                        }
-                    )
-                ),
                 'logfire.span_type': 'span',
             }
         )
@@ -963,8 +911,6 @@ def test_output_type_bound_instance_method_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -979,17 +925,6 @@ def test_output_type_bound_instance_method_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
-                            },
-                        }
-                    )
-                ),
                 'logfire.span_type': 'span',
             }
         )
@@ -1043,8 +978,6 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -1059,17 +992,6 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
-                            },
-                        }
-                    )
-                ),
                 'logfire.span_type': 'span',
             }
         )
@@ -1118,8 +1040,6 @@ def test_output_type_async_function_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -1134,17 +1054,6 @@ def test_output_type_async_function_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
-                            },
-                        }
-                    )
-                ),
                 'logfire.span_type': 'span',
             }
         )
@@ -1187,6 +1096,7 @@ def test_text_output_function_logfire_attributes(
     if include_content:
         assert text_function_attributes == snapshot(
             {
+                'gen_ai.tool.name': 'upcase_text',
                 'tool_arguments': '{"text":"hello world"}',
                 'logfire.msg': 'running output function: upcase_text',
                 'logfire.json_schema': IsJson(
@@ -1207,15 +1117,8 @@ def test_text_output_function_logfire_attributes(
     else:
         assert text_function_attributes == snapshot(
             {
+                'gen_ai.tool.name': 'upcase_text',
                 'logfire.msg': 'running output function: upcase_text',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {},
-                        }
-                    )
-                ),
                 'logfire.span_type': 'span',
             }
         )
@@ -1263,6 +1166,7 @@ def test_prompted_output_function_logfire_attributes(
     if include_content:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.tool.name': 'upcase_text',
                 'tool_arguments': '{"text": "hello world"}',
                 'logfire.msg': 'running output function: upcase_text',
                 'logfire.json_schema': IsJson(
@@ -1283,15 +1187,8 @@ def test_prompted_output_function_logfire_attributes(
     else:
         assert output_function_attributes == snapshot(
             {
+                'gen_ai.tool.name': 'upcase_text',
                 'logfire.msg': 'running output function: upcase_text',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {},
-                        }
-                    )
-                ),
                 'logfire.span_type': 'span',
             }
         )
@@ -1342,6 +1239,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
     if include_content:
         assert successful_attributes == snapshot(
             {
+                'gen_ai.tool.name': 'get_weather_with_retry',
                 'tool_arguments': '{"city":"Mexico City"}',
                 'logfire.msg': 'running output function: get_weather_with_retry',
                 'logfire.json_schema': IsJson(
@@ -1362,15 +1260,8 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
     else:
         assert successful_attributes == snapshot(
             {
+                'gen_ai.tool.name': 'get_weather_with_retry',
                 'logfire.msg': 'running output function: get_weather_with_retry',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {},
-                        }
-                    )
-                ),
                 'logfire.span_type': 'span',
             }
         )

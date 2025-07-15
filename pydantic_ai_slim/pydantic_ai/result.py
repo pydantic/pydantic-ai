@@ -106,10 +106,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 )
 
             call, output_tool = match
-            with self._trace_ctx.with_call(call):
-                result_data = await output_tool.process(
-                    call, self._run_ctx, self._trace_ctx, allow_partial=allow_partial, wrap_validation_errors=False
-                )
+            result_data = await output_tool.process(
+                call,
+                self._run_ctx,
+                self._trace_ctx.with_call(call),
+                allow_partial=allow_partial,
+                wrap_validation_errors=False,
+            )
         elif isinstance(self._output_schema, TextOutputSchema):
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
 
@@ -426,10 +429,13 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 )
 
             call, output_tool = match
-            with self._trace_ctx.with_call(call):
-                result_data = await output_tool.process(
-                    call, self._run_ctx, self._trace_ctx, allow_partial=allow_partial, wrap_validation_errors=False
-                )
+            result_data = await output_tool.process(
+                call,
+                self._run_ctx,
+                self._trace_ctx.with_call(call),
+                allow_partial=allow_partial,
+                wrap_validation_errors=False,
+            )
         elif isinstance(self._output_schema, TextOutputSchema):
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
 
