@@ -70,7 +70,7 @@ groq = ["groq>=0.19.0"]
 mistral = ["mistralai>=1.2.5"]
 bedrock = ["boto3>=1.37.24"]
 # Tools
-duckduckgo = ["duckduckgo-search>=7.0.0"]
+duckduckgo = ["ddgs>=9.0.0"]
 tavily = ["tavily-python>=0.5.0"]
 # CLI
 cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0"]
@@ -88,6 +88,7 @@ dev = [
     "devtools>=0.12.2",
     "coverage[toml]>=7.6.2",
     "dirty-equals>=0.9.0",
+    "duckduckgo-search>=7.0.0",
     "inline-snapshot>=0.19.3",
     "pytest>=8.3.3",
     "pytest-examples>=0.0.14",
