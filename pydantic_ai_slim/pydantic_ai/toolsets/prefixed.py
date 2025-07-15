@@ -10,7 +10,10 @@ from .wrapper import WrapperToolset
 
 @dataclass
 class PrefixedToolset(WrapperToolset[AgentDepsT]):
-    """A toolset that prefixes the names of the tools it contains."""
+    """A toolset that prefixes the names of the tools it contains.
+
+    See [toolset docs](../toolsets.md#prefixing-tool-names) for more information.
+    """
 
     prefix: str
 

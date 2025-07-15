@@ -21,14 +21,17 @@ from .abstract import AbstractToolset, ToolsetTool
 
 @dataclass
 class _FunctionToolsetTool(ToolsetTool[AgentDepsT]):
-    """A tool definition for a function toolset tool."""
+    """A tool definition for a function toolset tool that keeps track of the function to call."""
 
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
 
 
 @dataclass(init=False)
 class FunctionToolset(AbstractToolset[AgentDepsT]):
-    """A toolset that lets Python functions be used as tools."""
+    """A toolset that lets Python functions be used as tools.
+
+    See [toolset docs](../toolsets.md#function-toolset) for more information.
+    """
 
     max_retries: int = field(default=1)
     tools: dict[str, Tool[Any]] = field(default_factory=dict)

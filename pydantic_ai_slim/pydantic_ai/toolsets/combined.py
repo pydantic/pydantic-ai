@@ -16,7 +16,7 @@ from .abstract import AbstractToolset, ToolsetTool
 
 @dataclass
 class _CombinedToolsetTool(ToolsetTool[AgentDepsT]):
-    """A tool definition for a function toolset tool."""
+    """A tool definition for a combined toolset tools that keeps track of the source toolset and tool."""
 
     source_toolset: AbstractToolset[AgentDepsT]
     source_tool: ToolsetTool[AgentDepsT]
@@ -24,7 +24,10 @@ class _CombinedToolsetTool(ToolsetTool[AgentDepsT]):
 
 @dataclass
 class CombinedToolset(AbstractToolset[AgentDepsT]):
-    """A toolset that combines multiple toolsets."""
+    """A toolset that combines multiple toolsets.
+
+    See [toolset docs](../toolsets.md#combining-toolsets) for more information.
+    """
 
     toolsets: Sequence[AbstractToolset[AgentDepsT]]
 

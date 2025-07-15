@@ -11,7 +11,10 @@ from .abstract import AbstractToolset, ToolsetTool
 
 @dataclass
 class WrapperToolset(AbstractToolset[AgentDepsT]):
-    """A toolset that wraps another toolset and delegates to it."""
+    """A toolset that wraps another toolset and delegates to it.
+
+    See [toolset docs](../toolsets.md#wrapping-a-toolset) for more information.
+    """
 
     wrapped: AbstractToolset[AgentDepsT]
 

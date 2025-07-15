@@ -832,10 +832,12 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
 
 @dataclass(init=False)
 class OutputToolset(AbstractToolset[AgentDepsT]):
-    """A toolset that contains output tools."""
+    """A toolset that contains contains output tools for agent output types."""
 
     _tool_defs: list[ToolDefinition]
+    """The tool definitions for the output tools in this toolset."""
     processors: dict[str, ObjectOutputProcessor[Any]]
+    """The processors for the output tools in this toolset."""
     max_retries: int
     output_validators: list[OutputValidator[AgentDepsT, Any]]
 

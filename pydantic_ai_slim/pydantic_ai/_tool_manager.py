@@ -19,14 +19,18 @@ from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 @dataclass
 class ToolManager(Generic[AgentDepsT]):
-    """TODO: Update docstring -- A toolset that caches the wrapped toolset's tool definitions for a specific run step and handles retries."""
+    """Manages tools for an agent run step. It caches the agent run's toolset's tool definitions and handles calling tools and retries."""
 
     ctx: RunContext[AgentDepsT]
+    """The agent run context for a specific run step."""
     toolset: AbstractToolset[AgentDepsT]
+    """The toolset that provides the tools for this run step."""
     tools: dict[str, ToolsetTool[AgentDepsT]]
+    """The cached tools for this run step."""
 
     @classmethod
     async def build(cls, toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
+        """Build a new tool manager for a specific run step."""
         return cls(
             ctx=ctx,
             toolset=toolset,
@@ -34,10 +38,12 @@ class ToolManager(Generic[AgentDepsT]):
         )
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
+        """Build a new tool manager for the next run step, carrying over the retries from the current run step."""
         return await self.__class__.build(self.toolset, replace(ctx, retries=self.ctx.retries))
 
     @property
     def tool_defs(self) -> list[ToolDefinition]:
+        """The tool definitions for the tools in this tool manager."""
         return [tool.tool_def for tool in self.tools.values()]
 
     def get_tool_def(self, name: str) -> ToolDefinition | None:
@@ -48,6 +54,12 @@ class ToolManager(Generic[AgentDepsT]):
             return None
 
     async def handle_call(self, call: ToolCallPart, allow_partial: bool = False) -> Any:
+        """Handle a tool call by validating the arguments, calling the tool, and handling retries.
+
+        Args:
+            call: The tool call part to handle.
+            allow_partial: Whether to allow partial validation of the tool arguments.
+        """
         name = call.tool_name
         tool = None
         try:
@@ -73,6 +85,7 @@ class ToolManager(Generic[AgentDepsT]):
                 args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
             else:
                 args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
+
             output = await self.toolset.call_tool(name, args_dict, ctx, tool)
         except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else 1
@@ -105,6 +118,7 @@ class ToolManager(Generic[AgentDepsT]):
             return output
 
     def get_deferred_tool_calls(self, parts: Iterable[_messages.ModelResponsePart]) -> DeferredToolCalls | None:
+        """Get the deferred tool calls from the model response parts."""
         deferred_calls_and_defs = [
             (part, tool_def)
             for part in parts

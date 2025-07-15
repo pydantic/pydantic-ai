@@ -13,9 +13,13 @@ from ..tools import ToolDefinition
 
 @dataclass
 class ToolsetTool(Generic[AgentDepsT]):
-    """Definition of a tool made available by a toolset.
+    """Definition of a tool available on a toolset.
 
-    This is a wrapper around a plain tool definition that includes information about the toolset that provides it, the maximum number of retries to attempt if the tool call fails, and a validator for the tool's arguments.
+    This is a wrapper around a plain tool definition that includes information about:
+
+    - the toolset that provided it, for use in error messages
+    - the maximum number of retries to attempt if the tool call fails
+    - the validator for the tool's arguments
     """
 
     toolset: AbstractToolset[AgentDepsT]
@@ -32,6 +36,8 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     - Listing the tools it contains
     - Validating the arguments of the tools
     - Calling the tools
+
+    See [toolset docs](../toolsets.md) for more information.
     """
 
     @property
@@ -73,10 +79,10 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             name: The name of the tool to call.
             tool_args: The arguments to pass to the tool.
             ctx: The run context.
-            tool: The tool definition.
+            tool: The tool definition returned by [`get_tools`][pydantic_ai.toolsets.AbstractToolset.get_tools] that was called.
         """
         raise NotImplementedError()
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
-        """Run a visitor function on all toolsets that implement tool listing and calling themselves instead of delegating to other toolsets."""
+        """Run a visitor function on all concrete toolsets that are not wrappers (i.e. they implement their own tool listing and calling)."""
         return visitor(self)

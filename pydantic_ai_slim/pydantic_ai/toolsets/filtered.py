@@ -11,7 +11,10 @@ from .wrapper import WrapperToolset
 
 @dataclass
 class FilteredToolset(WrapperToolset[AgentDepsT]):
-    """A toolset that filters the tools it contains using a filter function."""
+    """A toolset that filters the tools it contains using a filter function that takes the agent context and the tool definition.
+
+    See [toolset docs](../toolsets.md#filtering-tools) for more information.
+    """
 
     filter_func: Callable[[RunContext[AgentDepsT], ToolDefinition], bool]
 

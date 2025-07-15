@@ -10,7 +10,10 @@ from .wrapper import WrapperToolset
 
 @dataclass
 class RenamedToolset(WrapperToolset[AgentDepsT]):
-    """A toolset that maps renamed tool names to original tool names."""
+    """A toolset that maps renamed tool names to original tool names.
+
+    See [toolset docs](../toolsets.md#renaming-tools) for more information.
+    """
 
     name_map: dict[str, str]
 
