@@ -442,7 +442,7 @@ def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Usage:
         # - RawContentBlockStartEvent
         # - RawContentBlockDeltaEvent
         # - RawContentBlockStopEvent
-        return _EMPTY_USAGE
+        return usage.Usage()
 
     # Store all integer-typed usage values in the details, except 'output_tokens' which is represented exactly by
     # `response_tokens`
@@ -541,6 +541,3 @@ class AnthropicStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
-
-
-_EMPTY_USAGE = usage.Usage()
