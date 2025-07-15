@@ -37,10 +37,6 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self._entered_count = 0
         self._exit_stack = None
 
-    @property
-    def name(self) -> str:
-        return 'Toolset'  # pragma: no cover
-
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
             if self._entered_count == 0:

@@ -465,10 +465,16 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
         return ()
 
 
-def get_async_lock() -> asyncio.Lock:
-    if sys.version_info < (3, 10):
-        with warnings.catch_warnings():  # pragma: lax no cover
-            warnings.simplefilter('ignore', DeprecationWarning)  # `Lock` `loop` argument is deprecated
+# The `asyncio.Lock` `loop` argument was deprecated in 3.8 and removed in 3.10,
+# but 3.9 still needs it to have the intended behavior.
+
+if sys.version_info < (3, 10):
+
+    def get_async_lock() -> asyncio.Lock:  # pragma: lax no cover
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', DeprecationWarning)
             return asyncio.Lock(loop=get_event_loop())
-    else:
-        return asyncio.Lock()  # pragma: lax no cover
+else:
+
+    def get_async_lock() -> asyncio.Lock:  # pragma: lax no cover
+        return asyncio.Lock()
