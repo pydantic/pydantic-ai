@@ -14,7 +14,8 @@ import nest_asyncio
 nest_asyncio.apply()
 ```
 
-Note: This fix also applies to Google Colab and [Marimo](https://github.com/marimo-team/marimo).
+!!! note
+    This fix also applies to Google Colab and [Marimo](https://github.com/marimo-team/marimo).
 
 ## API Key Configuration
 

@@ -1,7 +1,7 @@
 # Graphs
 
 !!! danger "Don't use a nail gun unless you need a nail gun"
-If Pydantic AI [agents](agents.md) are a hammer, and [multi-agent workflows](multi-agent-applications.md) are a sledgehammer, then graphs are a nail gun:
+    If Pydantic AI [agents](agents.md) are a hammer, and [multi-agent workflows](multi-agent-applications.md) are a sledgehammer, then graphs are a nail gun:
 
     * sure, nail guns look cooler than hammers
     * but nail guns take a lot more setup than hammers

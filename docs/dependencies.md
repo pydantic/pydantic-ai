@@ -107,7 +107,7 @@ If these functions are not coroutines (e.g. `async def`) they are called with
 to use `async` methods where dependencies perform IO, although synchronous dependencies should work fine too.
 
 !!! note "`run` vs. `run_sync` and Asynchronous vs. Synchronous dependencies"
-Whether you use synchronous or asynchronous dependencies, is completely independent of whether you use `run` or `run_sync` — `run_sync` is just a wrapper around `run` and agents are always run in an async context.
+    Whether you use synchronous or asynchronous dependencies, is completely independent of whether you use `run` or `run_sync` — `run_sync` is just a wrapper around `run` and agents are always run in an async context.
 
 Here's the same example as above, but with a synchronous dependency:
 

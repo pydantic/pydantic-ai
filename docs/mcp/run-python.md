@@ -13,10 +13,10 @@ The **MCP Run Python** package is an MCP server that allows agents to execute Py
 ## Installation
 
 !!! warning "Switch from npx to deno"
-We previously distributed `mcp-run-python` as an `npm` package to use via `npx`.
-We now recommend using `deno` instead as it provides better sandboxing and security.
+    We previously distributed `mcp-run-python` as an `npm` package to use via `npx`.
+    We now recommend using `deno` instead as it provides better sandboxing and security.
 
-The MCP Run Python server is distributed as a [JSR package](https://jsr.io/@pydantic/mcp-run-python) and can be run directly using [`deno run`](https://deno.com/):
+    The MCP Run Python server is distributed as a [JSR package](https://jsr.io/@pydantic/mcp-run-python) and can be run directly using [`deno run`](https://deno.com/):
 
 ```bash {title="terminal"}
 deno run \

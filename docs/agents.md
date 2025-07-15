@@ -457,7 +457,7 @@ except UsageLimitExceeded as e:
 2. This run will error after 3 requests, preventing the infinite tool calling.
 
 !!! note
-This is especially relevant if you've registered many tools. The `request_limit` can be used to prevent the model from calling them in a loop too many times.
+    This is especially relevant if you've registered many tools. The `request_limit` can be used to prevent the model from calling them in a loop too many times.
 
 #### Model (Run) Settings
 
@@ -575,7 +575,7 @@ _(This example is complete, it can be run "as is")_
 Pydantic AI is designed to work well with static type checkers, like mypy and pyright.
 
 !!! tip "Typing is (somewhat) optional"
-Pydantic AI is designed to make type checking as useful as possible for you if you choose to use it, but you don't have to use types everywhere all the time.
+    Pydantic AI is designed to make type checking as useful as possible for you if you choose to use it, but you don't have to use types everywhere all the time.
 
     That said, because Pydantic AI uses Pydantic, and Pydantic uses type hints as the definition for schema and validation, some types (specifically type hints on parameters to tools, and the `output_type` arguments to [`Agent`][pydantic_ai.Agent]) are used at runtime.
 
@@ -636,7 +636,7 @@ Running `pyright` would identify the same issues.
 System prompts might seem simple at first glance since they're just strings (or sequences of strings that are concatenated), but crafting the right system prompt is key to getting the model to behave as you want.
 
 !!! tip
-For most use cases, you should use `instructions` instead of "system prompts".
+    For most use cases, you should use `instructions` instead of "system prompts".
 
     If you know what you are doing though and want to preserve system prompt messages in the message history sent to the
     LLM in subsequent completions requests, you can achieve this using the `system_prompt` argument/decorator.
@@ -890,4 +890,4 @@ with capture_run_messages() as messages:  # (2)!
 _(This example is complete, it can be run "as is")_
 
 !!! note
-If you call [`run`][pydantic_ai.Agent.run], [`run_sync`][pydantic_ai.Agent.run_sync], or [`run_stream`][pydantic_ai.Agent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.
+    If you call [`run`][pydantic_ai.Agent.run], [`run_sync`][pydantic_ai.Agent.run_sync], or [`run_stream`][pydantic_ai.Agent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.

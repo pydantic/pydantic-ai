@@ -10,7 +10,7 @@ Pydantic AI is still pre-version 1, so breaking changes will occur, however:
 ## Breaking Changes
 
 !!! note
-Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
+    Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
 ### v0.4.0 (2025-07-08)
 

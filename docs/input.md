@@ -5,7 +5,7 @@ Some LLMs are now capable of understanding audio, video, image and document cont
 ## Image Input
 
 !!! info
-Some models do not support image input. Please check the model's documentation to confirm whether it supports image input.
+    Some models do not support image input. Please check the model's documentation to confirm whether it supports image input.
 
 If you have a direct URL for the image, you can use [`ImageUrl`][pydantic_ai.ImageUrl]:
 
@@ -48,21 +48,21 @@ print(result.output)
 ## Audio Input
 
 !!! info
-Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input.
+    Some models do not support audio input. Please check the model's documentation to confirm whether it supports audio input.
 
 You can provide audio input using either [`AudioUrl`][pydantic_ai.AudioUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is analogous to the examples above.
 
 ## Video Input
 
 !!! info
-Some models do not support video input. Please check the model's documentation to confirm whether it supports video input.
+    Some models do not support video input. Please check the model's documentation to confirm whether it supports video input.
 
 You can provide video input using either [`VideoUrl`][pydantic_ai.VideoUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is analogous to the examples above.
 
 ## Document Input
 
 !!! info
-Some models do not support document input. Please check the model's documentation to confirm whether it supports document input.
+    Some models do not support document input. Please check the model's documentation to confirm whether it supports document input.
 
 You can provide document input using either [`DocumentUrl`][pydantic_ai.DocumentUrl] or [`BinaryContent`][pydantic_ai.BinaryContent]. The process is similar to the examples above.
 
