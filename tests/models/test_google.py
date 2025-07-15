@@ -420,6 +420,23 @@ It looks like someone is either reviewing footage on the monitor, or using it as
 """)
 
 
+async def test_google_model_video_as_binary_content_input_with_vendor_metadata(
+    allow_model_requests: None, video_content: BinaryContent, google_provider: GoogleProvider
+):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    video_content.vendor_metadata = {'start_offset': '2s', 'end_offset': '10s'}
+
+    result = await agent.run(['Explain me this video', video_content])
+    assert result.output == snapshot("""\
+Okay, I can describe what is visible in the image.
+
+The image shows a camera setup in an outdoor setting. The camera is mounted on a tripod and has an external monitor attached to it. The monitor is displaying a scene that appears to be a desert landscape with rocky formations and mountains in the background. The foreground and background of the overall image, outside of the camera monitor, is also a blurry, desert landscape. The colors in the background are warm and suggest either sunrise, sunset, or reflected light off the rock formations.
+
+It looks like someone is either reviewing footage on the monitor, or using it as an aid for framing the shot.\
+""")
+
+
 async def test_google_model_image_url_input(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, system_prompt='You are a helpful chatbot.')
@@ -441,6 +458,32 @@ async def test_google_model_video_url_input(allow_model_requests: None, google_p
         [
             'Explain me this video',
             VideoUrl(url='https://github.com/pydantic/pydantic-ai/raw/refs/heads/main/tests/assets/small_video.mp4'),
+        ]
+    )
+    assert result.output == snapshot("""\
+Okay, based on the image, here's what I can infer:
+
+*   **A camera monitor is mounted on top of a camera.**
+*   **The monitor's screen is on, displaying a view of the rocky mountains.**
+*   **This setting suggests a professional video shoot.**
+
+If you'd like a more detailed explanation, please provide additional information about the video.\
+""")
+
+
+async def test_google_model_youtube_video_url_input_with_vendor_metadata(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+
+    result = await agent.run(
+        [
+            'Explain me this video',
+            VideoUrl(
+                url='https://youtu.be/lCdaVNyHtjU',
+                vendor_metadata={'fps': 0.2},
+            ),
         ]
     )
     assert result.output == snapshot("""\

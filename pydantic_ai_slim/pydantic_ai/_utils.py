@@ -60,7 +60,12 @@ def is_model_like(type_: Any) -> bool:
     return (
         isinstance(type_, type)
         and not isinstance(type_, GenericAlias)
-        and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))  # pyright: ignore[reportUnknownArgumentType]
+        and (
+            issubclass(type_, BaseModel)
+            or is_dataclass(type_)  # pyright: ignore[reportUnknownArgumentType]
+            or is_typeddict(type_)  # pyright: ignore[reportUnknownArgumentType]
+            or getattr(type_, '__is_model_like__', False)  # pyright: ignore[reportUnknownArgumentType]
+        )
     )
 
 
@@ -315,8 +320,11 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
 
+_datetime_ta = TypeAdapter(datetime)
+
+
 def number_to_datetime(x: int | float) -> datetime:
-    return TypeAdapter(datetime).validate_python(x)
+    return _datetime_ta.validate_python(x)
 
 
 AwaitableCallable = Callable[..., Awaitable[T]]

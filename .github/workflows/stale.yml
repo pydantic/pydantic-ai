@@ -1,10 +1,11 @@
-name: 'Close stale issues'
+name: 'Close stale issues and PRs'
 on:
   schedule:
     - cron: '0 14 * * *'
 
 permissions:
   issues: write
+  pull-requests: write
 
 jobs:
   stale:
@@ -12,8 +13,13 @@ jobs:
     steps:
       - uses: actions/stale@v9
         with:
-          stale-issue-message: 'This issue is stale, and will be closed in 3 days if no reply is received.'
-          close-issue-message: 'Closing this issue as it has been inactive for 10 days.'
-          any-of-labels: 'question,more info'
           days-before-stale: 7
           days-before-close: 3
+
+          any-of-issue-labels: 'question,more info'
+          stale-issue-message: 'This issue is stale, and will be closed in 3 days if no reply is received.'
+          close-issue-message: 'Closing this issue as it has been inactive for 10 days.'
+
+          any-of-pr-labels: 'awaiting author revision'
+          stale-pr-message: 'This PR is stale, and will be closed in 3 days if no reply is received.'
+          close-pr-message: 'Closing this PR as it has been inactive for 10 days.'

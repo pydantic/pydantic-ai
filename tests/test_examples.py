@@ -6,7 +6,6 @@ import re
 import shutil
 import sys
 from collections.abc import AsyncIterator, Iterable, Sequence
-from contextlib import nullcontext
 from dataclasses import dataclass
 from inspect import FrameInfo
 from io import StringIO
@@ -206,7 +205,9 @@ def test_docs_examples(  # noqa: C901
             eval_example.lint_ruff(example)
 
     if opt_test.startswith('skip'):
-        print(opt_test[4:].lstrip(' -') or 'running code skipped')
+        pytest.skip(opt_test[4:].lstrip(' -') or 'running code skipped')
+    elif opt_test.startswith('ci_only') and os.environ.get('GITHUB_ACTIONS', '').lower() != 'true':
+        pytest.skip(opt_test[7:].lstrip(' -') or 'running code skipped in local tests')  # pragma: no cover
     else:
         test_globals: dict[str, str] = {'__name__': dunder_name}
 
@@ -259,7 +260,6 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
 
 class MockMCPServer:
     is_running = True
-    override_sampling_model = nullcontext
 
     async def __aenter__(self) -> MockMCPServer:
         return self
@@ -445,6 +445,11 @@ text_responses: dict[str, str | ToolCallPart] = {
     'What is a banana?': ToolCallPart(tool_name='return_fruit', args={'name': 'banana', 'color': 'yellow'}),
     'What is a Ford Explorer?': '{"result": {"kind": "Vehicle", "data": {"name": "Ford Explorer", "wheels": 4}}}',
     'What is a MacBook?': '{"result": {"kind": "Device", "data": {"name": "MacBook", "kind": "laptop"}}}',
+    'Write a creative story about space exploration': 'In the year 2157, Captain Maya Chen piloted her spacecraft through the vast expanse of the Andromeda Galaxy. As she discovered a planet with crystalline mountains that sang in harmony with the cosmic winds, she realized that space exploration was not just about finding new worlds, but about finding new ways to understand the universe and our place within it.',
+    'Create a person': ToolCallPart(
+        tool_name='final_result',
+        args={'name': 'John Doe', 'age': 30},
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
