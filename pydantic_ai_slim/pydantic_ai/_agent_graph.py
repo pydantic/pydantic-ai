@@ -14,6 +14,7 @@ from typing_extensions import TypeGuard, TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._utils import is_async_callable, run_in_executor
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
@@ -109,6 +110,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     history_processors: Sequence[HistoryProcessor[DepsT]]
 
     function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
+    builtin_tools: list[AbstractBuiltinTool] = dataclasses.field(repr=False)
     mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
     default_retries: int
 
@@ -301,6 +303,7 @@ async def _prepare_request_parameters(
 
     return models.ModelRequestParameters(
         function_tools=function_tool_defs,
+        builtin_tools=ctx.deps.builtin_tools,
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_object,
@@ -476,6 +479,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             texts.append(part.content)
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
+                    elif isinstance(part, _messages.ServerToolCallPart):
+                        yield _messages.ServerToolCallEvent(part)
+                    elif isinstance(part, _messages.ServerToolReturnPart):
+                        yield _messages.ServerToolResultEvent(part)
                     elif isinstance(part, _messages.ThinkingPart):
                         # We don't need to do anything with thinking parts in this tool-calling node.
                         # We need to handle text parts in case there are no tool calls and/or the desired output comes
