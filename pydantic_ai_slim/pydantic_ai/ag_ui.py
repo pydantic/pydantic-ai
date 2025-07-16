@@ -118,7 +118,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
     def __init__(
         self,
         *,
-        # Agent.
+        # Agent parameters.
         agent: Agent[AgentDepsT, OutputDataT],
         # Agent.iter parameters.
         output_type: OutputSpec[OutputDataT] | None = None,
@@ -129,7 +129,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         usage: Usage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        # Starlette
+        # Starlette parameters.
         debug: bool = False,
         routes: Sequence[BaseRoute] | None = None,
         middleware: Sequence[Middleware] | None = None,

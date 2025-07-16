@@ -68,7 +68,6 @@ pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
-pydantic-ai-ag-ui = { workspace = true }
 
 [tool.uv.workspace]
 members = [
