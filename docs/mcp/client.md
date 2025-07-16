@@ -24,7 +24,7 @@ PydanticAI comes with three ways to connect to MCP servers:
 
 Examples of all three are shown below; [mcp-run-python](run-python.md) is used as the MCP server in all examples.
 
-Each MCP server instance is a [toolset](../tools.md#toolsets) and can be registered with an [`Agent`][pydantic_ai.Agent] using the `toolsets` argument.
+Each MCP server instance is a [toolset](../toolsets.md) and can be registered with an [`Agent`][pydantic_ai.Agent] using the `toolsets` argument.
 
 You can use the [`async with agent`][pydantic_ai.Agent.__aenter__] context manager to open and close connections to all registered servers (and in the case of stdio servers, start and stop the subprocesses) around the context where they'll be used in agent runs. You can also use [`async with server`][pydantic_ai.mcp.MCPServer.__aenter__] to manage the connection or subprocess of a specific server, for example if you'd like to use it with multiple agents. If you don't explicitly enter one of these context managers to set up the server, this will be done automatically when it's needed (e.g. to list the available tools or call a specific tool), but it's more efficient to do so around the entire context where you expect the servers to be used.
 
