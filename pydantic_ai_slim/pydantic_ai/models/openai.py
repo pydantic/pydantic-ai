@@ -1051,7 +1051,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     vendor_part_id=chunk.item_id,
                     tool_name=None,
                     args=chunk.delta,
-                    tool_call_id=chunk.item_id,
+                    tool_call_id=None,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
