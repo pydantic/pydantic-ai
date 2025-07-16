@@ -826,7 +826,7 @@ with capture_run_messages() as messages:  # (2)!
         result = agent.run_sync('Please get me the volume of a box with size 6.')
     except UnexpectedModelBehavior as e:
         print('An error occurred:', e)
-        #> An error occurred: Tool exceeded max retries count of 1
+        #> An error occurred: Tool 'calc_volume' exceeded max retries count of 1
         print('cause:', repr(e.__cause__))
         #> cause: ModelRetry('Please try again.')
         print('messages:', messages)

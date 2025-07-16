@@ -28,9 +28,10 @@ nav:
           - models/cohere.md
           - models/groq.md
           - models/mistral.md
+          - models/huggingface.md
       - dependencies.md
       - tools.md
-      - common-tools.md
+      - toolsets.md
       - output.md
       - message-history.md
       - testing.md
@@ -41,6 +42,7 @@ nav:
       - input.md
       - thinking.md
       - direct.md
+      - common-tools.md
       - MCP:
           - mcp/index.md
           - mcp/client.md
@@ -64,6 +66,7 @@ nav:
   - API Reference:
       - api/agent.md
       - api/tools.md
+      - api/toolsets.md
       - api/common_tools.md
       - api/output.md
       - api/result.md
@@ -75,6 +78,7 @@ nav:
       - api/format_as_xml.md
       - api/format_prompt.md
       - api/direct.md
+      - api/ext.md
       - api/models/base.md
       - api/models/openai.md
       - api/models/anthropic.md

@@ -69,7 +69,7 @@ agent = Agent(model)
 ## Custom Hugging Face client
 
 [`HuggingFaceProvider`][pydantic_ai.providers.huggingface.HuggingFaceProvider] also accepts a custom
-[`AsyncInferenceClient`][huggingface_hub.AsyncInferenceClient] client via the `hf_client` parameter, so you can customise
+[`AsyncInferenceClient`](https://huggingface.co/docs/huggingface_hub/v0.29.3/en/package_reference/inference_client#huggingface_hub.AsyncInferenceClient) client via the `hf_client` parameter, so you can customise
 the `headers`, `bill_to` (billing to an HF organization you're a member of), `base_url` etc. as defined in the
 [Hugging Face Hub python library docs](https://huggingface.co/docs/huggingface_hub/package_reference/inference_client).
 
