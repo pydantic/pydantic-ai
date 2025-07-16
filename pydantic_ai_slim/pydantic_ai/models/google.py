@@ -229,10 +229,8 @@ class GoogleModel(Model):
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 tools.append(ToolDict(google_search=GoogleSearchDict()))
-            elif isinstance(tool, CodeExecutionTool):
+            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
-            else:
-                raise UserError(f'Unsupported builtin tool: {tool}')
         return tools or None
 
     def _get_tool_config(
@@ -511,10 +509,10 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             # please open an issue. The below code is the code to send thinking to the provider.
             # parts.append({'text': item.content, 'thought': True})
             pass
-        elif isinstance(item, ServerToolCallPart):
+        elif isinstance(item, ServerToolCallPart):  # pragma: no cover
             # Never returned from google
             pass
-        elif isinstance(item, ServerToolReturnPart):
+        elif isinstance(item, ServerToolReturnPart):  # pragma: no cover
             # Never returned from google
             pass
         else:

@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from abc import ABC
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 from typing_extensions import TypedDict
 
@@ -19,7 +19,7 @@ class AbstractBuiltinTool(ABC):
     """
 
     # TODO(Marcelo): We need to handle custom tool definitions per model base.
-    def handle_custom_tool_definition(self, model: str) -> Any: ...
+    # def handle_custom_tool_definition(self, model: str) -> Any: ...
 
 
 @dataclass
@@ -97,5 +97,5 @@ class CodeExecutionTool(AbstractBuiltinTool):
 
     Supported by:
     * Anthropic
-    * Gemini
+    * Google
     """

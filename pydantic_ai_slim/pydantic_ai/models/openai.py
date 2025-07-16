@@ -832,7 +832,7 @@ class OpenAIResponsesModel(Model):
     def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
         for tool in model_request_parameters.builtin_tools:
-            if isinstance(tool, WebSearchTool):
+            if isinstance(tool, WebSearchTool):  # pragma: no branch
                 web_search_tool = responses.WebSearchToolParam(
                     type='web_search_preview', search_context_size=tool.search_context_size
                 )
