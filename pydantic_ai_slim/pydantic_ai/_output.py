@@ -661,7 +661,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 )
                 raise ToolRetryError(m) from e
             else:
-                raise  # pragma: no cover
+                raise
 
         try:
             output = await self.call(output, run_context)
