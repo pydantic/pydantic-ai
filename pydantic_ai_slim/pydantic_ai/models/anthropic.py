@@ -106,10 +106,9 @@ See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models)
 
 
 class AnthropicModelSettings(ModelSettings, total=False):
-    """Settings used for an Anthropic model request.
+    """Settings used for an Anthropic model request."""
 
-    ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     anthropic_metadata: BetaMetadataParam
     """An object describing metadata about the request.
@@ -144,6 +143,7 @@ class AnthropicModel(Model):
         *,
         provider: Literal['anthropic'] | Provider[AsyncAnthropic] = 'anthropic',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize an Anthropic model.
 
@@ -153,13 +153,15 @@ class AnthropicModel(Model):
             provider: The provider to use for the Anthropic API. Can be either the string 'anthropic' or an
                 instance of `Provider[AsyncAnthropic]`. If not provided, the other parameters will be used.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Default model settings for this model instance.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
@@ -272,7 +274,7 @@ class AnthropicModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise  # pragma: no cover
 
     def _process_response(self, response: BetaMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -508,7 +510,7 @@ class AnthropicModel(Model):
     def _map_tool_definition(f: ToolDefinition) -> BetaToolParam:
         return {
             'name': f.name,
-            'description': f.description,
+            'description': f.description or '',
             'input_schema': f.parameters_json_schema,
         }
 

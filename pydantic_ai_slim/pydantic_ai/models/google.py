@@ -59,6 +59,7 @@ try:
         GenerateContentResponse,
         GoogleSearchDict,
         HttpOptionsDict,
+        MediaResolution,
         Part,
         PartDict,
         SafetySettingDict,
@@ -103,10 +104,9 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 
 
 class GoogleModelSettings(ModelSettings, total=False):
-    """Settings used for a Gemini model request.
+    """Settings used for a Gemini model request."""
 
-    ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     google_safety_settings: list[SafetySettingDict]
     """The safety settings to use for the model.
@@ -124,6 +124,12 @@ class GoogleModelSettings(ModelSettings, total=False):
     """User-defined metadata to break down billed charges. Only supported by the Vertex AI API.
 
     See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
+    """
+
+    google_video_resolution: MediaResolution
+    """The video resolution to use for the model.
+
+    See <https://ai.google.dev/api/generate-content#MediaResolution> for more information.
     """
 
 
@@ -150,6 +156,7 @@ class GoogleModel(Model):
         *,
         provider: Literal['google-gla', 'google-vertex'] | Provider[genai.Client] = 'google-gla',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Gemini model.
 
@@ -159,16 +166,18 @@ class GoogleModel(Model):
                 'google-gla' or 'google-vertex' or an instance of `Provider[httpx.AsyncClient]`.
                 If not provided, a new provider will be created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: The model settings to use. Defaults to None.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = GoogleProvider(vertexai=provider == 'google-vertex')  # pragma: lax no cover
+            provider = GoogleProvider(vertexai=provider == 'google-vertex')
 
         self._provider = provider
         self._system = provider.name
         self.client = provider.client
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
@@ -304,6 +313,7 @@ class GoogleModel(Model):
             safety_settings=model_settings.get('google_safety_settings'),
             thinking_config=model_settings.get('google_thinking_config'),
             labels=model_settings.get('google_labels'),
+            media_resolution=model_settings.get('google_video_resolution'),
             tools=cast(ToolListUnionDict, tools),
             tool_config=tool_config,
             response_mime_type=response_mime_type,
@@ -411,9 +421,15 @@ class GoogleModel(Model):
                 elif isinstance(item, BinaryContent):
                     # NOTE: The type from Google GenAI is incorrect, it should be `str`, not `bytes`.
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
-                    content.append({'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}})  # type: ignore
+                    inline_data_dict = {'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}}
+                    if item.vendor_metadata:
+                        inline_data_dict['video_metadata'] = item.vendor_metadata
+                    content.append(inline_data_dict)  # type: ignore
                 elif isinstance(item, VideoUrl) and item.is_youtube:
-                    content.append({'file_data': {'file_uri': item.url, 'mime_type': item.media_type}})
+                    file_data_dict = {'file_data': {'file_uri': item.url, 'mime_type': item.media_type}}
+                    if item.vendor_metadata:
+                        file_data_dict['video_metadata'] = item.vendor_metadata
+                    content.append(file_data_dict)  # type: ignore
                 elif isinstance(item, FileUrl):
                     if self.system == 'google-gla' or item.force_download:
                         downloaded_item = await download_item(item, data_format='base64')
@@ -550,7 +566,7 @@ def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclaration
     json_schema = tool.parameters_json_schema
     f = FunctionDeclarationDict(
         name=tool.name,
-        description=tool.description,
+        description=tool.description or '',
         parameters=json_schema,  # type: ignore
     )
     return f

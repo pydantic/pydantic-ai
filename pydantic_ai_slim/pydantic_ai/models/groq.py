@@ -95,10 +95,9 @@ See <https://console.groq.com/docs/models> for an up to date date list of models
 
 
 class GroqModelSettings(ModelSettings, total=False):
-    """Settings used for a Groq model request.
+    """Settings used for a Groq model request."""
 
-    ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     groq_reasoning_format: Literal['hidden', 'raw', 'parsed']
 
@@ -123,6 +122,7 @@ class GroqModel(Model):
         *,
         provider: Literal['groq'] | Provider[AsyncGroq] = 'groq',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Groq model.
 
@@ -133,13 +133,15 @@ class GroqModel(Model):
                 'groq' or an instance of `Provider[AsyncGroq]`. If not provided, a new provider will be
                 created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
@@ -248,7 +250,7 @@ class GroqModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise  # pragma: no cover
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -353,7 +355,7 @@ class GroqModel(Model):
             'type': 'function',
             'function': {
                 'name': f.name,
-                'description': f.description,
+                'description': f.description or '',
                 'parameters': f.parameters_json_schema,
             },
         }

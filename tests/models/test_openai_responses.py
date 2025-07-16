@@ -526,9 +526,9 @@ Daily Forecast:
 
 def test_model_profile_strict_not_supported():
     my_tool = ToolDefinition(
-        'my_tool',
-        'This is my tool',
-        {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
+        name='my_tool',
+        description='This is my tool',
+        parameters_json_schema={'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}},
         strict=True,
     )
 

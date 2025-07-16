@@ -42,6 +42,7 @@ class FallbackModel(Model):
             fallback_models: The names or instances of the fallback models to use upon failure.
             fallback_on: A callable or tuple of exceptions that should trigger a fallback.
         """
+        super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
 
         if isinstance(fallback_on, tuple):

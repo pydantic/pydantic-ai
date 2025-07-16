@@ -4,13 +4,13 @@ import re
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Callable, TypeAlias, Union
+from typing import Any, Callable, TypeAlias, Union
 
 from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.output import TextOutput, ToolOutput
+from pydantic_ai.output import StructuredDict, TextOutput, ToolOutput
 from pydantic_ai.tools import ToolDefinition
 
 # Define here so we can check `if MYPY` below. This will not be executed, MYPY will always set it to True
@@ -169,6 +169,16 @@ def run_sync3() -> None:
 MyUnion: TypeAlias = 'Foo | Bar'
 union_agent2: Agent[None, MyUnion] = Agent(output_type=MyUnion)  # type: ignore[call-overload]
 assert_type(union_agent2, Agent[None, MyUnion])
+
+structured_dict = StructuredDict(
+    {
+        'type': 'object',
+        'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+        'required': ['name', 'age'],
+    }
+)
+structured_dict_agent = Agent(output_type=structured_dict)
+assert_type(structured_dict_agent, Agent[None, dict[str, Any]])
 
 
 def foobar_ctx(ctx: RunContext[int], x: str, y: int) -> Decimal:

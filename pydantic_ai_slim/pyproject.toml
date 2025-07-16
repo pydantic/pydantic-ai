@@ -64,13 +64,13 @@ logfire = ["logfire>=3.11.0"]
 openai = ["openai>=1.76.0"]
 cohere = ["cohere>=5.13.11; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
-google = ["google-genai>=1.15.0"]
+google = ["google-genai>=1.24.0"]
 anthropic = ["anthropic>=0.52.0"]
 groq = ["groq>=0.25.0"]
 mistral = ["mistralai>=1.2.5"]
 bedrock = ["boto3>=1.37.24"]
 # Tools
-duckduckgo = ["duckduckgo-search>=7.0.0"]
+duckduckgo = ["ddgs>=9.0.0"]
 tavily = ["tavily-python>=0.5.0"]
 # CLI
 cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0"]
@@ -79,7 +79,7 @@ mcp = ["mcp>=1.9.4; python_version >= '3.10'"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # A2A
-a2a = ["fasta2a=={{ version }}"]
+a2a = ["fasta2a>=0.4.1"]
 
 [dependency-groups]
 dev = [
@@ -88,6 +88,7 @@ dev = [
     "devtools>=0.12.2",
     "coverage[toml]>=7.6.2",
     "dirty-equals>=0.9.0",
+    "duckduckgo-search>=7.0.0",
     "inline-snapshot>=0.19.3",
     "pytest>=8.3.3",
     "pytest-examples>=0.0.14",

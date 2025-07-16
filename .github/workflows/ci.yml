@@ -204,6 +204,7 @@ jobs:
           enable-cache: true
 
       - run: uv sync --package pydantic-ai-slim --only-dev
+      - run: rm coverage/.coverage.*-py3.9-* # Exclude 3.9 coverage as it gets the wrong line numbers, causing invalid failures.
       - run: uv run coverage combine coverage
 
       - run: uv run coverage html --show-contexts --title "PydanticAI coverage for ${{ github.sha }}"

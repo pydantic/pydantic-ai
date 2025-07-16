@@ -264,10 +264,16 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
 
                 output = output.output
 
+            description = description or default_description
+            if strict is None:
+                strict = default_strict
+
+            processor = ObjectOutputProcessor(output=output, description=description, strict=strict)
+
             if name is None:
                 name = default_name
                 if multiple:
-                    name += f'_{output.__name__}'
+                    name += f'_{processor.object_def.name}'
 
             i = 1
             original_name = name
@@ -275,11 +281,6 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                 i += 1
                 name = f'{original_name}_{i}'
 
-            description = description or default_description
-            if strict is None:
-                strict = default_strict
-
-            processor = ObjectOutputProcessor(output=output, description=description, strict=strict)
             tools[name] = OutputTool(name=name, processor=processor, multiple=multiple)
 
         return tools
@@ -616,6 +617,9 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
                 json_schema.pop('title')
 
+        if name is None and (json_schema_title := json_schema.get('title', None)):
+            name = json_schema_title
+
         if json_schema_description := json_schema.pop('description', None):
             if description is None:
                 description = json_schema_description
@@ -660,7 +664,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 )
                 raise ToolRetryError(m) from e
             else:
-                raise  # pragma: lax no cover
+                raise
 
         if k := self.outer_typed_dict_key:
             output = output[k]
@@ -675,7 +679,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                     )
                     raise ToolRetryError(m) from r
                 else:
-                    raise  # pragma: lax no cover
+                    raise
 
         return output
 
@@ -845,7 +849,7 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 )
                 raise ToolRetryError(m) from r
             else:
-                raise  # pragma: lax no cover
+                raise  # pragma: no cover
 
         return cast(OutputDataT, output)
 
@@ -904,7 +908,7 @@ class OutputTool(Generic[OutputDataT]):
                 )
                 raise ToolRetryError(m) from e
             else:
-                raise  # pragma: lax no cover
+                raise  # pragma: no cover
         except ModelRetry as r:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -914,7 +918,7 @@ class OutputTool(Generic[OutputDataT]):
                 )
                 raise ToolRetryError(m) from r
             else:
-                raise  # pragma: lax no cover
+                raise  # pragma: no cover
         else:
             return output
 
