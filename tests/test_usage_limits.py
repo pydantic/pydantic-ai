@@ -177,7 +177,7 @@ async def test_multi_agent_usage_no_incr():
     assert result2.usage() == functools.reduce(operator.add, run_1_usages)
 
     result1_usage = result1.usage()
-    result1_usage.details = {'custom1': 10, 'custom2': 20}
+    result1_usage.details = {'custom1': 10, 'custom2': 20, 'custom3': 0}
     assert result1_usage.opentelemetry_attributes() == {
         'gen_ai.usage.input_tokens': 103,
         'gen_ai.usage.output_tokens': 13,
