@@ -1684,20 +1684,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         else:
             return deps
 
-    def _get_user_toolsets(
-        self, toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None
-    ) -> Sequence[AbstractToolset[AgentDepsT]]:
-        """Get user toolsets for a run.
-
-        If we've overridden toolsets via `_override_toolsets`, use that, otherwise use the toolsets passed to the call.
-        """
-        if some_toolsets := self._override_toolsets.get():
-            return some_toolsets.value
-        elif toolsets is not None:
-            return toolsets
-        else:
-            return self._user_toolsets
-
     def _get_toolset(
         self,
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,

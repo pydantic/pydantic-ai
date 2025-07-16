@@ -672,7 +672,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 )
                 raise ToolRetryError(m) from r
             else:
-                raise
+                raise  # pragma: no cover
 
         return output
 

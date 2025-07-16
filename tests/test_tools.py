@@ -600,10 +600,10 @@ def test_tool_name_conflict_hint():
     ):
 
         def tool(x: int) -> int:
-            return x + 1
+            return x + 1  # pragma: no cover
 
         def foo_tool(x: str) -> str:
-            return x + 'foo'
+            return x + 'foo'  # pragma: no cover
 
         function_toolset = FunctionToolset([tool])
         prefixed_toolset = PrefixedToolset(function_toolset, 'foo')
