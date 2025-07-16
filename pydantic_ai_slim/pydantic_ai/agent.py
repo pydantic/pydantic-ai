@@ -57,14 +57,14 @@ ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
 
 if TYPE_CHECKING:
+    from fasta2a.applications import FastA2A
+    from fasta2a.broker import Broker
+    from fasta2a.schema import AgentProvider, Skill
+    from fasta2a.storage import Storage
     from starlette.middleware import Middleware
     from starlette.routing import Route
     from starlette.types import ExceptionHandler, Lifespan
 
-    from fasta2a.applications import FastA2A
-    from fasta2a.broker import Broker
-    from fasta2a.schema import Provider, Skill
-    from fasta2a.storage import Storage
     from pydantic_ai.mcp import MCPServer
 
 
@@ -296,7 +296,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if 'result_type' in _deprecated_kwargs:
             if output_type is not str:  # pragma: no cover
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning)
+            warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning, stacklevel=2)
             output_type = _deprecated_kwargs.pop('result_type')
 
         self.output_type = output_type
@@ -310,6 +310,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn(
                 '`result_tool_name` is deprecated, use `output_type` with `ToolOutput` instead',
                 DeprecationWarning,
+                stacklevel=2,
             )
 
         self._deprecated_result_tool_description = _deprecated_kwargs.pop('result_tool_description', None)
@@ -317,12 +318,15 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             warnings.warn(
                 '`result_tool_description` is deprecated, use `output_type` with `ToolOutput` instead',
                 DeprecationWarning,
+                stacklevel=2,
             )
         result_retries = _deprecated_kwargs.pop('result_retries', None)
         if result_retries is not None:
             if output_retries is not None:  # pragma: no cover
                 raise TypeError('`output_retries` and `result_retries` cannot be set at the same time.')
-            warnings.warn('`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning)
+            warnings.warn(
+                '`result_retries` is deprecated, use `max_result_retries` instead', DeprecationWarning, stacklevel=2
+            )
             output_retries = result_retries
 
         default_output_mode = (
@@ -472,7 +476,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if 'result_type' in _deprecated_kwargs:  # pragma: no cover
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
+            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
             output_type = _deprecated_kwargs.pop('result_type')
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
@@ -496,7 +500,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent] | None,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -512,7 +516,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent] | None,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -529,7 +533,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @deprecated('`result_type` is deprecated, use `output_type` instead.')
     def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent] | None,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         result_type: type[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -640,7 +644,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if 'result_type' in _deprecated_kwargs:  # pragma: no cover
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
+            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
             output_type = _deprecated_kwargs.pop('result_type')
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
@@ -670,12 +674,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
         output_validators = cast(list[_output.OutputValidator[AgentDepsT, RunOutputDataT]], self._output_validators)
 
-        model_settings = merge_model_settings(self.model_settings, model_settings)
+        # Merge model settings in order of precedence: run > agent > model
+        merged_settings = merge_model_settings(model_used.settings, self.model_settings)
+        model_settings = merge_model_settings(merged_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
 
         if isinstance(model_used, InstrumentedModel):
-            instrumentation_settings = model_used.settings
-            tracer = model_used.settings.tracer
+            instrumentation_settings = model_used.instrumentation_settings
+            tracer = model_used.instrumentation_settings.tracer
         else:
             instrumentation_settings = None
             tracer = NoOpTracer()
@@ -879,7 +885,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if 'result_type' in _deprecated_kwargs:  # pragma: no cover
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
+            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
             output_type = _deprecated_kwargs.pop('result_type')
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
@@ -997,7 +1003,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if 'result_type' in _deprecated_kwargs:  # pragma: no cover
             if output_type is not str:
                 raise TypeError('`result_type` and `output_type` cannot be set at the same time.')
-            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning)
+            warnings.warn('`result_type` is deprecated, use `output_type` instead.', DeprecationWarning, stacklevel=2)
             output_type = _deprecated_kwargs.pop('result_type')
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
@@ -1083,6 +1089,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                                 streamed_response,
                                 graph_ctx.deps.output_schema,
                                 _agent_graph.build_run_context(graph_ctx),
+                                _output.build_trace_context(graph_ctx),
                                 graph_ctx.deps.output_validators,
                                 final_result_details.tool_name,
                                 on_complete,
@@ -1336,7 +1343,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         return func
 
     @deprecated('`result_validator` is deprecated, use `output_validator` instead.')
-    def result_validator(self, func: Any, /) -> Any: ...
+    def result_validator(self, func: Any, /) -> Any:
+        warnings.warn(
+            '`result_validator` is deprecated, use `output_validator` instead.', DeprecationWarning, stacklevel=2
+        )
+        return self.output_validator(func)  # type: ignore
 
     @overload
     def tool(self, func: ToolFuncContext[AgentDepsT, ToolParams], /) -> ToolFuncContext[AgentDepsT, ToolParams]: ...
@@ -1756,7 +1767,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         url: str = 'http://localhost:8000',
         version: str = '1.0.0',
         description: str | None = None,
-        provider: Provider | None = None,
+        provider: AgentProvider | None = None,
         skills: list[Skill] | None = None,
         # Starlette
         debug: bool = False,

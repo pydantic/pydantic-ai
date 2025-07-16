@@ -124,6 +124,39 @@ The `ModelResponse` message above indicates in the `model_name` field that the o
 !!! note
     Each model's options should be configured individually. For example, `base_url`, `api_key`, and custom clients should be set on each model itself, not on the `FallbackModel`.
 
+### Per-Model Settings
+
+You can configure different [`ModelSettings`][pydantic_ai.settings.ModelSettings] for each model in a fallback chain by passing the `settings` parameter when creating each model. This is particularly useful when different providers have different optimal configurations:
+
+```python {title="fallback_model_per_settings.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.settings import ModelSettings
+
+# Configure each model with provider-specific optimal settings
+openai_model = OpenAIModel(
+    'gpt-4o',
+    settings=ModelSettings(temperature=0.7, max_tokens=1000)  # Higher creativity for OpenAI
+)
+anthropic_model = AnthropicModel(
+    'claude-3-5-sonnet-latest',
+    settings=ModelSettings(temperature=0.2, max_tokens=1000)  # Lower temperature for consistency
+)
+
+fallback_model = FallbackModel(openai_model, anthropic_model)
+agent = Agent(fallback_model)
+
+result = agent.run_sync('Write a creative story about space exploration')
+print(result.output)
+"""
+In the year 2157, Captain Maya Chen piloted her spacecraft through the vast expanse of the Andromeda Galaxy. As she discovered a planet with crystalline mountains that sang in harmony with the cosmic winds, she realized that space exploration was not just about finding new worlds, but about finding new ways to understand the universe and our place within it.
+"""
+```
+
+In this example, if the OpenAI model fails, the agent will automatically fall back to the Anthropic model with its own configured settings. The `FallbackModel` itself doesn't have settings - it uses the individual settings of whichever model successfully handles the request.
+
 In this next example, we demonstrate the exception-handling capabilities of `FallbackModel`.
 If all models fail, a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] is raised, which
 contains all the exceptions encountered during the `run` execution.

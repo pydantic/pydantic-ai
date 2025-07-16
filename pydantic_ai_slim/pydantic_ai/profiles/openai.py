@@ -93,9 +93,17 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
     def transform(self, schema: JsonSchema) -> JsonSchema:  # noqa C901
         # Remove unnecessary keys
         schema.pop('title', None)
-        schema.pop('default', None)
         schema.pop('$schema', None)
         schema.pop('discriminator', None)
+
+        default = schema.get('default', _sentinel)
+        if default is not _sentinel:
+            # the "default" keyword is not allowed in strict mode, but including it makes some Ollama models behave
+            # better, so we keep it around when not strict
+            if self.strict is True:
+                schema.pop('default', None)
+            elif self.strict is None:  # pragma: no branch
+                self.is_strict_compatible = False
 
         if schema_ref := schema.get('$ref'):
             if schema_ref == self.root_ref:
