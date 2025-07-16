@@ -1120,6 +1120,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     )
                 elif isinstance(chunk.item, responses.ResponseOutputMessage):
                     pass
+                elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
+                    pass
                 else:
                     warnings.warn(  # pragma: no cover
                         f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -1146,10 +1148,23 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     signature=chunk.item_id,
                 )
 
+            # TODO(Marcelo): We should support annotations in the future.
+            elif isinstance(chunk, responses.ResponseTextAnnotationDeltaEvent):
+                pass
+
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 yield self._parts_manager.handle_text_delta(vendor_part_id=chunk.content_index, content=chunk.delta)
 
             elif isinstance(chunk, responses.ResponseTextDoneEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseWebSearchCallInProgressEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseWebSearchCallSearchingEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseWebSearchCallCompletedEvent):
                 pass  # there's nothing we need to do here
 
             else:  # pragma: no cover
