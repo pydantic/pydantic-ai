@@ -870,14 +870,9 @@ def test_output_type_function_with_retry_logfire_attributes(
 
     summary = get_logfire_summary()
 
-    # Find the successful output function span attributes (should be the last one)
-    output_function_attributes: list[dict[str, Any]] = []
     output_function_attributes = [
         attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
     ]
-
-    # Should have two spans - one failed, one successful
-    assert len(output_function_attributes) >= 1
 
     if include_content:
         assert output_function_attributes == snapshot(
