@@ -13,14 +13,6 @@ pip/uv-add "pydantic-ai-slim[google]"
 
 ---
 
-!!! warning "Explicit instantiation required"
-    You **cannot** currently use `Agent('google-gla:gemini-1.5-flash')` or `Agent('google-vertex:gemini-1.5-flash')` directly with `GoogleModel`. The model name inference will select [`GeminiModel`](../models/gemini.md) instead of `GoogleModel`.
-
-    To use `GoogleModel`, you **must** explicitly instantiate a [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] and pass it to
-    [`GoogleModel`][pydantic_ai.models.google.GoogleModel], then pass the model to [`Agent`][pydantic_ai.Agent].
-
----
-
 ## Configuration
 
 `GoogleModel` lets you use Google's Gemini models through their [Generative Language API](https://ai.google.dev/api/all-methods) (`generativelanguage.googleapis.com`) or [Vertex AI API](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models) (`*-aiplatform.googleapis.com`).
