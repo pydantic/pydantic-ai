@@ -75,7 +75,7 @@ try:
     from mistralai.models.usermessage import UserMessage as MistralUserMessage
     from mistralai.types.basemodel import Unset as MistralUnset
     from mistralai.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
-except ImportError as e:  # pragma: lax no cover
+except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install `mistral` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
@@ -96,10 +96,9 @@ Since [the Mistral docs](https://docs.mistral.ai/getting-started/models/models_o
 
 
 class MistralModelSettings(ModelSettings, total=False):
-    """Settings used for a Mistral model request.
+    """Settings used for a Mistral model request."""
 
-    ALL FIELDS MUST BE `mistral_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `mistral_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     # This class is a placeholder for any future mistral-specific settings
 
@@ -126,6 +125,7 @@ class MistralModel(Model):
         provider: Literal['mistral'] | Provider[Mistral] = 'mistral',
         profile: ModelProfileSpec | None = None,
         json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n""",
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Mistral model.
 
@@ -136,6 +136,7 @@ class MistralModel(Model):
                 created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             json_mode_schema_prompt: The prompt to show when the model expects a JSON object as input.
+            settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
         self.json_mode_schema_prompt = json_mode_schema_prompt
@@ -143,7 +144,8 @@ class MistralModel(Model):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
@@ -215,7 +217,7 @@ class MistralModel(Model):
         except SDKError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise  # pragma: no cover
 
         assert response, 'A unexpected empty response from Mistral.'
         return response
@@ -307,7 +309,9 @@ class MistralModel(Model):
         )
         tools = [
             MistralTool(
-                function=MistralFunction(name=r.name, parameters=r.parameters_json_schema, description=r.description)
+                function=MistralFunction(
+                    name=r.name, parameters=r.parameters_json_schema, description=r.description or ''
+                )
             )
             for r in all_tools
         ]

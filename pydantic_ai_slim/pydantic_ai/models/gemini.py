@@ -74,10 +74,9 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 
 
 class GeminiModelSettings(ModelSettings, total=False):
-    """Settings used for a Gemini model request.
+    """Settings used for a Gemini model request."""
 
-    ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     gemini_safety_settings: list[GeminiSafetySettings]
     """Safety settings options for Gemini model request."""
@@ -134,6 +133,7 @@ class GeminiModel(Model):
         *,
         provider: Literal['google-gla', 'google-vertex'] | Provider[httpx.AsyncClient] = 'google-gla',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Gemini model.
 
@@ -143,6 +143,7 @@ class GeminiModel(Model):
                 'google-gla' or 'google-vertex' or an instance of `Provider[httpx.AsyncClient]`.
                 If not provided, a new provider will be created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Default model settings for this model instance.
         """
         self._model_name = model_name
         self._provider = provider
@@ -152,7 +153,8 @@ class GeminiModel(Model):
         self._system = provider.name
         self.client = provider.client
         self._url = str(self.client.base_url)
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
@@ -251,7 +253,7 @@ class GeminiModel(Model):
 
         if gemini_labels := model_settings.get('gemini_labels'):
             if self._system == 'google-vertex':
-                request_data['labels'] = gemini_labels  # pragma: lax no cover
+                request_data['labels'] = gemini_labels
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
@@ -413,7 +415,7 @@ def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _Gemi
     if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
         config['frequency_penalty'] = frequency_penalty
     if (thinkingConfig := model_settings.get('gemini_thinking_config')) is not None:
-        config['thinking_config'] = thinkingConfig  # pragma: lax no cover
+        config['thinking_config'] = thinkingConfig
     return config
 
 
@@ -774,7 +776,7 @@ class _GeminiFunction(TypedDict):
 
 def _function_from_abstract_tool(tool: ToolDefinition) -> _GeminiFunction:
     json_schema = tool.parameters_json_schema
-    f = _GeminiFunction(name=tool.name, description=tool.description, parameters=json_schema)
+    f = _GeminiFunction(name=tool.name, description=tool.description or '', parameters=json_schema)
     return f
 
 
@@ -922,10 +924,10 @@ def _ensure_decodeable(content: bytearray) -> bytearray:
 
     This is a temporary workaround until https://github.com/pydantic/pydantic-core/issues/1633 is resolved
     """
-    while True:
-        try:
-            content.decode()
-        except UnicodeDecodeError:
-            content = content[:-1]  # this will definitely succeed before we run out of bytes
-        else:
-            return content
+    try:
+        content.decode()
+    except UnicodeDecodeError as e:
+        # e.start marks the start of the invalid decoded bytes, so cut up to before the first invalid byte
+        return content[: e.start]
+    else:
+        return content

@@ -35,7 +35,7 @@ class FunctionSchema:
     """Internal information about a function schema."""
 
     function: Callable[..., Any]
-    description: str
+    description: str | None
     validator: SchemaValidator
     json_schema: ObjectJsonSchema
     # if not None, the function takes a single by that name (besides potentially `info`)
