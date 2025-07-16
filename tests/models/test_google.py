@@ -5,7 +5,6 @@ import os
 from typing import Any
 
 import pytest
-from google.genai.types import Language
 from httpx import Timeout
 from inline_snapshot import Is, snapshot
 from pydantic import BaseModel
@@ -45,7 +44,7 @@ from pydantic_ai.result import Usage
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
-    from google.genai.types import HarmBlockThreshold, HarmCategory
+    from google.genai.types import HarmBlockThreshold, HarmCategory, Language
 
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import GoogleProvider
