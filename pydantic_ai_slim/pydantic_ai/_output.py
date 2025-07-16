@@ -427,7 +427,7 @@ class TextOutputSchema(OutputSchema[OutputDataT], ABC):
         self,
         text: str,
         run_context: RunContext[AgentDepsT],
-        trace_context: TraceContext | None = None,
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -450,7 +450,7 @@ class PlainTextOutputSchema(TextOutputSchema[OutputDataT]):
         self,
         text: str,
         run_context: RunContext[AgentDepsT],
-        trace_context: TraceContext | None = None,
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -498,7 +498,7 @@ class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         self,
         text: str,
         run_context: RunContext[AgentDepsT],
-        trace_context: TraceContext | None = None,
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -551,7 +551,7 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         self,
         text: str,
         run_context: RunContext[AgentDepsT],
-        trace_context: TraceContext | None = None,
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -653,7 +653,7 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         self,
         data: str,
         run_context: RunContext[AgentDepsT],
-        trace_context: TraceContext | None = None,
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -723,7 +723,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
         self,
         data: str | dict[str, Any] | None,
         run_context: RunContext[AgentDepsT],
-        trace_context: TraceContext | None = None,
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -759,21 +759,18 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
 
         if self._function_schema:
             try:
-                # Wraps the output function call in an OpenTelemetry span if trace_context is provided.
-                if trace_context:
-                    if trace_context.call:
-                        span_manager = trace_context.span(trace_context.call, include_tool_call_id=True)
-                    else:
-                        function_name = getattr(self._function_schema.function, '__name__', 'output_function')
-                        span_manager = trace_context.span(
-                            _messages.ToolCallPart(tool_name=function_name, args=data), include_tool_call_id=False
-                        )
-                    with span_manager as span:
-                        output = await execute_function_call(
-                            self._function_schema, run_context, trace_context, output, span
-                        )
+                # Wraps the output function call in an OpenTelemetry span.
+                if trace_context.call:
+                    span_manager = trace_context.span(trace_context.call, include_tool_call_id=True)
                 else:
-                    assert_never(output)
+                    function_name = getattr(self._function_schema.function, '__name__', 'output_function')
+                    span_manager = trace_context.span(
+                        _messages.ToolCallPart(tool_name=function_name, args=data), include_tool_call_id=False
+                    )
+                with span_manager as span:
+                    output = await execute_function_call(
+                        self._function_schema, run_context, trace_context, output, span
+                    )
             except ModelRetry as r:
                 if wrap_validation_errors:
                     m = _messages.RetryPromptPart(
@@ -886,7 +883,7 @@ class UnionOutputProcessor(BaseOutputProcessor[OutputDataT]):
         self,
         data: str | dict[str, Any] | None,
         run_context: RunContext[AgentDepsT],
-        trace_context: TraceContext | None = None,
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -938,7 +935,7 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
         self,
         data: str,
         run_context: RunContext[AgentDepsT],
-        trace_context: TraceContext | None = None,
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -948,14 +945,11 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
             # Wraps the output function call in an OpenTelemetry span if trace_context is provided.
             # Note: PlainTextOutputProcessor is used for text responses (not tool calls),
             # so we don't have tool call attributes like gen_ai.tool.name or gen_ai.tool.call.id
-            if trace_context:
-                function_name = getattr(self._function_schema.function, '__name__', 'text_output_function')
-                with trace_context.span(
-                    _messages.ToolCallPart(tool_name=function_name, args=args), include_tool_call_id=False
-                ) as span:
-                    output = await execute_function_call(self._function_schema, run_context, trace_context, args, span)
-            else:
-                assert_never(trace_context)  # type: ignore[arg-type]
+            function_name = getattr(self._function_schema.function, '__name__', 'text_output_function')
+            with trace_context.span(
+                _messages.ToolCallPart(tool_name=function_name, args=args), include_tool_call_id=False
+            ) as span:
+                output = await execute_function_call(self._function_schema, run_context, trace_context, args, span)
         except ModelRetry as r:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
