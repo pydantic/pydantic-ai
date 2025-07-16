@@ -936,7 +936,7 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
         args = {self._str_argument_name: data}
 
         try:
-            # Wraps the output function call in an OpenTelemetry span if trace_context is provided.
+            # Wraps the output function call in an OpenTelemetry span.
             # Note: PlainTextOutputProcessor is used for text responses (not tool calls),
             # so we don't have tool call attributes like gen_ai.tool.name or gen_ai.tool.call.id
             function_name = getattr(self._function_schema.function, '__name__', 'text_output_function')

@@ -1358,42 +1358,66 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
 
     summary = get_logfire_summary()
 
-    # Find the successful text output function span attributes (should be the last one)
-    text_function_attributes: list[dict[str, Any]] = []
-    for attributes in summary.attributes.values():
-        msg = attributes.get('logfire.msg', '')
-        if 'running output function: get_weather_with_retry' in msg:
-            text_function_attributes.append(attributes)
-
-    assert len(text_function_attributes) >= 1
-    successful_attributes = text_function_attributes[-1]  # Last one should be successful
+    text_function_attributes = [
+        attributes
+        for attributes in summary.attributes.values()
+        if 'running output function: get_weather_with_retry' in attributes.get('logfire.msg', '')
+    ]
 
     if include_content:
-        assert successful_attributes == snapshot(
-            {
-                'gen_ai.tool.name': 'get_weather_with_retry',
-                'tool_arguments': '{"city":"Mexico City"}',
-                'logfire.msg': 'running output function: get_weather_with_retry',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'tool_arguments': {'type': 'object'},
-                                'tool_response': {'type': 'object'},
-                            },
-                        }
-                    )
-                ),
-                'logfire.span_type': 'span',
-                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
-            }
+        assert text_function_attributes == snapshot(
+            [
+                {
+                    'gen_ai.tool.name': 'get_weather_with_retry',
+                    'tool_arguments': '{"city":"New York City"}',
+                    'logfire.msg': 'running output function: get_weather_with_retry',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'logfire.level_num': 17,
+                },
+                {
+                    'gen_ai.tool.name': 'get_weather_with_retry',
+                    'tool_arguments': '{"city":"Mexico City"}',
+                    'logfire.msg': 'running output function: get_weather_with_retry',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+                },
+            ]
         )
     else:
-        assert successful_attributes == snapshot(
-            {
-                'gen_ai.tool.name': 'get_weather_with_retry',
-                'logfire.msg': 'running output function: get_weather_with_retry',
-                'logfire.span_type': 'span',
-            }
+        assert text_function_attributes == snapshot(
+            [
+                {
+                    'gen_ai.tool.name': 'get_weather_with_retry',
+                    'logfire.msg': 'running output function: get_weather_with_retry',
+                    'logfire.span_type': 'span',
+                    'logfire.level_num': 17,
+                },
+                {
+                    'gen_ai.tool.name': 'get_weather_with_retry',
+                    'logfire.msg': 'running output function: get_weather_with_retry',
+                    'logfire.span_type': 'span',
+                },
+            ]
         )
