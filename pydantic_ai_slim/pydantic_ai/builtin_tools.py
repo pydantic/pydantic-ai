@@ -26,6 +26,11 @@ class WebSearchTool(AbstractBuiltinTool):
     """A builtin tool that allows your agent to search the web for information.
 
     The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
+
+    Supported by:
+    * OpenAI
+    * Anthropic
+    * Groq
     """
 
     search_context_size: Literal['low', 'medium', 'high'] = 'medium'
@@ -91,5 +96,5 @@ class CodeExecutionTool(AbstractBuiltinTool):
 
     Supported by:
     * Anthropic
-    * OpenAI
+    * Gemini
     """

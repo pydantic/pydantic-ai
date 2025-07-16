@@ -2115,3 +2115,38 @@ async def test_anthropic_unsupported_server_tool_name_error():
     # This should raise a ValueError
     with pytest.raises(ValueError, match='Unsupported tool name: unsupported_tool'):
         await model._map_message(messages)  # type: ignore[attr-defined]
+
+
+async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='Give me the top 3 news in the world today.') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert event_parts.pop(0) == snapshot(
+        PartStartEvent(index=0, part=TextPart(content="I'll search for the latest world"))
+    )
+    assert event_parts.pop(0) == snapshot(FinalResultEvent(tool_name=None, tool_call_id=None))
+    assert ''.join(event.delta.content_delta for event in event_parts) == snapshot("""\
+ news to get you the top 3 stories from today.Let me search for more specific and recent global news stories from today.Let me search for more specific global news stories from today.Based on my search results, here are the top 3 global news stories from today, July 16, 2025:
+
+## 1. Trump's Ukraine Special Envoy Visits Kyiv
+
+U.S. President Donald Trump's special envoy to Ukraine, retired Lt. Gen. Keith Kellogg, arrived in Kyiv on Monday. This high-profile diplomatic visit comes as tensions continue over the ongoing conflict, with President Trump threatening to punish Russia with heavy tariffs on countries that trade with Moscow if the Kremlin fails to reach a ceasefire deal with Ukraine, while promising Kyiv weapons.
+
+## 2. EU Trade Ministers Meet Over U.S. Tariffs
+
+European trade ministers are meeting in Brussels after U.S. President Donald Trump announced 30% tariffs on the European Union. The EU is America's biggest business partner and the world's largest trading block. The U.S. decision will have repercussions for governments, companies and consumers on both sides of the Atlantic.
+
+## 3. Syria Violence Escalates
+
+Clashes between Druze militias and Sunni Bedouin clans in Syria's Sweida province have killed more than 30 people and injured nearly 100. This represents a significant escalation in sectarian violence in the region.
+
+Additional notable stories include Vietnam's plan to ban fossil-fuel motorcycles in the heart of Hanoi starting July 2026, aiming to cut air pollution and move toward cleaner transport, and ongoing restoration efforts for Copenhagen's Old Stock Exchange, which is taking shape 15 months after a fire destroyed more than half of the 400-year-old building.\
+""")

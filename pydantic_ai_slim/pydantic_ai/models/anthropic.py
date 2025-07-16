@@ -9,8 +9,10 @@ from datetime import datetime, timezone
 from typing import Any, Literal, Union, cast, overload
 
 from anthropic.types.beta import (
+    BetaCitationsDelta,
     BetaCodeExecutionToolResultBlock,
     BetaCodeExecutionToolResultBlockParam,
+    BetaInputJSONDelta,
     BetaServerToolUseBlockParam,
     BetaWebSearchToolResultBlockParam,
 )
@@ -561,13 +563,16 @@ class AnthropicStreamedResponse(StreamedResponse):
     _response: AsyncIterable[BetaRawMessageStreamEvent]
     _timestamp: datetime
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         current_block: BetaContentBlock | None = None
 
         async for event in self._response:
             self._usage += _map_usage(event)
 
-            if isinstance(event, BetaRawContentBlockStartEvent):
+            if isinstance(event, BetaRawMessageStartEvent):
+                pass
+
+            elif isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, BetaTextBlock) and current_block.text:
                     yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=current_block.text)
@@ -586,6 +591,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
+                elif isinstance(current_block, BetaServerToolUseBlock):
+                    pass
 
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
                 if isinstance(event.delta, BetaTextDelta):
@@ -611,6 +618,14 @@ class AnthropicStreamedResponse(StreamedResponse):
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
+                elif isinstance(event.delta, BetaInputJSONDelta):
+                    pass
+                # TODO(Marcelo): We need to handle citations.
+                elif isinstance(event.delta, BetaCitationsDelta):
+                    pass
+
+            elif isinstance(event, BetaRawMessageDeltaEvent):
+                pass
 
             elif isinstance(event, (BetaRawContentBlockStopEvent, BetaRawMessageStopEvent)):
                 current_block = None
