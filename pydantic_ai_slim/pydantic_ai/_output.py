@@ -5,7 +5,6 @@ import inspect
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Iterable, Iterator, Sequence
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast, overload
 
@@ -19,7 +18,6 @@ from pydantic_graph.nodes import GraphRunContext
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, UserError
-from .messages import ToolCallPart
 from .output import (
     NativeOutput,
     OutputDataT,
@@ -35,8 +33,6 @@ from .output import (
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 
 if TYPE_CHECKING:
-    from opentelemetry.trace.span import Span
-
     from pydantic_ai._agent_graph import DepsT, GraphAgentDeps, GraphAgentState
 
     from .profiles import ModelProfile
@@ -87,8 +83,16 @@ class TraceContext:
     def with_call(self, call: _messages.ToolCallPart):
         return dataclasses.replace(self, call=call)
 
-    @contextmanager
-    def span(self, call: ToolCallPart, include_tool_call_id: bool) -> Iterator[Span]:
+    async def execute_function_with_span(
+        self,
+        function_schema: _function_schema.FunctionSchema,
+        run_context: RunContext[AgentDepsT],
+        args: dict[str, Any] | Any,
+        call: _messages.ToolCallPart,
+        include_tool_call_id: bool = True,
+    ) -> Any:
+        """Execute a function call within a traced span, automatically recording the response."""
+        # Set up span attributes
         attributes = {
             'gen_ai.tool.name': call.tool_name,
             'logfire.msg': f'running output function: {call.tool_name}',
@@ -107,18 +111,20 @@ class TraceContext:
                 }
             )
 
+        # Execute function within span
         with self.tracer.start_as_current_span('running output function', attributes=attributes) as span:
-            yield span
+            output = await function_schema.call(args, run_context)
 
-    def record_response(self, span: Span, response: Any) -> None:
-        """Record the function response in the span if content inclusion is enabled."""
-        if self.include_content and span.is_recording():
-            from .models.instrumented import InstrumentedModel
+            # Record response if content inclusion is enabled
+            if self.include_content and span.is_recording():
+                from .models.instrumented import InstrumentedModel
 
-            span.set_attribute(
-                'tool_response',
-                response if isinstance(response, str) else json.dumps(InstrumentedModel.serialize_any(response)),
-            )
+                span.set_attribute(
+                    'tool_response',
+                    output if isinstance(output, str) else json.dumps(InstrumentedModel.serialize_any(output)),
+                )
+
+            return output
 
 
 def build_trace_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> TraceContext:
@@ -129,18 +135,6 @@ def build_trace_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
             ctx.deps.instrumentation_settings is not None and ctx.deps.instrumentation_settings.include_content
         ),
     )
-
-
-async def execute_function_call(
-    function_schema: _function_schema.FunctionSchema,
-    run_context: RunContext[AgentDepsT],
-    trace_context: TraceContext,
-    args: dict[str, Any] | Any,
-    span: Span,
-) -> Any:
-    output = await function_schema.call(args, run_context)
-    trace_context.record_response(span, output)
-    return output
 
 
 class ToolRetryError(Exception):
@@ -761,16 +755,16 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
             try:
                 # Wraps the output function call in an OpenTelemetry span.
                 if trace_context.call:
-                    span_manager = trace_context.span(trace_context.call, include_tool_call_id=True)
+                    call = trace_context.call
+                    include_tool_call_id = True
                 else:
                     function_name = getattr(self._function_schema.function, '__name__', 'output_function')
-                    span_manager = trace_context.span(
-                        _messages.ToolCallPart(tool_name=function_name, args=data), include_tool_call_id=False
-                    )
-                with span_manager as span:
-                    output = await execute_function_call(
-                        self._function_schema, run_context, trace_context, output, span
-                    )
+                    call = _messages.ToolCallPart(tool_name=function_name, args=data)
+                    include_tool_call_id = False
+
+                output = await trace_context.execute_function_with_span(
+                    self._function_schema, run_context, output, call, include_tool_call_id
+                )
             except ModelRetry as r:
                 if wrap_validation_errors:
                     m = _messages.RetryPromptPart(
@@ -946,10 +940,11 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
             # Note: PlainTextOutputProcessor is used for text responses (not tool calls),
             # so we don't have tool call attributes like gen_ai.tool.name or gen_ai.tool.call.id
             function_name = getattr(self._function_schema.function, '__name__', 'text_output_function')
-            with trace_context.span(
-                _messages.ToolCallPart(tool_name=function_name, args=args), include_tool_call_id=False
-            ) as span:
-                output = await execute_function_call(self._function_schema, run_context, trace_context, args, span)
+            call = _messages.ToolCallPart(tool_name=function_name, args=args)
+
+            output = await trace_context.execute_function_with_span(
+                self._function_schema, run_context, args, call, include_tool_call_id=False
+            )
         except ModelRetry as r:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -1007,7 +1002,11 @@ class OutputTool(Generic[OutputDataT]):
         """
         try:
             output = await self.processor.process(
-                tool_call.args, run_context, trace_context, allow_partial=allow_partial, wrap_validation_errors=False
+                tool_call.args,
+                run_context,
+                trace_context.with_call(tool_call),
+                allow_partial=allow_partial,
+                wrap_validation_errors=False,
             )
         except ValidationError as e:
             if wrap_validation_errors:

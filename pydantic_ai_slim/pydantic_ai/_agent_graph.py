@@ -531,7 +531,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             for call, output_tool in output_schema.find_tool(tool_calls):
                 try:
                     trace_context = _output.build_trace_context(ctx)
-                    result_data = await output_tool.process(call, run_context, trace_context.with_call(call))
+                    result_data = await output_tool.process(call, run_context, trace_context)
                     result_data = await _validate_output(result_data, ctx, call)
                 except _output.ToolRetryError as e:
                     # TODO: Should only increment retry stuff once per node execution, not for each tool call
