@@ -872,44 +872,73 @@ def test_output_type_function_with_retry_logfire_attributes(
 
     # Find the successful output function span attributes (should be the last one)
     output_function_attributes: list[dict[str, Any]] = []
-    for attributes in summary.attributes.values():
-        if attributes.get('gen_ai.tool.name') == 'final_result':
-            output_function_attributes.append(attributes)
+    output_function_attributes = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+    ]
 
     # Should have two spans - one failed, one successful
     assert len(output_function_attributes) >= 1
-    successful_attributes = output_function_attributes[-1]  # Last one should be successful
 
     if include_content:
-        assert successful_attributes == snapshot(
-            {
-                'gen_ai.tool.name': 'final_result',
-                'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city": "Mexico City"}',
-                'logfire.msg': 'running output function: final_result',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'tool_arguments': {'type': 'object'},
-                                'tool_response': {'type': 'object'},
-                            },
-                        }
-                    )
-                ),
-                'logfire.span_type': 'span',
-                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
-            }
+        assert output_function_attributes == snapshot(
+            [
+                {
+                    'gen_ai.tool.name': 'final_result',
+                    'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'tool_arguments': '{"city": "New York City"}',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'logfire.level_num': 17,
+                },
+                {
+                    'gen_ai.tool.name': 'final_result',
+                    'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'tool_arguments': '{"city": "Mexico City"}',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+                },
+            ]
         )
     else:
-        assert successful_attributes == snapshot(
-            {
-                'gen_ai.tool.name': 'final_result',
-                'gen_ai.tool.call.id': IsStr(),
-                'logfire.msg': 'running output function: final_result',
-                'logfire.span_type': 'span',
-            }
+        assert output_function_attributes == snapshot(
+            [
+                {
+                    'gen_ai.tool.name': 'final_result',
+                    'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'logfire.span_type': 'span',
+                    'logfire.level_num': 17,
+                },
+                {
+                    'gen_ai.tool.name': 'final_result',
+                    'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'logfire.span_type': 'span',
+                },
+            ]
         )
 
 
