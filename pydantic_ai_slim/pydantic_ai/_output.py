@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import dataclasses
 import inspect
 import json
 from abc import ABC, abstractmethod
@@ -7,9 +8,12 @@ from collections.abc import Awaitable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast, overload
 
+from opentelemetry.trace import Tracer
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator
 from typing_extensions import TypedDict, TypeVar, assert_never
+
+from pydantic_graph.nodes import GraphRunContext
 
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
@@ -29,6 +33,8 @@ from .output import (
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 
 if TYPE_CHECKING:
+    from pydantic_ai._agent_graph import DepsT, GraphAgentDeps, GraphAgentState
+
     from .profiles import ModelProfile
 
 T = TypeVar('T')
@@ -66,6 +72,71 @@ DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
 
 
+@dataclass(frozen=True)
+class TraceContext:
+    """A context for tracing output processing."""
+
+    tracer: Tracer
+    include_content: bool
+    call: _messages.ToolCallPart | None = None
+
+    def with_call(self, call: _messages.ToolCallPart):
+        return dataclasses.replace(self, call=call)
+
+    async def execute_function_with_span(
+        self,
+        function_schema: _function_schema.FunctionSchema,
+        run_context: RunContext[AgentDepsT],
+        args: dict[str, Any] | Any,
+        call: _messages.ToolCallPart,
+        include_tool_call_id: bool = True,
+    ) -> Any:
+        """Execute a function call within a traced span, automatically recording the response."""
+        # Set up span attributes
+        attributes = {
+            'gen_ai.tool.name': call.tool_name,
+            'logfire.msg': f'running output function: {call.tool_name}',
+        }
+        if include_tool_call_id:
+            attributes['gen_ai.tool.call.id'] = call.tool_call_id
+        if self.include_content:
+            attributes['tool_arguments'] = call.args_as_json_str()
+            attributes['logfire.json_schema'] = json.dumps(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'tool_arguments': {'type': 'object'},
+                        'tool_response': {'type': 'object'},
+                    },
+                }
+            )
+
+        # Execute function within span
+        with self.tracer.start_as_current_span('running output function', attributes=attributes) as span:
+            output = await function_schema.call(args, run_context)
+
+            # Record response if content inclusion is enabled
+            if self.include_content and span.is_recording():
+                from .models.instrumented import InstrumentedModel
+
+                span.set_attribute(
+                    'tool_response',
+                    output if isinstance(output, str) else json.dumps(InstrumentedModel.serialize_any(output)),
+                )
+
+            return output
+
+
+def build_trace_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> TraceContext:
+    """Build a `TraceContext` from the current agent graph run context."""
+    return TraceContext(
+        tracer=ctx.deps.tracer,
+        include_content=(
+            ctx.deps.instrumentation_settings is not None and ctx.deps.instrumentation_settings.include_content
+        ),
+    )
+
+
 class ToolRetryError(Exception):
     """Exception used to signal a `ToolRetry` message should be returned to the LLM."""
 
@@ -96,6 +167,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
             result: The result data after Pydantic validation the message content.
             tool_call: The original tool call message, `None` if there was no tool call.
             run_context: The current run context.
+            trace_context: The trace context to use for tracing the output processing.
 
         Returns:
             Result of either the validated result data (ok) or a retry message (Err).
@@ -349,6 +421,7 @@ class TextOutputSchema(OutputSchema[OutputDataT], ABC):
         self,
         text: str,
         run_context: RunContext[AgentDepsT],
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -371,6 +444,7 @@ class PlainTextOutputSchema(TextOutputSchema[OutputDataT]):
         self,
         text: str,
         run_context: RunContext[AgentDepsT],
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -379,6 +453,7 @@ class PlainTextOutputSchema(TextOutputSchema[OutputDataT]):
         Args:
             text: The output text to validate.
             run_context: The current run context.
+            trace_context: The trace context to use for tracing the output processing.
             allow_partial: If true, allow partial validation.
             wrap_validation_errors: If true, wrap the validation errors in a retry message.
 
@@ -389,7 +464,7 @@ class PlainTextOutputSchema(TextOutputSchema[OutputDataT]):
             return cast(OutputDataT, text)
 
         return await self.processor.process(
-            text, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+            text, run_context, trace_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
         )
 
 
@@ -417,6 +492,7 @@ class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         self,
         text: str,
         run_context: RunContext[AgentDepsT],
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -425,6 +501,7 @@ class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         Args:
             text: The output text to validate.
             run_context: The current run context.
+            trace_context: The trace context to use for tracing the output processing.
             allow_partial: If true, allow partial validation.
             wrap_validation_errors: If true, wrap the validation errors in a retry message.
 
@@ -432,7 +509,7 @@ class NativeOutputSchema(StructuredTextOutputSchema[OutputDataT]):
             Either the validated output data (left) or a retry message (right).
         """
         return await self.processor.process(
-            text, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+            text, run_context, trace_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
         )
 
 
@@ -468,6 +545,7 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         self,
         text: str,
         run_context: RunContext[AgentDepsT],
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -476,6 +554,7 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         Args:
             text: The output text to validate.
             run_context: The current run context.
+            trace_context: The trace context to use for tracing the output processing.
             allow_partial: If true, allow partial validation.
             wrap_validation_errors: If true, wrap the validation errors in a retry message.
 
@@ -485,7 +564,7 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         text = _utils.strip_markdown_fences(text)
 
         return await self.processor.process(
-            text, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+            text, run_context, trace_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
         )
 
 
@@ -568,6 +647,7 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         self,
         data: str,
         run_context: RunContext[AgentDepsT],
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -637,6 +717,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
         self,
         data: str | dict[str, Any] | None,
         run_context: RunContext[AgentDepsT],
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -645,6 +726,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
         Args:
             data: The output data to validate.
             run_context: The current run context.
+            trace_context: The trace context to use for tracing the output processing.
             allow_partial: If true, allow partial validation.
             wrap_validation_errors: If true, wrap the validation errors in a retry message.
 
@@ -670,8 +752,18 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
             output = output[k]
 
         if self._function_schema:
+            # Wraps the output function call in an OpenTelemetry span.
+            if trace_context.call:
+                call = trace_context.call
+                include_tool_call_id = True
+            else:
+                function_name = getattr(self._function_schema.function, '__name__', 'output_function')
+                call = _messages.ToolCallPart(tool_name=function_name, args=data)
+                include_tool_call_id = False
             try:
-                output = await self._function_schema.call(output, run_context)
+                output = await trace_context.execute_function_with_span(
+                    self._function_schema, run_context, output, call, include_tool_call_id
+                )
             except ModelRetry as r:
                 if wrap_validation_errors:
                     m = _messages.RetryPromptPart(
@@ -784,11 +876,12 @@ class UnionOutputProcessor(BaseOutputProcessor[OutputDataT]):
         self,
         data: str | dict[str, Any] | None,
         run_context: RunContext[AgentDepsT],
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
         union_object = await self._union_processor.process(
-            data, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+            data, run_context, trace_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
         )
 
         result = union_object.result
@@ -804,7 +897,7 @@ class UnionOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 raise
 
         return await processor.process(
-            data, run_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
+            data, run_context, trace_context, allow_partial=allow_partial, wrap_validation_errors=wrap_validation_errors
         )
 
 
@@ -835,13 +928,20 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
         self,
         data: str,
         run_context: RunContext[AgentDepsT],
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
         args = {self._str_argument_name: data}
-
+        # Wraps the output function call in an OpenTelemetry span.
+        # Note: PlainTextOutputProcessor is used for text responses (not tool calls),
+        # so we don't have tool call attributes like gen_ai.tool.name or gen_ai.tool.call.id
+        function_name = getattr(self._function_schema.function, '__name__', 'text_output_function')
+        call = _messages.ToolCallPart(tool_name=function_name, args=args)
         try:
-            output = await self._function_schema.call(args, run_context)
+            output = await trace_context.execute_function_with_span(
+                self._function_schema, run_context, args, call, include_tool_call_id=False
+            )
         except ModelRetry as r:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
@@ -881,6 +981,7 @@ class OutputTool(Generic[OutputDataT]):
         self,
         tool_call: _messages.ToolCallPart,
         run_context: RunContext[AgentDepsT],
+        trace_context: TraceContext,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
@@ -889,6 +990,7 @@ class OutputTool(Generic[OutputDataT]):
         Args:
             tool_call: The tool call from the LLM to validate.
             run_context: The current run context.
+            trace_context: The trace context to use for tracing the output processing.
             allow_partial: If true, allow partial validation.
             wrap_validation_errors: If true, wrap the validation errors in a retry message.
 
@@ -897,7 +999,11 @@ class OutputTool(Generic[OutputDataT]):
         """
         try:
             output = await self.processor.process(
-                tool_call.args, run_context, allow_partial=allow_partial, wrap_validation_errors=False
+                tool_call.args,
+                run_context,
+                trace_context.with_call(tool_call),
+                allow_partial=allow_partial,
+                wrap_validation_errors=False,
             )
         except ValidationError as e:
             if wrap_validation_errors:
