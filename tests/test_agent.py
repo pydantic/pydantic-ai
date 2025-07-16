@@ -923,6 +923,7 @@ def test_output_type_text_output_function_with_retry():
                 parts=[
                     RetryPromptPart(
                         content='City not found, I only know Mexico City',
+                        tool_name='get_weather',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -930,7 +931,7 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
-                usage=Usage(requests=1, request_tokens=70, response_tokens=5, total_tokens=75),
+                usage=Usage(requests=1, request_tokens=68, response_tokens=5, total_tokens=73),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
             ),
@@ -1648,6 +1649,7 @@ Don't include any text or Markdown fencing before or after.\
                 parts=[
                     RetryPromptPart(
                         content='City not found, I only know Mexico City',
+                        tool_name='get_weather',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -1655,7 +1657,7 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
-                usage=Usage(requests=1, request_tokens=70, response_tokens=11, total_tokens=81),
+                usage=Usage(requests=1, request_tokens=68, response_tokens=11, total_tokens=79),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
             ),
