@@ -83,6 +83,7 @@ nav:
       - api/models/gemini.md
       - api/models/google.md
       - api/models/groq.md
+      - api/models/huggingface.md
       - api/models/instrumented.md
       - api/models/mistral.md
       - api/models/test.md

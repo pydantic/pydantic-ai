@@ -317,6 +317,11 @@ def openrouter_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def huggingface_api_key() -> str:
+    return os.getenv('HF_TOKEN', 'hf_token')
+
+
+@pytest.fixture(scope='session')
 def heroku_inference_key() -> str:
     return os.getenv('HEROKU_INFERENCE_KEY', 'mock-api-key')
 
@@ -398,6 +403,7 @@ def model(
     groq_api_key: str,
     co_api_key: str,
     gemini_api_key: str,
+    huggingface_api_key: str,
     bedrock_provider: BedrockProvider,
 ) -> Model:  # pragma: lax no cover
     try:
@@ -440,6 +446,14 @@ def model(
             from pydantic_ai.models.bedrock import BedrockConverseModel
 
             return BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+        elif request.param == 'huggingface':
+            from pydantic_ai.models.huggingface import HuggingFaceModel
+            from pydantic_ai.providers.huggingface import HuggingFaceProvider
+
+            return HuggingFaceModel(
+                'Qwen/Qwen2.5-72B-Instruct',
+                provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
+            )
         else:
             raise ValueError(f'Unknown model: {request.param}')
     except ImportError:
