@@ -49,7 +49,6 @@ try:
         ChatCompletionOutput,
         ChatCompletionOutputMessage,
         ChatCompletionStreamOutput,
-        InferenceTimeoutError,
     )
     from huggingface_hub.errors import HfHubHTTPError
 
@@ -88,11 +87,9 @@ You can browse available models [here](https://huggingface.co/models?pipeline_ta
 
 
 class HuggingFaceModelSettings(ModelSettings, total=False):
-    """Settings used for a Hugging Face model request.
+    """Settings used for a Hugging Face model request."""
 
-    ALL FIELDS MUST BE `huggingface_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
-
+    # ALL FIELDS MUST BE `huggingface_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     # This class is a placeholder for any future huggingface-specific settings
 
 
@@ -220,20 +217,18 @@ class HuggingFaceModel(Model):
                 top_logprobs=model_settings.get('top_logprobs', None),
                 extra_body=model_settings.get('extra_body'),  # type: ignore
             )
-        except (InferenceTimeoutError, aiohttp.ClientResponseError, HfHubHTTPError) as e:
-            if isinstance(e, aiohttp.ClientResponseError):
-                raise ModelHTTPError(
-                    status_code=e.status,
-                    model_name=self.model_name,
-                    body=e.response_error_payload,  # type: ignore
-                ) from e
-            elif isinstance(e, HfHubHTTPError):
-                raise ModelHTTPError(
-                    status_code=e.response.status_code,
-                    model_name=self.model_name,
-                    body=e.response.content,
-                ) from e
-            raise  # pragma: lax no cover
+        except aiohttp.ClientResponseError as e:
+            raise ModelHTTPError(
+                status_code=e.status,
+                model_name=self.model_name,
+                body=e.response_error_payload,  # type: ignore
+            ) from e
+        except HfHubHTTPError as e:
+            raise ModelHTTPError(
+                status_code=e.response.status_code,
+                model_name=self.model_name,
+                body=e.response.content,
+            ) from e
 
     def _process_response(self, response: ChatCompletionOutput) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
