@@ -590,7 +590,7 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.Usage:
         details['thoughts_tokens'] = thoughts_token_count
 
     if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count'):
-        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count  # pragma: no cover
+        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count
 
     for key, metadata_details in metadata.items():
         if key.endswith('_details') and metadata_details:
