@@ -64,6 +64,7 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for a while
 
 [tool.uv.sources]
+pydantic-ai = { workspace = true }
 pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
