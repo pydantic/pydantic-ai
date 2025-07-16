@@ -28,6 +28,7 @@ nav:
           - models/cohere.md
           - models/groq.md
           - models/mistral.md
+          - models/huggingface.md
       - dependencies.md
       - tools.md
       - toolsets.md
