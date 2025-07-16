@@ -2,13 +2,22 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Protocol, TypeVar
 
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
-from ..tools import ToolDefinition
+from ..tools import ToolDefinition, ToolsPrepareFunc
+
+if TYPE_CHECKING:
+    from .filtered import FilteredToolset
+    from .prefixed import PrefixedToolset
+    from .prepared import PreparedToolset
+    from .renamed import RenamedToolset
+    from .wrapper import WrapperToolset
+
+WrapperT = TypeVar('WrapperT', bound='WrapperToolset[Any]')
 
 
 class SchemaValidatorProt(Protocol):
@@ -109,3 +118,48 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
         """Run a visitor function on all concrete toolsets that are not wrappers (i.e. they implement their own tool listing and calling)."""
         return visitor(self)
+
+    def filtered(
+        self, filter_func: Callable[[RunContext[AgentDepsT], ToolDefinition], bool]
+    ) -> FilteredToolset[AgentDepsT]:
+        """Returns a new toolset that filters this toolset's tools using a filter function that takes the agent context and the tool definition.
+
+        See [toolset docs](../toolsets.md#filtering-tools) for more information.
+        """
+        from .filtered import FilteredToolset
+
+        return FilteredToolset(self, filter_func)
+
+    def prefixed(self, prefix: str) -> PrefixedToolset[AgentDepsT]:
+        """Returns a new toolset that prefixes the names of this toolset's tools.
+
+        See [toolset docs](../toolsets.md#prefixing-tool-names) for more information.
+        """
+        from .prefixed import PrefixedToolset
+
+        return PrefixedToolset(self, prefix)
+
+    def prepared(self, prepare_func: ToolsPrepareFunc[AgentDepsT]) -> PreparedToolset[AgentDepsT]:
+        """Returns a new toolset that prepares this toolset's tools using a prepare function that takes the agent context and the original tool definitions.
+
+        See [toolset docs](../toolsets.md#preparing-tool-definitions) for more information.
+        """
+        from .prepared import PreparedToolset
+
+        return PreparedToolset(self, prepare_func)
+
+    def renamed(self, name_map: dict[str, str]) -> RenamedToolset[AgentDepsT]:
+        """Returns a new toolset that renames this toolset's tools using a dictionary mapping new names to original names.
+
+        See [toolset docs](../toolsets.md#renaming-tools) for more information.
+        """
+        from .renamed import RenamedToolset
+
+        return RenamedToolset(self, name_map)
+
+    def wrap(self, wrapper_cls: type[WrapperT], *args: Any, **kwargs: Any) -> WrapperT:
+        """Returns an instance of the provided wrapper class wrapping this toolset, with all arguments passed to the wrapper class constructor.
+
+        See [toolset docs](../toolsets.md#wrapping-a-toolset) for more information.
+        """
+        return wrapper_cls(self, *args, **kwargs)

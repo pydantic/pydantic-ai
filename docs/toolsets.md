@@ -147,14 +147,15 @@ _(This example is complete, it can be run "as is")_
 
 [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset] wraps a toolset and filters available tools ahead of each step of the run based on a user-defined function that is passed the agent [run context][pydantic_ai.tools.RunContext] and each tool's [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] and returns a boolean to indicate whether or not a given tool should be available.
 
+To easily chain different modifications, you can also call [`filtered()`][pydantic_ai.toolsets.AbstractToolset.filtered] on any toolset instead of directly constructing a `FilteredToolset`.
+
 ```python {title="filtered_toolset.py" requires="function_toolset.py,combined_toolset.py"}
 from combined_toolset import combined_toolset
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import FilteredToolset
 
-filtered_toolset = FilteredToolset(combined_toolset, lambda ctx, tool_def: 'fahrenheit' not in tool_def.name)
+filtered_toolset = combined_toolset.filtered(lambda ctx, tool_def: 'fahrenheit' not in tool_def.name)
 
 test_model = TestModel() # (1)!
 agent = Agent(test_model, toolsets=[filtered_toolset])
@@ -171,17 +172,22 @@ _(This example is complete, it can be run "as is")_
 
 [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset] wraps a toolset and adds a prefix to each tool name to prevent tool name conflicts between different toolsets.
 
+To easily chain different modifications, you can also call [`prefixed()`][pydantic_ai.toolsets.AbstractToolset.prefixed] on any toolset instead of directly constructing a `PrefixedToolset`.
+
 ```python {title="combined_toolset.py" requires="function_toolset.py"}
 from function_toolset import weather_toolset, datetime_toolset
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import CombinedToolset, PrefixedToolset
+from pydantic_ai.toolsets import CombinedToolset
 
 
-prefixed_weather_toolset = PrefixedToolset(weather_toolset, prefix='weather')
-prefixed_datetime_toolset = PrefixedToolset(datetime_toolset, prefix='datetime')
-combined_toolset = CombinedToolset([prefixed_weather_toolset, prefixed_datetime_toolset])
+combined_toolset = CombinedToolset(
+    [
+        weather_toolset.prefixed('weather'),
+        datetime_toolset.prefixed('datetime')
+    ]
+)
 
 test_model = TestModel() # (1)!
 agent = Agent(test_model, toolsets=[combined_toolset])
@@ -203,18 +209,18 @@ _(This example is complete, it can be run "as is")_
 
 ### Renaming Tools
 
-[`RenamedToolset`][pydantic_ai.toolsets.RenamedToolset] wraps a toolset and lets you rename tools using a dictionary mapping old names to new names. This is useful when the names provided by a toolset are ambiguous or would conflict with tools defined by other toolsets, but [prefixing them](#prefixing-tool-names) creates a name that is unnecessarily long or could be confusing to the model.
+[`RenamedToolset`][pydantic_ai.toolsets.RenamedToolset] wraps a toolset and lets you rename tools using a dictionary mapping new names to original names. This is useful when the names provided by a toolset are ambiguous or would conflict with tools defined by other toolsets, but [prefixing them](#prefixing-tool-names) creates a name that is unnecessarily long or could be confusing to the model.
+
+To easily chain different modifications, you can also call [`renamed()`][pydantic_ai.toolsets.AbstractToolset.renamed] on any toolset instead of directly constructing a `RenamedToolset`.
 
 ```python {title="renamed_toolset.py" requires="function_toolset.py,combined_toolset.py"}
 from combined_toolset import combined_toolset
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import RenamedToolset
 
 
-renamed_toolset = RenamedToolset(
-    combined_toolset,
+renamed_toolset = combined_toolset.renamed(
     {
         'current_time': 'datetime_now',
         'temperature_celsius': 'weather_temperature_celsius',
@@ -243,6 +249,8 @@ This is the toolset-specific equivalent of the [`prepare_tools`](tools.md#prepar
 
 Note that it is not possible to add or rename tools using `PreparedToolset`. Instead, you can use [`FunctionToolset.add_function()`](#function-toolset) or [`RenamedToolset`](#renaming-tools).
 
+To easily chain different modifications, you can also call [`prepared()`][pydantic_ai.toolsets.AbstractToolset.prepared] on any toolset instead of directly constructing a `PreparedToolset`.
+
 ```python {title="prepared_toolset.py" requires="function_toolset.py,combined_toolset.py,renamed_toolset.py"}
 from dataclasses import replace
 from typing import Union
@@ -252,7 +260,6 @@ from renamed_toolset import renamed_toolset
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import PreparedToolset
 
 descriptions = {
     'temperature_celsius': 'Get the temperature in degrees Celsius',
@@ -270,7 +277,7 @@ async def add_descriptions(ctx: RunContext, tool_defs: list[ToolDefinition]) -> 
         in tool_defs
     ]
 
-prepared_toolset = PreparedToolset(renamed_toolset, add_descriptions)
+prepared_toolset = renamed_toolset.prepared(add_descriptions)
 
 test_model = TestModel() # (1)!
 agent = Agent(test_model, toolsets=[prepared_toolset])
@@ -327,7 +334,9 @@ print(test_model.last_model_request_parameters.function_tools)
 
 [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] wraps another toolset and delegates all responsibility to it.
 
-This is a no-op by default, but enables some useful abilities:
+To easily chain different modifications, you can also call [`wrap()`][pydantic_ai.toolsets.AbstractToolset.wrap] on any toolset instead of directly constructing an instance of (a subclass of) `WrapperToolset`.
+
+`WrapperToolset` is a no-op by default, but enables some useful abilities:
 
 #### Changing Tool Execution
 
@@ -358,7 +367,7 @@ class LoggingToolset(WrapperToolset):
             return result
 
 
-logging_toolset = LoggingToolset(prepared_toolset)
+logging_toolset = prepared_toolset.wrap(LoggingToolset)
 
 agent = Agent(TestModel(), toolsets=[logging_toolset]) # (1)!
 result = agent.run_sync('Call all the tools')
@@ -369,8 +378,8 @@ print(LOG)
     "Calling tool 'temperature_fahrenheit' with args: {'city': 'a'}",
     "Calling tool 'weather_conditions' with args: {'city': 'a'}",
     "Calling tool 'current_time' with args: {}",
-    "Finished calling tool 'temperature_fahrenheit' with result: 69.8",
     "Finished calling tool 'temperature_celsius' with result: 21.0",
+    "Finished calling tool 'temperature_fahrenheit' with result: 69.8",
     'Finished calling tool \'weather_conditions\' with result: "It\'s raining"',
     "Finished calling tool 'current_time' with result: datetime.datetime(...)",
 ]
@@ -383,7 +392,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Modifying Toolsets During a Run
 
-You can change the `WrapperAgent`'s `wrapped` property during an agent run to swap out one toolset for another starting at the next run step.
+You can change the `WrapperToolset`'s `wrapped` property during an agent run to swap out one toolset for another starting at the next run step.
 
 To add or remove available toolsets, you can wrap a [`CombinedToolset`](#combining-toolsets) and replace it during the run with one that can include fewer, more, or entirely different toolsets.
 

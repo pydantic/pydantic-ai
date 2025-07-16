@@ -11,7 +11,10 @@ from .wrapper import WrapperToolset
 
 @dataclass
 class PreparedToolset(WrapperToolset[AgentDepsT]):
-    """A toolset that prepares the tools it contains using a prepare function that takes the agent context and the original tool definitions."""
+    """A toolset that prepares the tools it contains using a prepare function that takes the agent context and the original tool definitions.
+
+    See [toolset docs](../toolsets.md#preparing-tool-definitions) for more information.
+    """
 
     prepare_func: ToolsPrepareFunc[AgentDepsT]
 
