@@ -752,16 +752,15 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
             output = output[k]
 
         if self._function_schema:
+            # Wraps the output function call in an OpenTelemetry span.
+            if trace_context.call:
+                call = trace_context.call
+                include_tool_call_id = True
+            else:
+                function_name = getattr(self._function_schema.function, '__name__', 'output_function')
+                call = _messages.ToolCallPart(tool_name=function_name, args=data)
+                include_tool_call_id = False
             try:
-                # Wraps the output function call in an OpenTelemetry span.
-                if trace_context.call:
-                    call = trace_context.call
-                    include_tool_call_id = True
-                else:
-                    function_name = getattr(self._function_schema.function, '__name__', 'output_function')
-                    call = _messages.ToolCallPart(tool_name=function_name, args=data)
-                    include_tool_call_id = False
-
                 output = await trace_context.execute_function_with_span(
                     self._function_schema, run_context, output, call, include_tool_call_id
                 )
@@ -934,14 +933,12 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
         args = {self._str_argument_name: data}
-
+        # Wraps the output function call in an OpenTelemetry span.
+        # Note: PlainTextOutputProcessor is used for text responses (not tool calls),
+        # so we don't have tool call attributes like gen_ai.tool.name or gen_ai.tool.call.id
+        function_name = getattr(self._function_schema.function, '__name__', 'text_output_function')
+        call = _messages.ToolCallPart(tool_name=function_name, args=args)
         try:
-            # Wraps the output function call in an OpenTelemetry span.
-            # Note: PlainTextOutputProcessor is used for text responses (not tool calls),
-            # so we don't have tool call attributes like gen_ai.tool.name or gen_ai.tool.call.id
-            function_name = getattr(self._function_schema.function, '__name__', 'text_output_function')
-            call = _messages.ToolCallPart(tool_name=function_name, args=args)
-
             output = await trace_context.execute_function_with_span(
                 self._function_schema, run_context, args, call, include_tool_call_id=False
             )
