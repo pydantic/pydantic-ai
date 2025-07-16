@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast, overload
 
 from pydantic import TypeAdapter, ValidationError
-from pydantic_core import SchemaValidator
+from pydantic_core import SchemaValidator, to_json
 from typing_extensions import Self, TypedDict, TypeVar, assert_never
 
 from . import _function_schema, _utils, messages as _messages
@@ -67,6 +67,48 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
+
+
+async def execute_output_function_with_span(
+    function_schema: _function_schema.FunctionSchema,
+    run_context: RunContext[AgentDepsT],
+    args: dict[str, Any] | Any,
+) -> Any:
+    """Execute a function call within a traced span, automatically recording the response."""
+    # Set up span attributes
+    tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
+    attributes = {
+        'gen_ai.tool.name': tool_name,
+        'logfire.msg': f'running output function: {tool_name}',
+    }
+    if run_context.tool_call_id:
+        attributes['gen_ai.tool.call.id'] = run_context.tool_call_id
+    if run_context.trace_include_content:
+        attributes['tool_arguments'] = to_json(args).decode()
+        attributes['logfire.json_schema'] = json.dumps(
+            {
+                'type': 'object',
+                'properties': {
+                    'tool_arguments': {'type': 'object'},
+                    'tool_response': {'type': 'object'},
+                },
+            }
+        )
+
+    # Execute function within span
+    with run_context.tracer.start_as_current_span('running output function', attributes=attributes) as span:
+        output = await function_schema.call(args, run_context)
+
+        # Record response if content inclusion is enabled
+        if run_context.trace_include_content and span.is_recording():
+            from .models.instrumented import InstrumentedModel
+
+            span.set_attribute(
+                'tool_response',
+                output if isinstance(output, str) else json.dumps(InstrumentedModel.serialize_any(output)),
+            )
+
+        return output
 
 
 @dataclass
@@ -655,7 +697,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
             output = output[k]
 
         if self._function_schema:
-            output = await self._function_schema.call(output, run_context)
+            output = await execute_output_function_with_span(self._function_schema, run_context, output)
 
         return output
 
@@ -815,9 +857,8 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
         args = {self._str_argument_name: data}
-
         try:
-            output = await self._function_schema.call(args, run_context)
+            output = await execute_output_function_with_span(self._function_schema, run_context, args)
         except ModelRetry as r:
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(

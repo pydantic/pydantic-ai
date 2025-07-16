@@ -563,6 +563,9 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         usage=ctx.state.usage,
         prompt=ctx.deps.prompt,
         messages=ctx.state.message_history,
+        tracer=ctx.deps.tracer,
+        trace_include_content=ctx.deps.instrumentation_settings is not None
+        and ctx.deps.instrumentation_settings.include_content,
         run_step=ctx.state.run_step,
     )
 

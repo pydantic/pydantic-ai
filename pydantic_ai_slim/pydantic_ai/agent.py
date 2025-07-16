@@ -752,12 +752,21 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             run_step=0,
         )
 
+        if isinstance(model_used, InstrumentedModel):
+            instrumentation_settings = model_used.instrumentation_settings
+            tracer = model_used.instrumentation_settings.tracer
+        else:
+            instrumentation_settings = None
+            tracer = NoOpTracer()
+
         run_context = RunContext[AgentDepsT](
             deps=deps,
             model=model_used,
             usage=usage,
             prompt=user_prompt,
             messages=state.message_history,
+            tracer=tracer,
+            trace_include_content=instrumentation_settings is not None and instrumentation_settings.include_content,
             run_step=state.run_step,
         )
 
@@ -769,13 +778,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         merged_settings = merge_model_settings(model_used.settings, self.model_settings)
         model_settings = merge_model_settings(merged_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
-
-        if isinstance(model_used, InstrumentedModel):
-            instrumentation_settings = model_used.instrumentation_settings
-            tracer = model_used.instrumentation_settings.tracer
-        else:
-            instrumentation_settings = None
-            tracer = NoOpTracer()
         agent_name = self.name or 'agent'
         run_span = tracer.start_span(
             'agent run',

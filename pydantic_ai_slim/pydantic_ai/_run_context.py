@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from dataclasses import field
 from typing import TYPE_CHECKING, Generic
 
+from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
 
 from . import _utils, messages as _messages
@@ -31,6 +32,10 @@ class RunContext(Generic[AgentDepsT]):
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""
+    tracer: Tracer = field(default_factory=NoOpTracer)
+    """The tracer to use for tracing the run."""
+    trace_include_content: bool = False
+    """Whether to include the content of the messages in the trace."""
     retries: dict[str, int] = field(default_factory=dict)
     """Number of retries for each tool so far."""
     tool_call_id: str | None = None

@@ -3017,7 +3017,7 @@ docs = [
     { name = "mkdocs-llmstxt", specifier = ">=0.2.0" },
     { name = "mkdocs-material", extras = ["imaging"], specifier = ">=9.5.45" },
     { name = "mkdocstrings-python", specifier = ">=1.12.2" },
-    { name = "pydantic-ai", extras = ["a2a"] },
+    { name = "pydantic-ai", extras = ["a2a"], editable = "." },
 ]
 docs-upload = [
     { name = "algoliasearch", specifier = ">=4.12.0" },
