@@ -90,6 +90,7 @@ class TraceContext:
         args: dict[str, Any] | Any,
         call: _messages.ToolCallPart,
         include_tool_call_id: bool = True,
+        wrap_validation_errors: bool = True,
     ) -> Any:
         """Execute a function call within a traced span, automatically recording the response."""
         # Set up span attributes
@@ -113,7 +114,20 @@ class TraceContext:
 
         # Execute function within span
         with self.tracer.start_as_current_span('running output function', attributes=attributes) as span:
-            output = await function_schema.call(args, run_context)
+            try:
+                output = await function_schema.call(args, run_context)
+            except ModelRetry as r:
+                if wrap_validation_errors:
+                    m = _messages.RetryPromptPart(
+                        content=r.message,
+                    )
+                    if call:
+                        m.tool_name = call.tool_name
+                    if include_tool_call_id and call:
+                        m.tool_call_id = call.tool_call_id
+                    raise ToolRetryError(m) from r
+                else:
+                    raise
 
             # Record response if content inclusion is enabled
             if self.include_content and span.is_recording():
@@ -760,18 +774,10 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 function_name = getattr(self._function_schema.function, '__name__', 'output_function')
                 call = _messages.ToolCallPart(tool_name=function_name, args=data)
                 include_tool_call_id = False
-            try:
-                output = await trace_context.execute_function_with_span(
-                    self._function_schema, run_context, output, call, include_tool_call_id
-                )
-            except ModelRetry as r:
-                if wrap_validation_errors:
-                    m = _messages.RetryPromptPart(
-                        content=r.message,
-                    )
-                    raise ToolRetryError(m) from r
-                else:
-                    raise
+
+            output = await trace_context.execute_function_with_span(
+                self._function_schema, run_context, output, call, include_tool_call_id, wrap_validation_errors
+            )
 
         return output
 
@@ -938,18 +944,15 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
         # so we don't have tool call attributes like gen_ai.tool.name or gen_ai.tool.call.id
         function_name = getattr(self._function_schema.function, '__name__', 'text_output_function')
         call = _messages.ToolCallPart(tool_name=function_name, args=args)
-        try:
-            output = await trace_context.execute_function_with_span(
-                self._function_schema, run_context, args, call, include_tool_call_id=False
-            )
-        except ModelRetry as r:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    content=r.message,
-                )
-                raise ToolRetryError(m) from r
-            else:
-                raise  # pragma: no cover
+
+        output = await trace_context.execute_function_with_span(
+            self._function_schema,
+            run_context,
+            args,
+            call,
+            include_tool_call_id=False,
+            wrap_validation_errors=wrap_validation_errors,
+        )
 
         return cast(OutputDataT, output)
 
