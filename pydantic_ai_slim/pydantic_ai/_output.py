@@ -95,7 +95,6 @@ async def execute_output_function_with_span(
             }
         )
 
-    # Execute function within span
     with run_context.tracer.start_as_current_span('running output function', attributes=attributes) as span:
         output = await function_schema.call(args, run_context)
 

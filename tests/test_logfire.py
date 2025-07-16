@@ -702,6 +702,7 @@ Tool error
 
 Fix the errors and try again.\
 """,
+                    'logfire.level_num': 17,
                 }
             )
         else:
@@ -729,25 +730,47 @@ Fix the errors and try again.\
                 }
             )
     else:
-        assert tool_attributes == snapshot(
-            {
-                'gen_ai.tool.name': 'add_numbers',
-                'gen_ai.tool.call.id': IsStr(),
-                'logfire.msg': 'running tool: add_numbers',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
-                            },
-                        }
-                    )
-                ),
-                'logfire.span_type': 'span',
-            }
-        )
+        if tool_error:
+            assert tool_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'add_numbers',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'logfire.msg': 'running tool: add_numbers',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'logfire.level_num': 17,
+                }
+            )
+        else:
+            assert tool_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'add_numbers',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'logfire.msg': 'running tool: add_numbers',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                }
+            )
 
 
 class WeatherInfo(BaseModel):
