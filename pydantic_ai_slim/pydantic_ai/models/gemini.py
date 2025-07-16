@@ -253,7 +253,7 @@ class GeminiModel(Model):
 
         if gemini_labels := model_settings.get('gemini_labels'):
             if self._system == 'google-vertex':
-                request_data['labels'] = gemini_labels  # pragma: lax no cover
+                request_data['labels'] = gemini_labels
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
@@ -415,7 +415,7 @@ def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _Gemi
     if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
         config['frequency_penalty'] = frequency_penalty
     if (thinkingConfig := model_settings.get('gemini_thinking_config')) is not None:
-        config['thinking_config'] = thinkingConfig  # pragma: lax no cover
+        config['thinking_config'] = thinkingConfig
     return config
 
 
