@@ -15,7 +15,11 @@ name = "pydantic-evals"
 dynamic = ["version", "dependencies"]
 description = "Framework for evaluating stochastic code execution, especially code making use of LLMs"
 authors = [
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
     { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Douwe Maan", email = "douwe@pydantic.dev" },
 ]
 license = "MIT"
 readme = "README.md"
