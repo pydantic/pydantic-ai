@@ -2,13 +2,29 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, Generic
+from typing import Any, Callable, Generic, Literal, Protocol
 
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
+
+
+class SchemaValidatorProt(Protocol):
+    """Protocol for a Pydantic Core `SchemaValidator` or `PluggableSchemaValidator` (which is private but API-compatible)."""
+
+    def validate_json(
+        self,
+        input: str | bytes | bytearray,
+        *,
+        allow_partial: bool | Literal['off', 'on', 'trailing-strings'] = False,
+        **kwargs: Any,
+    ) -> Any: ...
+
+    def validate_python(
+        self, input: Any, *, allow_partial: bool | Literal['off', 'on', 'trailing-strings'] = False, **kwargs: Any
+    ) -> Any: ...
 
 
 @dataclass
@@ -23,9 +39,16 @@ class ToolsetTool(Generic[AgentDepsT]):
     """
 
     toolset: AbstractToolset[AgentDepsT]
+    """The toolset that provided this tool, for use in error messages."""
     tool_def: ToolDefinition
+    """The tool definition for this tool, including the name, description, and parameters."""
     max_retries: int
-    args_validator: SchemaValidator
+    """The maximum number of retries to attempt if the tool call fails."""
+    args_validator: SchemaValidator | SchemaValidatorProt
+    """The Pydantic Core validator for the tool's arguments.
+
+    For example, a [`pydantic.TypeAdapter(...).validator`](https://docs.pydantic.dev/latest/concepts/type_adapter/) or [`pydantic_core.SchemaValidator`](https://docs.pydantic.dev/latest/api/pydantic_core/#pydantic_core.SchemaValidator).
+    """
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):
