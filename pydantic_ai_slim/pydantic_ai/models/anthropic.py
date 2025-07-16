@@ -361,7 +361,7 @@ class AnthropicModel(Model):
                         user_location=user_location,
                     )
                 )
-            elif isinstance(tool, CodeExecutionTool):
+            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
         return tools
 
@@ -627,7 +627,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             elif isinstance(event, BetaRawMessageDeltaEvent):
                 pass
 
-            elif isinstance(event, (BetaRawContentBlockStopEvent, BetaRawMessageStopEvent)):
+            elif isinstance(event, (BetaRawContentBlockStopEvent, BetaRawMessageStopEvent)):  # pragma: no branch
                 current_block = None
 
     @property

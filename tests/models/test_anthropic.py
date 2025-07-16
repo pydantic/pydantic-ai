@@ -1517,11 +1517,8 @@ print(f"3 * 12390 = {result}")\
 async def test_anthropic_server_tool_pass_history_to_another_provider(
     allow_model_requests: None, anthropic_api_key: str, openai_api_key: str
 ):
-    try:
-        from pydantic_ai.models.openai import OpenAIResponsesModel
-        from pydantic_ai.providers.openai import OpenAIProvider
-    except ImportError:
-        pytest.skip('OpenAI is not installed')
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
 
     openai_model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
     anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))

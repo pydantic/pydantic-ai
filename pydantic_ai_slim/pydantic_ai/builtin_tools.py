@@ -18,6 +18,7 @@ class AbstractBuiltinTool(ABC):
     The builtin tools are passed to the model as part of the `ModelRequestParameters`.
     """
 
+    # TODO(Marcelo): We need to handle custom tool definitions per model base.
     def handle_custom_tool_definition(self, model: str) -> Any: ...
 
 

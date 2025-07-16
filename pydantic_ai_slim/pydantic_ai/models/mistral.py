@@ -503,11 +503,11 @@ class MistralModel(Model):
                         pass
                     elif isinstance(part, ToolCallPart):
                         tool_calls.append(self._map_tool_call(part))
-                    elif isinstance(part, ServerToolCallPart):
+                    elif isinstance(part, ServerToolCallPart):  # pragma: no cover
                         # Handle ServerToolCallPart the same as ToolCallPart
                         # Never returned from mistral
                         pass
-                    elif isinstance(part, ServerToolReturnPart):
+                    elif isinstance(part, ServerToolReturnPart):  # pragma: no cover
                         # For now, we'll add ServerToolReturnPart as text content
                         # Never returned from mistral
                         pass

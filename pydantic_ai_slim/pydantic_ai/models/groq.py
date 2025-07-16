@@ -317,11 +317,11 @@ class GroqModel(Model):
                     elif isinstance(item, ThinkingPart):
                         # Skip thinking parts when mapping to Groq messages
                         continue
-                    elif isinstance(item, ServerToolCallPart):
+                    elif isinstance(item, ServerToolCallPart):  # pragma: no cover
                         # ServerToolCallPart is handled separately in server-side tools
                         # Never returned from groq
                         pass
-                    elif isinstance(item, ServerToolReturnPart):
+                    elif isinstance(item, ServerToolReturnPart):  # pragma: no cover
                         # ServerToolReturnPart is handled separately in server-side tools
                         # Never returned from groq
                         pass

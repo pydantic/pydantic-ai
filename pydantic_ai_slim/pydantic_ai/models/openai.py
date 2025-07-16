@@ -418,7 +418,7 @@ class OpenAIModel(Model):
 
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.builtin_tools:
-            if isinstance(tool, WebSearchTool):
+            if isinstance(tool, WebSearchTool):  # pragma: no branch
                 if tool.user_location:
                     return WebSearchOptions(
                         search_context_size=tool.search_context_size,
@@ -450,7 +450,7 @@ class OpenAIModel(Model):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     # OpenAI doesn't return server tools calls.
-                    elif isinstance(item, (ServerToolCallPart, ServerToolReturnPart)):
+                    elif isinstance(item, (ServerToolCallPart, ServerToolReturnPart)):  # pragma: no cover
                         continue
                     else:
                         assert_never(item)
