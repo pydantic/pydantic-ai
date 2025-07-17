@@ -77,7 +77,7 @@ TEST_CASES = [
         'grok:grok-3',
         'grok-3',
         'grok',
-        'openai',
+        'grok',
         'OpenAIModel',
     ),
     (
@@ -85,7 +85,7 @@ TEST_CASES = [
         'grok-4',  # Note that the provider and model name are both "grok", so the plain string grok with no prefix works because its also the provider name
         'grok-4',
         'grok',
-        'openai',
+        'grok',
         'OpenAIModel',
     ),
 ]
