@@ -484,8 +484,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
             parts.append({'function_call': function_call})
         elif isinstance(item, TextPart):
-            if item.content:  # pragma: no branch
-                parts.append({'text': item.content})
+            parts.append({'text': item.content})
         elif isinstance(item, ThinkingPart):  # pragma: no cover
             # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
             # please open an issue. The below code is the code to send thinking to the provider.
