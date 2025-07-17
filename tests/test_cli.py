@@ -144,7 +144,6 @@ def test_list_models(capfd: CaptureFixture[str]):
         'cohere',
         'deepseek',
         'heroku',
-        'grok',
         'moonshotai',
         'huggingface',
     )
