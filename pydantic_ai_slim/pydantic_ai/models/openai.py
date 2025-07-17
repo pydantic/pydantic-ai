@@ -50,7 +50,7 @@ from . import (
 
 try:
     from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream, NotGiven
-    from openai.types import ChatModel, chat, responses
+    from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
         ChatCompletionContentPartImageParam,
@@ -80,7 +80,7 @@ __all__ = (
     'OpenAIModelName',
 )
 
-OpenAIModelName = Union[str, ChatModel]
+OpenAIModelName = Union[str, AllModels]
 """
 Possible OpenAI model names.
 
