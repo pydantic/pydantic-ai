@@ -441,8 +441,8 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
 
 
 @pytest.mark.vcr()
-async def test_tool_returning_text_resource_1(allow_model_requests: None, agent: Agent):
-    async with agent.run_mcp_servers():
+async def test_tool_returning_text_resource_link(allow_model_requests: None, agent: Agent):
+    async with agent:
         result = await agent.run('Get me the product name')
         assert result.output == snapshot('The product name is "PydanticAI".')
         assert result.all_messages() == snapshot(
@@ -458,7 +458,7 @@ async def test_tool_returning_text_resource_1(allow_model_requests: None, agent:
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_product_name_1',
+                            tool_name='get_product_name_link',
                             args='{}',
                             tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
                         )
@@ -483,7 +483,7 @@ async def test_tool_returning_text_resource_1(allow_model_requests: None, agent:
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='get_product_name_1',
+                            tool_name='get_product_name_link',
                             content='PydanticAI',
                             tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
                             timestamp=IsDatetime(),
@@ -594,8 +594,10 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
 
 
 @pytest.mark.vcr()
-async def test_tool_returning_image_resource_1(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
-    async with agent.run_mcp_servers():
+async def test_tool_returning_image_resource_link(
+    allow_model_requests: None, agent: Agent, image_content: BinaryContent
+):
+    async with agent:
         result = await agent.run('Get me the image resource')
         assert result.output == snapshot(
             'This is an image of a sliced kiwi with a vibrant green interior and black seeds.'
@@ -613,7 +615,7 @@ async def test_tool_returning_image_resource_1(allow_model_requests: None, agent
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_image_resource_1',
+                            tool_name='get_image_resource_link',
                             args='{}',
                             tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                         )
@@ -638,7 +640,7 @@ async def test_tool_returning_image_resource_1(allow_model_requests: None, agent
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='get_image_resource_1',
+                            tool_name='get_image_resource_link',
                             content='See file 1c8566',
                             tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                             timestamp=IsDatetime(),
@@ -728,11 +730,11 @@ async def test_tool_returning_audio_resource(
 
 
 @pytest.mark.vcr()
-async def test_tool_returning_audio_resource_1(
+async def test_tool_returning_audio_resource_link(
     allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
 ):
     model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
-    async with agent.run_mcp_servers():
+    async with agent:
         result = await agent.run("What's the content of the audio resource?", model=model)
         assert result.output == snapshot('The audio resource contains a voice saying "Hello, my name is Marcelo."')
         assert result.all_messages() == snapshot(
@@ -741,7 +743,7 @@ async def test_tool_returning_audio_resource_1(
                     parts=[UserPromptPart(content="What's the content of the audio resource?", timestamp=IsDatetime())]
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='get_audio_resource_1', args={}, tool_call_id=IsStr())],
+                    parts=[ToolCallPart(tool_name='get_audio_resource_link', args={}, tool_call_id=IsStr())],
                     usage=Usage(
                         requests=1,
                         request_tokens=383,
@@ -756,7 +758,7 @@ async def test_tool_returning_audio_resource_1(
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='get_audio_resource_1',
+                            tool_name='get_audio_resource_link',
                             content='See file 2d36ae',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),

@@ -59,7 +59,7 @@ async def get_image_resource() -> EmbeddedResource:
 
 
 @mcp.tool()
-async def get_image_resource_1() -> ResourceLink:
+async def get_image_resource_link() -> ResourceLink:
     return ResourceLink(
         type='resource_link',
         uri=AnyUrl(Path(__file__).parent.joinpath('assets/kiwi.png').absolute().as_uri()),
@@ -81,7 +81,7 @@ async def get_audio_resource() -> EmbeddedResource:
 
 
 @mcp.tool()
-async def get_audio_resource_1() -> ResourceLink:
+async def get_audio_resource_link() -> ResourceLink:
     return ResourceLink(
         type='resource_link',
         uri=AnyUrl(Path(__file__).parent.joinpath('assets/marcelo.mp3').absolute().as_uri()),
@@ -101,7 +101,7 @@ async def get_product_name() -> EmbeddedResource:
 
 
 @mcp.tool()
-async def get_product_name_1() -> ResourceLink:
+async def get_product_name_link() -> ResourceLink:
     return ResourceLink(
         type='resource_link',
         uri=AnyUrl(Path(__file__).parent.joinpath('assets/product_name.txt').absolute().as_uri()),
