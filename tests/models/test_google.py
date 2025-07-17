@@ -604,6 +604,21 @@ async def test_google_model_empty_user_prompt(allow_model_requests: None, google
     assert result.output == snapshot("I'm ready to assist you.  Please tell me what you need.\n")
 
 
+async def test_google_model_empty_assistant_response(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    agent = Agent(m)
+
+    result = await agent.run(
+        'Empty?',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='Hi')]),
+            ModelResponse(parts=[TextPart(content='')]),
+        ],
+    )
+
+    assert result.output == snapshot('Yes, your previous message was empty.  Is there anything I can help you with?\n')
+
+
 async def test_google_model_thinking_part(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-pro-preview-03-25', provider=google_provider)
     settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True})
