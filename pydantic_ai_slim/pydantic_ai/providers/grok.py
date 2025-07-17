@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import Literal, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from openai import AsyncOpenAI
@@ -21,6 +21,18 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
+# https://docs.x.ai/docs/models
+GrokModelName = Literal[
+    'grok-4',
+    'grok-4-0709',
+    'grok-3',
+    'grok-3-mini',
+    'grok-3-fast',
+    'grok-3-mini-fast',
+    'grok-2-vision-1212',
+    'grok-2-image-1212',
+]
+
 
 class GrokProvider(Provider[AsyncOpenAI]):
     """Provider for Grok API."""
@@ -36,27 +48,6 @@ class GrokProvider(Provider[AsyncOpenAI]):
     @property
     def client(self) -> AsyncOpenAI:
         return self._client
-
-    # ---------------------------------------------------------------------
-    # Supported model names
-    # ---------------------------------------------------------------------
-
-    # https://docs.x.ai/docs/models
-    GROK_MODEL_NAMES: list[str] = [
-        'grok-4',
-        'grok-4-0709',
-        'grok-3',
-        'grok-3-mini',
-        'grok-3-fast',
-        'grok-3-mini-fast',
-        'grok-2-vision-1212',
-        'grok-2-image-1212',
-    ]
-
-    @classmethod
-    def get_model_names(cls) -> list[str]:
-        """Return the list of Grok model IDs we know about."""
-        return cls.GROK_MODEL_NAMES.copy()
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         profile = grok_model_profile(model_name)
