@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, models
-from pydantic_ai.messages import UserContent
+from pydantic_ai.messages import MultiModalContentTypes, UserContent
 from pydantic_ai.settings import ModelSettings
 
 __all__ = (
@@ -227,49 +227,31 @@ def _build_prompt(
     output: Any,
     rubric: str,
     expected_output: Any | None = None,
-) -> str | Sequence[UserContent]:
-    """Build a prompt that includes input, output, and rubric.
+) -> str | Sequence[str | UserContent]:
+    """Build a prompt that includes input, output, and rubric."""
+    sections: list[str | UserContent] = []
 
-    If inputs is a string, returns a dedented string.
-    If inputs is not a string (e.g., BinaryContent), returns a list of UserContent.
-    """
-    expected_output_section = None
+    if inputs is not None:
+        if isinstance(inputs, str):
+            sections.append(f'<Input>\n{inputs}\n</Input>')
+        elif isinstance(inputs, Sequence):
+            for item in inputs:  # type: ignore
+                if isinstance(item, (str, MultiModalContentTypes)):
+                    sections.append(item)
+                else:
+                    sections.append(_stringify(item))
+        elif isinstance(inputs, MultiModalContentTypes):
+            sections.append(inputs)
+        else:
+            sections.append(_stringify(inputs))
+
+    sections.append(f'<Output>\n{_stringify(output)}\n</Output>')
+    sections.append(f'<Rubric>\n{rubric}\n</Rubric>')
+
     if expected_output is not None:
-        expected_output_section = f'<ExpectedOutput>\n{_stringify(expected_output)}\n</ExpectedOutput>'
-
-    output_section = f'<Output>\n{_stringify(output)}\n</Output>'
-
-    rubric_section = f'<Rubric>\n{rubric}\n</Rubric>'
+        sections.append(f'<ExpectedOutput>\n{_stringify(expected_output)}\n</ExpectedOutput>')
 
     if inputs is None or isinstance(inputs, str):
-        sections: list[str] = []
-        if isinstance(inputs, str):
-            sections.append(
-                dedent(f"""
-                <Input>
-                {inputs}
-                </Input>
-                """)
-            )
-        if expected_output_section is not None:
-            sections.append(expected_output_section)
-
-        sections.append(output_section)
-        sections.append(rubric_section)
-        return '\n\n'.join(sections)
-
-    prompt_parts: list[UserContent] = []
-    prompt_parts.append('<Input>')
-    if isinstance(inputs, Sequence):
-        prompt_parts.extend(inputs)
+        return '\n\n'.join(sections)  # type: ignore[arg-type]
     else:
-        prompt_parts.append(inputs)
-    prompt_parts.append('</Input>')
-
-    if expected_output_section is not None:
-        prompt_parts.append(expected_output_section)
-
-    prompt_parts.append(output_section)
-    prompt_parts.append(rubric_section)
-
-    return prompt_parts
+        return sections
