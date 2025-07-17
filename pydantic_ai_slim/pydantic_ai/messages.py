@@ -293,7 +293,12 @@ class BinaryContent:
     """Type identifier, this is available on all parts as a discriminator."""
 
     identifier: str | None = None
-    """identifier for the binary content, such as a URL or unique ID."""
+    """Identifier for the binary content, such as a URL or unique ID.
+    
+    This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument, and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
+    
+    This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool. If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier, e.g. "This is file <identifier>:" preceding the `BinaryContent`.
+    """
 
     @property
     def is_audio(self) -> bool:
