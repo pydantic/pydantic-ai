@@ -1,8 +1,8 @@
 # Dependencies
 
-PydanticAI uses a dependency injection system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [output validators](output.md#output-validator-functions).
+Pydantic AI uses a dependency injection system to provide data and services to your agent's [system prompts](agents.md#system-prompts), [tools](tools.md) and [output validators](output.md#output-validator-functions).
 
-Matching PydanticAI's design philosophy, our dependency system tries to use existing best practice in Python development rather than inventing esoteric "magic", this should make dependencies type-safe, understandable easier to test and ultimately easier to deploy in production.
+Matching Pydantic AI's design philosophy, our dependency system tries to use existing best practice in Python development rather than inventing esoteric "magic", this should make dependencies type-safe, understandable easier to test and ultimately easier to deploy in production.
 
 ## Defining Dependencies
 
@@ -299,7 +299,7 @@ async def test_application_code():
 
 ## Examples
 
-The following examples demonstrate how to use dependencies in PydanticAI:
+The following examples demonstrate how to use dependencies in Pydantic AI:
 
 - [Weather Agent](examples/weather-agent.md)
 - [SQL Generation](examples/sql-gen.md)

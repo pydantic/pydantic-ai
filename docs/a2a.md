@@ -5,7 +5,7 @@ communication and interoperability between AI agents, regardless of the framewor
 
 At Pydantic, we built the [FastA2A](#fasta2a) library to make it easier to implement the A2A protocol in Python.
 
-We also built a convenience method that expose PydanticAI agents as A2A servers - let's have a quick look at how to use it:
+We also built a convenience method that expose Pydantic AI agents as A2A servers - let's have a quick look at how to use it:
 
 ```py {title="agent_to_a2a.py" hl_lines="4"}
 from pydantic_ai import Agent
@@ -18,12 +18,12 @@ _You can run the example with `uvicorn agent_to_a2a:app --host 0.0.0.0 --port 80
 
 This will expose the agent as an A2A server, and you can start sending requests to it.
 
-See more about [exposing PydanticAI agents as A2A servers](#pydanticai-agent-to-a2a-server).
+See more about [exposing Pydantic AI agents as A2A servers](#pydantic-ai-agent-to-a2a-server).
 
 ## FastA2A
 
 **FastA2A** is an agentic framework agnostic implementation of the A2A protocol in Python.
-The library is designed to be used with any agentic framework, and is **not exclusive to PydanticAI**.
+The library is designed to be used with any agentic framework, and is **not exclusive to Pydantic AI**.
 
 ### Design
 
@@ -75,8 +75,7 @@ The [`Storage`][fasta2a.Storage] component serves two purposes:
 
 This design allows for agents to store rich internal state (e.g., tool calls, reasoning traces) as well as store task-specific A2A-formatted messages and artifacts.
 
-For example, a PydanticAI agent might store its complete internal message format (including tool calls and responses) in the context storage, while storing only the A2A-compliant messages in the task history.
-
+For example, a Pydantic AI agent might store its complete internal message format (including tool calls and responses) in the context storage, while storing only the A2A-compliant messages in the task history.
 
 ### Installation
 
@@ -92,15 +91,15 @@ The only dependencies are:
 - [pydantic](https://pydantic.dev): to validate the request/response messages
 - [opentelemetry-api](https://opentelemetry-python.readthedocs.io/en/latest): to provide tracing capabilities
 
-You can install PydanticAI with the `a2a` extra to include **FastA2A**:
+You can install Pydantic AI with the `a2a` extra to include **FastA2A**:
 
 ```bash
 pip/uv-add 'pydantic-ai-slim[a2a]'
 ```
 
-### PydanticAI Agent to A2A Server
+### Pydantic AI Agent to A2A Server
 
-To expose a PydanticAI agent as an A2A server, you can use the `to_a2a` method:
+To expose a Pydantic AI agent as an A2A server, you can use the `to_a2a` method:
 
 ```python {title="agent_to_a2a.py"}
 from pydantic_ai import Agent
@@ -117,7 +116,7 @@ uvicorn agent_to_a2a:app --host 0.0.0.0 --port 8000
 
 Since the goal of `to_a2a` is to be a convenience method, it accepts the same arguments as the [`FastA2A`][fasta2a.FastA2A] constructor.
 
-When using `to_a2a()`, PydanticAI automatically:
+When using `to_a2a()`, Pydantic AI automatically:
 
 - Stores the complete conversation history (including tool calls and responses) in the context storage
 - Ensures that subsequent messages with the same `context_id` have access to the full conversation history
