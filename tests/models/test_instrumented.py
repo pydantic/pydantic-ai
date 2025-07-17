@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -146,7 +147,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 18000000000,
+                'end_time': 16000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'my_system',
@@ -261,7 +262,7 @@ Fix the errors and try again.\
                 'trace_flags': 1,
             },
             {
-                'body': {'role': 'assistant', 'content': 'text3'},
+                'body': {'role': 'assistant', 'content': [{'kind': 'text', 'text': 'text3'}]},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {
@@ -280,7 +281,7 @@ Fix the errors and try again.\
                     'index': 0,
                     'message': {
                         'role': 'assistant',
-                        'content': 'text1',
+                        'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'text', 'text': 'text2'}],
                         'tool_calls': [
                             {
                                 'id': 'tool_call_1',
@@ -300,17 +301,6 @@ Fix the errors and try again.\
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
                 'timestamp': 14000000000,
                 'observed_timestamp': 15000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text2'}},
-                'severity_number': 9,
-                'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
-                'timestamp': 16000000000,
-                'observed_timestamp': 17000000000,
                 'trace_id': 1,
                 'span_id': 1,
                 'trace_flags': 1,
@@ -413,7 +403,10 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 'trace_flags': 1,
             },
             {
-                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1text2'}},
+                'body': {
+                    'index': 0,
+                    'message': {'role': 'assistant', 'content': [{'kind': 'text', 'text': 'text1text2'}]},
+                },
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
@@ -513,7 +506,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 'trace_flags': 1,
             },
             {
-                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1'}},
+                'body': {'index': 0, 'message': {'role': 'assistant', 'content': [{'kind': 'text', 'text': 'text1'}]}},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
@@ -630,18 +623,20 @@ Fix the errors and try again.\
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
-                                    'event.name': 'gen_ai.assistant.message',
                                     'role': 'assistant',
-                                    'content': 'text3',
-                                    'gen_ai.message.index': 1,
+                                    'content': [{'kind': 'text', 'text': 'text3'}],
                                     'gen_ai.system': 'my_system',
+                                    'gen_ai.message.index': 1,
+                                    'event.name': 'gen_ai.assistant.message',
                                 },
                                 {
-                                    'event.name': 'gen_ai.choice',
                                     'index': 0,
                                     'message': {
                                         'role': 'assistant',
-                                        'content': 'text1',
+                                        'content': [
+                                            {'kind': 'text', 'text': 'text1'},
+                                            {'kind': 'text', 'text': 'text2'},
+                                        ],
                                         'tool_calls': [
                                             {
                                                 'id': 'tool_call_1',
@@ -656,12 +651,7 @@ Fix the errors and try again.\
                                         ],
                                     },
                                     'gen_ai.system': 'my_system',
-                                },
-                                {
                                     'event.name': 'gen_ai.choice',
-                                    'index': 0,
-                                    'message': {'role': 'assistant', 'content': 'text2'},
-                                    'gen_ai.system': 'my_system',
                                 },
                             ]
                         )
@@ -714,7 +704,7 @@ def test_messages_to_otel_events_instructions():
             {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
             {
                 'role': 'assistant',
-                'content': 'text1',
+                'content': [{'kind': 'text', 'text': 'text1'}],
                 'gen_ai.message.index': 1,
                 'event.name': 'gen_ai.assistant.message',
             },
@@ -735,7 +725,7 @@ def test_messages_to_otel_events_instructions_multiple_messages():
             {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
             {
                 'role': 'assistant',
-                'content': 'text1',
+                'content': [{'kind': 'text', 'text': 'text1'}],
                 'gen_ai.message.index': 1,
                 'event.name': 'gen_ai.assistant.message',
             },
@@ -764,7 +754,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
             ]
         ),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
-        ModelResponse(parts=[TextPart('text1')]),
+        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking1')]),
     ]
     settings = InstrumentationSettings()
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -816,7 +806,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
             },
             {
                 'role': 'assistant',
-                'content': 'text1',
+                'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'thinking', 'text': 'thinking1'}],
                 'gen_ai.message.index': 6,
                 'event.name': 'gen_ai.assistant.message',
             },
