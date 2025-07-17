@@ -129,7 +129,6 @@ class CohereModel(Model):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
-        self._profile = profile or provider.model_profile
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
