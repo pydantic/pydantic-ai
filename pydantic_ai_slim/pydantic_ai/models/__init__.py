@@ -286,6 +286,8 @@ KnownModelName = TypeAliasType(
         'openai:o3-mini-2025-01-31',
         'openai:o4-mini',
         'openai:o4-mini-2025-04-16',
+        'openai:computer-use-preview-2025-03-11',
+        'moonshotai:kimi-k2-0711-preview',
         'test',
     ],
 )
@@ -588,6 +590,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'azure',
         'openrouter',
         'grok',
+        'moonshotai',
         'fireworks',
         'together',
         'heroku',

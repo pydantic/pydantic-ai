@@ -190,7 +190,16 @@ class OpenAIModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
-            'openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku', 'github'
+            'openai',
+            'deepseek',
+            'azure',
+            'openrouter',
+            'grok',
+            'moonshotai',
+            'fireworks',
+            'together',
+            'heroku',
+            'github',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -598,7 +607,18 @@ class OpenAIResponsesModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together']
+        provider: Literal[
+            'openai',
+            'deepseek',
+            'azure',
+            'openrouter',
+            'grok',
+            'moonshotai',
+            'fireworks',
+            'together',
+            'heroku',
+            'github',
+        ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,

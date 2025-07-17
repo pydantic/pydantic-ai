@@ -72,6 +72,14 @@ TEST_CASES = [
         'github',
         'OpenAIModel',
     ),
+    (
+        'MOONSHOT_API_KEY',
+        'moonshotai:kimi-k2-0711-preview',
+        'kimi-k2-0711-preview',
+        'moonshotai',
+        'openai',
+        'OpenAIModel',
+    ),
 ]
 
 
