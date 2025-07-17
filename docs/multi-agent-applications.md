@@ -1,6 +1,6 @@
 # Multi-agent Applications
 
-There are roughly four levels of complexity when building applications with PydanticAI:
+There are roughly four levels of complexity when building applications with Pydantic AI:
 
 1. Single agent workflows — what most of the `pydantic_ai` documentation covers
 2. [Agent delegation](#agent-delegation) — agents using another agent via tools
@@ -327,6 +327,6 @@ See the [graph](graph.md) documentation on when and how to use graphs.
 
 ## Examples
 
-The following examples demonstrate how to use dependencies in PydanticAI:
+The following examples demonstrate how to use dependencies in Pydantic AI:
 
 - [Flight booking](examples/flight-booking.md)

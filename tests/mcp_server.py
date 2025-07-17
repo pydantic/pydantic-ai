@@ -15,7 +15,7 @@ from mcp.types import (
 )
 from pydantic import AnyUrl
 
-mcp = FastMCP('PydanticAI MCP Server')
+mcp = FastMCP('Pydantic AI MCP Server')
 log_level = 'unset'
 
 
@@ -95,7 +95,7 @@ async def get_product_name() -> EmbeddedResource:
         type='resource',
         resource=TextResourceContents(
             uri=AnyUrl('resource://product_name.txt'),
-            text='PydanticAI',
+            text='Pydantic AI',
         ),
     )
 

@@ -1,6 +1,6 @@
 # Upgrade Guide
 
-PydanticAI is still pre-version 1, so breaking changes will occur, however:
+Pydantic AI is still pre-version 1, so breaking changes will occur, however:
 
 - We try to minimize them as much as possible.
 - We use minor version bumps to signify breaking changes.
@@ -10,7 +10,7 @@ PydanticAI is still pre-version 1, so breaking changes will occur, however:
 ## Breaking Changes
 
 !!! note
-    Here's a filtered list of the breaking changes for each version to help you upgrade PydanticAI.
+    Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
 ### v0.4.0 (2025-07-08)
 
@@ -23,7 +23,7 @@ See [#1507](https://github.com/pydantic/pydantic-ai/pull/1507) - The `ToolDefini
 See [#1142](https://github.com/pydantic/pydantic-ai/pull/1142) — Adds support for thinking parts.
 
 We now convert the thinking blocks (`"<think>..."</think>"`) in provider specific text parts to
-PydanticAI `ThinkingPart`s. Also, as part of this release, we made the choice to not send back the
+Pydantic AI `ThinkingPart`s. Also, as part of this release, we made the choice to not send back the
 `ThinkingPart`s to the provider - the idea is to save costs on behalf of the user. In the future, we
 intend to add a setting to customize this behavior.
 
@@ -31,9 +31,8 @@ intend to add a setting to customize this behavior.
 
 See [#1647](https://github.com/pydantic/pydantic-ai/pull/1647) — usage makes sense as part of `ModelResponse`, and could be really useful in "messages" (really a sequence of requests and response). In this PR:
 
-* Adds `usage` to `ModelResponse` (field has a default factory of `Usage()` so it'll work to load data that doesn't have usage)
-* changes the return type of `Model.request` to just `ModelResponse` instead of `tuple[ModelResponse, Usage]`
-
+- Adds `usage` to `ModelResponse` (field has a default factory of `Usage()` so it'll work to load data that doesn't have usage)
+- changes the return type of `Model.request` to just `ModelResponse` instead of `tuple[ModelResponse, Usage]`
 
 ### v0.1.0 (2025-04-15)
 

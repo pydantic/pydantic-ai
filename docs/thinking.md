@@ -6,7 +6,7 @@ providing its final answer.
 This capability is typically disabled by default and depends on the specific model being used.
 See the sections below for how to enable thinking for each provider.
 
-Internally, if the model doesn't provide thinking objects, PydanticAI will convert thinking blocks
+Internally, if the model doesn't provide thinking objects, Pydantic AI will convert thinking blocks
 (`"<think>..."</think>"`) in provider-specific text parts to `ThinkingPart`s. We have also made
 the decision not to send `ThinkingPart`s back to the provider in multi-turn conversations -
 this helps save costs for users. In the future, we plan to add a setting to customize this behavior.
@@ -14,7 +14,7 @@ this helps save costs for users. In the future, we plan to add a setting to cust
 ## OpenAI
 
 When using the [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel], thinking objects are not created
-by default. However, the text content may contain `"<think>"` tags. When this happens, PydanticAI will
+by default. However, the text content may contain `"<think>"` tags. When this happens, Pydantic AI will
 convert them to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
 
 In contrast, the [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] does

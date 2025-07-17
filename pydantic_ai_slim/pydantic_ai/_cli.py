@@ -38,7 +38,7 @@ try:
     from rich.text import Text
 except ImportError as _import_error:
     raise ImportError(
-        'Please install `rich`, `prompt-toolkit` and `argcomplete` to use the PydanticAI CLI, '
+        'Please install `rich`, `prompt-toolkit` and `argcomplete` to use the Pydantic AI CLI, '
         'you can use the `cli` optional group — `pip install "pydantic-ai-slim[cli]"`'
     ) from _import_error
 
@@ -47,7 +47,7 @@ __all__ = 'cli', 'cli_exit'
 
 
 PYDANTIC_AI_HOME = Path.home() / '.pydantic-ai'
-"""The home directory for PydanticAI CLI.
+"""The home directory for Pydantic AI CLI.
 
 This folder is used to store the prompt history and configuration.
 """
@@ -108,7 +108,7 @@ def cli(  # noqa: C901
     parser = argparse.ArgumentParser(
         prog=prog_name,
         description=f"""\
-PydanticAI CLI v{__version__}\n\n
+Pydantic AI CLI v{__version__}\n\n
 
 Special prompts:
 * `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
@@ -153,7 +153,7 @@ Special prompts:
     args = parser.parse_args(args_list)
 
     console = Console()
-    name_version = f'[green]{prog_name} - PydanticAI CLI v{__version__}[/green]'
+    name_version = f'[green]{prog_name} - Pydantic AI CLI v{__version__}[/green]'
     if args.version:
         console.print(name_version, highlight=False)
         return 0

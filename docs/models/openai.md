@@ -100,7 +100,7 @@ agent = Agent(model)
 
 ## OpenAI Responses API
 
-PydanticAI also supports OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) through the `OpenAIResponsesModel` class.
+Pydantic AI also supports OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) through the `OpenAIResponsesModel` class.
 
 ```python
 from pydantic_ai import Agent
@@ -144,7 +144,7 @@ You can learn more about the differences between the Responses API and Chat Comp
 
 ## OpenAI-compatible Models
 
-Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIModel` in PydanticAI.
+Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIModel` in Pydantic AI.
 Before getting started, check the [installation and configuration](#install) instructions above.
 
 To use another OpenAI-compatible API, you can make use of the `base_url` and `api_key` arguments from `OpenAIProvider`:
@@ -171,7 +171,7 @@ When a provider has its own provider class, you can use the `Agent("<provider>:<
 
 Sometimes, the provider or model you're using will have slightly different requirements than OpenAI's API or models, like having different restrictions on JSON schemas for tool definitions, or not supporting tool definitions to be marked as strict.
 
-When using an alternative provider class provided by PydanticAI, an appropriate model profile is typically selected automatically based on the model name.
+When using an alternative provider class provided by Pydantic AI, an appropriate model profile is typically selected automatically based on the model name.
 If the model you're using is not working correctly out of the box, you can tweak various aspects of how model requests are constructed by providing your own [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (for behaviors shared among all model classes) or [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (for behaviors specific to `OpenAIModel`):
 
 ```py
