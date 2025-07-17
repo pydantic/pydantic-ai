@@ -7,6 +7,7 @@ from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field, replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -59,6 +60,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     log_level: mcp_types.LoggingLevel | None = None
     log_handler: LoggingFnT | None = None
     timeout: float = 5
+    sse_read_timeout: float = 5 * 60
     process_tool_call: ProcessToolCallback | None = None
     allow_sampling: bool = True
     max_retries: int = 1
@@ -208,6 +210,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     write_stream=self._write_stream,
                     sampling_callback=self._sampling_callback if self.allow_sampling else None,
                     logging_callback=self.log_handler,
+                    read_timeout_seconds=timedelta(seconds=self.sse_read_timeout),
                 )
                 self._client = await self._exit_stack.enter_async_context(client)
 
