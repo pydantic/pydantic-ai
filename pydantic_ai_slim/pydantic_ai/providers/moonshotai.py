@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import Literal, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from openai import AsyncOpenAI
@@ -16,22 +16,21 @@ from pydantic_ai.profiles.openai import (
 )
 from pydantic_ai.providers import Provider
 
+MoonshotModelName = Literal[
+    'moonshot-v1-8k',
+    'moonshot-v1-32k',
+    'moonshot-v1-128k',
+    'moonshot-v1-8k-vision-preview',
+    'moonshot-v1-32k-vision-preview',
+    'moonshot-v1-128k-vision-preview',
+    'kimi-latest',
+    'kimi-thinking-preview',
+    'kimi-k2-0711-preview',
+]
+
 
 class MoonshotAIProvider(Provider[AsyncOpenAI]):
     """Provider for MoonshotAI platform (Kimi models)."""
-
-    # Keep the canonical list of known Moonshot model names here so tests and
-    # docs can import it from a single place.
-    MOONSHOT_MODEL_NAMES: tuple[str, ...] = (
-        'kimi-k2-0711-preview',
-        'moonshot-v1-auto',
-        'moonshot-v1-128k',
-    )
-
-    @staticmethod
-    def get_model_names() -> tuple[str, ...]:
-        """Return the tuple of known MoonshotAI model names."""
-        return MoonshotAIProvider.MOONSHOT_MODEL_NAMES
 
     @property
     def name(self) -> str:
