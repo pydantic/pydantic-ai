@@ -18,6 +18,7 @@ def format_as_xml(
     include_root_tag: bool = True,
     none_str: str = 'null',
     indent: str | None = '  ',
+    fields_attributes: bool = True,
 ) -> str:
     """Format a Python object as XML.
 
@@ -36,6 +37,8 @@ def format_as_xml(
             (The root tag is always included if it includes a body - e.g. when the input is a simple value).
         none_str: String to use for `None` values.
         indent: Indentation string to use for pretty printing.
+        fields_attributes: Whether to include field attributes (title, description, alias) as attributes
+            on the XML elements for Pydantic models.
 
     Returns:
         XML representation of the object.
@@ -54,7 +57,7 @@ def format_as_xml(
     '''
     ```
     """
-    el = _ToXml(item_tag=item_tag, none_str=none_str).to_xml(obj, root_tag)
+    el = _ToXml(item_tag=item_tag, none_str=none_str, add_fields_attributes=fields_attributes).to_xml(obj, root_tag)
     if not include_root_tag and el.text is None:
         join = '' if indent is None else '\n'
         return join.join(_rootless_xml_elements(el, indent))
@@ -68,9 +71,13 @@ def format_as_xml(
 class _ToXml:
     item_tag: str
     none_str: str
+    add_fields_attributes: bool
 
-    def to_xml(self, value: Any, tag: str | None) -> ElementTree.Element:
+    def to_xml(self, value: Any, tag: str | None, attributes: dict[str, str] | None = None) -> ElementTree.Element:
         element = ElementTree.Element(self.item_tag if tag is None else tag)
+        if attributes is not None:
+            for k, v in attributes.items():
+                element.set(k, v)
         if value is None:
             element.text = self.none_str
         elif isinstance(value, str):
@@ -91,7 +98,11 @@ class _ToXml:
         elif isinstance(value, BaseModel):
             if tag is None:
                 element = ElementTree.Element(value.__class__.__name__)
-            self._mapping_to_xml(element, value.model_dump(mode='python'))
+            self._mapping_to_xml(
+                element=element,
+                mapping=value.model_dump(mode='python'),
+                fields_attributes=self._fields_attributes(value) if self.add_fields_attributes else None,
+            )
         elif isinstance(value, Iterable):
             for item in value:  # pyright: ignore[reportUnknownVariableType]
                 item_el = self.to_xml(item, None)
@@ -100,13 +111,33 @@ class _ToXml:
             raise TypeError(f'Unsupported type for XML formatting: {type(value)}')
         return element
 
-    def _mapping_to_xml(self, element: ElementTree.Element, mapping: Mapping[Any, Any]) -> None:
+    def _mapping_to_xml(
+        self,
+        element: ElementTree.Element,
+        mapping: Mapping[Any, Any],
+        fields_attributes: dict[str, dict[str, str]] | None = None,
+    ) -> None:
+        fields_attributes = fields_attributes or {}
         for key, value in mapping.items():
             if isinstance(key, int):
                 key = str(key)
             elif not isinstance(key, str):
                 raise TypeError(f'Unsupported key type for XML formatting: {type(key)}, only str and int are allowed')
-            element.append(self.to_xml(value, key))
+            element.append(self.to_xml(value, key, fields_attributes.get(key)))
+
+    @staticmethod
+    def _fields_attributes(value: BaseModel) -> dict[str, dict[str, str]]:
+        ret: dict[str, dict[str, str]] = {}
+        for field, info in value.model_fields.items():
+            if not info.exclude:
+                attributes = {}
+                for attr in ('title', 'description', 'alias'):
+                    attr_value = getattr(info, attr, None)
+                    if attr_value is not None:
+                        attributes[attr] = str(attr_value)
+                if attributes:
+                    ret[info.serialization_alias or field] = attributes
+        return ret
 
 
 def _rootless_xml_elements(root: ElementTree.Element, indent: str | None) -> Iterator[str]:
