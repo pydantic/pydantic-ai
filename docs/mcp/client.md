@@ -12,7 +12,7 @@ pip/uv-add "pydantic-ai-slim[mcp]"
 ```
 
 !!! note
-MCP integration requires Python 3.10 or higher.
+    MCP integration requires Python 3.10 or higher.
 
 ## Usage
 
@@ -238,7 +238,7 @@ agent = Agent('openai:gpt-4o', toolsets=[weather_server, calculator_server])
 ## MCP Sampling
 
 !!! info "What is MCP Sampling?"
-In MCP [sampling](https://modelcontextprotocol.io/docs/concepts/sampling) is a system by which an MCP server can make LLM calls via the MCP client - effectively proxying requests to an LLM via the client over whatever transport is being used.
+    In MCP [sampling](https://modelcontextprotocol.io/docs/concepts/sampling) is a system by which an MCP server can make LLM calls via the MCP client - effectively proxying requests to an LLM via the client over whatever transport is being used.
 
     Sampling is extremely useful when MCP servers need to use Gen AI but you don't want to provision them each with their own LLM credentials or when a public MCP server would like the connecting client to pay for LLM calls.
 
