@@ -300,6 +300,8 @@ KnownModelName = TypeAliasType(
         'openai:o4-mini',
         'openai:o4-mini-2025-04-16',
         'moonshotai:kimi-k2-0711-preview',
+        'moonshotai:moonshot-v1-auto',
+        'moonshotai:moonshot-v1-128k',
         'openai:o4-mini-deep-research',
         'openai:o4-mini-deep-research-2025-06-26',
         'openai:o3-pro',

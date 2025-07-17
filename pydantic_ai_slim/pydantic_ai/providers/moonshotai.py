@@ -20,6 +20,19 @@ from pydantic_ai.providers import Provider
 class MoonshotAIProvider(Provider[AsyncOpenAI]):
     """Provider for MoonshotAI platform (Kimi models)."""
 
+    # Keep the canonical list of known Moonshot model names here so tests and
+    # docs can import it from a single place.
+    MOONSHOT_MODEL_NAMES: tuple[str, ...] = (
+        'kimi-k2-0711-preview',
+        'moonshot-v1-auto',
+        'moonshot-v1-128k',
+    )
+
+    @staticmethod
+    def get_model_names() -> tuple[str, ...]:
+        """Return the tuple of known MoonshotAI model names."""
+        return MoonshotAIProvider.MOONSHOT_MODEL_NAMES
+
     @property
     def name(self) -> str:
         return 'moonshotai'
@@ -44,6 +57,7 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_supports_strict_tool_definition=False,
+            openai_supports_tool_choice_required=False,
         ).update(profile)
 
     # ---------------------------------------------------------------------
