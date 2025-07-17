@@ -444,7 +444,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
 async def test_tool_returning_text_resource_link(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Get me the product name')
-        assert result.output == snapshot('The product name is "PydanticAI".')
+        assert result.output == snapshot('The product name is "Pydantic AI".')
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
