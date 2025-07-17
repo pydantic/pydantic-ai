@@ -36,7 +36,7 @@ where:
   — suitable for running the process as a subprocess locally
 - `streamable_http` runs the server with the
   [Streamable HTTP MCP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)
-  — running the server as an HTTP server to connect locally or remotely. 
+  — running the server as an HTTP server to connect locally or remotely.
   This supports stateful requests, but does not require the client to hold a stateful connection like SSE
 - `sse` runs the server with the
   [SSE MCP transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse)
