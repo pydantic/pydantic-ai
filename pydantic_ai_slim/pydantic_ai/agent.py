@@ -2218,12 +2218,18 @@ class AgentRunResult(Generic[OutputDataT]):
         """
         if not self._output_tool_name:
             raise ValueError('Cannot set output tool return content when the return type is `str`.')
-        messages = deepcopy(self._state.message_history)
+
+        messages = self._state.message_history
         last_message = messages[-1]
-        for part in last_message.parts:
+        for idx, part in enumerate(last_message.parts):
             if isinstance(part, _messages.ToolReturnPart) and part.tool_name == self._output_tool_name:
-                part.content = return_content
-                return messages
+                # Only do deepcopy when we have to modify
+                copied_messages = list(messages)
+                copied_last = deepcopy(last_message)
+                copied_last.parts[idx].content = return_content  # type: ignore[misc]
+                copied_messages[-1] = copied_last
+                return copied_messages
+
         raise LookupError(f'No tool call found with tool name {self._output_tool_name!r}.')
 
     @overload
