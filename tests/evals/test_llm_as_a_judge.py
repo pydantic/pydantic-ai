@@ -244,7 +244,7 @@ async def test_judge_input_output_expected_mock(mocker: MockerFixture):
 
 
 @pytest.mark.anyio
-async def test_judge_input_output_expected_with_model_settings_mock(mocker: MockerFixture):
+async def test_judge_input_output_expected_with_model_settings_mock(mocker: MockerFixture, image_content: BinaryContent):
     """Test judge_input_output_expected function with model_settings and mocked agent."""
     mock_result = mocker.MagicMock()
     mock_result.output = GradingOutput(reason='Test passed with settings', pass_=True, score=1.0)
@@ -264,7 +264,6 @@ async def test_judge_input_output_expected_with_model_settings_mock(mocker: Mock
     assert result.pass_ is True
     assert result.score == 1.0
 
-    mock_run.assert_called_once()
     call_args, call_kwargs = mock_run.call_args
     assert '<Input>\nHello settings\n</Input>' in call_args[0]
     assert '<ExpectedOutput>\nHello\n</ExpectedOutput>' in call_args[0]
@@ -274,6 +273,27 @@ async def test_judge_input_output_expected_with_model_settings_mock(mocker: Mock
     # Check if 'model' kwarg is passed, its value will be the default model or None
     assert 'model' in call_kwargs
 
+    result = await judge_input_output_expected(
+        image_content,
+        'Hello world with settings',
+        'Hello',
+        'Output contains input with settings',
+        model_settings=test_model_settings,
+    )
+
+    assert isinstance(result, GradingOutput)
+    assert result.reason == 'Test passed with settings'
+    assert result.pass_ is True
+    assert result.score == 1.0
+
+    call_args, call_kwargs = mock_run.call_args
+    assert image_content in call_args[0]
+    assert '<ExpectedOutput>\nHello\n</ExpectedOutput>' in call_args[0]
+    assert '<Output>\nHello world with settings\n</Output>' in call_args[0]
+    assert '<Rubric>\nOutput contains input with settings\n</Rubric>' in call_args[0]
+    assert call_kwargs['model_settings'] == test_model_settings
+    # Check if 'model' kwarg is passed, its value will be the default model or None
+    assert 'model' in call_kwargs
 
 @pytest.mark.anyio
 async def test_judge_output_expected_mock(mocker: MockerFixture):
