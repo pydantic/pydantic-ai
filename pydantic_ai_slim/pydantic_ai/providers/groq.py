@@ -48,7 +48,7 @@ class GroqProvider(Provider[AsyncGroq]):
             'qwen': qwen_model_profile,
             'deepseek': deepseek_model_profile,
             'mistral': mistral_model_profile,
-            'moonshotai': moonshotai_model_profile,
+            'moonshotai/': moonshotai_model_profile,
         }
 
         for prefix, profile_func in prefix_to_profile.items():
