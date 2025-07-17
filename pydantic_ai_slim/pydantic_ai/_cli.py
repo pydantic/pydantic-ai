@@ -101,7 +101,9 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai') -> int:  # noqa: C901
+def cli(  # noqa: C901
+    args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-4.1'
+) -> int:
     """Run the CLI and return the exit code for the process."""
     parser = argparse.ArgumentParser(
         prog=prog_name,
@@ -120,7 +122,7 @@ Special prompts:
         '-m',
         '--model',
         nargs='?',
-        help='Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o" or "anthropic:claude-3-7-sonnet-latest". Defaults to "openai:gpt-4o".',
+        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4.1" or "anthropic:claude-sonnet-4-0". Defaults to "{default_model}".',
     )
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
@@ -179,7 +181,7 @@ Special prompts:
     model_arg_set = args.model is not None
     if agent.model is None or model_arg_set:
         try:
-            agent.model = infer_model(args.model or 'openai:gpt-4o')
+            agent.model = infer_model(args.model or default_model)
         except UserError as e:
             console.print(f'Error initializing [magenta]{args.model}[/magenta]:\n[red]{e}[/red]')
             return 1

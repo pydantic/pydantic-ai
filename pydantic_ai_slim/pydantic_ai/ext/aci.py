@@ -4,11 +4,13 @@ try:
 except ImportError as _import_error:
     raise ImportError('Please install `aci-sdk` to use ACI.dev tools') from _import_error
 
+from collections.abc import Sequence
 from typing import Any
 
 from aci import ACI
 
-from pydantic_ai import Tool
+from pydantic_ai.tools import Tool
+from pydantic_ai.toolsets.function import FunctionToolset
 
 
 def _clean_schema(schema):
@@ -22,10 +24,10 @@ def _clean_schema(schema):
 
 
 def tool_from_aci(aci_function: str, linked_account_owner_id: str) -> Tool:
-    """Creates a Pydantic AI tool proxy from an ACI function.
+    """Creates a Pydantic AI tool proxy from an ACI.dev function.
 
     Args:
-        aci_function: The ACI function to wrao.
+        aci_function: The ACI.dev function to wrap.
         linked_account_owner_id: The ACI user ID to execute the function on behalf of.
 
     Returns:
@@ -64,3 +66,10 @@ def tool_from_aci(aci_function: str, linked_account_owner_id: str) -> Tool:
         description=function_description,
         json_schema=json_schema,
     )
+
+
+class ACIToolset(FunctionToolset):
+    """A toolset that wraps ACI.dev tools."""
+
+    def __init__(self, aci_functions: Sequence[str], linked_account_owner_id: str):
+        super().__init__([tool_from_aci(aci_function, linked_account_owner_id) for aci_function in aci_functions])

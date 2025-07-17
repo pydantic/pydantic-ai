@@ -1,6 +1,6 @@
 # Server
 
-PydanticAI models can also be used within MCP Servers.
+PydanticAI agents can also be used within MCP Servers.
 
 ## MCP Server
 

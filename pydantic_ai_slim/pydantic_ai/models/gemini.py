@@ -48,18 +48,10 @@ from . import (
 )
 
 LatestGeminiModelNames = Literal[
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-    'gemini-1.5-pro',
-    'gemini-1.0-pro',
     'gemini-2.0-flash',
-    'gemini-2.0-flash-lite-preview-02-05',
-    'gemini-2.0-pro-exp-02-05',
-    'gemini-2.5-flash-preview-05-20',
+    'gemini-2.0-flash-lite',
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite-preview-06-17',
-    'gemini-2.5-pro-exp-03-25',
-    'gemini-2.5-pro-preview-05-06',
     'gemini-2.5-pro',
 ]
 """Latest Gemini models."""
@@ -253,7 +245,7 @@ class GeminiModel(Model):
 
         if gemini_labels := model_settings.get('gemini_labels'):
             if self._system == 'google-vertex':
-                request_data['labels'] = gemini_labels  # pragma: lax no cover
+                request_data['labels'] = gemini_labels
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
@@ -415,7 +407,7 @@ def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _Gemi
     if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
         config['frequency_penalty'] = frequency_penalty
     if (thinkingConfig := model_settings.get('gemini_thinking_config')) is not None:
-        config['thinking_config'] = thinkingConfig  # pragma: lax no cover
+        config['thinking_config'] = thinkingConfig
     return config
 
 
