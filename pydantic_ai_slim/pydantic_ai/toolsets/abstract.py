@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Protocol
 
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
@@ -15,9 +15,6 @@ if TYPE_CHECKING:
     from .prefixed import PrefixedToolset
     from .prepared import PreparedToolset
     from .renamed import RenamedToolset
-    from .wrapper import WrapperToolset
-
-WrapperT = TypeVar('WrapperT', bound='WrapperToolset[Any]')
 
 
 class SchemaValidatorProt(Protocol):
@@ -115,9 +112,9 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         raise NotImplementedError()
 
-    def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
+    def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         """Run a visitor function on all concrete toolsets that are not wrappers (i.e. they implement their own tool listing and calling)."""
-        return visitor(self)
+        visitor(self)
 
     def filtered(
         self, filter_func: Callable[[RunContext[AgentDepsT], ToolDefinition], bool]
@@ -156,10 +153,3 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         from .renamed import RenamedToolset
 
         return RenamedToolset(self, name_map)
-
-    def wrap(self, wrapper_cls: type[WrapperT], *args: Any, **kwargs: Any) -> WrapperT:
-        """Returns an instance of the provided wrapper class wrapping this toolset, with all arguments passed to the wrapper class constructor.
-
-        See [toolset docs](../toolsets.md#wrapping-a-toolset) for more information.
-        """
-        return wrapper_cls(self, *args, **kwargs)
