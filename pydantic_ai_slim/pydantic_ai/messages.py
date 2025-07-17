@@ -292,6 +292,9 @@ class BinaryContent:
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    identifier: str | None = None
+    """identifier for the binary content, such as a URL or unique ID."""
+
     @property
     def is_audio(self) -> bool:
         """Return `True` if the media type is an audio type."""
