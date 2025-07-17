@@ -13,7 +13,7 @@ __all__ = 'Usage', 'UsageLimits'
 class Usage:
     """LLM usage associated with a request or run.
 
-    Responsibility for calculating usage is on the model; PydanticAI simply sums the usage information across requests.
+    Responsibility for calculating usage is on the model; Pydantic AI simply sums the usage information across requests.
 
     You'll need to look up the documentation of the model you're using to convert usage to monetary costs.
     """

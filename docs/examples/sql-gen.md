@@ -1,13 +1,13 @@
 # SQL Generation
 
-Example demonstrating how to use PydanticAI to generate SQL queries based on user input.
+Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.
 
 Demonstrates:
 
-* [dynamic system prompt](../agents.md#system-prompts)
-* [structured `output_type`](../output.md#structured-output)
-* [output validation](../output.md#output-validator-functions)
-* [agent dependencies](../dependencies.md)
+- [dynamic system prompt](../agents.md#system-prompts)
+- [structured `output_type`](../output.md#structured-output)
+- [output validation](../output.md#output-validator-functions)
+- [agent dependencies](../dependencies.md)
 
 ## Running the Example
 
@@ -16,6 +16,7 @@ The resulting SQL is validated by running it as an `EXPLAIN` query on PostgreSQL
 ```bash
 docker run --rm -e POSTGRES_PASSWORD=postgres -p 54320:5432 postgres
 ```
+
 _(we run postgres on port `54320` to avoid conflicts with any other postgres instances you may have running)_
 
 With [dependencies installed and environment variables set](./index.md#usage), run:

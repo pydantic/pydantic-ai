@@ -1,9 +1,9 @@
 # Command Line Interface (CLI)
 
-**PydanticAI** comes with a CLI, `clai` (pronounced "clay") which you can use to interact with various LLMs from the command line.
+**Pydantic AI** comes with a CLI, `clai` (pronounced "clay") which you can use to interact with various LLMs from the command line.
 It provides a convenient way to chat with language models and quickly get answers right in the terminal.
 
-We originally developed this CLI for our own use, but found ourselves using it so frequently that we decided to share it as part of the PydanticAI package.
+We originally developed this CLI for our own use, but found ourselves using it so frequently that we decided to share it as part of the Pydantic AI package.
 
 We plan to continue adding new features, such as interaction with MCP servers, access to tools, and more.
 
@@ -85,7 +85,6 @@ The format must be `module:variable` where:
 
 - `module` is the importable Python module path
 - `variable` is the name of the Agent instance in that module
-
 
 Additionally, you can directly launch CLI mode from an `Agent` instance using `Agent.to_cli_sync()`:
 
