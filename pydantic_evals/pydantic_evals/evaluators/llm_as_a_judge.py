@@ -64,7 +64,7 @@ async def judge_output(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = _build_prompt(None, output, rubric)
+    user_prompt = _build_prompt(inputs=None, output=output, rubric=rubric)
     return (
         await _judge_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
     ).output
@@ -93,59 +93,6 @@ _judge_input_output_agent = Agent(
 )
 
 
-def _build_prompt(
-    inputs: UserContent | Sequence[UserContent] | None,
-    output: Any,
-    rubric: str,
-    expected_output: Any | None = None,
-) -> str | Sequence[UserContent]:
-    """Build a prompt that includes input, output, and rubric.
-
-    If inputs is a string, returns a dedented string.
-    If inputs is not a string (e.g., BinaryContent), returns a list of UserContent.
-    """
-    expected_output_section = None
-    if expected_output is not None:
-        expected_output_section = f'<ExpectedOutput>\n{_stringify(expected_output)}\n</ExpectedOutput>'
-
-    output_section = f'<Output>\n{_stringify(output)}\n</Output>'
-
-    rubric_section = f'<Rubric>\n{rubric}\n</Rubric>'
-
-    if inputs is None or isinstance(inputs, str):
-        sections: list[str] = []
-        if isinstance(inputs, str):
-            sections.append(
-                dedent(f"""
-                <Input>
-                {inputs}
-                </Input>
-                """)
-            )
-        if expected_output_section is not None:
-            sections.append(expected_output_section)
-
-        sections.append(output_section)
-        sections.append(rubric_section)
-        return '\n\n'.join(sections)
-
-    prompt_parts: list[UserContent] = []
-    prompt_parts.append('<Input>\n')
-    if isinstance(inputs, Sequence):
-        prompt_parts.extend(inputs)
-    else:
-        prompt_parts.append(inputs)
-    prompt_parts.append('\n</Input>')
-
-    if expected_output_section is not None:
-        prompt_parts.append(expected_output_section)
-
-    prompt_parts.append(output_section)
-    prompt_parts.append(rubric_section)
-
-    return prompt_parts
-
-
 async def judge_input_output(
     inputs: Any,
     output: Any,
@@ -158,7 +105,7 @@ async def judge_input_output(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = _build_prompt(inputs, output, rubric)
+    user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric)
 
     return (
         await _judge_input_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
@@ -203,7 +150,7 @@ async def judge_input_output_expected(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = _build_prompt(inputs, output, rubric, expected_output)
+    user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric, expected_output=expected_output)
 
     return (
         await _judge_input_output_expected_agent.run(
@@ -247,7 +194,7 @@ async def judge_output_expected(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = _build_prompt(None, output, rubric, expected_output)
+    user_prompt = _build_prompt(inputs=None, output=output, rubric=rubric, expected_output=expected_output)
     return (
         await _judge_output_expected_agent.run(
             user_prompt, model=model or _default_model, model_settings=model_settings
@@ -273,3 +220,56 @@ def _stringify(value: Any) -> str:
         return to_json(value).decode()
     except Exception:
         return repr(value)
+
+
+def _build_prompt(
+    inputs: Any,
+    output: Any,
+    rubric: str,
+    expected_output: Any | None = None,
+) -> str | Sequence[UserContent]:
+    """Build a prompt that includes input, output, and rubric.
+
+    If inputs is a string, returns a dedented string.
+    If inputs is not a string (e.g., BinaryContent), returns a list of UserContent.
+    """
+    expected_output_section = None
+    if expected_output is not None:
+        expected_output_section = f'<ExpectedOutput>\n{_stringify(expected_output)}\n</ExpectedOutput>'
+
+    output_section = f'<Output>\n{_stringify(output)}\n</Output>'
+
+    rubric_section = f'<Rubric>\n{rubric}\n</Rubric>'
+
+    if inputs is None or isinstance(inputs, str):
+        sections: list[str] = []
+        if isinstance(inputs, str):
+            sections.append(
+                dedent(f"""
+                <Input>
+                {inputs}
+                </Input>
+                """)
+            )
+        if expected_output_section is not None:
+            sections.append(expected_output_section)
+
+        sections.append(output_section)
+        sections.append(rubric_section)
+        return '\n\n'.join(sections)
+
+    prompt_parts: list[UserContent] = []
+    prompt_parts.append('<Input>')
+    if isinstance(inputs, Sequence):
+        prompt_parts.extend(inputs)
+    else:
+        prompt_parts.append(inputs)
+    prompt_parts.append('</Input>')
+
+    if expected_output_section is not None:
+        prompt_parts.append(expected_output_section)
+
+    prompt_parts.append(output_section)
+    prompt_parts.append(rubric_section)
+
+    return prompt_parts
