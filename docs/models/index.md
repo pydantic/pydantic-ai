@@ -9,6 +9,7 @@ PydanticAI is model-agnostic and has built-in support for multiple model provide
 * [Mistral](mistral.md)
 * [Cohere](cohere.md)
 * [Bedrock](bedrock.md)
+* [Hugging Face](huggingface.md)
 
 ## OpenAI-compatible Providers
 
