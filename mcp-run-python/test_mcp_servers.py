@@ -12,8 +12,8 @@ from httpx import AsyncClient, HTTPError
 from inline_snapshot import snapshot
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamablehttp_client
 
 if TYPE_CHECKING:
     from mcp import ClientSession

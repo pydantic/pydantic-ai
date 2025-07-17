@@ -127,6 +127,7 @@ function httpGetUrl(req: http.IncomingMessage): URL {
 function httpGetBody(req: http.IncomingMessage): Promise<JSON> {
   // https://nodejs.org/en/learn/modules/anatomy-of-an-http-transaction#request-body
   return new Promise((resolve) => {
+    // deno-lint-ignore no-explicit-any
     const bodyParts: any[] = []
     let body
     req.on('data', (chunk) => {
