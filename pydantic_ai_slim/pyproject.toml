@@ -54,7 +54,7 @@ dependencies = [
     "pydantic>=2.10",
     "pydantic-graph=={{ version }}",
     "exceptiongroup; python_version < '3.11'",
-    "opentelemetry-api>=1.28.0",
+    "opentelemetry-api>=1.35.0",
     "typing-inspection>=0.4.0",
 ]
 
@@ -62,7 +62,7 @@ dependencies = [
 # WARNING if you add optional groups, please update docs/install.md
 logfire = ["logfire>=3.11.0"]
 # Models
-openai = ["openai>=1.86.0"]
+openai = ["openai>=1.92.0"]
 cohere = ["cohere>=5.16.0; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
 google = ["google-genai>=1.24.0"]

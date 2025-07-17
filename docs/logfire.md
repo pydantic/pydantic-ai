@@ -283,17 +283,17 @@ Note that the OpenTelemetry Semantic Conventions are still experimental and are 
 
 ### Setting OpenTelemetry SDK providers
 
-By default, the global `TracerProvider` and `EventLoggerProvider` are used. These are set automatically by `logfire.configure()`. They can also be set by the `set_tracer_provider` and `set_event_logger_provider` functions in the OpenTelemetry Python SDK. You can set custom providers with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
+By default, the global `TracerProvider` and `LoggerProvider` are used. These are set automatically by `logfire.configure()`. They can also be set by the `set_tracer_provider` and `set_event_logger_provider` functions in the OpenTelemetry Python SDK. You can set custom providers with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
 
 ```python {title="instrumentation_settings_providers.py"}
-from opentelemetry.sdk._events import EventLoggerProvider
+from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk.trace import TracerProvider
 
 from pydantic_ai.agent import Agent, InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(
     tracer_provider=TracerProvider(),
-    event_logger_provider=EventLoggerProvider(),
+    event_logger_provider=LoggerProvider(),
 )
 
 agent = Agent('gpt-4o', instrument=instrumentation_settings)
