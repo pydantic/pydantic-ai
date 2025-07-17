@@ -428,7 +428,7 @@ class MistralModel(Model):
         if value_type == 'object':
             additional_properties = value.get('additionalProperties', {})
             if isinstance(additional_properties, bool):
-                return 'bool'  # pragma: no cover
+                return 'bool'  # pragma: lax no cover
             additional_properties_type = additional_properties.get('type')
             if (
                 additional_properties_type in SIMPLE_JSON_TYPE_MAPPING
