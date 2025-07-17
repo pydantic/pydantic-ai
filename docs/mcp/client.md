@@ -1,6 +1,6 @@
 # Client
 
-PydanticAI can act as an [MCP client](https://modelcontextprotocol.io/quickstart/client), connecting to MCP servers
+Pydantic AI can act as an [MCP client](https://modelcontextprotocol.io/quickstart/client), connecting to MCP servers
 to use their tools.
 
 ## Install
@@ -16,7 +16,7 @@ pip/uv-add "pydantic-ai-slim[mcp]"
 
 ## Usage
 
-PydanticAI comes with three ways to connect to MCP servers:
+Pydantic AI comes with two ways to connect to MCP servers:
 
 - [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] which connects to an MCP server using the [Streamable HTTP](https://modelcontextprotocol.io/introduction#streamable-http) transport
 - [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] which connects to an MCP server using the [HTTP SSE](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport
@@ -34,9 +34,7 @@ You can use the [`async with agent`][pydantic_ai.Agent.__aenter__] context manag
 [Streamable HTTP](https://modelcontextprotocol.io/introduction#streamable-http) transport to a server.
 
 !!! note
-    [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] requires an MCP server to be
-    running and accepting HTTP connections before running the agent. Running the server is not
-    managed by Pydantic AI.
+    [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] requires an MCP server to be running and accepting HTTP connections before running the agent. Running the server is not managed by Pydantic AI.
 
 Before creating the Streamable HTTP client, we need to run a server that supports the Streamable HTTP transport.
 
@@ -80,7 +78,7 @@ _(This example is complete, it can be run "as is" with Python 3.10+ — you'll n
 - The model is receiving the prompt "how many days between 2000-01-01 and 2025-03-18?"
 - The model decides "Oh, I've got this `run_python_code` tool, that will be a good way to answer this question", and writes some python code to calculate the answer.
 - The model returns a tool call
-- PydanticAI sends the tool call to the MCP server using the SSE transport
+- Pydantic AI sends the tool call to the MCP server using the SSE transport
 - The model is called again with the return value of running the code
 - The model returns the final answer
 

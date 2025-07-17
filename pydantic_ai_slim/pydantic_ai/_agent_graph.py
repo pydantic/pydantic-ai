@@ -815,14 +815,21 @@ def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
         If you call `run`, `run_sync`, or `run_stream` more than once within a single `capture_run_messages` context,
         `messages` will represent the messages exchanged during the first call only.
     """
+    token = None
+    messages: list[_messages.ModelMessage] = []
+
+    # Try to reuse existing message context if available
     try:
-        yield _messages_ctx_var.get().messages
+        messages = _messages_ctx_var.get().messages
     except LookupError:
-        messages: list[_messages.ModelMessage] = []
+        # No existing context, create a new one
         token = _messages_ctx_var.set(_RunMessages(messages))
-        try:
-            yield messages
-        finally:
+
+    try:
+        yield messages
+    finally:
+        # Clean up context if we created it
+        if token is not None:
             _messages_ctx_var.reset(token)
 
 

@@ -8,7 +8,7 @@ from mcp.shared.context import LifespanContextT, RequestT
 from mcp.types import BlobResourceContents, EmbeddedResource, SamplingMessage, TextContent, TextResourceContents
 from pydantic import AnyUrl
 
-mcp = FastMCP('PydanticAI MCP Server')
+mcp = FastMCP('Pydantic AI MCP Server')
 log_level = 'unset'
 
 
@@ -70,7 +70,7 @@ async def get_product_name() -> EmbeddedResource:
         type='resource',
         resource=TextResourceContents(
             uri='resource://product_name.txt',  # type: ignore
-            text='PydanticAI',
+            text='Pydantic AI',
         ),
     )
 

@@ -2673,6 +2673,18 @@ def test_double_capture_run_messages() -> None:
     )
 
 
+def test_capture_run_messages_with_user_exception_does_not_contain_internal_errors() -> None:
+    """Test that user exceptions within capture_run_messages context have clean stack traces."""
+    agent = Agent('test')
+
+    try:
+        with capture_run_messages():
+            agent.run_sync('Hello')
+            raise ZeroDivisionError('division by zero')
+    except Exception as e:
+        assert e.__context__ is None
+
+
 def test_dynamic_false_no_reevaluate():
     """When dynamic is false (default), the system prompt is not reevaluated
     i.e: SystemPromptPart(
