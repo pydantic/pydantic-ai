@@ -60,7 +60,7 @@ uvx clai --help
 You can specify which model to use with the `--model` flag:
 
 ```bash
-uvx clai --model anthropic:claude-3-7-sonnet-latest
+uvx clai --model anthropic:claude-sonnet-4-0
 ```
 
 (a full list of models available can be printed with `uvx clai --list-models`)
@@ -72,7 +72,7 @@ You can specify a custom agent using the `--agent` flag with a module path and v
 ```python {title="custom_agent.py" test="skip"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
+agent = Agent('openai:gpt-4.1', instructions='You always respond in Italian.')
 ```
 
 Then run:
@@ -92,7 +92,7 @@ Additionally, you can directly launch CLI mode from an `Agent` instance using `A
 ```python {title="agent_to_cli_sync.py" test="skip" hl_lines=4}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
+agent = Agent('openai:gpt-4.1', instructions='You always respond in Italian.')
 agent.to_cli_sync()
 ```
 
@@ -101,7 +101,7 @@ You can also use the async interface with `Agent.to_cli()`:
 ```python {title="agent_to_cli.py" test="skip" hl_lines=6}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o', instructions='You always respond in Italian.')
+agent = Agent('openai:gpt-4.1', instructions='You always respond in Italian.')
 
 async def main():
     await agent.to_cli()
